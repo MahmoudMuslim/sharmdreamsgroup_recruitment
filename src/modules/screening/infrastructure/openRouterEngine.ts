@@ -272,9 +272,7 @@ ${questionPrompt}
 CONTEXT PROVIDED TO CANDIDATE:
 ${context}
 
-EXPECTED COMPETENCIES:
-${expectedCompetencies.map((c) => `- ${c}`).join("\n")}
-
+${expectedCompetencies.length > 0 ? `EXPECTED COMPETENCIES:\n${expectedCompetencies.map((c) => `- ${c}`).join("\n")}\n` : ""}
 CANDIDATE ANSWER:
 ${candidateAnswer}
 
@@ -302,22 +300,84 @@ Evaluate and return:
 }
 
 /**
- * Excel Model Evaluation: checks formulas against expected outputs.
- * Returns score 0-100 and detailed breakdown.
+ * Excel Model Evaluation: AI-examines the candidate's submitted cells against
+ * the question's required outputs (cell, description, formula hint).
+ * Required cells the candidate left empty fail deterministically; the model
+ * judges the populated ones, and the final score is recomputed from the merged
+ * breakdown rather than trusting the model's own score field.
  */
+export interface ExcelEvaluation {
+  score: number;
+  breakdown: { cell: string; expected: string; actual: string; correct: boolean }[];
+}
+
 export async function evaluateExcelModel(
-  candidateGrid: (string | number | null)[][],
-  expectedOutputs: { cell: string; formulaHint: string; description: string }[]
-): Promise<{ score: number; breakdown: { cell: string; expected: string; actual: string; correct: boolean }[] }> {
-  // This runs client-side in HyperFormula; here we just provide the evaluation structure.
-  // Server-side evaluation would re-run HyperFormula on the submitted grid.
-  const breakdown = expectedOutputs.map((exp) => ({
-    cell: exp.cell,
-    expected: exp.formulaHint,
-    actual: "TODO: compute from candidateGrid",
-    correct: false,
-  }));
+  questionPrompt: string,
+  candidateCells: Record<string, string | number | null>,
+  expectedOutputs: { cell: string; formulaHint?: string; description: string }[]
+): Promise<ExcelEvaluation> {
+  const breakdown: ExcelEvaluation["breakdown"] = [];
+  const pending: typeof expectedOutputs = [];
+  const submittedLines: string[] = [];
+
+  for (const output of expectedOutputs) {
+    const raw = candidateCells[output.cell];
+    const value = typeof raw === "string" ? raw.trim() : raw;
+    if (value === null || value === undefined || value === "") {
+      breakdown.push({ cell: output.cell, expected: output.description, actual: "(left empty)", correct: false });
+    } else {
+      pending.push(output);
+      submittedLines.push(`${output.cell}: ${value}`);
+    }
+  }
+
+  if (pending.length > 0) {
+    const systemPrompt = `You are a financial modelling examiner grading a candidate's spreadsheet model.
+Return ONLY valid JSON. No markdown.
+For each required output, judge whether the candidate's cell value (which may be a formula or a computed number) satisfies the requirement described. Be strict about correctness: a plausible-looking but wrong number or a formula referencing the wrong inputs is incorrect.`;
+
+    const userPrompt = `QUESTION:
+${questionPrompt}
+
+REQUIRED OUTPUTS:
+${pending.map((o) => `- ${o.cell}: ${o.description}${o.formulaHint ? ` (hint: ${o.formulaHint})` : ""}`).join("\n")}
+
+CANDIDATE SUBMITTED CELLS (other cells were left empty or are not required):
+${submittedLines.join("\n")}
+
+Grade and return:
+{
+  "score": number (0-100, share of required outputs judged correct),
+  "breakdown": [{ "cell": string, "expected": string (what was required, short), "actual": string (what the candidate submitted, short), "correct": boolean }]
+}`;
+
+    const request: CompletionRequest = {
+      capability: "case_reasoning",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.1,
+      maxTokens: 1200,
+      jsonMode: true,
+    };
+
+    const result = await complete(request);
+    const parsed = parseJsonResponse<ExcelEvaluation>(result.content);
+
+    const verdictByCell = new Map((parsed.breakdown ?? []).map((b) => [b.cell, b]));
+    for (const output of pending) {
+      const verdict = verdictByCell.get(output.cell);
+      breakdown.push({
+        cell: output.cell,
+        expected: verdict?.expected ?? output.description,
+        actual: verdict?.actual ?? String(candidateCells[output.cell]),
+        correct: Boolean(verdict?.correct),
+      });
+    }
+  }
+
   const correctCount = breakdown.filter((b) => b.correct).length;
-  const score = expectedOutputs.length > 0 ? Math.round((correctCount / expectedOutputs.length) * 100) : 0;
+  const score = breakdown.length > 0 ? Math.round((correctCount / breakdown.length) * 100) : 0;
   return { score, breakdown };
 }

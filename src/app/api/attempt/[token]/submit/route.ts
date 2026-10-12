@@ -1,4 +1,6 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { after } from "next/server";
+import { gradeAttemptResponses } from "@/modules/assessment/application/gradeAttempt";
 import { NextResponse } from "next/server";
 import type { SpreadsheetCellData } from "@/types";
 
@@ -152,6 +154,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     .from("applications")
     .update({ stage: "ASSESSMENT" })
     .eq("id", attempt.application_id);
+
+  // Grade essays and models in the background; the candidate's confirmation
+  // must not wait on AI latency, and grading errors never lose their answers.
+  after(async () => {
+    try {
+      await gradeAttemptResponses(attempt.id);
+    } catch (error) {
+      console.error("Background attempt grading failed:", error);
+    }
+  });
 
   return NextResponse.json({ ok: true, submitted_at: submittedAt, total_score: totalScore, max_score: maxScore });
 }
