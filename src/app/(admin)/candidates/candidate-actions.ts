@@ -6,6 +6,10 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { WhatsAppConnector } from "@/modules/omnichannel/infrastructure/connectors";
 import {
+  enqueueStageChangeWhatsApp,
+  processDueWhatsAppJobs,
+} from "@/modules/omnichannel/application/whatsapp-dispatch";
+import {
   generateFeedbackForApplication,
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
@@ -193,6 +197,14 @@ export async function updateApplicationStage(input: {
     .eq("id", input.applicationId);
 
   if (error) return { ok: false, error: error.message };
+
+  // The candidate is told about the move after the response is sent: enqueue
+  // first, then drain immediately so the alert does not wait for the next cron
+  // tick. A notification failure never affects the stage move itself.
+  after(async () => {
+    const { queued } = await enqueueStageChangeWhatsApp(input.applicationId, input.stage);
+    if (queued) await processDueWhatsAppJobs(5);
+  });
 
   // Selection decisions get a feedback draft written after the response is
   // sent, so the recruiter is never kept waiting on a model call and a failed

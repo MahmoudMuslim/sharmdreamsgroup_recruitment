@@ -13,7 +13,7 @@ import type { WhatsAppOutboundMessage, CalendarEventPayload } from "@/types";
 /**
  * WhatsApp Cloud API connector.
  * Enqueues outbound candidate messages (status alerts, interview reminders, screening updates).
- * Uses webhook URL: https://graph.facebook.com/v{version}/me/messages?access_token={token}
+ * Send endpoint: https://graph.facebook.com/v{version}/{phone-number-id}/messages
  */
 export class WhatsAppConnector {
   /**
@@ -47,7 +47,10 @@ export class WhatsAppConnector {
       return { success: false, error: "WhatsApp credentials not configured" };
     }
 
-    const url = `https://graph.facebook.com/${omnichannelConfig.whatsapp.graphApiVersion}/me/messages`;
+    // Messages must be posted to the sending phone number's id — `/me/messages`
+    // is the Messenger Platform endpoint and Graph answers it with
+    // "Object with ID 'me' does not exist" for a WhatsApp token.
+    const url = `https://graph.facebook.com/${omnichannelConfig.whatsapp.graphApiVersion}/${creds.phoneNumberId}/messages`;
 
     const payload = {
       messaging_product: "whatsapp",
