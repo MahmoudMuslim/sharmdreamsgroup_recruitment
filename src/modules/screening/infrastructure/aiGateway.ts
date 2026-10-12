@@ -31,6 +31,8 @@ export interface CompletionResult {
   model: string;
   provider: "openrouter" | "google";
   attempts: { model: string; ok: boolean; error?: string; credential?: string }[];
+  /** The provider stopped at its output cap, so `content` is cut off mid-answer. */
+  truncated: boolean;
 }
 
 export class AiGatewayError extends Error {
@@ -45,7 +47,7 @@ async function callOpenRouter(
   request: CompletionRequest,
   signal: AbortSignal,
   apiKey: string
-): Promise<string> {
+): Promise<{ content: string; truncated: boolean }> {
   const response = await fetch(aiConfig.openRouter.baseUrl, {
     method: "POST",
     signal,
@@ -73,11 +75,12 @@ async function callOpenRouter(
   if (payload.error) {
     throw new Error(`OpenRouter ${model}: ${payload.error.message}`);
   }
-  const content = payload.choices?.[0]?.message?.content;
+  const choice = payload.choices?.[0];
+  const content = choice?.message?.content;
   if (!content || content.trim().length === 0) {
     throw new Error(`OpenRouter ${model} returned an empty completion`);
   }
-  return content;
+  return { content, truncated: choice?.finish_reason === "length" };
 }
 
 /**
@@ -103,7 +106,7 @@ async function callGoogleAiStudio(
   request: CompletionRequest,
   signal: AbortSignal,
   apiKey: string
-): Promise<{ content: string; model: string }> {
+): Promise<{ content: string; model: string; truncated: boolean }> {
   const systemPrompt = request.messages
     .filter((m) => m.role === "system")
     .map((m) => m.content)
@@ -158,13 +161,17 @@ async function callGoogleAiStudio(
     }
 
     const payload = (await response.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] } }[];
+      candidates?: {
+        content?: { parts?: { text?: string }[] };
+        finishReason?: string;
+      }[];
     };
-    const content = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
+    const candidate = payload.candidates?.[0];
+    const content = candidate?.content?.parts?.map((p) => p.text ?? "").join("");
     if (!content || content.trim().length === 0) {
       throw new Error(`Google AI Studio ${model} returned an empty completion`);
     }
-    return { content, model };
+    return { content, model, truncated: candidate?.finishReason === "MAX_TOKENS" };
   }
 
   throw new Error(
@@ -313,10 +320,16 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), aiConfig.openRouter.timeoutMs);
       try {
-        const content = await callOpenRouter(model, effective, controller.signal, credential.secret);
+        const reply = await callOpenRouter(model, effective, controller.signal, credential.secret);
         clearTimeout(timeout);
         attempts.push({ model, ok: true, credential: credential.secretHint });
-        return { content, model, provider: "openrouter", attempts };
+        return {
+          content: reply.content,
+          model,
+          provider: "openrouter",
+          attempts,
+          truncated: reply.truncated,
+        };
       } catch (error) {
         clearTimeout(timeout);
         attempts.push({
@@ -345,7 +358,13 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
     const result = await callGoogleAiStudio(effective, controller.signal, googleKey);
     clearTimeout(timeout);
     attempts.push({ model: result.model, ok: true, credential: "google" });
-    return { content: result.content, model: result.model, provider: "google", attempts };
+    return {
+      content: result.content,
+      model: result.model,
+      provider: "google",
+      attempts,
+      truncated: result.truncated,
+    };
   } catch (error) {
     clearTimeout(timeout);
     attempts.push({
@@ -364,13 +383,69 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
   );
 }
 
+/** Raised when a model's reply ends before the JSON it was writing is complete. */
+export class TruncatedJsonResponseError extends Error {}
+
+/**
+ * The first balanced JSON value in a reply, or null when it never closes.
+ *
+ * Scanning (rather than slicing to the last brace) is what separates a reply
+ * that simply has prose around it from one that was cut off mid-write.
+ */
+function balancedJsonRegion(text: string, open: number): string | null {
+  const expected: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = open; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      expected.push(char === "{" ? "}" : "]");
+    } else if (char === "}" || char === "]") {
+      if (expected[expected.length - 1] !== char) return null;
+      expected.pop();
+      if (expected.length === 0) return text.slice(open, i + 1);
+    }
+  }
+
+  return null;
+}
+
 /** Extracts the first JSON object/array from a model response. */
-export function parseJsonResponse<T>(raw: string): T {
+export function parseJsonResponse<T>(
+  raw: string,
+  options: { truncated?: boolean } = {}
+): T {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1] : raw;
   const start = candidate.search(/[[{]/);
   if (start === -1) throw new Error("No JSON found in model response");
-  const end = Math.max(candidate.lastIndexOf("}"), candidate.lastIndexOf("]"));
-  const jsonSlice = candidate.slice(start, end + 1);
-  return JSON.parse(jsonSlice) as T;
+
+  const region = balancedJsonRegion(candidate, start);
+  if (region === null) {
+    throw new TruncatedJsonResponseError(
+      options.truncated
+        ? "The grading model hit its output limit while writing its verdict, so the answer arrived cut off."
+        : `The grading model's reply ended in the middle of its JSON (${
+            candidate.length - start
+          } characters, unparsed).`
+    );
+  }
+
+  try {
+    return JSON.parse(region) as T;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`Model returned malformed JSON: ${reason.slice(0, 120)}`);
+  }
 }

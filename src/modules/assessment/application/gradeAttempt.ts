@@ -11,6 +11,7 @@ import {
 } from "@/modules/screening/infrastructure/openRouterEngine";
 import {
   RecordingNotTranscribableError,
+  TruncatedJsonResponseError,
   transcribeRecording,
 } from "@/modules/screening/infrastructure/aiGateway";
 import type { QuestionEvaluation, SpreadsheetCellData } from "@/types";
@@ -195,6 +196,17 @@ async function gradePendingResponses(
       if (error instanceof ManualReviewRequiredError) {
         // A blocker no retry can clear — hand the row to the reviewer.
         await writeManualNote(supabase, response.id, error.message);
+        continue;
+      }
+      if (error instanceof TruncatedJsonResponseError) {
+        // Explain the blank in the report rather than leaving it unremarked, but
+        // still count it as failed: a later pass may reach a model with enough
+        // output room to finish the verdict.
+        await writeManualNote(supabase, response.id, error.message);
+        failed += 1;
+        console.error(
+          `AI grading truncated for response ${response.id} (${question.title}): ${error.message}`
+        );
         continue;
       }
       failed += 1;

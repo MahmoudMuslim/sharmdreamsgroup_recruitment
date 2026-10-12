@@ -39,22 +39,6 @@ function anonymizeCvText(text: string): { text: string; anonymized: boolean } {
 }
 
 /**
- * Extracts plain text from PDF/Docx buffers.
- * In production, use pdf-parse or mammoth; here we assume text is pre-extracted.
- */
-export async function extractTextFromBuffer(buffer: Buffer, mimeType: string): Promise<string> {
-  if (mimeType === "application/pdf") {
-    // Placeholder: integrate pdf-parse
-    return buffer.toString("utf-8");
-  }
-  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-    // Placeholder: integrate mammoth
-    return buffer.toString("utf-8");
-  }
-  return buffer.toString("utf-8");
-}
-
-/**
  * CV Screening & Match Score (0-100%) with bias reduction.
  * Uses google/gemma-4-31b-it:free as primary.
  */
@@ -100,7 +84,7 @@ Evaluate and return:
   };
 
   const result = await complete(request);
-  const parsed = parseJsonResponse<CvScreeningResult>(result.content);
+  const parsed = parseJsonResponse<CvScreeningResult>(result.content, { truncated: result.truncated });
   return { ...parsed, anonymization_applied: anonymized, model_used: result.model };
 }
 
@@ -151,7 +135,7 @@ Return:
   };
 
   const result = await complete(request);
-  return parseJsonResponse<SentimentAnalysisResult>(result.content);
+  return parseJsonResponse<SentimentAnalysisResult>(result.content, { truncated: result.truncated });
 }
 
 /**
@@ -200,7 +184,7 @@ Write a feedback report with:
   };
 
   const result = await complete(request);
-  return parseJsonResponse<FeedbackReport>(result.content);
+  return parseJsonResponse<FeedbackReport>(result.content, { truncated: result.truncated });
 }
 
 /**
@@ -249,7 +233,7 @@ Generate interview questions:
   };
 
   const result = await complete(request);
-  return parseJsonResponse<GeneratedInterviewQuestions>(result.content);
+  return parseJsonResponse<GeneratedInterviewQuestions>(result.content, { truncated: result.truncated });
 }
 
 /**
@@ -296,7 +280,7 @@ Evaluate and return:
   };
 
   const result = await complete(request);
-  return parseJsonResponse<{ score: number; rationale: string; strengths: string[]; improvements: string[] }>(result.content);
+  return parseJsonResponse<{ score: number; rationale: string; strengths: string[]; improvements: string[] }>(result.content, { truncated: result.truncated });
 }
 
 /**
@@ -396,7 +380,7 @@ Grade and return:
     };
 
     const result = await complete(request);
-    const parsed = parseJsonResponse<ExcelEvaluation>(result.content);
+    const parsed = parseJsonResponse<ExcelEvaluation>(result.content, { truncated: result.truncated });
 
     const verdictByCell = new Map((parsed.breakdown ?? []).map((b) => [b.cell, b]));
     for (const output of pending) {
@@ -470,5 +454,5 @@ Evaluate and return:
     rationale: string;
     strengths: string[];
     improvements: string[];
-  }>(result.content);
+  }>(result.content, { truncated: result.truncated });
 }
