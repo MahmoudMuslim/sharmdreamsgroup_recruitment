@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, FileText, Loader2, Search, Send, Sparkles } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
@@ -99,7 +99,10 @@ export function CandidateBrowser({
   canWrite: boolean;
 }) {
   const router = useRouter();
-  const [query, setQuery] = useState("");
+  // `?c=` arrives from the interviews agenda: open the page already filtered
+  // to that candidate.
+  const trackedCode = useSearchParams().get("c");
+  const [query, setQuery] = useState(trackedCode ?? "");
   const [stageFilter, setStageFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [profile, setProfile] = useState<CandidateRow | null>(null);

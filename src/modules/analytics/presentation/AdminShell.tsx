@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   BriefcaseBusiness,
+  CalendarDays,
   ClipboardCheck,
   LayoutDashboard,
   Menu,
@@ -31,6 +32,7 @@ const NAV: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics" },
   { href: "/candidates", label: "Candidates", icon: Users, hint: "Pipeline & AI scores" },
   { href: "/assessments", label: "Assessments", icon: ClipboardCheck, hint: "Test suite builder" },
+  { href: "/interviews", label: "Interviews", icon: CalendarDays, hint: "Scheduled panels" },
   { href: "/onboarding", label: "Onboarding", icon: UserRoundPlus, hint: "New-hire checklists" },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness, hint: "Open positions" },
   { href: "/settings", label: "Settings", icon: Settings, hint: "Configuration & access" },
