@@ -96,9 +96,13 @@ export function NewJobDrawer({ options }: { options: JobFormOptions }) {
       });
       if (result.ok) {
         setSaved(true);
+        // The action already revalidated /jobs; refresh pulls the new row in.
+        // Done here rather than via a callback prop, because this component is
+        // rendered from a Server Component and functions cannot cross that
+        // boundary.
         setTimeout(() => {
           close();
-          onCreated();
+          router.refresh();
         }, 600);
       } else {
         setError(result.error ?? "Could not create the opening.");

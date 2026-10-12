@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import { ClipboardCheck } from "lucide-react";
 import { getTemplates, getAssignableCandidates } from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
@@ -16,40 +15,26 @@ export const metadata = {
 /** Auth-gated route: content is fully session/RLS dependent. */
 export const instant = false;
 
-async function TemplateList() {
+async function loadTemplates() {
   const [templates, candidates, options] = await Promise.all([
     getTemplates(),
     getAssignableCandidates(),
     getMasterOptions(),
   ]);
 
-  if (templates.length === 0) {
-    return (
-      <Card>
-        <EmptyState
-          title="No assessment suites yet"
-          description="Create a suite to start evaluating candidates with Excel models, video pitches and case studies."
-          icon={<ClipboardCheck className="h-8 w-8" aria-hidden />}
-        />
-      </Card>
-    );
-  }
-
-  return (
-    <AssessmentGrid
-      templates={templates}
-      candidates={candidates}
-      options={{
-        roleFamilies: options.roleFamilies,
-        companies: options.companies,
-      }}
-    />
-  );
+  return { templates, candidates, options };
 }
 
 export default async function AssessmentsBuilderPage() {
   await connection();
   const user = await requireStaff("/assessments");
+
+  // Fetched in the page component rather than behind a <Suspense> boundary.
+  // The page is already request-time (await connection() above), so a boundary
+  // here only produced a static shell whose hole the client had to re-fetch —
+  // and on a hard load that fetch never landed, leaving the skeleton up
+  // forever and every button unclickable.
+  const { templates, candidates, options } = await loadTemplates();
 
   return (
     <AdminShell user={user}>
@@ -59,17 +44,24 @@ export default async function AssessmentsBuilderPage() {
         description="Every suite currently defined for the group, with live question counts and assignment activity."
       />
 
-      <Suspense
-        fallback={
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-56 animate-pulse rounded-2xl bg-white" />
-            ))}
-          </div>
-        }
-      >
-        <TemplateList />
-      </Suspense>
+      {templates.length === 0 ? (
+        <Card>
+          <EmptyState
+            title="No assessment suites yet"
+            description="Create a suite to start evaluating candidates with Excel models, video pitches and case studies."
+            icon={<ClipboardCheck className="h-8 w-8" aria-hidden />}
+          />
+        </Card>
+      ) : (
+        <AssessmentGrid
+          templates={templates}
+          candidates={candidates}
+          options={{
+            roleFamilies: options.roleFamilies,
+            companies: options.companies,
+          }}
+        />
+      )}
     </AdminShell>
   );
 }

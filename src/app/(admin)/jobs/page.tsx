@@ -56,7 +56,6 @@ export default async function JobsPage() {
               departments: options.departments,
               locations: options.locations,
             }}
-            onCreated={() => {}}
           />
         }
       />

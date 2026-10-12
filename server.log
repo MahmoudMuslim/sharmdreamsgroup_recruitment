@@ -9,12 +9,5 @@ npm notice run next start -p 3100
 Γû▓ Next.js 16.4.0
 - Local:         http://localhost:3100
 - Network:       http://192.168.1.6:3100
-Γ£ô Ready in 319ms
-Γ£ô Running next.config.ts took 55ms
-Γ¿» Error: Event handlers cannot be passed to Client Component props.
-  {options: ..., onCreated: function onCreated}
-                            ^^^^^^^^^^^^^^^^^^
-If you need interactivity, consider converting part of this to a Client Component.
-    at ignore-listed frames {
-  digest: '446636305'
-}
+Γ£ô Ready in 224ms
+Γ£ô Running next.config.ts took 50ms

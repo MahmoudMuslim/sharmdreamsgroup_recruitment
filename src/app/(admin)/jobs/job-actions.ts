@@ -59,7 +59,20 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   }
 
   const supabase = await createSupabaseServerClient();
+
+  // `job_openings.created_by` references user_profiles(id), not auth.users(id),
+  // so the authenticated user must be resolved to their profile row. Passing the
+  // auth id directly violates the foreign key.
   const { data: userData } = await supabase.auth.getUser();
+  let createdBy: string | null = null;
+  if (userData.user) {
+    const { data: profile } = await supabase
+      .from("user_profiles")
+      .select("id")
+      .eq("auth_user_id", userData.user.id)
+      .maybeSingle();
+    createdBy = profile?.id ?? null;
+  }
 
   const status = draft.status;
   const { data, error } = await supabase
@@ -76,7 +89,7 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
       max_salary_usd: draft.max_salary_usd ? Number(draft.max_salary_usd) : null,
       status,
-      created_by: userData.user?.id ?? null,
+      created_by: createdBy,
       // Only a published opening gets a posted date.
       posted_at: status === "PUBLISHED" ? new Date().toISOString() : null,
     })
@@ -84,8 +97,19 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     .single();
 
   if (error) {
+    // 23503 is a foreign-key violation. Naming the column makes this far
+    // easier to diagnose than a generic "could not be found".
     if (error.code === "23503") {
-      return { ok: false, error: "That company could not be found." };
+      if (error.message.includes("tenant_id")) {
+        return { ok: false, error: "That company no longer exists — pick another." };
+      }
+      if (error.message.includes("created_by")) {
+        return { ok: false, error: "Your staff profile is missing — ask an admin to fix it." };
+      }
+      return { ok: false, error: "A linked record no longer exists." };
+    }
+    if (error.code === "23514") {
+      return { ok: false, error: "The employment type or status is not valid." };
     }
     return { ok: false, error: error.message };
   }

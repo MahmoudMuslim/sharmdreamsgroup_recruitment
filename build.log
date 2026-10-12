@@ -8,20 +8,20 @@ At line:1 char:1
 npm notice run next build
 Γû▓ Next.js 16.4.0 (Turbopack)
 - Environments: .env.local, .env
-Γ£ô Running next.config.ts took 42ms
+Γ£ô Running next.config.ts took 51ms
 - Cache Components enabled
 - Partial Prefetching enabled
 
   Creating an optimized production build ...
-Γ£ô Compiled successfully in 2.4s
+Γ£ô Compiled successfully in 2.8s
   Running TypeScript ...
-  Finished TypeScript in 7.8s ...
+  Finished TypeScript in 3.7s ...
   Collecting page data using 19 workers ...
   Generating static pages using 19 workers (0/15) ...
   Generating static pages using 19 workers (3/15) 
   Generating static pages using 19 workers (7/15) 
   Generating static pages using 19 workers (11/15) 
-Γ£ô Generating static pages using 19 workers (15/15) in 2.4s
+Γ£ô Generating static pages using 19 workers (15/15) in 2.6s
   Finalizing page optimization ...
 
 Route (app)
