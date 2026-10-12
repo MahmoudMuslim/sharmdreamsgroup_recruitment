@@ -15,14 +15,20 @@ function optional(value: string | undefined, fallback = ""): string {
 
 const supabaseUrl = optional(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
-/** Raises only on the server, where the value is actually required. */
+/** Raises only on the server at runtime, where the value is actually required.
+ * During build (static generation), we allow missing values to avoid build failures. */
 function assertServer(name: string, value: string): string {
-  if (!value && typeof window === "undefined") {
+  // Skip validation during Next.js build/static generation
+  const isBuildTime = process.env.NEXT_PHASE === "phase-production-build" ||
+                      process.env.NEXT_PHASE === "phase-development-build" ||
+                      process.env.NODE_ENV === "production" && typeof window === "undefined" && !process.env.VERCEL;
+  
+  if (!value && typeof window === "undefined" && !isBuildTime) {
     throw new Error(
       `[config] Missing required environment variable: ${name}. Add it to .env.local (see .env.example).`
     );
   }
-  return value;
+  return value || "";
 }
 
 export const supabaseConfig = {

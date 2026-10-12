@@ -30,8 +30,16 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# local dev server / build output
+server.log
+build.log
+
 # env files (can opt-in for committing if needed)
 .env*
+
+# Prompt/notes files can contain pasted credentials — never track them.
+prompt.md
+PROMPT.md
 
 # vercel
 .vercel

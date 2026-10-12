@@ -1,9 +1,13 @@
 /**
  * Omnichannel ATS & Communication Connectors
  * Provides API integration logic for WhatsApp Cloud API, ATS adapters (Greenhouse, Lever, Frappe HR), and OAuth 2.0 Calendar scheduling.
- * All calls are server-side only; credentials are sourced from config/omnichannelConfig.ts.
+ *
+ * All calls are server-side only. Credentials resolve from the encrypted
+ * Settings store first, then fall back to the environment — so keys entered in
+ * the admin UI work without a redeploy, and an env-only deployment still works.
  */
 import { omnichannelConfig } from "@/lib/config.server";
+import { resolveConfig, resolveSecret } from "@/modules/settings/infrastructure/credentialResolver";
 import type { WhatsAppOutboundMessage, CalendarEventPayload } from "@/types";
 
 /**
@@ -12,7 +16,23 @@ import type { WhatsAppOutboundMessage, CalendarEventPayload } from "@/types";
  * Uses webhook URL: https://graph.facebook.com/v{version}/me/messages?access_token={token}
  */
 export class WhatsAppConnector {
-  private static readonly config = omnichannelConfig.whatsapp;
+  /**
+   * Resolves credentials through the encrypted store first, falling back to the
+   * environment. This is what makes a key entered in Settings → API keys take
+   * effect without a redeploy.
+   */
+  private static async credentials(): Promise<{ token: string; phoneNumberId: string } | null> {
+    const [token, config] = await Promise.all([
+      resolveSecret("whatsapp"),
+      resolveConfig("whatsapp"),
+    ]);
+
+    const phoneNumberId =
+      config.phone_number_id?.trim() || omnichannelConfig.whatsapp.phoneNumberId;
+
+    if (!token || !phoneNumberId) return null;
+    return { token, phoneNumberId };
+  }
 
   /**
    * Send a single message to a candidate via WhatsApp.
@@ -22,11 +42,12 @@ export class WhatsAppConnector {
     to: string,
     options: { template?: string; text?: string } = {}
   ): Promise<{ success: boolean; error?: string }> {
-    if (!this.config.apiToken || !this.config.phoneNumberId) {
+    const creds = await this.credentials();
+    if (!creds) {
       return { success: false, error: "WhatsApp credentials not configured" };
     }
 
-    const url = `https://graph.facebook.com/${this.config.graphApiVersion}/me/messages`;
+    const url = `https://graph.facebook.com/${omnichannelConfig.whatsapp.graphApiVersion}/me/messages`;
 
     const payload = {
       messaging_product: "whatsapp",
@@ -40,7 +61,7 @@ export class WhatsAppConnector {
       const response = await fetch(url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${this.config.apiToken}`,
+          Authorization: `Bearer ${creds.token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),

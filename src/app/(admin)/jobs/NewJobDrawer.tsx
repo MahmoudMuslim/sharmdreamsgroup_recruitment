@@ -18,6 +18,7 @@ export interface JobFormOptions {
   companies: { id: string; name: string; sector: string }[];
   departments: { id: string; name: string }[];
   locations: { id: string; name: string }[];
+  currencies: { id: string; code: string; symbol: string; label: string }[];
 }
 
 const EMPLOYMENT_TYPES = [
@@ -45,6 +46,7 @@ const EMPTY = {
   requirements: "",
   min_salary_usd: "",
   max_salary_usd: "",
+  salary_currency: "USD",
   status: "DRAFT",
 };
 
@@ -58,7 +60,16 @@ const EMPTY = {
 export function NewJobDrawer({ options }: { options: JobFormOptions }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({ ...EMPTY, tenant_id: options.companies[0]?.id ?? "" });
+  const [draft, setDraft] = useState({
+    ...EMPTY,
+    tenant_id: options.companies[0]?.id ?? "",
+    // Default to the first configured currency so a newly added code is picked
+    // up without touching the form.
+    salary_currency:
+      options.currencies.find((c) => c.code === "USD")?.code ??
+      options.currencies[0]?.code ??
+      "USD",
+  });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, setPending] = useState(false);
@@ -256,27 +267,60 @@ export function NewJobDrawer({ options }: { options: JobFormOptions }) {
             />
           </Field>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Salary from (USD)" htmlFor="job-salary-min">
-              <TextInput
-                id="job-salary-min"
-                type="number"
-                min={0}
-                value={draft.min_salary_usd}
-                onChange={(e) => set("min_salary_usd")(e.target.value)}
-                placeholder="1200"
-              />
+          {/* Salary is a three-part value: an amount pair plus the currency they
+              are denominated in. Labelling the inputs with the selected code
+              keeps the two in step as the recruiter switches currency. */}
+          <div className="rounded-xl border border-brand-line bg-brand-cream p-4">
+            <Field
+              label="Salary currency"
+              htmlFor="job-currency"
+              hint="From Settings → Organisation → Currencies."
+              className="mb-4"
+            >
+              <Select
+                id="job-currency"
+                value={draft.salary_currency}
+                onChange={(e) => set("salary_currency")(e.target.value)}
+              >
+                {options.currencies.length === 0 && (
+                  <option value="USD">USD — US Dollar</option>
+                )}
+                {options.currencies.map((c) => (
+                  <option key={c.id} value={c.code}>
+                    {c.code} — {c.label}
+                  </option>
+                ))}
+              </Select>
             </Field>
-            <Field label="Salary to (USD)" htmlFor="job-salary-max">
-              <TextInput
-                id="job-salary-max"
-                type="number"
-                min={0}
-                value={draft.max_salary_usd}
-                onChange={(e) => set("max_salary_usd")(e.target.value)}
-                placeholder="1800"
-              />
-            </Field>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field
+                label={`Salary from (${draft.salary_currency})`}
+                htmlFor="job-salary-min"
+              >
+                <TextInput
+                  id="job-salary-min"
+                  type="number"
+                  min={0}
+                  value={draft.min_salary_usd}
+                  onChange={(e) => set("min_salary_usd")(e.target.value)}
+                  placeholder="1200"
+                />
+              </Field>
+              <Field
+                label={`Salary to (${draft.salary_currency})`}
+                htmlFor="job-salary-max"
+              >
+                <TextInput
+                  id="job-salary-max"
+                  type="number"
+                  min={0}
+                  value={draft.max_salary_usd}
+                  onChange={(e) => set("max_salary_usd")(e.target.value)}
+                  placeholder="1800"
+                />
+              </Field>
+            </div>
           </div>
 
           <FormMessage error={error} success={saved ? "Opening created." : null} />

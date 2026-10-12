@@ -1,6 +1,0 @@
-{
-  "name": "Sharm Dreams HR - Omnichannel AI ATS",
-  "description": "Custom Frappe HR app and AI Recruiter ATS for Sharm Dreams Group with multi-subsidiary screening, WhatsApp Cloud API ingestion, and sector-specific LLM evaluation.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

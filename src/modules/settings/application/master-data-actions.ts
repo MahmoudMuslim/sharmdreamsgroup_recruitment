@@ -6,6 +6,7 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import type {
   Company,
+  Currency,
   Department,
   Location,
   MasterEntity,
@@ -30,6 +31,7 @@ const REQUIRED_COLUMNS: Record<MasterEntity, readonly string[]> = {
   locations: ["name", "country", "timezone"],
   role_families: ["key", "label"],
   skills: ["name"],
+  currencies: ["code", "symbol", "label"],
 };
 
 /** Human-readable labels for the required-column validation message. */
@@ -41,6 +43,8 @@ const REQUIRED_LABELS: Record<string, string> = {
   sector: "sector",
   country: "country",
   timezone: "time zone",
+  code: "currency code",
+  symbol: "symbol",
 };
 
 /** Turns a label into a stable, URL-safe slug. */
@@ -75,36 +79,42 @@ export async function getMasterData(): Promise<{
   locations: Location[];
   roleFamilies: RoleFamily[];
   skills: Skill[];
+  currencies: Currency[];
 }> {
   await requireStaff("/settings");
   const supabase = await createSupabaseServerClient();
 
-  const [companies, departments, locations, roleFamilies, skills] = await Promise.all([
-    supabase
-      .from("tenants_and_companies")
-      .select(
-        "id, name, legal_name, slug, sector, country, website, contact_email, contact_phone, address, city, logo_url, is_active, sort_order"
-      )
-      .order("sort_order"),
-    supabase
-      .from("departments")
-      .select("id, tenant_id, name, slug, description, head_profile_id, is_active, sort_order")
-      .order("sort_order"),
-    supabase
-      .from("locations")
-      .select(
-        "id, tenant_id, name, city, governorate, country, timezone, address, is_active, sort_order"
-      )
-      .order("sort_order"),
-    supabase
-      .from("role_families")
-      .select("id, key, label, description, department_id, is_active, sort_order")
-      .order("sort_order"),
-    supabase
-      .from("skills")
-      .select("id, name, category, description, is_active, sort_order")
-      .order("sort_order"),
-  ]);
+  const [companies, departments, locations, roleFamilies, skills, currencies] =
+    await Promise.all([
+      supabase
+        .from("tenants_and_companies")
+        .select(
+          "id, name, legal_name, slug, sector, country, website, contact_email, contact_phone, address, city, logo_url, is_active, sort_order"
+        )
+        .order("sort_order"),
+      supabase
+        .from("departments")
+        .select("id, tenant_id, name, slug, description, head_profile_id, is_active, sort_order")
+        .order("sort_order"),
+      supabase
+        .from("locations")
+        .select(
+          "id, tenant_id, name, city, governorate, country, timezone, address, is_active, sort_order"
+        )
+        .order("sort_order"),
+      supabase
+        .from("role_families")
+        .select("id, key, label, description, department_id, is_active, sort_order")
+        .order("sort_order"),
+      supabase
+        .from("skills")
+        .select("id, name, category, description, is_active, sort_order")
+        .order("sort_order"),
+      supabase
+        .from("currencies")
+        .select("id, code, symbol, label, is_active, sort_order")
+        .order("sort_order"),
+    ]);
 
   return {
     companies: (companies.data ?? []) as Company[],
@@ -112,6 +122,7 @@ export async function getMasterData(): Promise<{
     locations: (locations.data ?? []) as Location[],
     roleFamilies: (roleFamilies.data ?? []) as RoleFamily[],
     skills: (skills.data ?? []) as Skill[],
+    currencies: (currencies.data ?? []) as Currency[],
   };
 }
 
@@ -145,8 +156,13 @@ export async function createMasterRecord(
   if (entity === "role_families" && !label) {
     return { ok: false, error: "A role family needs a label." };
   }
-  if (entity !== "role_families" && !name) {
+  // Currencies are keyed by ISO code rather than a name, and department/location
+  // still use `name`.
+  if (entity !== "role_families" && entity !== "currencies" && !name) {
     return { ok: false, error: "A name is required." };
+  }
+  if (entity === "currencies" && !label) {
+    return { ok: false, error: "A currency needs a display label." };
   }
 
   let row: Record<string, unknown>;
@@ -229,6 +245,26 @@ export async function createMasterRecord(
         name,
         category: clean(payload.category),
         description: clean(payload.description),
+        is_active: payload.is_active !== false,
+        sort_order: Number(payload.sort_order ?? 100),
+      };
+      break;
+    }
+
+    case "currencies": {
+      const code = (clean(payload.code) ?? "").toUpperCase();
+      if (!/^[A-Z]{3}$/.test(code)) {
+        return {
+          ok: false,
+          error: "A currency code must be exactly 3 letters, e.g. EGP.",
+        };
+      }
+      row = {
+        code,
+        // Many currencies have no distinct glyph (EGP, AED, SAR), so the code
+        // doubles as the symbol rather than leaving the field blank.
+        symbol: clean(payload.symbol) ?? code,
+        label,
         is_active: payload.is_active !== false,
         sort_order: Number(payload.sort_order ?? 100),
       };
@@ -371,10 +407,11 @@ export async function getMasterOptions(): Promise<{
   locations: { id: string; name: string; city: string | null }[];
   roleFamilies: { id: string; key: string; label: string }[];
   skills: { id: string; name: string; category: string | null }[];
+  currencies: { id: string; code: string; symbol: string; label: string }[];
 }> {
   const supabase = await createSupabaseServerClient();
 
-  const [companies, departments, locations, roleFamilies, skills] = await Promise.all([
+  const [companies, departments, locations, roleFamilies, skills, currencies] = await Promise.all([
     // `sector` is included so job creation can pre-fill it from the company.
     supabase
       .from("tenants_and_companies")
@@ -385,6 +422,11 @@ export async function getMasterOptions(): Promise<{
     supabase.from("locations").select("id, name, city").eq("is_active", true).order("sort_order"),
     supabase.from("role_families").select("id, key, label").eq("is_active", true).order("sort_order"),
     supabase.from("skills").select("id, name, category").eq("is_active", true).order("sort_order"),
+    supabase
+      .from("currencies")
+      .select("id, code, symbol, label")
+      .eq("is_active", true)
+      .order("sort_order"),
   ]);
 
   return {
@@ -393,5 +435,11 @@ export async function getMasterOptions(): Promise<{
     locations: (locations.data ?? []) as { id: string; name: string; city: string | null }[],
     roleFamilies: (roleFamilies.data ?? []) as { id: string; key: string; label: string }[],
     skills: (skills.data ?? []) as { id: string; name: string; category: string | null }[],
+    currencies: (currencies.data ?? []) as {
+      id: string;
+      code: string;
+      symbol: string;
+      label: string;
+    }[],
   };
 }

@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Megaphone, Network, SlidersHorizontal } from "lucide-react";
+import { KeyRound, Megaphone, Network, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type SettingsArea = "platform" | "organisation" | "access";
+export type SettingsArea = "platform" | "organisation" | "access" | "integrations";
 
 const AREAS: {
   id: SettingsArea;
@@ -30,6 +30,12 @@ const AREAS: {
     icon: Megaphone,
     blurb: "Who can do what, plus the messages candidates receive.",
   },
+  {
+    id: "integrations",
+    label: "API keys",
+    icon: KeyRound,
+    blurb: "Credentials for AI, messaging, ATS and calendars — encrypted at rest. Plus per-task model routing.",
+  },
 ];
 
 /**
@@ -47,10 +53,12 @@ export function SettingsShell({
   platform,
   organisation,
   access,
+  integrations,
 }: {
   platform: ReactNode;
   organisation: ReactNode;
   access: ReactNode;
+  integrations: ReactNode;
 }) {
   const [area, setArea] = useState<SettingsArea>("platform");
   const active = AREAS.find((a) => a.id === area) ?? AREAS[0];
@@ -100,6 +108,7 @@ export function SettingsShell({
         {area === "platform" && platform}
         {area === "organisation" && organisation}
         {area === "access" && access}
+        {area === "integrations" && integrations}
       </div>
     </div>
   );

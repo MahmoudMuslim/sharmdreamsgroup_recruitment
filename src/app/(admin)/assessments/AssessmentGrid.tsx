@@ -1,7 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Pencil, Plus, Target } from "lucide-react";
+import { ListChecks, Pencil, Plus, Target } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -13,6 +14,7 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { saveTemplate, assignTemplate } from "./assessment-actions";
 import type { TemplateSummary } from "./actions";
+import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { Badge, Card } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 
@@ -240,8 +242,9 @@ const [draft, setDraft] = useState<DraftState>(() =>
 
         {isEdit && (
           <p className="rounded-xl border border-brand-line px-4 py-3 text-xs leading-relaxed text-brand-ink/55">
-            This suite already has questions. Editing questions individually is not
-            available yet — this panel changes suite settings only.
+            This panel changes suite settings only. Close it and use{" "}
+            <strong className="font-bold">Questions</strong> on the suite card to add, edit,
+            re-order or delete individual questions.
           </p>
         )}
 
@@ -397,14 +400,20 @@ export function AssessmentGrid({
   templates,
   candidates,
   options,
+  questionsByTemplate,
+  canEdit,
 }: {
   templates: TemplateSummary[];
   candidates: AssignableCandidate[];
   options: TemplateOptions;
+  questionsByTemplate: Record<string, EditableQuestion[]>;
+  canEdit: boolean;
 }) {
+  const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<TemplateSummary | null>(null);
   const [assigning, setAssigning] = useState<TemplateSummary | null>(null);
+  const [questionEditing, setQuestionEditing] = useState<TemplateSummary | null>(null);
 
   return (
     <>
@@ -472,6 +481,14 @@ export function AssessmentGrid({
             <div className="mt-auto flex flex-wrap gap-2 border-t border-brand-line pt-4">
               <button
                 type="button"
+                onClick={() => setQuestionEditing(template)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-cream px-2.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand"
+              >
+                <ListChecks className="h-3.5 w-3.5" aria-hidden />
+                Questions
+              </button>
+              <button
+                type="button"
                 onClick={() => setEditing(template)}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand"
               >
@@ -521,6 +538,17 @@ export function AssessmentGrid({
           template={assigning}
           candidates={candidates}
           onClose={() => setAssigning(null)}
+        />
+      )}
+      {questionEditing && (
+        <QuestionEditorDrawer
+          open
+          onClose={() => setQuestionEditing(null)}
+          templateId={questionEditing.id}
+          templateName={questionEditing.name}
+          questions={questionsByTemplate[questionEditing.id] ?? []}
+          editable={canEdit}
+          onChanged={router.refresh}
         />
       )}
     </>

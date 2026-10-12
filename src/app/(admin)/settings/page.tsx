@@ -2,6 +2,7 @@ import { SettingsConsole } from "./SettingsConsole";
 import { SettingsShell } from "./SettingsShell";
 import { MasterDataConsole } from "./MasterDataConsole";
 import { PermissionMatrixCard } from "./PermissionMatrixCard";
+import { IntegrationsPanel } from "./IntegrationsPanel";
 import { loadSettings } from "./actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
 import { requireStaff } from "@/lib/auth/session";
@@ -87,6 +88,7 @@ export default async function SettingsPage() {
             </section>
           </div>
         }
+        integrations={<IntegrationsPanel editable={editable} />}
       />
     </AdminShell>
   );

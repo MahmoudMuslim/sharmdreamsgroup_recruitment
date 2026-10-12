@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -180,19 +180,48 @@ function ApplicationCard({ app }: { app: TrackedApplication }) {
   );
 }
 
+// Empty subscribe: the query string cannot change while this page is mounted, so
+// there is nothing to watch. The snapshot functions exist to make the read
+// hydration-safe — the server has no window, so it reports "" and the first
+// client render matches, then React re-renders with the real value.
+function subscribeToNothing() {
+  return () => {};
+}
+
+function readCodeFromUrl() {
+  return new URLSearchParams(window.location.search).get("code")?.trim().toUpperCase() ?? "";
+}
+
+function readCodeOnServer() {
+  return "";
+}
+
+/**
+ * The tracking code passed in the URL, read without touching `searchParams`.
+ *
+ * Reading `searchParams` on the server would mark the whole portal request-time
+ * under `cacheComponents: true`, costing every visitor a server render to save
+ * one field's typing.
+ */
+function useCodeFromUrl(): string {
+  return useSyncExternalStore(subscribeToNothing, readCodeFromUrl, readCodeOnServer);
+}
+
 export function PortalTracker() {
+  const codeFromUrl = useCodeFromUrl();
+
   const [code, setCode] = useState("");
   const [results, setResults] = useState<TrackedApplication[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const lookedUp = useRef(false);
 
-  function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function lookup(value: string) {
     setError(null);
     setResults(null);
 
     startTransition(async () => {
-      const result = await trackApplication(code);
+      const result = await trackApplication(value);
       if (result.ok) {
         setResults(result.applications);
       } else {
@@ -200,6 +229,22 @@ export function PortalTracker() {
       }
     });
   }
+
+  function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCode(displayedCode);
+    lookup(displayedCode);
+  }
+
+  // Run the lookup once when the careers confirmation hands us a code.
+  useEffect(() => {
+    if (!codeFromUrl || lookedUp.current) return;
+    lookedUp.current = true;
+    lookup(codeFromUrl);
+  }, [codeFromUrl]);
+
+  // The field shows the URL code until the candidate edits it themselves.
+  const displayedCode = code || codeFromUrl;
 
   return (
     <main className="min-h-screen bg-brand-ivory text-brand-ink">
@@ -234,12 +279,12 @@ export function PortalTracker() {
             Tracking code
           </label>
           <p className="mb-3 text-xs text-brand-ink/50">
-            Looks like <code className="rounded bg-brand-sand px-1 py-0.5 font-mono">SDG-XXXX-0000</code>
+            Looks like <code className="rounded bg-brand-sand px-1 py-0.5 font-mono">SDG-ABC123-01234</code>
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               id="tracking"
-              value={code}
+              value={displayedCode}
               onChange={(event) => setCode(event.target.value)}
               placeholder="SDG-FINANCE01"
               autoComplete="off"

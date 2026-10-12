@@ -1,11 +1,21 @@
 /**
- * AI Gateway — OpenRouter client with multi-model failover.
- * Walks the capability's model chain until a provider returns a valid
- * completion; each hop gets its own timeout. Falls back to the Google AI
- * Studio endpoint if OpenRouter fails entirely.
+ * AI Gateway — OpenRouter client with multi-model and multi-key failover.
+ * 
+ * Walks the capability's model chain AND credential chain until a provider 
+ * returns a valid completion. Each hop gets its own timeout. Falls back to 
+ * the Google AI Studio endpoint if OpenRouter fails entirely.
+ *
+ * Credentials and model routing are resolved per request from the encrypted
+ * store first, falling back to the compiled-in environment variables. That is
+ * what makes the Settings → API keys panel authoritative rather than cosmetic.
  */
 import { aiConfig } from "@/lib/config.server";
 import { modelChains, type AiCapability } from "@/lib/config";
+import {
+  resolveCredentials,
+  resolveSecret,
+  resolveModelRouting,
+} from "@/modules/settings/infrastructure/credentialResolver";
 import type { ChatCompletionMessage, ChatCompletionResponse } from "@/types";
 
 export interface CompletionRequest {
@@ -20,11 +30,11 @@ export interface CompletionResult {
   content: string;
   model: string;
   provider: "openrouter" | "google";
-  attempts: { model: string; ok: boolean; error?: string }[];
+  attempts: { model: string; ok: boolean; error?: string; credential?: string }[];
 }
 
 export class AiGatewayError extends Error {
-  constructor(message: string, readonly attempts: { model: string; ok: boolean; error?: string }[]) {
+  constructor(message: string, readonly attempts: { model: string; ok: boolean; error?: string; credential?: string }[]) {
     super(message);
     this.name = "AiGatewayError";
   }
@@ -33,13 +43,14 @@ export class AiGatewayError extends Error {
 async function callOpenRouter(
   model: string,
   request: CompletionRequest,
-  signal: AbortSignal
+  signal: AbortSignal,
+  apiKey: string
 ): Promise<string> {
   const response = await fetch(aiConfig.openRouter.baseUrl, {
     method: "POST",
     signal,
     headers: {
-      Authorization: `Bearer ${aiConfig.openRouter.apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "https://sharmdreams.com",
       "X-Title": "Sharm Dreams Talent Cloud",
@@ -69,13 +80,20 @@ async function callOpenRouter(
   return content;
 }
 
+/**
+ * Google AI Studio model ids, newest first.
+ *
+ * The previously hardcoded `gemini-2.0-flash` was retired by Google and now
+ * returns "This model is no longer available". This list is walked in order so
+ * a retired entry cannot silently break the fallback path.
+ */
+const GOOGLE_MODEL_CHAIN = ["gemini-2.5-flash", "gemini-3.8-flash"] as const;
+
 async function callGoogleAiStudio(
   request: CompletionRequest,
-  signal: AbortSignal
-): Promise<string> {
-  if (!aiConfig.googleAiStudio.apiKey) {
-    throw new Error("Google AI Studio key is not configured");
-  }
+  signal: AbortSignal,
+  apiKey: string
+): Promise<{ content: string; model: string }> {
   const systemPrompt = request.messages
     .filter((m) => m.role === "system")
     .map((m) => m.content)
@@ -85,75 +103,136 @@ async function callGoogleAiStudio(
     .map((m) => m.content)
     .join("\n");
 
-  const response = await fetch(
-    `${aiConfig.googleAiStudio.baseUrl}/models/gemini-2.0-flash:generateContent?key=${aiConfig.googleAiStudio.apiKey}`,
-    {
-      method: "POST",
-      signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        generationConfig: {
-          temperature: request.temperature ?? 0.2,
-          maxOutputTokens: request.maxTokens ?? 2048,
-          ...(request.jsonMode ? { responseMimeType: "application/json" } : {}),
-        },
-      }),
+  let lastError = "";
+
+  for (const model of GOOGLE_MODEL_CHAIN) {
+    const response = await fetch(
+      `${aiConfig.googleAiStudio.baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: {
+            temperature: request.temperature ?? 0.2,
+            maxOutputTokens: request.maxTokens ?? 2048,
+            ...(request.jsonMode ? { responseMimeType: "application/json" } : {}),
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      lastError = `Google AI Studio ${model} HTTP ${response.status}: ${text.slice(0, 200)}`;
+
+      // 404 means the model id is retired — walk to the next one.
+      if (response.status === 404) continue;
+
+      // A 403 means the key itself is blocked (e.g. reported as leaked).
+      // Retrying other models cannot help, so surface it immediately.
+      if (response.status === 403) {
+        throw new Error(
+          "Google AI Studio rejected the API key (HTTP 403). This is almost always a key " +
+            "flagged as leaked — generate a new one in AI Studio."
+        );
+      }
+
+      throw new Error(lastError);
     }
-  );
 
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`Google AI Studio HTTP ${response.status}: ${text.slice(0, 200)}`);
+    const payload = (await response.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const content = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
+    if (!content || content.trim().length === 0) {
+      throw new Error(`Google AI Studio ${model} returned an empty completion`);
+    }
+    return { content, model };
   }
 
-  const payload = (await response.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const content = payload.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
-  if (!content || content.trim().length === 0) {
-    throw new Error("Google AI Studio returned an empty completion");
-  }
-  return content;
+  throw new Error(lastError || "Google AI Studio: no available model responded");
 }
 
 export async function complete(request: CompletionRequest): Promise<CompletionResult> {
-  const chain = modelChains[request.capability];
-  const attempts: { model: string; ok: boolean; error?: string }[] = [];
+  const attempts: { model: string; ok: boolean; error?: string; credential?: string }[] = [];
 
-  for (const model of chain) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), aiConfig.openRouter.timeoutMs);
-    try {
-      const content = await callOpenRouter(model, request, controller.signal);
-      clearTimeout(timeout);
-      attempts.push({ model, ok: true });
-      return { content, model, provider: "openrouter", attempts };
-    } catch (error) {
-      clearTimeout(timeout);
-      attempts.push({
-        model,
-        ok: false,
-        error: error instanceof Error ? error.message : "unknown error",
-      });
+  // Settings win over the environment; both are optional.
+  const [credentials, googleKey, routing] = await Promise.all([
+    resolveCredentials("openrouter"),
+    resolveSecret("google_ai_studio"),
+    resolveModelRouting(request.capability),
+  ]);
+
+  if (credentials.length === 0 && !googleKey) {
+    throw new AiGatewayError(
+      "No AI provider is configured. Add an OpenRouter key in Settings → API keys, " +
+        "or set OPENROUTER_API_KEY in the environment.",
+      attempts
+    );
+  }
+
+  // Chain: the capability's configured primary + fallback, then the compiled-in
+  // defaults as a last resort.
+  const chain = [
+    ...(routing.enabled ? [routing.primaryModel, routing.fallbackModel] : []),
+    ...modelChains[request.capability],
+  ].filter((id, i, arr): id is string => Boolean(id) && arr.indexOf(id) === i);
+
+  const effective: CompletionRequest = {
+    ...request,
+    temperature: request.temperature ?? routing.temperature,
+    maxTokens: request.maxTokens ?? routing.maxTokens,
+  };
+
+  // Try OpenRouter with each credential (by priority) and each model
+  for (const credential of credentials) {
+    for (const model of chain) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), aiConfig.openRouter.timeoutMs);
+      try {
+        const content = await callOpenRouter(model, effective, controller.signal, credential.secret);
+        clearTimeout(timeout);
+        attempts.push({ model, ok: true, credential: credential.secretHint });
+        return { content, model, provider: "openrouter", attempts };
+      } catch (error) {
+        clearTimeout(timeout);
+        attempts.push({
+          model,
+          ok: false,
+          error: error instanceof Error ? error.message : "unknown error",
+          credential: credential.secretHint,
+        });
+      }
     }
   }
 
   // Final fallback: Google AI Studio.
+  if (!googleKey) {
+    throw new AiGatewayError(
+      `All AI providers failed for capability "${request.capability}": ${attempts
+        .map((a) => `${a.model}: ${a.error ?? "ok"}`)
+        .join(" | ")}`,
+      attempts
+    );
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), aiConfig.googleAiStudio.timeoutMs);
   try {
-    const content = await callGoogleAiStudio(request, controller.signal);
+    const result = await callGoogleAiStudio(effective, controller.signal, googleKey);
     clearTimeout(timeout);
-    attempts.push({ model: "gemini-2.0-flash", ok: true });
-    return { content, model: "gemini-2.0-flash", provider: "google", attempts };
+    attempts.push({ model: result.model, ok: true, credential: "google" });
+    return { content: result.content, model: result.model, provider: "google", attempts };
   } catch (error) {
     clearTimeout(timeout);
     attempts.push({
-      model: "gemini-2.0-flash",
+      model: "google-ai-studio",
       ok: false,
       error: error instanceof Error ? error.message : "unknown error",
+      credential: "google",
     });
   }
 

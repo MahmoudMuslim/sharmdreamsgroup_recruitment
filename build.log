@@ -8,49 +8,45 @@ At line:1 char:1
 npm notice run next build
 Γû▓ Next.js 16.4.0 (Turbopack)
 - Environments: .env.local, .env
-Γ£ô Running next.config.ts took 51ms
+Γ£ô Running next.config.ts took 24ms
 - Cache Components enabled
 - Partial Prefetching enabled
 
   Creating an optimized production build ...
-Γ£ô Compiled successfully in 2.8s
-  Running TypeScript ...
-  Finished TypeScript in 3.7s ...
-  Collecting page data using 19 workers ...
-  Generating static pages using 19 workers (0/15) ...
-  Generating static pages using 19 workers (3/15) 
-  Generating static pages using 19 workers (7/15) 
-  Generating static pages using 19 workers (11/15) 
-Γ£ô Generating static pages using 19 workers (15/15) in 2.6s
-  Finalizing page optimization ...
 
-Route (app)
-Γöî Γùï /
-Γö£ Γùï /_not-found
-Γö£ ╞Æ /api/attempt/[token]
-Γö£ ╞Æ /api/attempt/[token]/draft
-Γö£ ╞Æ /api/attempt/[token]/integrity
-Γö£ ╞Æ /api/attempt/[token]/start
-Γö£ ╞Æ /api/attempt/[token]/submit
-Γö£ ╞Æ /api/attempt/[token]/video
-Γö£ Γùï /apple-icon.png
-Γö£ ╞Æ /assessments
-Γö£ ╞Æ /auth/callback
-Γö£ ╞Æ /candidates
-Γö£ ╞Æ /dashboard
-Γö£ Γùï /icon.png
-Γö£ ╞Æ /jobs
-Γö£ Γùï /login
-Γö£ ╞Æ /onboarding
-Γö£ Γùï /portal
-Γö£ ╞Æ /settings
-Γöö   /test/[token]
-  Γöö ΓùÉ /test/[token]
+> Build error occurred
+Error: Turbopack build failed with 1 error:
+./src/modules/settings/domain/providers.ts:405:6
+Error: Expected unicode escape
+  [90m403 |[0m         costTier,
+  [90m404 |[0m         models: [],
+[31m[1m>[0m [90m405 |[0m       };\n\nexport [36mfunction[0m providerById(id: string): 
+[33mProviderDefinition[0m | [36mundefined[0m {\n .[36m..[0m
+  [90m    |[0m      [31m[1m^[0m
+  [90m406 |[0m       grouped.set(key, group);
+  [90m407 |[0m     }
+  [90m408 |[0m     group.models.push(model);
+
+Parsing ecmascript source code failed
+
+Import traces:
+  Server Component:
+    ./src/modules/settings/domain/providers.ts
+    ./src/modules/settings/application/credential-actions-ai.ts
+
+  Client Component Browser:
+    ./src/modules/settings/domain/providers.ts [Client Component Browser]
+    ./src/app/(admin)/settings/ModelRoutingConsole.tsx [Client Component Browser]
+    ./src/app/(admin)/settings/IntegrationsPanel.tsx [Client Component Browser]
+    ./src/app/(admin)/settings/IntegrationsPanel.tsx [Server Component]
+    ./src/app/(admin)/settings/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/modules/settings/domain/providers.ts [Client Component SSR]
+    ./src/app/(admin)/settings/ModelRoutingConsole.tsx [Client Component SSR]
+    ./src/app/(admin)/settings/IntegrationsPanel.tsx [Client Component SSR]
+    ./src/app/(admin)/settings/IntegrationsPanel.tsx [Server Component]
+    ./src/app/(admin)/settings/page.tsx [Server Component]
 
 
-╞Æ Proxy (Middleware)
-
-Γùï  (Static)             prerendered as static content
-ΓùÉ  (Partial Prerender)  prerendered as static HTML with dynamic server-streamed content
-╞Æ  (Dynamic)            server-rendered on demand
-
+    at ignore-listed frames

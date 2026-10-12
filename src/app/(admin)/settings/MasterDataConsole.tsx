@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   BriefcaseBusiness,
   Building2,
+  CircleDollarSign,
   GraduationCap,
   Loader2,
   MapPin,
@@ -23,6 +24,7 @@ import { Badge, Button } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 import type {
   Company,
+  Currency,
   Department,
   Location,
   MasterData,
@@ -118,6 +120,22 @@ const FIELDS: Record<MasterEntity, FieldDef[]> = {
     { name: "category", label: "Category", kind: "text", hint: "Technical, Soft, Commercial…" },
     { name: "description", label: "Description", kind: "textarea" },
   ],
+  currencies: [
+    {
+      name: "code",
+      label: "Currency code",
+      kind: "text",
+      required: true,
+      hint: "ISO 4217 — 3 letters, e.g. EGP.",
+    },
+    {
+      name: "symbol",
+      label: "Symbol",
+      kind: "text",
+      hint: "Shown next to salary figures. Leave blank to use the code.",
+    },
+    { name: "label", label: "Display name", kind: "text", required: true },
+  ],
 };
 
 const TABS: {
@@ -163,6 +181,14 @@ const TABS: {
     icon: GraduationCap,
     blurb: "Shared skill vocabulary. Feeds AI screening, skill-gap analysis and reporting.",
   },
+  {
+    entity: "currencies",
+    label: "Currencies",
+    singular: "currency",
+    icon: CircleDollarSign,
+    blurb:
+      "Currencies job salaries can be advertised in. Every job picks one, so a range is never ambiguous about what it is denominated in.",
+  },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -186,10 +212,12 @@ function rowsFor(data: MasterData, entity: MasterEntity): MasterRow[] {
       return shapeRow(entity, data.roleFamilies);
     case "skills":
       return shapeRow(entity, data.skills);
+    case "currencies":
+      return shapeRow(entity, data.currencies);
   }
 }
 
-type MasterRow = (Company | Department | Location | RoleFamily | Skill) & {
+type MasterRow = (Company | Department | Location | RoleFamily | Skill | Currency) & {
   id: string;
   name?: string | null;
   label?: string | null;
@@ -200,6 +228,8 @@ type MasterRow = (Company | Department | Location | RoleFamily | Skill) & {
   sector?: string | null;
   category?: string | null;
   key?: string | null;
+  code?: string | null;
+  symbol?: string | null;
   is_active: boolean;
 };
 
@@ -208,6 +238,14 @@ function subline(row: MasterRow, data: MasterData): string | null {
   const companyName = (id: string | null | undefined) =>
     id ? (data.companies.find((c) => c.id === id)?.name ?? null) : null;
 
+  if ("code" in row && row.code) {
+    const currency = row as Currency;
+    // Only show the symbol when it differs from the code, so EGP does not read
+    // as "EGP · EGP".
+    return currency.symbol && currency.symbol !== currency.code
+      ? `${currency.code} · ${currency.symbol}`
+      : currency.code;
+  }
   if ("legal_name" in row) {
     const company = row as Company;
     const bits = [
@@ -362,6 +400,14 @@ export function MasterDataConsole({
     setDraft((d) => ({ ...d, [name]: value }));
     if (error) setError(null);
     if (saved) setSaved(false);
+  }
+
+  /** Field-level input normalisation applied as the user types. */
+  function normalise(name: string, value: string): string {
+    // ISO codes are conventionally uppercase and the server rejects anything
+    // else, so normalise here rather than letting the user discover it on save.
+    if (name === "code") return value.toUpperCase();
+    return value;
   }
 
   return (
@@ -578,7 +624,9 @@ export function MasterDataConsole({
                         type="text"
                         value={String(value)}
                         required={field.required}
-                        onChange={(e) => editField(field.name, e.target.value)}
+                        onChange={(e) =>
+                          editField(field.name, normalise(field.name, e.target.value))
+                        }
                         className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                       />
                     )}

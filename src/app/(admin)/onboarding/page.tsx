@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import {
   CheckCircle2,
   FolderOpen,
@@ -8,6 +7,7 @@ import {
 } from "lucide-react";
 import { getOnboardingData } from "./actions";
 import { GeneratePlanButton } from "./components/GeneratePlanButton";
+import type { OnboardingRow, OnboardingSummary } from "./actions";
 import { requireStaff } from "@/lib/auth/session";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import {
@@ -55,9 +55,15 @@ function riskTone(score: number) {
   return "success" as const;
 }
 
-async function OnboardingData() {
-  const { plans, summary, unplanned } = await getOnboardingData();
-
+function OnboardingData({
+  plans,
+  summary,
+  unplanned,
+}: {
+  plans: OnboardingRow[];
+  summary: OnboardingSummary;
+  unplanned: { id: string; full_name: string; job_title: string | null }[];
+}) {
   if (plans.length === 0 && unplanned.length === 0) {
     return (
       <Card>
@@ -164,6 +170,13 @@ export default async function OnboardingPage() {
   await connection();
   const user = await requireStaff("/onboarding");
 
+  // Fetched in the page component rather than behind a <Suspense> boundary.
+  // The page is already request-time (await connection() above), so the boundary
+  // only produced a static shell whose hole the client had to re-fetch — and on
+  // a hard load that fetch intermittently never landed, leaving the skeleton up
+  // and every control unclickable.
+  const { plans, summary, unplanned } = await getOnboardingData();
+
   return (
     <AdminShell user={user}>
       <PageHeader
@@ -172,17 +185,7 @@ export default async function OnboardingPage() {
         description="Turn accepted offers into structured, measurable journeys — with live progress, skill gaps and retention insight."
       />
 
-      <Suspense
-        fallback={
-          <div className="space-y-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="h-28 animate-pulse rounded-2xl bg-white" />
-            ))}
-          </div>
-        }
-      >
-        <OnboardingData />
-      </Suspense>
+      <OnboardingData plans={plans} summary={summary} unplanned={unplanned} />
 
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         {CAPABILITIES.map(({ icon: Icon, title, copy, points }) => (

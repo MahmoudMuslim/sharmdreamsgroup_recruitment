@@ -156,13 +156,29 @@ export interface Skill {
   sort_order: number;
 }
 
+/**
+ * An ISO 4217 currency that job salaries can be denominated in.
+ *
+ * `code` is the identifier stored on job openings; `symbol` is display-only and
+ * falls back to the code where no distinct glyph exists (EGP, AED, SAR…).
+ */
+export interface Currency {
+  id: string;
+  code: string;
+  symbol: string;
+  label: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
 /** The controlled vocabularies that can be added, edited and retired. */
 export type MasterEntity =
   | "companies"
   | "departments"
   | "locations"
   | "role_families"
-  | "skills";
+  | "skills"
+  | "currencies";
 
 /** Field values submitted by the master-data form. */
 export type MasterPayload = Record<string, string | number | boolean | null>;
@@ -174,6 +190,7 @@ export interface MasterData {
   locations: Location[];
   roleFamilies: RoleFamily[];
   skills: Skill[];
+  currencies: Currency[];
 }
 
 export interface AuditEntry {

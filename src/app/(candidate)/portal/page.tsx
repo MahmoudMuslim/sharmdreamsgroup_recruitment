@@ -7,5 +7,8 @@ export const metadata: Metadata = {
 };
 
 export default function CandidatePortalPage() {
+  // The `?code=…` pre-fill is read on the client, not from `searchParams`.
+  // Reading it here would mark the whole portal request-time, costing every
+  // visitor a server render to save one field's typing.
   return <PortalTracker />;
 }

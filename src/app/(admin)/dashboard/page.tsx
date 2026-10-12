@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import { Clock, Sparkles, TrendingUp, Users, Zap } from "lucide-react";
 import { getDashboardAnalytics } from "./actions";
 import { requireStaff } from "@/lib/auth/session";
@@ -30,9 +29,7 @@ function stageTone(stage: string) {
   return "info" as const;
 }
 
-async function DashboardContent() {
-  const analytics: DashboardAnalytics = await getDashboardAnalytics();
-
+function DashboardContent({ analytics }: { analytics: DashboardAnalytics }) {
   const maxPipeline = Math.max(...analytics.pipeline.map((p) => p.count), 1);
   const totalScored = analytics.fit_distribution.reduce((sum, b) => sum + b.count, 0);
   const maxChannel = Math.max(...analytics.channels.map((c) => c.applications), 1);
@@ -248,6 +245,13 @@ export default async function DashboardPage() {
   await connection();
   const user = await requireStaff("/dashboard");
 
+  // Fetched in the page component rather than behind a <Suspense> boundary.
+  // The page is already request-time (await connection() above), so the boundary
+  // only produced a static shell whose hole the client had to re-fetch — and on
+  // a hard load that fetch intermittently never landed, leaving the skeleton up
+  // forever.
+  const analytics: DashboardAnalytics = await getDashboardAnalytics();
+
   return (
     <AdminShell user={user}>
       <PageHeader
@@ -262,21 +266,7 @@ export default async function DashboardPage() {
         }
       />
 
-      <Suspense
-        fallback={
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-28 animate-pulse rounded-2xl bg-white" />
-              ))}
-            </div>
-            <div className="h-80 animate-pulse rounded-2xl bg-white" />
-            <div className="h-64 animate-pulse rounded-2xl bg-white" />
-          </div>
-        }
-      >
-        <DashboardContent />
-      </Suspense>
+      <DashboardContent analytics={analytics} />
     </AdminShell>
   );
 }

@@ -13,6 +13,7 @@
     "@supabase/server": "^1.9.1",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
+    "@thelioo/opencode-balancer": "^0.2.18",
     "clsx": "^2.1.1",
     "framer-motion": "^14.1.0",
     "handsontable": "^16.2.0",

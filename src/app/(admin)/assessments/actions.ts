@@ -3,6 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import type { QuestionType } from "@/types";
+import type { EditableQuestion } from "./QuestionEditorDrawer";
 
 export interface TemplateSummary {
   id: string;
@@ -136,4 +137,35 @@ export async function getTemplateDetail(templateId: string): Promise<TemplateDet
     ...(data as Omit<TemplateDetail, "questions">),
     questions: (questions ?? []) as TemplateDetail["questions"],
   };
+}
+
+/**
+ * Every question across every suite, grouped by template.
+ *
+ * Loaded in one pass so the grid's "Questions" drawer opens instantly instead
+ * of fetching per click. Assessment content is small (tens of rows), unlike the
+ * candidate tables.
+ */
+export async function getQuestionsForEditor(): Promise<
+  Record<string, EditableQuestion[]>
+> {
+  await requireStaff("/assessments");
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("assessment_questions")
+    .select(
+      "id, template_id, question_type, title, prompt, instructions, config, points, position, time_limit_minutes, shuffle_options"
+    )
+    .order("position");
+
+  if (error) throw error;
+
+  const grouped: Record<string, EditableQuestion[]> = {};
+
+  for (const row of (data ?? []) as unknown as EditableQuestion[]) {
+    (grouped[row.template_id] ??= []).push(row);
+  }
+
+  return grouped;
 }

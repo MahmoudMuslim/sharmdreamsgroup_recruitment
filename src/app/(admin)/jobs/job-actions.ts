@@ -17,6 +17,8 @@ export interface JobDraft {
   requirements: string[];
   min_salary_usd: string;
   max_salary_usd: string;
+  /** ISO 4217 code the two salary figures are denominated in. */
+  salary_currency: string;
   status: string;
 }
 
@@ -60,6 +62,24 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
 
   const supabase = await createSupabaseServerClient();
 
+  // The salary pair is only meaningful with its currency, so the code is
+  // validated against master data rather than trusted from the form.
+  const currency = (draft.salary_currency || "USD").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) {
+    return { ok: false, error: "Select a valid salary currency." };
+  }
+  const { data: currencyRow } = await supabase
+    .from("currencies")
+    .select("code")
+    .eq("code", currency)
+    .maybeSingle();
+  if (!currencyRow) {
+    return {
+      ok: false,
+      error: `Currency “${currency}” is not set up. Add it in Settings → Organisation → Currencies.`,
+    };
+  }
+
   // `job_openings.created_by` references user_profiles(id), not auth.users(id),
   // so the authenticated user must be resolved to their profile row. Passing the
   // auth id directly violates the foreign key.
@@ -88,6 +108,7 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       requirements: draft.requirements,
       min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
       max_salary_usd: draft.max_salary_usd ? Number(draft.max_salary_usd) : null,
+      salary_currency: currency,
       status,
       created_by: createdBy,
       // Only a published opening gets a posted date.
@@ -115,5 +136,9 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   }
 
   revalidatePath("/jobs");
+  // The careers board is cached (see getPublicJobs). Without this a newly
+  // published opening would stay invisible on the public site until the cache
+  // window expired, which reads as "the job I just posted never appeared".
+  revalidatePath("/careers");
   return { ok: true, id: data?.id };
 }

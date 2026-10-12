@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Badge, Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
+import { formatSalaryRange } from "@/lib/currency";
 import { NewJobDrawer } from "./NewJobDrawer";
 import { connection } from "next/server";
 
@@ -25,6 +26,7 @@ interface JobRow {
   status: string;
   min_salary_usd: number | null;
   max_salary_usd: number | null;
+  salary_currency: string;
   applications: { count: number }[];
 }
 
@@ -36,7 +38,7 @@ export default async function JobsPage() {
   const { data } = await supabase
     .from("job_openings")
     .select(
-      "id, title, department, sector, location, employment_type, status, min_salary_usd, max_salary_usd, applications(count)"
+      "id, title, department, sector, location, employment_type, status, min_salary_usd, max_salary_usd, salary_currency, applications(count)"
     )
     .order("created_at", { ascending: false });
 
@@ -55,6 +57,7 @@ export default async function JobsPage() {
               companies: options.companies,
               departments: options.departments,
               locations: options.locations,
+              currencies: options.currencies,
             }}
           />
         }
@@ -70,6 +73,15 @@ export default async function JobsPage() {
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {jobs.map((job) => {
             const applicants = job.applications?.[0]?.count ?? 0;
+            const salary = formatSalaryRange(
+              {
+                min: job.min_salary_usd,
+                max: job.max_salary_usd,
+                // Pre-dating the currency column every row was USD.
+                currency: job.salary_currency || "USD",
+              },
+              options.currencies
+            );
             return (
               <Card key={job.id} className="flex flex-col gap-4 p-5 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
@@ -102,13 +114,8 @@ export default async function JobsPage() {
                     <strong className="font-display text-base text-brand-ink">{applicants}</strong>{" "}
                     applicant{applicants === 1 ? "" : "s"}
                   </span>
-                  {job.min_salary_usd !== null && (
-                    <span className="font-mono text-xs text-brand-ink/50">
-                      ${(job.min_salary_usd / 1000).toFixed(0)}k –{" "}
-                      {job.max_salary_usd !== null
-                        ? `$${(job.max_salary_usd / 1000).toFixed(0)}k`
-                        : "—"}
-                    </span>
+                  {salary && (
+                    <span className="font-mono text-xs text-brand-ink/50">{salary}</span>
                   )}
                 </div>
               </Card>

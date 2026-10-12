@@ -1,7 +1,8 @@
 import { ClipboardCheck } from "lucide-react";
-import { getTemplates, getAssignableCandidates } from "./actions";
+import { getTemplates, getAssignableCandidates, getQuestionsForEditor } from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
@@ -16,13 +17,14 @@ export const metadata = {
 export const instant = false;
 
 async function loadTemplates() {
-  const [templates, candidates, options] = await Promise.all([
+  const [templates, candidates, options, questionsByTemplate] = await Promise.all([
     getTemplates(),
     getAssignableCandidates(),
     getMasterOptions(),
+    getQuestionsForEditor(),
   ]);
 
-  return { templates, candidates, options };
+  return { templates, candidates, options, questionsByTemplate };
 }
 
 export default async function AssessmentsBuilderPage() {
@@ -34,7 +36,8 @@ export default async function AssessmentsBuilderPage() {
   // here only produced a static shell whose hole the client had to re-fetch —
   // and on a hard load that fetch never landed, leaving the skeleton up
   // forever and every button unclickable.
-  const { templates, candidates, options } = await loadTemplates();
+  const { templates, candidates, options, questionsByTemplate } = await loadTemplates();
+  const canEdit = await hasPermissionForUser("assessments.create");
 
   return (
     <AdminShell user={user}>
@@ -60,6 +63,8 @@ export default async function AssessmentsBuilderPage() {
             roleFamilies: options.roleFamilies,
             companies: options.companies,
           }}
+          questionsByTemplate={questionsByTemplate}
+          canEdit={canEdit}
         />
       )}
     </AdminShell>
