@@ -1,7 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { FileText, Search, Send } from "lucide-react";
+import { ChevronRight, FileText, Loader2, Search, Send, Sparkles } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -10,9 +11,16 @@ import {
   Select,
   TextArea,
 } from "@/modules/analytics/presentation/Form";
-import { Badge, Card, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
-import { sendBulkWhatsApp } from "./candidate-actions";
+import { Badge, Button, Card, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
+import {
+  draftCandidateFeedback,
+  screenApplication,
+  sendBulkWhatsApp,
+  updateApplicationStage,
+  type PipelineStage,
+} from "./candidate-actions";
 import type { CandidateRow } from "./actions";
+import { cn } from "@/lib/utils";
 import type { SoftSkillReport } from "@/types";
 
 function stageTone(stage: string) {
@@ -23,6 +31,17 @@ function stageTone(stage: string) {
 }
 
 const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
+
+/** Forward move used by the one-click "Advance" buttons. */
+const NEXT_STAGE: Record<string, PipelineStage | null> = {
+  NEW: "AI_SCREENING",
+  AI_SCREENING: "ASSESSMENT",
+  ASSESSMENT: "INTERVIEW",
+  INTERVIEW: "OFFER",
+  OFFER: "HIRED",
+  HIRED: null,
+  REJECTED: null,
+};
 
 const TEMPLATES = [
   {
@@ -64,18 +83,48 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
 }
 
 /**
- * Candidate table with working search, selection and profile view.
+ * Candidate table with working search, selection, pipeline and profile view.
  *
- * Replaces the previous read-only server table: the "View", "Search" and
- * "Bulk WhatsApp" buttons were all inert. Search filters live, selection drives
- * the broadcast, and the profile drawer shows the real AI screening output.
+ * Search filters live, selection drives the broadcast, the profile drawer runs
+ * AI screening and moves candidates between stages, and every row has a
+ * one-click forward move for the common case.
  */
-export function CandidateBrowser({ candidates }: { candidates: CandidateRow[] }) {
+export function CandidateBrowser({
+  candidates,
+  canWrite,
+}: {
+  candidates: CandidateRow[];
+  canWrite: boolean;
+}) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [profile, setProfile] = useState<CandidateRow | null>(null);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
+
+  // The drawer keeps the row it was opened with; after router.refresh() the
+  // fresh server data lives in `candidates`, so re-resolve by id to avoid
+  // showing a stale score or stage behind the drawer.
+  const liveProfile = profile
+    ? candidates.find((c) => c.id === profile.id) ?? profile
+    : null;
+
+  async function quickAdvance(candidate: CandidateRow) {
+    const next = NEXT_STAGE[candidate.stage];
+    if (!next) return;
+    setPendingAdvance(candidate.id);
+    try {
+      const result = await updateApplicationStage({
+        applicationId: candidate.id,
+        stage: next,
+      });
+      if (result.ok) router.refresh();
+    } finally {
+      setPendingAdvance(null);
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -232,14 +281,32 @@ export function CandidateBrowser({ candidates }: { candidates: CandidateRow[] })
                       )}
                     </td>
                     <td className="px-4 py-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setProfile(c)}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold transition hover:bg-brand-sand"
-                      >
-                        <FileText className="h-3.5 w-3.5" aria-hidden />
-                        View
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {canWrite && NEXT_STAGE[c.stage] && (
+                          <button
+                            type="button"
+                            onClick={() => void quickAdvance(c)}
+                            disabled={pendingAdvance === c.id}
+                            title={`Move to ${NEXT_STAGE[c.stage]?.replace("_", " ").toLowerCase()}`}
+                            className="inline-flex items-center gap-1 rounded-lg bg-brand-gold/15 px-2.5 py-1 text-xs font-semibold text-brand-gold-dark transition hover:bg-brand-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {pendingAdvance === c.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            ) : (
+                              <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                            Advance
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setProfile(c)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold transition hover:bg-brand-sand"
+                        >
+                          <FileText className="h-3.5 w-3.5" aria-hidden />
+                          View
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -279,14 +346,31 @@ export function CandidateBrowser({ candidates }: { candidates: CandidateRow[] })
 
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-mono text-[11px] text-brand-ink/40">{c.tracking_code}</span>
-                  <button
-                    type="button"
-                    onClick={() => setProfile(c)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold transition hover:bg-brand-sand"
-                  >
-                    <FileText className="h-3.5 w-3.5" aria-hidden />
-                    View profile
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {canWrite && NEXT_STAGE[c.stage] && (
+                      <button
+                        type="button"
+                        onClick={() => void quickAdvance(c)}
+                        disabled={pendingAdvance === c.id}
+                        className="inline-flex items-center gap-1 rounded-lg bg-brand-gold/15 px-2.5 py-1 text-xs font-semibold text-brand-gold-dark transition hover:bg-brand-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {pendingAdvance === c.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                        ) : (
+                          <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                        )}
+                        Advance
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setProfile(c)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold transition hover:bg-brand-sand"
+                    >
+                      <FileText className="h-3.5 w-3.5" aria-hidden />
+                      View profile
+                    </button>
+                  </div>
                 </div>
               </li>
             ))}
@@ -294,7 +378,11 @@ export function CandidateBrowser({ candidates }: { candidates: CandidateRow[] })
         </Card>
       )}
 
-      <ProfileDrawer candidate={profile} onClose={() => setProfile(null)} />
+      <ProfileDrawer
+        candidate={liveProfile}
+        canWrite={canWrite}
+        onClose={() => setProfile(null)}
+      />
 
       <BroadcastDrawer
         open={broadcastOpen}
@@ -310,14 +398,117 @@ export function CandidateBrowser({ candidates }: { candidates: CandidateRow[] })
 
 function ProfileDrawer({
   candidate,
+  canWrite,
   onClose,
 }: {
   candidate: CandidateRow | null;
+  canWrite: boolean;
   onClose: () => void;
 }) {
+  const router = useRouter();
   const report = candidate?.ai_soft_skills as SoftSkillReport | null;
   const strengths = candidate?.ai_strengths ?? [];
   const gaps = candidate?.ai_gaps ?? [];
+
+  const [pendingStage, setPendingStage] = useState<string | null>(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [screenPending, setScreenPending] = useState(false);
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function moveTo(stage: PipelineStage) {
+    if (!candidate || stage === candidate.stage) return;
+    if (stage === "REJECTED") {
+      setRejectOpen(true);
+      return;
+    }
+    setPendingStage(stage);
+    setError(null);
+    setDone(null);
+    try {
+      const result = await updateApplicationStage({ applicationId: candidate.id, stage });
+      if (result.ok) {
+        setDone(`Moved to ${stage.replace("_", " ").toLowerCase()}.`);
+        router.refresh();
+      } else {
+        setError(result.error ?? "Could not move the candidate.");
+      }
+    } catch {
+      setError("Something went wrong moving the candidate.");
+    } finally {
+      setPendingStage(null);
+    }
+  }
+
+  async function confirmReject() {
+    if (!candidate) return;
+    setPendingStage("REJECTED");
+    setError(null);
+    setDone(null);
+    try {
+      const result = await updateApplicationStage({
+        applicationId: candidate.id,
+        stage: "REJECTED",
+        reason: rejectReason,
+      });
+      if (result.ok) {
+        setRejectOpen(false);
+        setRejectReason("");
+        setDone("Candidate rejected. A feedback draft is being written in the background.");
+        router.refresh();
+      } else {
+        setError(result.error ?? "Could not reject the candidate.");
+      }
+    } catch {
+      setError("Something went wrong rejecting the candidate.");
+    } finally {
+      setPendingStage(null);
+    }
+  }
+
+  async function runScreen() {
+    if (!candidate) return;
+    setScreenPending(true);
+    setError(null);
+    setDone(null);
+    try {
+      const result = await screenApplication(candidate.id);
+      if (result.ok) {
+        setDone(
+          `Screened: ${result.score}% fit${result.decision ? ` — ${result.decision.toLowerCase()}` : ""}.`
+        );
+        router.refresh();
+      } else {
+        setError(result.error ?? "Screening failed.");
+      }
+    } catch {
+      setError("Something went wrong running the screening.");
+    } finally {
+      setScreenPending(false);
+    }
+  }
+
+  async function draftFeedback() {
+    if (!candidate) return;
+    setFeedbackPending(true);
+    setError(null);
+    setDone(null);
+    try {
+      const result = await draftCandidateFeedback(candidate.id);
+      if (result.ok) {
+        setDone("Feedback draft written.");
+        router.refresh();
+      } else {
+        setError(result.error ?? "Could not draft feedback.");
+      }
+    } catch {
+      setError("Something went wrong drafting the feedback.");
+    } finally {
+      setFeedbackPending(false);
+    }
+  }
 
   return (
     <Drawer
@@ -336,8 +527,82 @@ function ProfileDrawer({
             {candidate.phone && <Badge tone="neutral">{candidate.phone}</Badge>}
           </div>
 
+          {canWrite && (
+            <section>
+              <h3 className="mb-2 font-display text-sm font-bold">Pipeline</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {STAGES.map((stage) => {
+                  const active = candidate.stage === stage;
+                  const isReject = stage === "REJECTED";
+                  const blocked = active || pendingStage !== null;
+                  return (
+                    <button
+                      key={stage}
+                      type="button"
+                      disabled={blocked}
+                      aria-pressed={active}
+                      onClick={() => void moveTo(stage as PipelineStage)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide transition",
+                        active
+                          ? "border-brand-gold bg-brand-gold/15 text-brand-gold-dark"
+                          : isReject
+                            ? "border-brand-line bg-white text-rose-700 hover:border-rose-300 hover:bg-rose-50"
+                            : "border-brand-line bg-white text-brand-ink/60 hover:bg-brand-sand",
+                        blocked && !active && "cursor-not-allowed opacity-60"
+                      )}
+                    >
+                      {pendingStage === stage && (
+                        <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                      )}
+                      {stage.replace("_", " ")}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {rejectOpen && (
+                <div className="mt-3 space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3.5">
+                  <label htmlFor="reject-reason" className="block text-xs font-bold text-rose-900">
+                    Rejection reason
+                  </label>
+                  <TextArea
+                    id="reject-reason"
+                    rows={2}
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="Why is this candidate not moving forward?"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => void confirmReject()}
+                      disabled={pendingStage !== null}
+                      className="bg-rose-600 text-white hover:bg-rose-700"
+                    >
+                      {pendingStage === "REJECTED" && (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      )}
+                      Confirm rejection
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setRejectOpen(false);
+                        setRejectReason("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
           <section>
-            <h3 className="mb-2 font-display text-sm font-bold">AI match</h3>
+            <h3 className="mb-2 font-display text-sm font-bold">AI screening</h3>
             {candidate.ai_match_score !== null ? (
               <div className="flex items-center gap-3">
                 <span className="w-12 text-right font-display text-2xl font-extrabold text-brand-gold-dark">
@@ -346,13 +611,47 @@ function ProfileDrawer({
                 <Meter value={candidate.ai_match_score} className="flex-1" />
               </div>
             ) : (
-              <p className="text-sm text-brand-ink/45">This candidate has not been screened yet.</p>
+              <p className="text-sm text-brand-ink/45">
+                This candidate has not been screened yet.
+              </p>
             )}
             {candidate.ai_screening_summary && (
               <p className="mt-3 text-sm leading-relaxed text-brand-ink/65">
                 {candidate.ai_screening_summary}
               </p>
             )}
+
+            {canWrite && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => void runScreen()}
+                  disabled={screenPending || pendingStage !== null}
+                >
+                  {screenPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  {candidate.ai_match_score !== null ? "Re-screen" : "Screen with AI"}
+                </Button>
+                {candidate.ai_match_score !== null && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void draftFeedback()}
+                    disabled={feedbackPending}
+                  >
+                    {feedbackPending && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    )}
+                    {candidate.ai_feedback ? "Redraft feedback" : "Draft feedback"}
+                  </Button>
+                )}
+              </div>
+            )}
+
+            <FormMessage error={error} success={done} />
           </section>
 
           {(strengths.length > 0 || gaps.length > 0) && (

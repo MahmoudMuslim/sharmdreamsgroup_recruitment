@@ -83,11 +83,21 @@ async function callOpenRouter(
 /**
  * Google AI Studio model ids, newest first.
  *
- * The previously hardcoded `gemini-2.0-flash` was retired by Google and now
- * returns "This model is no longer available". This list is walked in order so
- * a retired entry cannot silently break the fallback path.
+ * Walked in order so no single entry can break the fallback path: retired ids
+ * (e.g. `gemini-2.0-flash`, and `gemini-2.5-flash` for newer accounts) 404 and
+ * the next one is tried. Google's per-model load also flaps — observed live,
+ * 3.8/3.7 returning 503 while 3.6/3.5 answered — so transient errors walk too
+ * rather than failing the screening.
  */
-const GOOGLE_MODEL_CHAIN = ["gemini-2.5-flash", "gemini-3.8-flash"] as const;
+const GOOGLE_MODEL_CHAIN = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+] as const;
+
+/** "This model can't serve you right now" — try the next id instead of giving up. */
+const GOOGLE_WALK_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
 
 async function callGoogleAiStudio(
   request: CompletionRequest,
@@ -104,6 +114,7 @@ async function callGoogleAiStudio(
     .join("\n");
 
   let lastError = "";
+  const walkErrors: string[] = [];
 
   for (const model of GOOGLE_MODEL_CHAIN) {
     const response = await fetch(
@@ -128,9 +139,6 @@ async function callGoogleAiStudio(
       const text = await response.text().catch(() => "");
       lastError = `Google AI Studio ${model} HTTP ${response.status}: ${text.slice(0, 200)}`;
 
-      // 404 means the model id is retired — walk to the next one.
-      if (response.status === 404) continue;
-
       // A 403 means the key itself is blocked (e.g. reported as leaked).
       // Retrying other models cannot help, so surface it immediately.
       if (response.status === 403) {
@@ -138,6 +146,12 @@ async function callGoogleAiStudio(
           "Google AI Studio rejected the API key (HTTP 403). This is almost always a key " +
             "flagged as leaked — generate a new one in AI Studio."
         );
+      }
+
+      // Retired ids and per-model capacity errors: record and move on.
+      if (GOOGLE_WALK_STATUSES.has(response.status)) {
+        walkErrors.push(lastError);
+        continue;
       }
 
       throw new Error(lastError);
@@ -153,7 +167,9 @@ async function callGoogleAiStudio(
     return { content, model };
   }
 
-  throw new Error(lastError || "Google AI Studio: no available model responded");
+  throw new Error(
+    walkErrors.join(" | ") || lastError || "Google AI Studio: no available model responded"
+  );
 }
 
 export async function complete(request: CompletionRequest): Promise<CompletionResult> {

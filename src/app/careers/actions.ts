@@ -1,9 +1,15 @@
 "use server";
 
 import { revalidatePath, cacheLife } from "next/cache";
+import { after } from "next/server";
 import { getSupabaseAnonClient } from "@/lib/supabase/anon";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { hasAiProvider } from "@/lib/config.server";
 import { extractCvText, type ExtractedCv as _ExtractedCv } from "@/modules/screening/infrastructure/cvParser";
+import {
+  getAiAutomationSettings,
+  screenApplicationById,
+} from "@/modules/screening/application/screen-application";
 
 /**
  * Public careers site.
@@ -266,7 +272,7 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
       source,
       stage: "NEW",
     })
-    .select("tracking_code")
+    .select("id, tracking_code")
     .single();
 
   if (error) {
@@ -291,6 +297,18 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   // The recruiter's job list shows application counts, so refresh it.
   revalidatePath("/careers");
   revalidatePath("/jobs");
+
+  // Auto-screening runs after the candidate's response is sent, so submitting
+  // an application never waits on a model call. Honour the Settings toggle —
+  // recruiters can also screen any application on demand from the profile
+  // drawer.
+  if (created?.id && hasAiProvider()) {
+    const applicationId = String(created.id);
+    const settings = await getAiAutomationSettings();
+    if (settings.aiEnabled && settings.autoScreen) {
+      after(() => screenApplicationById(applicationId).then(() => undefined));
+    }
+  }
 
   return { ok: true, trackingCode: created?.tracking_code ?? "" };
 }

@@ -2,6 +2,7 @@ import { Sparkles, Upload } from "lucide-react";
 import { getCandidateList } from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
 import { requireStaff } from "@/lib/auth/session";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { connection } from "next/server";
@@ -18,7 +19,10 @@ export default async function CandidatesPage() {
   // Admin content is per-session; stop the static shell before any rendering.
   await connection();
   const user = await requireStaff("/candidates");
-  const candidates = await getCandidateList();
+  const [candidates, canWrite] = await Promise.all([
+    getCandidateList(),
+    hasPermissionForUser("candidates.write"),
+  ]);
 
   return (
     <AdminShell user={user}>
@@ -28,7 +32,7 @@ export default async function CandidatesPage() {
         description="Every application across the group, with bias-reduced AI screening scores and assessment status."
       />
 
-      <CandidateBrowser candidates={candidates} />
+      <CandidateBrowser candidates={candidates} canWrite={canWrite} />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="p-5">
