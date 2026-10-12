@@ -88,7 +88,7 @@ create policy ai_model_config_read on ai_model_config
 insert into ai_model_config (capability, primary_model, fallback_model) values
   ('resume_screening',     'google/gemma-4-31b-it:free',      'google/gemma-4-26b-a4b-it:free'),
   ('soft_skills',          'nvidia/nemotron-3.5-lightning:free', 'google/gemma-4-31b-it:free'),
-  ('case_reasoning',       'deepseek/deepseek-r1:free',      'google/gemma-4-31b-it:free'),
+  ('case_reasoning',       'google/gemma-4-31b-it:free',     'google/gemma-4-26b-a4b-it:free'),
   ('feedback',             'google/gemma-4-31b-it:free',      'google/gemma-4-26b-a4b-it:free'),
   ('interview_questions',  'nvidia/nemotron-3.5-lightning:free', 'google/gemma-4-31b-it:free'),
   ('transcription',        'google/gemma-4-31b-it:free',      'google/gemma-4-26b-a4b-it:free')

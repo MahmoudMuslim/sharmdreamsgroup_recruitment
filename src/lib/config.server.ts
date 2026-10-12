@@ -130,4 +130,5 @@ export const cronConfig = {
   /** Shared secret expected in the `x-cron-secret` header. */
   secret: optional("CRON_SECRET", process.env.CRON_SECRET),
   whatsappBatchSize: Number(process.env.WHATSAPP_CRON_BATCH_SIZE ?? 50),
+  gradingBatchSize: Number(process.env.GRADING_CRON_BATCH_SIZE ?? 10),
 } as const;

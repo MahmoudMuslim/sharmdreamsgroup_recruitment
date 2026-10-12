@@ -81,6 +81,41 @@ export async function gradeAttemptResponses(
   return { graded, failed };
 }
 
+/**
+ * Re-grades submitted attempts that still have unscored written/model
+ * responses — the recovery path for attempts whose grading ran during a
+ * provider outage. A cron sweep calls this; each attempt reuses the same
+ * gated, pass-based grading as fresh submissions.
+ */
+export async function regradeStuckAttempts(
+  limit: number
+): Promise<{ swept: number; graded: number; failed: number }> {
+  const { aiEnabled } = await getAiAutomationSettings();
+  if (!aiEnabled || !hasAiProvider()) return { swept: 0, graded: 0, failed: 0 };
+
+  const supabase = getSupabaseServiceClient();
+
+  // Inner join on null-score responses: only attempts with at least one
+  // response the submit route left for AI grading.
+  const { data } = await supabase
+    .from("candidate_attempts")
+    .select("id, candidate_responses!inner(score)")
+    .eq("status", "SUBMITTED")
+    .is("candidate_responses.score", null)
+    .limit(limit);
+
+  const attemptIds = [...new Set(((data ?? []) as { id: string }[]).map((row) => row.id))];
+
+  let graded = 0;
+  let failed = 0;
+  for (const attemptId of attemptIds) {
+    const result = await gradeAttemptResponses(attemptId);
+    graded += result.graded;
+    failed += result.failed;
+  }
+  return { swept: attemptIds.length, graded, failed };
+}
+
 /** Grades every not-yet-scored written/model response of the attempt. */
 async function gradePendingResponses(
   supabase: ReturnType<typeof getSupabaseServiceClient>,

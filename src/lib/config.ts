@@ -72,7 +72,7 @@ export type AiCapability =
 
 const PRIMARY = optional(process.env.AI_MODEL_PRIMARY, "google/gemma-4-31b-it:free");
 const FAST = optional(process.env.AI_MODEL_FAST, "nvidia/nemotron-3.5-lightning:free");
-const REASONING = optional(process.env.AI_MODEL_REASONING, "deepseek/deepseek-r1:free");
+const REASONING = optional(process.env.AI_MODEL_REASONING, "google/gemma-4-31b-it:free");
 const FALLBACK = optional(process.env.AI_MODEL_FALLBACK, "google/gemma-4-26b-a4b-it:free");
 
 /**
@@ -83,7 +83,7 @@ const FALLBACK = optional(process.env.AI_MODEL_FALLBACK, "google/gemma-4-26b-a4b
 export const modelChains: Record<AiCapability, readonly string[]> = {
   resume_screening: [PRIMARY, FALLBACK, FAST],
   soft_skills: [FAST, PRIMARY, FALLBACK],
-  case_reasoning: [REASONING, "openrouter/free", PRIMARY],
+  case_reasoning: [REASONING, FALLBACK, PRIMARY],
   feedback: [PRIMARY, FALLBACK],
   interview_questions: [FAST, PRIMARY],
   transcription: [PRIMARY, FALLBACK],

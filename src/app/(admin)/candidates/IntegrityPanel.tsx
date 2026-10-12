@@ -2,16 +2,27 @@
 
 import { useState } from "react";
 import {
+  Check,
+  Clock,
   Laptop,
   Loader2,
   ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
+  Sparkles,
   X,
 } from "lucide-react";
 import { getAttemptIntegrity, type AttemptIntegrity } from "./integrity-actions";
+import { getAttemptAiGrades, type AttemptGrades } from "./assessment-actions";
 import { INTEGRITY_LABELS } from "@/modules/assessment/domain/integrity";
 import { Badge } from "@/modules/analytics/presentation/ui";
+
+const QUESTION_TYPE_LABELS: Record<string, string> = {
+  EXCEL_MODEL: "Excel model",
+  VIDEO_PITCH: "Video pitch",
+  CASE_STUDY: "Case study",
+  MULTIPLE_CHOICE: "Multiple choice",
+};
 
 function severityTone(severity: string) {
   if (severity === "CRITICAL") return "danger" as const;
@@ -42,6 +53,7 @@ export function IntegrityPanel({
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState<AttemptIntegrity | null>(null);
+  const [grades, setGrades] = useState<AttemptGrades | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function openPanel() {
@@ -50,8 +62,12 @@ export function IntegrityPanel({
     setLoading(true);
     setError(null);
     try {
-      const result = await getAttemptIntegrity(accessToken);
-      setReport(result);
+      const [integrityResult, gradesResult] = await Promise.all([
+        getAttemptIntegrity(accessToken),
+        getAttemptAiGrades(accessToken),
+      ]);
+      setReport(integrityResult);
+      setGrades(gradesResult);
     } catch {
       setError("Could not load the integrity report.");
     } finally {
@@ -88,7 +104,7 @@ export function IntegrityPanel({
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h2 id="integrity-title" className="font-display text-xl font-extrabold">
-                  Assessment integrity
+                  Assessment report
                 </h2>
                 <p className="mt-1 text-sm text-brand-ink/60">{candidateName}</p>
               </div>
@@ -155,6 +171,84 @@ export function IntegrityPanel({
                     <p className="mt-1 text-sm font-bold">{report.status}</p>
                   </div>
                 </div>
+
+                {grades && grades.grades.length > 0 && (
+                  <section className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.14em] text-brand-ink/45">
+                        <Sparkles className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
+                        AI feedback — {grades.template_name}
+                      </h3>
+                      {grades.status !== "GRADED" && (
+                        <span className="inline-flex items-center gap-1 rounded bg-brand-cream px-2 py-1 text-[11px] font-semibold text-brand-ink/55">
+                          <Clock className="h-3 w-3" aria-hidden />
+                          Grading in progress
+                        </span>
+                      )}
+                    </div>
+
+                    <ul className="space-y-3">
+                      {grades.grades.map((grade) => (
+                        <li
+                          key={grade.id}
+                          className="rounded-xl border border-brand-line p-4"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-bold">{grade.title}</p>
+                              <p className="text-[11px] font-semibold uppercase tracking-wider text-brand-ink/45">
+                                {QUESTION_TYPE_LABELS[grade.question_type] ?? grade.question_type}
+                              </p>
+                            </div>
+                            <Badge tone={scoreTone(grade.max_score > 0 && grade.score !== null ? Math.round((grade.score / grade.max_score) * 100) : null)} className="shrink-0">
+                              {grade.score === null ? "Not graded" : `${grade.score}/${grade.max_score}`}
+                            </Badge>
+                          </div>
+
+                          {grade.rationale && (
+                            <p className="mt-2.5 text-sm leading-relaxed text-brand-ink/70">
+                              {grade.rationale}
+                            </p>
+                          )}
+
+                          {grade.strengths.length > 0 && (
+                            <ul className="mt-2.5 space-y-1">
+                              {grade.strengths.slice(0, 5).map((strength) => (
+                                <li key={strength} className="flex items-start gap-1.5 text-xs text-emerald-800">
+                                  <Check className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />
+                                  {strength}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {grade.improvements.length > 0 && (
+                            <ul className="mt-2 space-y-1">
+                              {grade.improvements.slice(0, 5).map((improvement) => (
+                                <li key={improvement} className="flex items-start gap-1.5 text-xs text-amber-800">
+                                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                                  {improvement}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+
+                          {grade.answer_preview && (
+                            <details className="mt-2.5">
+                              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-brand-ink/40 hover:text-brand-ink/60">
+                                Answer excerpt
+                              </summary>
+                              <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-brand-cream p-3 text-xs leading-relaxed text-brand-ink/60">
+                                {grade.answer_preview}
+                                {grade.answer_preview.length === 400 && "…"}
+                              </p>
+                            </details>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
 
                 {report.events.length === 0 ? (
                   <p className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
