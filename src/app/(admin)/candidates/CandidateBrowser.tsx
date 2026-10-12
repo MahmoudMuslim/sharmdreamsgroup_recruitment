@@ -20,6 +20,7 @@ import {
   type PipelineStage,
 } from "./candidate-actions";
 import type { CandidateRow } from "./actions";
+import { IntegrityPanel } from "./IntegrityPanel";
 import { cn } from "@/lib/utils";
 import type { SoftSkillReport } from "@/types";
 
@@ -525,6 +526,12 @@ function ProfileDrawer({
             <Badge tone={stageTone(candidate.stage)}>{candidate.stage.replace("_", " ")}</Badge>
             {candidate.job_title && <Badge tone="neutral">{candidate.job_title}</Badge>}
             {candidate.phone && <Badge tone="neutral">{candidate.phone}</Badge>}
+            {candidate.attempt_token && (
+              <IntegrityPanel
+                accessToken={candidate.attempt_token}
+                candidateName={candidate.full_name}
+              />
+            )}
           </div>
 
           {canWrite && (
