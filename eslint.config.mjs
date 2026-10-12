@@ -12,7 +12,19 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Unrelated standalone Vite project living in the repo root:
+    "sharm-dreams-hr---omnichannel-ai-ats/**",
   ]),
+  {
+    rules: {
+      // Allow the conventional underscore prefix for intentionally unused
+      // params, which third-party hook signatures often require.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

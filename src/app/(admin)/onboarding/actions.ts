@@ -1,0 +1,111 @@
+"use server";
+
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireStaff } from "@/lib/auth/session";
+
+export interface OnboardingRow {
+  id: string;
+  application_id: string;
+  candidate_name: string;
+  job_title: string | null;
+  company_name: string | null;
+  progress: number;
+  retention_risk_score: number | null;
+  generated_by_ai: boolean;
+  checklist_total: number;
+  checklist_done: number;
+  skill_gap_count: number;
+}
+
+export interface OnboardingSummary {
+  active: number;
+  avg_progress: number;
+  at_risk: number;
+  ai_generated: number;
+}
+
+export interface OnboardingData {
+  plans: OnboardingRow[];
+  summary: OnboardingSummary;
+  /** Hires without a generated plan yet. */
+  unplanned: { id: string; full_name: string; job_title: string | null }[];
+}
+
+export async function getOnboardingData(): Promise<OnboardingData> {
+  await requireStaff("/onboarding");
+  const supabase = await createSupabaseServerClient();
+
+  const { data } = await supabase
+    .from("onboarding_plans")
+    .select(
+      "id, application_id, progress, retention_risk_score, generated_by_ai, checklist, skill_gaps, applications(full_name, job_openings(title, tenants_and_companies(name)))"
+    )
+    .order("created_at", { ascending: false });
+
+  const plans: OnboardingRow[] = (data ?? []).map((row) => {
+    const application = Array.isArray(row.applications)
+      ? row.applications[0]
+      : row.applications;
+    const job = application?.job_openings as { title?: string; tenants_and_companies?: { name?: string } | { name?: string }[] } | null;
+    const company = Array.isArray(job?.tenants_and_companies)
+      ? job.tenants_and_companies[0]
+      : job?.tenants_and_companies;
+
+    const checklist = Array.isArray(row.checklist) ? row.checklist : [];
+    const gaps = Array.isArray(row.skill_gaps) ? row.skill_gaps : [];
+
+    return {
+      id: row.id,
+      application_id: row.application_id,
+      candidate_name: application?.full_name ?? "Unknown",
+      job_title: job?.title ?? null,
+      company_name: company?.name ?? null,
+      progress: Number(row.progress ?? 0),
+      retention_risk_score:
+        row.retention_risk_score === null ? null : Number(row.retention_risk_score),
+      generated_by_ai: Boolean(row.generated_by_ai),
+      checklist_total: checklist.length,
+      checklist_done: checklist.filter((item: { completed?: boolean }) => item.completed).length,
+      skill_gap_count: gaps.length,
+    };
+  });
+
+  // Recent hires with no plan yet, so the recruiter can generate one.
+  const { data: hired } = await supabase
+    .from("applications")
+    .select("id, full_name, job_openings(title)")
+    .eq("stage", "HIRED")
+    .order("hired_at", { ascending: false })
+    .limit(10);
+
+  interface HiredRow {
+  id: string;
+  full_name: string;
+  job_openings?: { title?: string } | { title?: string }[] | null;
+}
+
+  const plannedIds = new Set(plans.map((p) => p.application_id));
+  const unplanned = ((hired ?? []) as HiredRow[])
+    .filter((row) => !plannedIds.has(row.id))
+    .map((row) => {
+      const job = Array.isArray(row.job_openings) ? row.job_openings[0] : row.job_openings;
+      return { id: row.id, full_name: row.full_name, job_title: job?.title ?? null };
+    });
+
+  const withProgress = plans.filter((p) => p.progress > 0);
+  const summary: OnboardingSummary = {
+    active: plans.length,
+    avg_progress:
+      withProgress.length === 0
+        ? 0
+        : Math.round(
+            withProgress.reduce((sum, p) => sum + p.progress, 0) / withProgress.length
+          ),
+    at_risk: plans.filter(
+      (p) => p.retention_risk_score !== null && p.retention_risk_score >= 50
+    ).length,
+    ai_generated: plans.filter((p) => p.generated_by_ai).length,
+  };
+
+  return { plans, summary, unplanned };
+}

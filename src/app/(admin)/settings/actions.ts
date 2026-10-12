@@ -1,0 +1,205 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireStaff } from "@/lib/auth/session";
+import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
+import type {
+  AppRole,
+  AuditEntry,
+  Company,
+  NotificationTemplate,
+  Permission,
+  Role,
+  RoleGrant,
+  SaveSettingsResult,
+  SettingsBundle,
+  StaffMember,
+} from "@/modules/settings/domain/types";
+
+/**
+ * Loads everything the settings screen needs in one round trip.
+ *
+ * Reads go through the caller's session client so Row Level Security applies:
+ * a recruiter without `settings.manage_users` sees staff rows filtered out by
+ * the database rather than by client-side guesswork.
+ */
+export async function loadSettings(): Promise<SettingsBundle> {
+  await requireStaff("/settings");
+  const supabase = await createSupabaseServerClient();
+
+  const [settingsResult, rolesResult, permsResult, grantsResult, companiesResult, staffResult, templatesResult] =
+    await Promise.all([
+      supabase.from("app_settings").select("key, value, description, company_id, scope").eq("scope", "GLOBAL"),
+      supabase.from("roles").select("key, label, description, is_system").order("label"),
+      supabase.from("permissions").select("key, label, group_name, description").order("group_name"),
+      supabase.from("role_permissions").select("role_key, permission_key, granted"),
+      supabase.from("tenants_and_companies").select("id, name, slug, sector, country").order("name"),
+      supabase.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, created_at"),
+      supabase.from("notification_templates").select("id, key, channel, subject, body, is_active").order("key"),
+    ]);
+
+  const values: Record<string, unknown> = {};
+  for (const row of settingsResult.data ?? []) {
+    values[row.key] = row.value;
+  }
+
+  return {
+    values,
+    roles: (rolesResult.data ?? []) as Role[],
+    permissions: (permsResult.data ?? []) as Permission[],
+    grants: (grantsResult.data ?? []) as RoleGrant[],
+    companies: (companiesResult.data ?? []) as Company[],
+    staff: (staffResult.data ?? []) as StaffMember[],
+    templates: (templatesResult.data ?? []) as NotificationTemplate[],
+  };
+}
+
+/**
+ * Persists a batch of settings.
+ *
+ * Only keys declared in `SETTINGS_SCHEMA` are accepted, so the client cannot
+ * write arbitrary rows. Each change is written to `settings_audit_log` before
+ * the upsert so the previous value is never lost.
+ */
+export async function saveSettings(
+  payload: Record<string, unknown>
+): Promise<SaveSettingsResult> {
+  await requireStaff("/settings");
+  const supabase = await createSupabaseServerClient();
+
+  const entries = Object.entries(payload).filter(([key]) => ALLOWED_SETTING_KEYS.has(key));
+
+  if (entries.length === 0) {
+    return { ok: false, saved: [], error: "No recognised settings were supplied." };
+  }
+
+  // Record the change with the current value before overwriting.
+  const { data: existing } = await supabase
+    .from("app_settings")
+    .select("id, key, value")
+    .eq("scope", "GLOBAL")
+    .in(
+      "key",
+      entries.map(([key]) => key)
+    );
+
+  const previous = new Map((existing ?? []).map((row) => [row.key, row.value]));
+
+  const { error: auditError } = await supabase.from("settings_audit_log").insert(
+    entries.map(([key, value]) => ({
+      key,
+      previous_value: previous.get(key) ?? null,
+      next_value: value,
+      changed_by: null,
+    }))
+  );
+
+  if (auditError) {
+    return { ok: false, saved: [], error: auditError.message };
+  }
+
+  const upserts = entries.map(([key, value]) => {
+    const row = (existing ?? []).find((r) => r.key === key);
+    return row
+      ? { id: row.id, scope: "GLOBAL", key, value, updated_by: null }
+      : { scope: "GLOBAL", company_id: null, key, value };
+  });
+
+  const { error } = await supabase
+    .from("app_settings")
+    // Relies on the `unique nulls not distinct (scope, company_id, key)`
+    // constraint — plain UNIQUE would never match GLOBAL rows because their
+    // company_id is NULL. See supabase/migrations/002_settings_nulls_not_distinct.sql
+    .upsert(upserts, { onConflict: "scope,company_id,key" });
+
+  if (error) {
+    return { ok: false, saved: [], error: error.message };
+  }
+
+  revalidatePath("/settings");
+  return { ok: true, saved: entries.map(([key]) => key), error: undefined };
+}
+
+/** Changes a staff member's role, writing an audit trail entry. */
+export async function updateStaffRole(
+  profileId: string,
+  role: AppRole
+): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/settings");
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("user_profiles")
+    .update({ role })
+    .eq("id", profileId);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("settings_audit_log").insert({
+    key: `staff.role:${profileId}`,
+    previous_value: null,
+    next_value: { role },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/** Assigns (or clears) the company a staff member belongs to. */
+export async function updateStaffCompany(
+  profileId: string,
+  companyId: string | null
+): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/settings");
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("user_profiles")
+    .update({ tenant_id: companyId })
+    .eq("id", profileId);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/** Grants or revokes a single permission for a role. */
+export async function updateRolePermission(
+  roleKey: AppRole,
+  permissionKey: string,
+  granted: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/settings");
+  const supabase = await createSupabaseServerClient();
+
+  const { error } = await supabase
+    .from("role_permissions")
+    .upsert({ role_key: roleKey, permission_key: permissionKey, granted });
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("settings_audit_log").insert({
+    key: `role_permission:${roleKey}`,
+    previous_value: null,
+    next_value: { permissionKey, granted },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/** Recent settings activity, newest first. */
+export async function loadAuditLog(limit = 25): Promise<AuditEntry[]> {
+  await requireStaff("/settings");
+  const supabase = await createSupabaseServerClient();
+
+  const { data } = await supabase
+    .from("settings_audit_log")
+    .select("id, key, previous_value, next_value, changed_at, changed_by")
+    .order("changed_at", { ascending: false })
+    .limit(limit);
+
+  return (data ?? []) as AuditEntry[];
+}

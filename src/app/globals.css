@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/*
+ * Sharm Dreams Group — Talent Cloud
+ * Brand tokens lifted from sharmdreamsgroup.com:
+ *   gold  #b38f6f / #d4b393 / #a87c52
+ *   ink   #161616
+ *   ivory #f5f4f0 / #faf9f6 / #f2f1ed
+ *   line  #e6e0dd
+ */
+@theme {
+  --color-brand-gold: #b38f6f;
+  --color-brand-gold-light: #d4b393;
+  --color-brand-gold-dark: #a87c52;
+  /* Sampled directly from the official sdg-icon.png wordmark. */
+  --color-brand-logo: #be9368;
+  --color-brand-ink: #161616;
+  --color-brand-ivory: #f5f4f0;
+  --color-brand-cream: #faf9f6;
+  --color-brand-sand: #f2f1ed;
+  --color-brand-line: #e6e0dd;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-amiri), Georgia, serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-brand-ivory);
+  color: var(--color-brand-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Elegant display headings, echoing the group's wordmark treatment. */
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+.font-serif-accent {
+  font-family: var(--font-serif);
+}
+
+/* Gold hairline used to separate hero sections. */
+.rule-gold {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-brand-gold) 18%,
+    var(--color-brand-gold) 82%,
+    transparent
+  );
+}
+
+/* Soft, warm shadow used on cards instead of heavy drop shadows. */
+.shadow-soft {
+  box-shadow:
+    0 1px 2px rgb(22 22 22 / 0.04),
+    0 8px 24px -12px rgb(22 22 22 / 0.12);
+}
+
+.shadow-lift {
+  box-shadow:
+    0 2px 4px rgb(22 22 22 / 0.05),
+    0 18px 40px -18px rgb(179 143 111 / 0.35);
+}
+
+/* Gold focus ring for keyboard accessibility across the app. */
+:focus-visible {
+  outline: 2px solid var(--color-brand-gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Slim, brand-styled scrollbars. */
+@supports (scrollbar-width: thin) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-brand-gold-light) transparent;
+  }
+}
+
+/* Respect users who ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
