@@ -11,7 +11,7 @@ import {
   Shield,
   Sparkles,
 } from "lucide-react";
-import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
+import { SETTINGS_SCHEMA, UNENFORCED_SETTING_KEYS } from "@/modules/settings/domain/schema";
 import { saveSettings } from "@/app/(admin)/settings/actions";
 import { Button, Card } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,14 @@ const ICONS: Record<string, typeof Sparkles> = {
 
 type Draft = Record<string, unknown>;
 
+function UnenforcedBadge() {
+  return (
+    <span className="ml-2 rounded-full border border-brand-line bg-brand-cream px-2 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-brand-ink/50">
+      Not enforced yet
+    </span>
+  );
+}
+
 function Field({
   control,
   value,
@@ -38,6 +46,7 @@ function Field({
   onChange: (next: unknown) => void;
 }) {
   const id = `setting-${control.key}`;
+  const unenforced = UNENFORCED_SETTING_KEYS.has(control.key);
 
   if (control.kind === "toggle") {
     const on = value === true;
@@ -46,6 +55,7 @@ function Field({
         <div className="min-w-0">
           <label htmlFor={id} className="block text-sm font-semibold">
             {control.label}
+            {unenforced && <UnenforcedBadge />}
           </label>
           {control.help && (
             <p className="mt-0.5 text-xs leading-relaxed text-brand-ink/50">{control.help}</p>
@@ -79,6 +89,7 @@ function Field({
       <div>
         <label htmlFor={id} className="mb-1.5 block text-sm font-semibold">
           {control.label}
+          {unenforced && <UnenforcedBadge />}
         </label>
         {control.help && (
           <p className="mb-2 text-xs leading-relaxed text-brand-ink/50">{control.help}</p>
@@ -103,7 +114,10 @@ function Field({
     const selected = Array.isArray(value) ? (value as string[]) : [];
     return (
       <fieldset>
-        <legend className="mb-1.5 text-sm font-semibold">{control.label}</legend>
+        <legend className="mb-1.5 text-sm font-semibold">
+          {control.label}
+          {unenforced && <UnenforcedBadge />}
+        </legend>
         {control.help && (
           <p className="mb-2 text-xs leading-relaxed text-brand-ink/50">{control.help}</p>
         )}
@@ -144,6 +158,7 @@ function Field({
       <div>
         <label htmlFor={id} className="mb-1.5 block text-sm font-semibold">
           {control.label}
+          {unenforced && <UnenforcedBadge />}
         </label>
         {control.help && (
           <p className="mb-2 text-xs leading-relaxed text-brand-ink/50">{control.help}</p>
@@ -171,6 +186,7 @@ function Field({
     <div>
       <label htmlFor={id} className="mb-1.5 block text-sm font-semibold">
         {control.label}
+        {unenforced && <UnenforcedBadge />}
       </label>
       {control.help && (
         <p className="mb-2 text-xs leading-relaxed text-brand-ink/50">{control.help}</p>

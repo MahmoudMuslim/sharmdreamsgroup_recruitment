@@ -46,7 +46,7 @@ export async function trackApplication(
   const code = trackingCode.trim().toUpperCase();
 
   if (code.length < 4) {
-    return { ok: false, applications: [], error: "Enter the tracking code from your application email." };
+    return { ok: false, applications: [], error: "Enter the tracking code you were given when you applied." };
   }
 
   let supabase: ReturnType<typeof getSupabaseServiceClient>;
@@ -77,7 +77,7 @@ export async function trackApplication(
     return {
       ok: false,
       applications: [],
-      error: "No application found for that tracking code. Check the email we sent you.",
+      error: "No application found for that tracking code. Check the code from your application confirmation.",
     };
   }
 

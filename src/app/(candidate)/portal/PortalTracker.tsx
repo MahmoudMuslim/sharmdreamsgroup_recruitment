@@ -42,7 +42,7 @@ function nextStep(app: TrackedApplication): string {
     return "Congratulations — our people team will be in touch about your offer.";
   }
   if (app.stage === "INTERVIEW") {
-    return "Your interview is being scheduled. You will receive a calendar invite by email.";
+    return "Your interview is being scheduled. We will confirm the time and joining link with you.";
   }
   if (app.attempt && app.attempt.status === "SUBMITTED") {
     return "Your assessment was submitted and is now with the hiring team.";
@@ -269,7 +269,7 @@ export function PortalTracker() {
             Track your application
           </h1>
           <p className="mt-2 text-brand-ink/60">
-            Enter the tracking code from your confirmation email to see your current stage,
+            Enter the tracking code you were given when you applied to see your current stage,
             assessment and next steps.
           </p>
         </header>
@@ -325,8 +325,8 @@ export function PortalTracker() {
           <Mail className="mx-auto h-9 w-9 text-brand-gold" aria-hidden />
           <h2 className="mt-3 font-display text-lg font-bold">Need help?</h2>
           <p className="mx-auto mt-1.5 max-w-md text-sm text-brand-ink/60">
-            If your link has expired or you cannot find your tracking code, contact the talent
-            team and we will resend it.
+            If your link has expired or you cannot find your tracking code, email the talent team
+            and they will look it up for you.
           </p>
           <a
             href="mailto:careers@sharmdreamsgroup.com"

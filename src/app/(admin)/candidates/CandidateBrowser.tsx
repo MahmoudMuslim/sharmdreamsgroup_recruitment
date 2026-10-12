@@ -164,7 +164,7 @@ export function CandidateBrowser({
       <Card>
         <EmptyState
           title="No applications yet"
-          description="New submissions appear here automatically, ranked by AI match score."
+          description="New submissions appear here as soon as they arrive, newest first."
         />
       </Card>
     );

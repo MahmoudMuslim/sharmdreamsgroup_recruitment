@@ -331,19 +331,12 @@ export async function generateOnboardingPlan(
   const checklist = buildChecklist(jobTitle);
   const skillGaps = await deriveSkillGaps(supabase, applicationId, jobTitle);
 
-  // No assessment data yet means no evidence of retention risk — start neutral
-  // rather than inventing a number that recruiters would act on.
-  const retentionRisk = 20;
-
   const { error } = await supabase.from("onboarding_plans").insert({
     application_id: applicationId,
     tenant_id: tenantId,
     checklist,
     skill_gaps: skillGaps,
-    internal_mobility_suggestions: [],
-    retention_risk_score: retentionRisk,
     progress: 0,
-    generated_by_ai: true,
   });
 
   if (error) {

@@ -10,8 +10,6 @@ export interface OnboardingRow {
   job_title: string | null;
   company_name: string | null;
   progress: number;
-  retention_risk_score: number | null;
-  generated_by_ai: boolean;
   checklist_total: number;
   checklist_done: number;
   skill_gap_count: number;
@@ -20,8 +18,8 @@ export interface OnboardingRow {
 export interface OnboardingSummary {
   active: number;
   avg_progress: number;
-  at_risk: number;
-  ai_generated: number;
+  /** Tasks across every plan where the hire's skill level is below the role's. */
+  open_skill_gaps: number;
 }
 
 export interface OnboardingData {
@@ -38,7 +36,7 @@ export async function getOnboardingData(): Promise<OnboardingData> {
   const { data } = await supabase
     .from("onboarding_plans")
     .select(
-      "id, application_id, progress, retention_risk_score, generated_by_ai, checklist, skill_gaps, applications(full_name, job_openings(title, tenants_and_companies(name)))"
+      "id, application_id, progress, checklist, skill_gaps, applications(full_name, job_openings(title, tenants_and_companies(name)))"
     )
     .order("created_at", { ascending: false });
 
@@ -61,9 +59,6 @@ export async function getOnboardingData(): Promise<OnboardingData> {
       job_title: job?.title ?? null,
       company_name: company?.name ?? null,
       progress: Number(row.progress ?? 0),
-      retention_risk_score:
-        row.retention_risk_score === null ? null : Number(row.retention_risk_score),
-      generated_by_ai: Boolean(row.generated_by_ai),
       checklist_total: checklist.length,
       checklist_done: checklist.filter((item: { completed?: boolean }) => item.completed).length,
       skill_gap_count: gaps.length,
@@ -101,10 +96,7 @@ export async function getOnboardingData(): Promise<OnboardingData> {
         : Math.round(
             withProgress.reduce((sum, p) => sum + p.progress, 0) / withProgress.length
           ),
-    at_risk: plans.filter(
-      (p) => p.retention_risk_score !== null && p.retention_risk_score >= 50
-    ).length,
-    ai_generated: plans.filter((p) => p.generated_by_ai).length,
+    open_skill_gaps: plans.reduce((sum, p) => sum + p.skill_gap_count, 0),
   };
 
   return { plans, summary, unplanned };

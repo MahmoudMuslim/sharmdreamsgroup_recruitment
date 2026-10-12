@@ -34,7 +34,7 @@ const AREAS: {
     id: "integrations",
     label: "API keys",
     icon: KeyRound,
-    blurb: "Credentials for AI, messaging, ATS and calendars — encrypted at rest. Plus per-task model routing.",
+    blurb: "Credentials for the AI providers and channels this platform actually calls — encrypted at rest. Plus per-task model routing.",
   },
 ];
 

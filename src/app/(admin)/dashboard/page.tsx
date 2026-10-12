@@ -16,7 +16,7 @@ import { connection } from "next/server";
 
 export const metadata = {
   title: "Recruiter Analytics Dashboard",
-  description: "Real-time hiring pipeline, AI fit scores, and diversity metrics",
+  description: "Real-time hiring pipeline, AI fit scores and channel effectiveness",
 };
 
 /** Auth-gated route: content is fully session/RLS dependent. */

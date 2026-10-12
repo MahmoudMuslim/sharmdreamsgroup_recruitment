@@ -1,4 +1,4 @@
-import { Sparkles, Upload } from "lucide-react";
+import { CalendarDays, Sparkles, Upload } from "lucide-react";
 import { getCandidateList } from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
 import { requireStaff } from "@/lib/auth/session";
@@ -58,11 +58,12 @@ export default async function CandidatesPage() {
 
         <Card className="p-5">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gold/15 text-brand-gold-dark">
-            <Sparkles className="h-5 w-5" aria-hidden />
+            <CalendarDays className="h-5 w-5" aria-hidden />
           </div>
-          <h3 className="font-display text-base font-bold">ATS sync</h3>
+          <h3 className="font-display text-base font-bold">Interview scheduling</h3>
           <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
-            Push candidates, scores and AI feedback to Greenhouse, Lever or Frappe HR in one click.
+            Book a panel with an interviewer and a joining link, then record the outcome. The
+            day-grouped agenda lives under Interviews.
           </p>
         </Card>
       </div>

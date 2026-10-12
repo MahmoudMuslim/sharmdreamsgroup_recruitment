@@ -1,7 +1,6 @@
 import {
   CheckCircle2,
   FolderOpen,
-  Sparkles,
   TrendingUp,
   UserRoundPlus,
 } from "lucide-react";
@@ -21,8 +20,8 @@ import {
 import { connection } from "next/server";
 
 export const metadata = {
-  title: "Onboarding & Internal Mobility",
-  description: "AI onboarding checklists, skill-gap analysis and retention scoring",
+  title: "Onboarding",
+  description: "Role-mapped onboarding checklists and skill-gap analysis for new hires",
 };
 
 /** Auth-gated route: content is fully session/RLS dependent. */
@@ -31,29 +30,23 @@ export const instant = false;
 const CAPABILITIES = [
   {
     icon: CheckCircle2,
-    title: "AI onboarding checklists",
-    copy: "Admin, IT, training, culture and role-specific tasks generated per hire, with due dates offset from the start date.",
-    points: ["Auto-generated per role", "Progress tracking", "Automatic reminders"],
+    title: "Role-mapped checklists",
+    copy: "Admin, IT, training, culture and role-specific tasks chosen from the hire's job family, with due dates offset from the start date.",
+    points: ["Matched to the job family", "Tick tasks off as they land", "Progress rolls up above"],
   },
   {
     icon: FolderOpen,
     title: "Skill gap analysis",
-    copy: "Assessment scores are compared against role requirements to surface gaps and recommend targeted development actions.",
-    points: ["Gap detection", "Learning recommendations", "Internal mobility matches"],
+    copy: "The role family behind the job is matched to its required skill levels and compared with the skills recorded for the hire; every shortfall carries a development action.",
+    points: ["Gap detection", "An action per gap", "Counted in the tile above"],
   },
   {
     icon: TrendingUp,
-    title: "Retention risk scoring",
-    copy: "Turnover likelihood within the first 12 months, based on engagement signals, score trends and sector benchmarks.",
-    points: ["0–100% risk score", "Early-warning flags", "Action plans"],
+    title: "One plan per hire",
+    copy: "Plans are created for hires only, belong to their company, and are scoped by row-level security — generating twice is refused rather than duplicated.",
+    points: ["Idempotent per hire", "Company-scoped access", "Needs platform permission"],
   },
 ] as const;
-
-function riskTone(score: number) {
-  if (score >= 70) return "danger" as const;
-  if (score >= 50) return "gold" as const;
-  return "success" as const;
-}
 
 function OnboardingData({
   plans,
@@ -69,7 +62,7 @@ function OnboardingData({
       <Card>
         <EmptyState
           title="No hires yet"
-          description="Once a candidate reaches the Hired stage you can generate their onboarding plan, skill-gap map and retention forecast here."
+          description="Once a candidate reaches the Hired stage you can generate their onboarding checklist and skill-gap map here."
           icon={<UserRoundPlus className="h-8 w-8" aria-hidden />}
         />
       </Card>
@@ -78,15 +71,14 @@ function OnboardingData({
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatTile label="Active plans" value={summary.active} hint="Onboarding in progress" />
         <StatTile label="Average progress" value={`${summary.avg_progress}%`} hint="Across active plans" />
         <StatTile
-          label="Retention risk"
-          value={summary.at_risk}
-          hint="Hires scoring 50% or above"
+          label="Open skill gaps"
+          value={summary.open_skill_gaps}
+          hint="Where the hire is below the role's level"
         />
-        <StatTile label="AI generated" value={summary.ai_generated} hint="Plans built by the model" />
       </div>
 
       {plans.length > 0 && (
@@ -108,17 +100,11 @@ function OnboardingData({
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    {plan.generated_by_ai && (
-                      <Badge tone="gold">
-                        <Sparkles className="h-3 w-3" aria-hidden />
-                        AI
-                      </Badge>
-                    )}
-                    {plan.retention_risk_score !== null && (
-                      <Badge tone={riskTone(plan.retention_risk_score)}>
-                        Risk {plan.retention_risk_score}%
-                      </Badge>
-                    )}
+                    <Badge tone={plan.checklist_total === plan.checklist_done ? "success" : "neutral"}>
+                      {plan.checklist_total === plan.checklist_done
+                        ? "Complete"
+                        : `${plan.checklist_total - plan.checklist_done} tasks left`}
+                    </Badge>
                   </div>
                 </div>
 
@@ -181,8 +167,8 @@ export default async function OnboardingPage() {
     <AdminShell user={user}>
       <PageHeader
         eyebrow="Post-hiring"
-        title="Onboarding & mobility"
-        description="Turn accepted offers into structured, measurable journeys — with live progress, skill gaps and retention insight."
+        title="Onboarding"
+        description="Turn accepted offers into structured, measurable journeys — checklist progress and skill gaps per hire."
       />
 
       <OnboardingData plans={plans} summary={summary} unplanned={unplanned} />

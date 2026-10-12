@@ -141,8 +141,8 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
               {[
                 "Apply with your CV. You get a tracking code immediately.",
                 "Our AI screening reads your CV against the role's requirements.",
-                "If there is a fit, you receive an invitation to an assessment.",
-                "Interviews are scheduled from your portal — everything in one place.",
+                "If there is a fit, we open an assessment and you start it from the portal with your code.",
+                "Your recruiter books the interview and confirms the time and joining link with you.",
               ].map((step, index) => (
                 <li key={index} className="flex items-start gap-3 text-sm leading-relaxed text-brand-ink/70">
                   <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-gold/15 text-[11px] font-bold text-brand-gold-dark">

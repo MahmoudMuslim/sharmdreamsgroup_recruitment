@@ -45,6 +45,8 @@ export interface ProviderDefinition {
   docsUrl?: string;
   verify?: ProviderVerifyConfig | null;
   fields: ProviderField[];
+  /** True when no flow in this codebase reads the stored credentials yet. */
+  storedOnly?: boolean;
 }
 
 /** Model option from catalogue (e.g., OpenRouter). */
@@ -105,7 +107,7 @@ export type CostTier = "free" | "low" | "medium" | "high" | "premium";
 /** Built-in provider groups for UI organization. */
 export const PROVIDER_GROUPS: ProviderGroupConfig[] = [
   { id: "ai", label: "AI Providers", blurb: "Language model APIs for generation, embedding, and reasoning." },
-  { id: "communication", label: "Communication", blurb: "Messaging and notification channels (WhatsApp, SMS, Email)." },
+  { id: "communication", label: "Communication", blurb: "Messaging channels that send candidate notifications." },
   { id: "calendar", label: "Calendar", blurb: "Calendar integrations for scheduling and availability." },
   { id: "hr", label: "HR Systems", blurb: "Human resource platform connectors." },
   { id: "other", label: "Other", blurb: "Miscellaneous integrations." },
@@ -204,6 +206,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     group: "hr",
     envVar: "FRAPPE_HR_API_KEY",
     description: "Frappe/ERPNext HR module integration.",
+    storedOnly: true,
     docsUrl: "https://frappeframework.com/docs",
     verify: {
       url: "",
@@ -222,6 +225,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     group: "calendar",
     envVar: "GOOGLE_CALENDAR_CLIENT_ID",
     description: "Google Calendar integration for interview scheduling.",
+    storedOnly: true,
     docsUrl: "https://developers.google.com/calendar",
     verify: null,
     fields: [
@@ -236,6 +240,7 @@ export const PROVIDERS: ProviderDefinition[] = [
     group: "calendar",
     envVar: "MS_CALENDAR_CLIENT_ID",
     description: "Microsoft Graph Calendar integration for Outlook/Exchange.",
+    storedOnly: true,
     docsUrl: "https://learn.microsoft.com/en-us/graph/api/resources/calendar",
     verify: null,
     fields: [

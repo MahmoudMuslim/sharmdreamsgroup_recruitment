@@ -8,21 +8,21 @@ const CAPABILITIES = [
     icon: Zap,
     eyebrow: "Analytics",
     title: "Real-time hiring intelligence",
-    copy: "Pipeline conversion, channel effectiveness, AI fit distributions and diversity metrics — live from the database.",
+    copy: "Pipeline conversion, channel effectiveness and AI fit-score distributions — live from the database.",
   },
   {
     href: "/assessments",
     icon: BookOpen,
     eyebrow: "Assessments",
     title: "Canditech-style test suites",
-    copy: "In-browser financial models with NPV and IRR, video pitches with sentiment analysis, case studies and graded quizzes.",
+    copy: "In-browser financial models with NPV and IRR, video pitches graded from what the candidate actually said, case studies and graded quizzes.",
   },
   {
     href: "/portal",
     icon: Users,
     eyebrow: "Candidate experience",
     title: "A portal candidates trust",
-    copy: "Track application status, interview schedules and next steps from any device, at any time.",
+    copy: "Track application status, assessment results and next steps from any device, at any time.",
   },
 ] as const;
 
@@ -83,7 +83,8 @@ export default function Home() {
 
           <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-brand-ink/65 sm:text-lg">
             Multi-tenant recruitment for the Sharm Dreams Group — bias-reduced CV screening,
-            interactive assessment suites, automated scheduling and real-time hiring analytics.
+            interactive assessment suites, interview scheduling with automatic candidate notices
+            and real-time hiring analytics.
           </p>
 
           <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
