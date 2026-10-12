@@ -205,6 +205,15 @@ export function IntegrityPanel({
                             </Badge>
                           </div>
 
+                          {grade.video_url && (
+                            <video
+                              src={grade.video_url}
+                              controls
+                              preload="none"
+                              className="mt-3 aspect-video w-full rounded-lg bg-black"
+                            />
+                          )}
+
                           {grade.rationale && (
                             <p className="mt-2.5 text-sm leading-relaxed text-brand-ink/70">
                               {grade.rationale}
@@ -241,6 +250,18 @@ export function IntegrityPanel({
                               <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-brand-cream p-3 text-xs leading-relaxed text-brand-ink/60">
                                 {grade.answer_preview}
                                 {grade.answer_preview.length === 400 && "…"}
+                              </p>
+                            </details>
+                          )}
+
+                          {grade.transcript && (
+                            <details className="mt-2.5">
+                              <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-brand-ink/40 hover:text-brand-ink/60">
+                                Transcript
+                              </summary>
+                              <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-brand-cream p-3 text-xs leading-relaxed text-brand-ink/60">
+                                {grade.transcript}
+                                {grade.transcript.length === 1200 && "…"}
                               </p>
                             </details>
                           )}

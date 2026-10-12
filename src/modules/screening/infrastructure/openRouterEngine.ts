@@ -414,3 +414,61 @@ Grade and return:
   const score = breakdown.length > 0 ? Math.round((correctCount / breakdown.length) * 100) : 0;
   return { score, breakdown };
 }
+
+/**
+ * Video pitch scoring.
+ *
+ * The model sees the transcript only, never the recording, so it judges what
+ * was said and how it was organised. Delivery, presence and voice stay with the
+ * human reviewer, who can play the video in the assessment report.
+ */
+export async function evaluateVideoPitch(
+  questionPrompt: string,
+  transcript: string,
+  expectations: { minDurationSeconds?: number; maxDurationSeconds?: number }
+): Promise<{ score: number; rationale: string; strengths: string[]; improvements: string[] }> {
+  const systemPrompt = `You are assessing a recorded candidate pitch for a hospitality / finance leadership role.
+You are given a verbatim transcript, NOT the video. Judge content and organisation only.
+Never comment on appearance, background, camera skills or voice quality — you cannot perceive them.
+The pitch may be in any language; assess the argument, not the language choice.
+Return ONLY valid JSON. No markdown.
+Score 0-100 based on: every part of the brief addressed, structure (opening, body, close), specificity (concrete numbers, metrics and examples over generalities), realism for a resort group, and whether the time allowed was used well.`;
+
+  const limits =
+    expectations.minDurationSeconds || expectations.maxDurationSeconds
+      ? `TIME ALLOWED: ${expectations.minDurationSeconds ?? 0}-${expectations.maxDurationSeconds ?? 120} seconds.`
+      : "";
+
+  const userPrompt = `BRIEF GIVEN TO THE CANDIDATE:
+${questionPrompt}
+${limits ? `\n${limits}` : ""}
+TRANSCRIPT (${transcript.split(/\s+/).filter(Boolean).length} words):
+${transcript}
+
+Evaluate and return:
+{
+  "score": number (0-100),
+  "rationale": "string (3-4 sentences explaining the score)",
+  "strengths": string[] (max 5, each under 15 words),
+  "improvements": string[] (max 5, each under 15 words)
+}`;
+
+  const request: CompletionRequest = {
+    capability: "soft_skills",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.2,
+    maxTokens: 1200,
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  return parseJsonResponse<{
+    score: number;
+    rationale: string;
+    strengths: string[];
+    improvements: string[];
+  }>(result.content);
+}

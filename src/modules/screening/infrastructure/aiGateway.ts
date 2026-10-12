@@ -172,6 +172,110 @@ async function callGoogleAiStudio(
   );
 }
 
+/**
+ * Inline Gemini requests are capped at 20MB total, and base64 inflates the
+ * payload by a third, so recordings above this are not worth attempting.
+ */
+const MAX_INLINE_MEDIA_BYTES = 14 * 1024 * 1024;
+
+/** Raised when a recording can never be transcribed in-line — a human must review it. */
+export class RecordingNotTranscribableError extends Error {}
+
+/**
+ * Speech-to-text for a candidate's pitch recording.
+ *
+ * Goes straight to Gemini rather than through `complete()`: it is the only
+ * provider in this stack that accepts audio, and the OpenRouter hops would
+ * spend daily quota on requests that cannot succeed. The same model chain is
+ * walked so a retired or overloaded id never breaks the transcript.
+ */
+export async function transcribeRecording(
+  bytes: Uint8Array,
+  mimeType: string
+): Promise<string> {
+  if (bytes.byteLength > MAX_INLINE_MEDIA_BYTES) {
+    throw new RecordingNotTranscribableError(
+      `Recording is ${(bytes.byteLength / 1024 / 1024).toFixed(1)}MB, above the ${
+        MAX_INLINE_MEDIA_BYTES / 1024 / 1024
+      }MB limit for automatic transcription.`
+    );
+  }
+
+  const apiKey = await resolveSecret("google_ai_studio");
+  if (!apiKey) {
+    throw new RecordingNotTranscribableError(
+      "No Google AI Studio key is configured, which the transcription model needs."
+    );
+  }
+
+  const data = Buffer.from(bytes).toString("base64");
+  const walkErrors: string[] = [];
+
+  for (const model of GOOGLE_MODEL_CHAIN) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), aiConfig.googleAiStudio.timeoutMs);
+    try {
+      const response = await fetch(
+        `${aiConfig.googleAiStudio.baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: {
+              parts: [{ text: "You are a precise speech-to-text transcriber. Output only what is said." }],
+            },
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { inlineData: { mimeType, data } },
+                  {
+                    text:
+                      "Transcribe everything said in this recording, verbatim, in the language " +
+                      "spoken. If nobody speaks, reply with exactly NO_SPEECH.",
+                  },
+                ],
+              },
+            ],
+            generationConfig: { temperature: 0, maxOutputTokens: 2000 },
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        const message = `Transcription ${model} HTTP ${response.status}: ${text.slice(0, 200)}`;
+        if (GOOGLE_WALK_STATUSES.has(response.status)) {
+          walkErrors.push(message);
+          continue;
+        }
+        throw new Error(message);
+      }
+
+      const payload = (await response.json()) as {
+        candidates?: { content?: { parts?: { text?: string }[] } }[];
+      };
+      const transcript = (payload.candidates?.[0]?.content?.parts ?? [])
+        .map((part) => part.text ?? "")
+        .join("")
+        .trim();
+
+      if (!transcript || transcript.toUpperCase().includes("NO_SPEECH")) return "";
+      return transcript;
+    } catch (error) {
+      if (error instanceof RecordingNotTranscribableError) throw error;
+      walkErrors.push(error instanceof Error ? error.message : "unknown error");
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error(
+    walkErrors.join(" | ") || "Transcription failed: no available model responded"
+  );
+}
+
 export async function complete(request: CompletionRequest): Promise<CompletionResult> {
   const attempts: { model: string; ok: boolean; error?: string; credential?: string }[] = [];
 

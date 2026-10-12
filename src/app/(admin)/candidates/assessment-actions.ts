@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { supabaseConfig } from "@/lib/config";
 
 export interface QuestionGrade {
   id: string;
@@ -13,6 +14,9 @@ export interface QuestionGrade {
   strengths: string[];
   improvements: string[];
   answer_preview: string | null;
+  /** Short-lived playback link, present only for recorded pitches. */
+  video_url: string | null;
+  transcript: string | null;
 }
 
 export interface AttemptGrades {
@@ -44,38 +48,53 @@ export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGr
   const { data: responses } = await supabase
     .from("candidate_responses")
     .select(
-      "question_id, answer_text, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
+      "question_id, answer_text, video_path, transcript, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
     )
     .eq("attempt_id", attempt.id)
     .order("position", { referencedTable: "assessment_questions", ascending: true });
 
-  const grades = ((responses ?? []) as unknown[]).map((row) => {
-    const response = row as {
-      question_id: string;
-      answer_text: string | null;
-      score: number | null;
-      max_score: number;
-      ai_evaluation: {
-        score?: number;
-        rationale?: string;
-        strengths?: string[];
-        improvements?: string[];
-      } | null;
-      assessment_questions?: { title?: string; question_type?: string } | null;
-    };
-    const question = response.assessment_questions;
-    return {
-      id: response.question_id,
+  const grades: QuestionGrade[] = [];
+  for (const row of (responses ?? []) as {
+    question_id: string;
+    answer_text: string | null;
+    video_path: string | null;
+    transcript: string | null;
+    score: number | null;
+    max_score: number;
+    ai_evaluation: {
+      score?: number;
+      rationale?: string;
+      strengths?: string[];
+      improvements?: string[];
+    } | null;
+    assessment_questions?: { title?: string; question_type?: string } | null;
+  }[]) {
+    const question = row.assessment_questions;
+
+    // Recordings live in a private bucket. Staff may watch them, so mint a
+    // short-lived playback link rather than exposing a public URL.
+    let videoUrl: string | null = null;
+    if (row.video_path) {
+      const { data: signed } = await supabase.storage
+        .from(supabaseConfig.buckets.candidateVideos)
+        .createSignedUrl(row.video_path, 60 * 60);
+      videoUrl = signed?.signedUrl ?? null;
+    }
+
+    grades.push({
+      id: row.question_id,
       title: question?.title ?? "Question",
       question_type: question?.question_type ?? "MULTIPLE_CHOICE",
-      score: response.score,
-      max_score: response.max_score,
-      rationale: response.ai_evaluation?.rationale ?? null,
-      strengths: response.ai_evaluation?.strengths ?? [],
-      improvements: response.ai_evaluation?.improvements ?? [],
-      answer_preview: response.answer_text ? response.answer_text.slice(0, 400) : null,
-    } satisfies QuestionGrade;
-  });
+      score: row.score,
+      max_score: row.max_score,
+      rationale: row.ai_evaluation?.rationale ?? null,
+      strengths: row.ai_evaluation?.strengths ?? [],
+      improvements: row.ai_evaluation?.improvements ?? [],
+      answer_preview: row.answer_text ? row.answer_text.slice(0, 400) : null,
+      video_url: videoUrl,
+      transcript: row.transcript ? row.transcript.slice(0, 1200) : null,
+    });
+  }
 
   const template = attempt.assessment_templates as { name?: string } | null;
 
