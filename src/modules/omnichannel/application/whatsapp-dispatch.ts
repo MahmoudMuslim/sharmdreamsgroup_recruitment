@@ -2,6 +2,15 @@ import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { WhatsAppConnector } from "@/modules/omnichannel/infrastructure/connectors";
+import {
+  STAGE_FALLBACK_TEMPLATE,
+  TEMPLATE_DEFAULTS,
+  WHATSAPP_INTERVIEW_TEMPLATES,
+  WHATSAPP_STAGE_TEMPLATES,
+  humanizeStage,
+  renderTemplate,
+  type TemplateVars,
+} from "@/modules/settings/domain/templates";
 
 /**
  * Timed WhatsApp dispatch for pipeline stage changes.
@@ -11,6 +20,10 @@ import { WhatsAppConnector } from "@/modules/omnichannel/infrastructure/connecto
  * That keeps one code path responsible for talking to Meta and for writing
  * `communication_logs`, so the cron retry and the best-effort immediate pass
  * can never drift apart.
+ *
+ * Copy comes from `notification_templates` (Settings → Access & comms), falling
+ * back to `TEMPLATE_DEFAULTS` when a row is missing or switched off, so the
+ * queue can never emit a half-rendered template key.
  *
  * Runs on the service-role client because the cron route has no user session;
  * callers are server-side trust boundaries (staff actions, the secret-guarded
@@ -51,27 +64,55 @@ async function getNotificationSettings(): Promise<NotificationSettings> {
   };
 }
 
-/**
- * Candidate-facing copy per stage. Placeholders match the bulk-send templates
- * in the candidates toolbar so recruiters see one consistent message style.
- * Rejections deliberately carry no internal detail — the stored reason is
- * recruiter-facing only.
- */
-const STAGE_MESSAGES: Record<string, string> = {
-  NEW: "Hi {{candidate_name}}, your application for {{job_title}} is active in our pipeline again. We will keep you updated here.",
-  AI_SCREENING:
-    "Hi {{candidate_name}}, your application for {{job_title}} is now being reviewed by our screening team.",
-  ASSESSMENT:
-    "Hi {{candidate_name}}, good news — you have moved to the assessment stage for {{job_title}}. {{assessment_link}}",
-  INTERVIEW:
-    "Hi {{candidate_name}}, you have reached the interview stage for {{job_title}}. We will be in touch shortly to arrange a time.",
-  OFFER:
-    "Hi {{candidate_name}}, we are excited to move forward with an offer for {{job_title}}. The details are on their way.",
-  HIRED:
-    "Welcome aboard, {{candidate_name}}! The {{job_title}} team is looking forward to having you.",
-  REJECTED:
-    "Hi {{candidate_name}}, thank you for your interest in {{job_title}}. After careful review we will not be progressing your application this time. We appreciate the time you invested and wish you every success.",
-};
+/** First active WHATSAPP row among `keys`, else the shipped default. */
+async function resolveTemplate(keys: string[]): Promise<{ body: string; key: string }> {
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from("notification_templates")
+    .select("key, body")
+    .eq("channel", "WHATSAPP")
+    .eq("is_active", true)
+    .in("key", keys);
+
+  const rows = (data ?? []) as { key: string; body: string }[];
+  for (const key of keys) {
+    const row = rows.find((candidate) => candidate.key === key);
+    if (row?.body?.trim()) return { body: row.body, key };
+  }
+
+  const fallback = keys.find((key) => TEMPLATE_DEFAULTS[key]);
+  if (!fallback) throw new Error(`No template or default for ${keys.join(", ")}`);
+  return { body: TEMPLATE_DEFAULTS[fallback], key: fallback };
+}
+
+/** `{{company_name}}` reads the same setting the rest of the portals show. */
+async function getCompanyName(): Promise<string> {
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from("app_settings")
+    .select("value")
+    .eq("scope", "GLOBAL")
+    .eq("key", "organisation.name")
+    .maybeSingle();
+
+  return typeof data?.value === "string" && data.value.trim()
+    ? data.value.trim()
+    : "Sharm Dreams Group";
+}
+
+/** Every token is always supplied; an unavailable value renders as nothing. */
+async function buildVars(application: { full_name: string }, jobTitle: string, stage: string) {
+  return {
+    candidate_name: application.full_name,
+    job_title: jobTitle,
+    stage,
+    company_name: await getCompanyName(),
+    assessment_link: "",
+    interview_when: "",
+    interview_duration: "",
+    interview_link: "",
+  } satisfies TemplateVars;
+}
 
 interface ApplicationForAlert {
   id: string;
@@ -91,8 +132,8 @@ export async function enqueueStageChangeWhatsApp(
   applicationId: string,
   stage: string
 ): Promise<StageChangeNotificationOutcome> {
-  const template = STAGE_MESSAGES[stage];
-  if (!template) return { queued: false };
+  const templateKey = WHATSAPP_STAGE_TEMPLATES[stage];
+  if (!templateKey) return { queued: false };
 
   const settings = await getNotificationSettings();
   if (!settings.whatsappEnabled || !settings.notifyOnStageChange) {
@@ -117,35 +158,30 @@ export async function enqueueStageChangeWhatsApp(
     : application.candidate_attempts;
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
-  const body = template
-    .replace(/\{\{\s*candidate_name\s*\}\}/g, application.full_name)
-    .replace(/\{\{\s*job_title\s*\}\}/g, job?.title ?? "the role")
-    .replace(
-      /\{\{\s*assessment_link\s*\}\}/g,
-      attempt?.access_token ? `Start it here: ${siteUrl}/test/${attempt.access_token}` : ""
-    )
-    .trim();
+  const { body, key } = await resolveTemplate([templateKey, STAGE_FALLBACK_TEMPLATE]);
+  const vars = await buildVars(
+    application,
+    job?.title ?? "the role",
+    humanizeStage(stage)
+  );
+  vars.assessment_link = attempt?.access_token
+    ? `Start it here: ${siteUrl}/test/${attempt.access_token}`
+    : "";
+
+  const text = renderTemplate(body, vars).trim();
 
   const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
     application_id: applicationId,
     recipient_phone: application.phone,
-    payload: { text: body },
+    payload: { text, template: key },
     status: "PENDING",
   });
 
   return { queued: !error };
 }
 
-export type InterviewNoticeKind = "SCHEDULED" | "CHANGED" | "CANCELLED";
 
-const INTERVIEW_MESSAGES: Record<InterviewNoticeKind, string> = {
-  SCHEDULED:
-    "Hi {{candidate_name}}, your interview for {{job_title}} is confirmed for {{interview_when}} (about {{interview_duration}} minutes).{{interview_link}}",
-  CHANGED:
-    "Hi {{candidate_name}}, we have moved your interview for {{job_title}} to {{interview_when}} (about {{interview_duration}} minutes).{{interview_link}}",
-  CANCELLED:
-    "Hi {{candidate_name}}, we have cancelled your interview for {{job_title}} that was set for {{interview_when}}. We will be in touch to arrange another time.",
-};
+export type InterviewNoticeKind = "SCHEDULED" | "CHANGED" | "CANCELLED";
 
 /**
  * Renders an interview slot for a candidate who reads it on their phone.
@@ -204,20 +240,26 @@ export async function enqueueInterviewNotice(
     ? application.job_openings[0]
     : application.job_openings;
 
-  const link = input.kind === "CANCELLED" ? "" : input.meetingLink?.trim() ? ` Join here: ${input.meetingLink.trim()}` : "";
+  const link =
+    input.kind === "CANCELLED"
+      ? ""
+      : input.meetingLink?.trim()
+        ? ` Join here: ${input.meetingLink.trim()}`
+        : "";
 
-  const body = INTERVIEW_MESSAGES[input.kind]
-    .replace(/\{\{\s*candidate_name\s*\}\}/g, application.full_name)
-    .replace(/\{\{\s*job_title\s*\}\}/g, job?.title ?? "the role")
-    .replace(/\{\{\s*interview_when\s*\}\}/g, formatInterviewWhen(input.scheduledAt))
-    .replace(/\{\{\s*interview_duration\s*\}\}/g, String(input.durationMinutes))
-    .replace(/\{\{\s*interview_link\s*\}\}/g, link)
-    .trim();
+  const templateKey = WHATSAPP_INTERVIEW_TEMPLATES[input.kind];
+  const { body, key } = await resolveTemplate([templateKey]);
+  const vars = await buildVars(application, job?.title ?? "the role", "interview");
+  vars.interview_when = formatInterviewWhen(input.scheduledAt);
+  vars.interview_duration = String(input.durationMinutes);
+  vars.interview_link = link;
+
+  const text = renderTemplate(body, vars).trim();
 
   const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
     application_id: input.applicationId,
     recipient_phone: application.phone,
-    payload: { text: body },
+    payload: { text, template: key },
     status: "PENDING",
   });
 

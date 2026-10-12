@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import type {
   AppRole,
   AuditEntry,
@@ -190,9 +191,61 @@ export async function updateRolePermission(
   return { ok: true };
 }
 
-/** Recent settings activity, newest first. */
-export async function loadAuditLog(limit = 25): Promise<AuditEntry[]> {
+/**
+ * Saves one notification template row.
+ *
+ * The WhatsApp dispatch path reads these bodies verbatim, so a recruiter edit
+ * here is the next message a candidate receives. RLS already limits writes to
+ * `settings.manage_platform`; the check below turns that into a readable error
+ * instead of a silent zero-row update.
+ */
+export async function saveNotificationTemplate(input: {
+  id: string;
+  subject: string | null;
+  body: string;
+  is_active: boolean;
+}): Promise<{ ok: boolean; error?: string }> {
   await requireStaff("/settings");
+
+  if (!(await hasPermissionForUser("settings.manage_platform"))) {
+    return { ok: false, error: "Editing templates requires settings.manage_platform." };
+  }
+
+  const body = input.body.trim();
+  if (!body) return { ok: false, error: "A template needs message copy." };
+  if (body.length > 4000) return { ok: false, error: "Keep templates under 4000 characters." };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: previous } = await supabase
+    .from("notification_templates")
+    .select("key, subject, body, is_active")
+    .eq("id", input.id)
+    .maybeSingle();
+
+  if (!previous) return { ok: false, error: "That template no longer exists." };
+
+  const subject = input.subject?.trim() || null;
+
+  const { error } = await supabase
+    .from("notification_templates")
+    .update({ subject, body, is_active: input.is_active })
+    .eq("id", input.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("settings_audit_log").insert({
+    key: `notification_template:${previous.key}`,
+    previous_value: { subject: previous.subject, body: previous.body, is_active: previous.is_active },
+    next_value: { subject, body, is_active: input.is_active },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/** Recent settings activity, newest first. */
+export async function loadAuditLog(limit = 25): Promise<AuditEntry[]> {  await requireStaff("/settings");
   const supabase = await createSupabaseServerClient();
 
   const { data } = await supabase

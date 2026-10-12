@@ -11,10 +11,15 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
     // the title is "General" because "Organisation" now names the master-data area.
     id: "organisation",
     title: "General",
-    description: "Identity and defaults shown across portals, emails and reports.",
+    description: "Identity and defaults for the group.",
     icon: "building",
     controls: [
-      { kind: "text", key: "organisation.name", label: "Organisation name" },
+      {
+        kind: "text",
+        key: "organisation.name",
+        label: "Organisation name",
+        help: "Fills {{company_name}} in notification templates and labels the portals.",
+      },
       {
         kind: "email",
         key: "organisation.support_email",
@@ -125,7 +130,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
   {
     id: "assessment",
     title: "Assessments",
-    description: "Timing, link validity, autosave and integrity rules.",
+    description: "Timing, link validity, autosave and integrity values.",
     icon: "clipboard",
     controls: [
       {
@@ -199,7 +204,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
   {
     id: "integrations",
     title: "Integrations",
-    description: "ATS and calendar connections. Credentials live in environment variables.",
+    description: "Toggles for ATS and calendar connections. No flow acts on them yet.",
     icon: "plug",
     controls: [
       { kind: "toggle", key: "integrations.greenhouse.enabled", label: "Greenhouse" },
@@ -213,7 +218,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
   {
     id: "security",
     title: "Security",
-    description: "Session, password and data-masking policy.",
+    description: "Session, password and data-masking values.",
     icon: "shield",
     controls: [
       {
@@ -252,6 +257,41 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
 export const ALLOWED_SETTING_KEYS: ReadonlySet<string> = new Set(
   SETTINGS_SCHEMA.flatMap((section) => section.controls.map((control) => control.key))
 );
+
+/**
+ * Keys the platform saves but no flow reads yet.
+ *
+ * The settings screen badges these instead of hiding them, so an admin is never
+ * told that a switch changes behaviour when it only changes a row. Drop a key
+ * from here the moment something starts reading it.
+ */
+export const UNENFORCED_SETTING_KEYS: ReadonlySet<string> = new Set([
+  "organisation.support_email",
+  "organisation.locale",
+  "organisation.enabled_locales",
+  "organisation.timezone",
+  "branding.logo_url",
+  "ai.bias_reduction",
+  "ai.match_threshold_advance",
+  "ai.match_threshold_reject",
+  "ai.generate_feedback",
+  "ai.interview_questions",
+  "assessment.default_duration_minutes",
+  "assessment.link_validity_hours",
+  "assessment.autosave_interval_seconds",
+  "assessment.lock_on_expiry",
+  "assessment.track_focus_changes",
+  "notifications.email_enabled",
+  "integrations.greenhouse.enabled",
+  "integrations.lever.enabled",
+  "integrations.frappe_hr.enabled",
+  "integrations.google_calendar.enabled",
+  "integrations.microsoft_calendar.enabled",
+  "security.session_timeout_minutes",
+  "security.password_min_length",
+  "security.require_oauth",
+  "security.mask_scores_for_reviewers",
+]);
 
 /** Re-exported for consumers that only need the control union. */
 export type { SettingControl };
