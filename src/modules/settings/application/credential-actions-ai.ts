@@ -51,6 +51,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   openrouter: "OpenRouter",
   google_ai_studio: "Google AI Studio",
   opencode: "OpenCode",
+  qoder: "Qoder",
 };
 
 /** Tests one provider's credential with a real API call. */
@@ -151,25 +152,99 @@ export async function testProvider(provider: string): Promise<ProviderTestResult
       };
     }
 
-    // opencode — test credential with v2 API.
-    const res = await fetch("https://opencode.ai/api/v2/models", {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: AbortSignal.timeout(15_000),
-    });
-    const latencyMs = Date.now() - started;
-    const contentType = res.headers.get("content-type") ?? "";
+    if (provider === "opencode") {
+      // `GET /inference/v1/models` is the only public-but-authenticated call:
+      // it returns the full catalogue with a valid key and 401 with a bad one,
+      // which makes it a cheap and precise key validator.
+      const res = await fetch("https://opencode.ai/inference/v1/models", {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        data?: { id?: string }[];
+        error?: { message?: string };
+      };
+      const latencyMs = Date.now() - started;
+
+      if (!res.ok) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: `HTTP ${res.status}`,
+          latencyMs,
+          detail:
+            res.status === 401 || res.status === 403
+              ? "Key rejected by OpenCode — revoked, expired, or mistyped. Generate a new key in the console."
+              : (body.error?.message ?? `HTTP ${res.status}`),
+        };
+      }
+
+      const ids = (body.data ?? []).map((m) => m.id ?? "").filter(Boolean);
+      const freeCount = ids.filter((id) => id.endsWith("-free")).length;
+      return {
+        provider,
+        displayName,
+        ok: true,
+        status: "authenticated",
+        latencyMs,
+        detail:
+          ids.length > 0
+            ? `Key valid. ${ids.length} models available (${freeCount} free). Free-tier models only run inside the OpenCode client — server calls need a paid model.`
+            : "Key valid, but the model list came back empty.",
+      };
+    }
+
+    if (provider === "qoder") {
+      // Qoder Cloud Agents exposes the forward model catalogue behind a
+      // personal access token (prefix `pt-`), so it doubles as a token check.
+      const res = await fetch("https://api.qoder.com/api/v1/forward/models", {
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        data?: { id?: string; display_name?: string; is_enabled?: boolean }[];
+        error?: { message?: string };
+        message?: string;
+      };
+      const latencyMs = Date.now() - started;
+
+      if (!res.ok) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: `HTTP ${res.status}`,
+          latencyMs,
+          detail:
+            res.status === 401 || res.status === 403
+              ? "Token rejected by Qoder — revoked, expired, or missing the required scope. Create a new personal access token."
+              : (body.error?.message ?? body.message ?? `HTTP ${res.status}`),
+        };
+      }
+
+      const models = body.data ?? [];
+      const enabled = models.filter((m) => m.is_enabled !== false).length;
+      return {
+        provider,
+        displayName,
+        ok: true,
+        status: "authenticated",
+        latencyMs,
+        detail:
+          models.length > 0
+            ? `Token valid. ${enabled} of ${models.length} model${models.length === 1 ? "" : "s"} enabled.`
+            : "Token valid, but the model catalogue came back empty.",
+      };
+    }
 
     return {
       provider,
       displayName,
-      ok: res.ok && contentType.includes("json"),
-      status: `HTTP ${res.status}`,
-      latencyMs,
-      detail: res.ok
-        ? contentType.includes("json")
-          ? "Endpoint reachable and authenticated."
-          : "Reached the host but it returned HTML — not an OpenAI-compatible API path."
-        : "Endpoint unreachable or key rejected.",
+      ok: false,
+      status: "not supported",
+      latencyMs: Date.now() - started,
+      detail: "No live test is implemented for this provider yet.",
     };
   } catch (error) {
     return {
@@ -345,5 +420,6 @@ export async function testAllProviders(): Promise<ProviderTestResult[]> {
     testProvider("openrouter"),
     testProvider("google_ai_studio"),
     testProvider("opencode"),
+    testProvider("qoder"),
   ]);
 }

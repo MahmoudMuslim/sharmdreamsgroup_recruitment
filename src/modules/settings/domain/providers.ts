@@ -150,15 +150,33 @@ export const PROVIDERS: ProviderDefinition[] = [
     displayName: "OpenCode",
     group: "ai",
     envVar: "OPENCODE_API_KEY",
-    description: "OpenCode AI provider for code generation and analysis.",
-    docsUrl: "https://opencode.ai/v2/docs/console/api",
+    description:
+      "OpenAI-compatible inference gateway with 80+ models. Free-tier models run only inside the OpenCode client — server-side calls require a paid model.",
+    docsUrl: "https://opencode.ai/v2/docs/console/api/inference/",
     verify: {
-      url: "https://opencode.ai/api/v2/models",
+      url: "https://opencode.ai/inference/v1/models",
       method: "GET",
       header: "Authorization",
     },
     fields: [
-      { key: "api_key", label: "API Key", kind: "text", placeholder: "oc_...", required: true, secret: true },
+      { key: "api_key", label: "API Key", kind: "text", placeholder: "sk-...", required: true, secret: true },
+    ],
+  },
+  {
+    id: "qoder",
+    displayName: "Qoder",
+    group: "ai",
+    envVar: "QODER_API_KEY",
+    description:
+      "Qoder Cloud Agents API. Exposes the forward model catalogue and agent execution over a personal access token.",
+    docsUrl: "https://docs.qoder.com/cloud-agents/api/conventions/authentication",
+    verify: {
+      url: "https://api.qoder.com/api/v1/forward/models",
+      method: "GET",
+      header: "Authorization",
+    },
+    fields: [
+      { key: "api_key", label: "Personal Access Token", kind: "text", placeholder: "pt-...", required: true, secret: true },
     ],
   },
   {
@@ -239,15 +257,19 @@ export const FALLBACK_MODELS: ModelOption[] = [
   { id: "google/gemini-flash-1.5", name: "Gemini 1.5 Flash", promptPrice: 0.075, completionPrice: 0.3, contextLength: 1000000, free: false },
 ];
 
-/** AI capabilities that can have custom model routing. */
+/**
+ * AI capabilities that can have custom model routing.
+ *
+ * INVARIANT: every `id` must match `AiCapability` in `src/lib/config.ts` — the
+ * gateway looks up `ai_model_config` rows by exactly these keys.
+ */
 export const AI_CAPABILITIES: AiCapability[] = [
-  { id: "screening", label: "Candidate Screening", description: "Analyze CVs, cover letters, and profile data against job requirements." },
-  { id: "assessment", label: "Assessment Generation", description: "Create tailored questions, case studies, and practical tasks." },
-  { id: "interview", label: "Interview Assistance", description: "Generate interview guides, scorecards, and follow-up questions." },
-  { id: "matching", label: "Job-Candidate Matching", description: "Semantic matching and ranking of candidates to roles." },
-  { id: "communication", label: "Candidate Communication", description: "Draft emails, messages, and notifications to candidates." },
-  { id: "analytics", label: "Analytics & Reporting", description: "Generate insights, summaries, and reports from hiring data." },
-  { id: "onboarding", label: "Onboarding Content", description: "Create welcome materials, training plans, and checklists." },
+  { id: "resume_screening", label: "Resume screening", description: "Score CVs, cover letters and profile data against job requirements." },
+  { id: "soft_skills", label: "Soft-skill signals", description: "Read tone, seniority and collaboration signals from application material." },
+  { id: "case_reasoning", label: "Case & reasoning", description: "Deep-reasoning work: case studies, scoring rubrics and complex analysis." },
+  { id: "feedback", label: "Feedback drafting", description: "Write candidate feedback and advance/rejection summaries." },
+  { id: "interview_questions", label: "Interview questions", description: "Generate interview guides, scorecards and follow-up questions." },
+  { id: "transcription", label: "Transcription", description: "Turn video pitches and interview audio into text." },
 ];
 
 // ============================================================================

@@ -14,6 +14,7 @@ import {
   TriangleAlert,
   XCircle,
   Zap,
+  type LucideIcon,
 } from "lucide-react";
 import {
   getModelCatalogue,
@@ -30,9 +31,9 @@ import {
 import {
   AI_CAPABILITIES,
   groupModelsByProviderAndCost,
-  filterModelsBySearch,
+  type CostTier,
+  type ModelCatalogue,
   type ProviderModel,
-  type ModelOption,
   getModelById,
   costTierLabel,
   getCostTier,
@@ -81,8 +82,10 @@ function contextLengthLabel(length: number | null): string {
   return length.toString();
 }
 
-function costTierBadge(tier: string) {
-  const colors: Record<string, string> = {
+const COST_TIERS: CostTier[] = ["free", "low", "medium", "high", "premium"];
+
+function costTierBadge(tier: CostTier) {
+  const colors: Record<CostTier, string> = {
     free: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
     low: "bg-teal-500/10 text-teal-700 border-teal-200",
     medium: "bg-amber-500/10 text-amber-700 border-amber-200",
@@ -93,11 +96,11 @@ function costTierBadge(tier: string) {
     <span
       className={cn(
         "inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-        colors[tier] || colors.medium
+        colors[tier]
       )}
     >
       <Tag className="h-2.5 w-2.5" aria-hidden />
-      {costTierLabel(tier as any)}
+      {costTierLabel(tier)}
     </span>
   );
 }
@@ -113,7 +116,7 @@ function snapshot(row: ModelRow) {
   });
 }
 
-function DetailStat({ icon: Icon, label, value }: { icon: any; label: string; value: string }) {
+function DetailStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
   return (
     <div className="rounded-xl bg-brand-cream/50 p-3.5">
       <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
@@ -121,6 +124,76 @@ function DetailStat({ icon: Icon, label, value }: { icon: any; label: string; va
         {label}
       </div>
       <p className="truncate text-base font-display font-bold text-brand-ink">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * Routes the catalogue model open in the detail modal to a capability.
+ * Assignments save immediately — this is the quick path, not a draft.
+ */
+function QuickAssign({
+  model,
+  rows,
+  editable,
+  onAssign,
+}: {
+  model: ProviderModel;
+  rows: ModelRow[];
+  editable: boolean;
+  onAssign: (capability: string, field: "primary" | "fallback") => void;
+}) {
+  const [capability, setCapability] = useState(rows[0]?.capability ?? "");
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-sm text-brand-ink/55">
+        No routable capabilities yet — they appear once the routing table loads.
+      </p>
+    );
+  }
+
+  const row = rows.find((r) => r.capability === capability);
+  const isPrimary = row?.primaryModel === model.modelId;
+  const isFallback = row?.fallbackModel === model.modelId;
+
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <Field label="Capability" htmlFor="quick-assign-capability" className="sm:max-w-xs sm:flex-1">
+        <Select
+          id="quick-assign-capability"
+          value={capability}
+          disabled={!editable}
+          onChange={(e) => setCapability(e.target.value)}
+        >
+          {AI_CAPABILITIES.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!editable || isPrimary}
+          onClick={() => onAssign(capability, "primary")}
+        >
+          {isPrimary && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden />}
+          {isPrimary ? "Is primary" : "Set as primary"}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!editable || isFallback}
+          onClick={() => onAssign(capability, "fallback")}
+        >
+          {isFallback && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden />}
+          {isFallback ? "Is fallback" : "Set as fallback"}
+        </Button>
+      </div>
+      <p className="text-[11px] text-brand-ink/45 sm:pb-2.5">Saves immediately.</p>
     </div>
   );
 }
@@ -136,10 +209,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   const [rows, setRows] = useState<ModelRow[]>([]);
   /** Last persisted state per capability, used to detect real edits. */
   const [saved, setSaved] = useState<Record<string, string>>({});
-  const [catalogue, setCatalogue] = useState<{
-    models: { id: string; name: string; free: boolean; promptPrice: number | null }[];
-    degraded: boolean;
-  } | null>(null);
+  const [catalogue, setCatalogue] = useState<ModelCatalogue | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderTestResult[]>([]);
@@ -148,10 +218,6 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
 
   // Global model search across the entire catalog
   const [globalSearch, setGlobalSearch] = useState("");
-
-  // Capability-specific selects keep their own search (works with a closed select)
-  const [primarySearch, setPrimarySearch] = useState<Record<string, string>>({});
-  const [fallbackSearch, setFallbackSearch] = useState<Record<string, string>>({});
 
   // Selected provider + cost tier filters for the catalog
   const [selectedProvider, setSelectedProvider] = useState<string>("all");
@@ -162,7 +228,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
 
   // Group models by provider and cost tier
   const groupedModels = useMemo(() => {
-    if (!catalogue?.models) return [];
+    if (!catalogue) return [];
     // Convert catalogue models to ProviderModel format
     const providerModels: ProviderModel[] = catalogue.models.map((m) => ({
       id: m.id,
@@ -170,13 +236,13 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       modelId: m.id,
       name: m.name,
       promptPrice: m.promptPrice,
-      completionPrice: null,
-      contextLength: null,
+      completionPrice: m.completionPrice,
+      contextLength: m.contextLength,
       isFree: m.free,
       contextWindowCategory: null,
       capabilities: [],
       isActive: true,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: catalogue.fetchedAt,
     }));
     return groupModelsByProviderAndCost(providerModels);
   }, [catalogue]);
@@ -206,7 +272,13 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     return Array.from(new Set(groupedModels.map((g) => g.provider))).sort();
   }, [groupedModels]);
 
-  // Load data on mount
+  const catalogueIds = useMemo(
+    () => new Set(groupedModels.flatMap((g) => g.models.map((m) => m.modelId))),
+    [groupedModels]
+  );
+
+  // Load data on mount. Routing rows are keyed off AI_CAPABILITIES so a
+  // capability that has never been saved still gets an editable card.
   useEffect(() => {
     let active = true;
     (async () => {
@@ -214,10 +286,24 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       try {
         const [routing, models] = await Promise.all([listModelRouting(), getModelCatalogue()]);
         if (!active) return;
-        const hydrated = routing.map((r) => ({ ...r, status: "idle" as const }));
+        const hydrated: ModelRow[] = AI_CAPABILITIES.map((capability) => {
+          const stored = routing.find((r) => r.capability === capability.id);
+          return stored
+            ? { ...stored, status: "idle" as const }
+            : {
+                capability: capability.id,
+                primaryModel: "",
+                fallbackModel: null,
+                temperature: 0.3,
+                maxTokens: 1200,
+                isEnabled: true,
+                updatedAt: new Date().toISOString(),
+                status: "idle" as const,
+              };
+        });
         setRows(hydrated);
         setSaved(Object.fromEntries(hydrated.map((r) => [r.capability, snapshot(r)])));
-        setCatalogue({ models: models.models, degraded: models.degraded });
+        setCatalogue(models);
         setError(null);
       } catch {
         if (active) setError("Could not load model routing.");
@@ -225,6 +311,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         if (active) setLoading(false);
       }
     })();
+    void probeProviders();
     return () => {
       active = false;
     };
@@ -233,8 +320,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   async function loadCatalogue() {
     setCatalogueLoading(true);
     try {
-      const result = await getModelCatalogue();
-      setCatalogue({ models: result.models, degraded: result.degraded });
+      setCatalogue(await getModelCatalogue());
     } catch {
       // Error is handled by the existing error state
     } finally {
@@ -288,6 +374,22 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     );
   }
 
+  /** Routes the model open in the detail modal to a capability, saving at once. */
+  function assignFromModal(capability: string, field: "primary" | "fallback") {
+    if (!selectedModel) return;
+    const current = rows.find((r) => r.capability === capability);
+    if (!current) return;
+    const next: ModelRow =
+      field === "primary"
+        ? { ...current, primaryModel: selectedModel.modelId }
+        : { ...current, fallbackModel: selectedModel.modelId };
+    patch(capability, {
+      primaryModel: next.primaryModel,
+      fallbackModel: next.fallbackModel,
+    });
+    void save(next);
+  }
+
   /** Runs a real completion through one capability's chain. */
   async function probe(capability: string) {
     patch(capability, { probing: true });
@@ -328,67 +430,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     }
   }
 
-  const availableProviders = useMemo(() => {
-    return providers.filter((p) => p.ok).map((p) => p.provider);
-  }, [providers]);
-
   const totalProviders = providers.length;
-  const workingProviders = availableProviders.length;
-
-  // Helper for assigning a model to a capability
-  const SelectWithAssignment = () => {
-    const capability = rows[0]?.capability;
-
-    if (!capability) {
-      return (
-        <div className="flex-1 rounded-xl border border-brand-line bg-brand-sand p-3.5 text-sm text-brand-ink/45">
-          No capabilities available yet.
-        </div>
-      );
-    }
-
-    const assignedTo = rows.find((r) => r.capability === capability);
-
-    return (
-      <div className="flex flex-1 flex-col gap-1">
-        <label className="text-xs font-semibold text-brand-ink/60">
-          Set as primary model
-        </label>
-        <div className="flex items-center gap-2">
-          <select
-            value={rows[0]?.primaryModel ?? ""}
-            onChange={(e) =>
-              e.target.value &&
-              patch(capability, { primaryModel: e.target.value })
-            }
-            className="flex-1 rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:outline-none"
-          >
-            <option value="">—</option>
-            {groupedModels.flatMap((g) => g.models).map((m) => (
-              <option key={m.modelId} value={m.modelId}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          <span
-            className={cn(
-              "shrink-0 rounded px-2 py-1 text-xs font-bold",
-              rows[0]?.primaryModel
-                ? "bg-emerald-500/10 text-emerald-700"
-                : "bg-brand-sand text-brand-ink/45"
-            )}
-          >
-            {rows[0]?.primaryModel ? "Set" : "None"}
-          </span>
-        </div>
-        {rows[0]?.primaryModel && (
-          <p className="text-[10px] text-emerald-700">
-            ✓ Assigned to {assignedTo?.capability}
-          </p>
-        )}
-      </div>
-    );
-  };
+  const workingProviders = providers.filter((p) => p.ok).length;
 
   if (loading) {
     return (
@@ -401,6 +444,15 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <p
+          role="alert"
+          className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700"
+        >
+          {error}
+        </p>
+      )}
+
       {/* ---------------- Header ---------------- */}
       <div className="rounded-2xl border border-brand-line bg-white p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -451,7 +503,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               Active providers
             </h3>
             <p className="mt-1 text-sm text-brand-ink/55">
-              Live credential health. Models are only selectable from authenticated providers.
+              Live credential health — each configured key is probed with a real API call when this
+              page opens.
             </p>
           </div>
           {providers.length > 0 && (
@@ -462,13 +515,30 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         </div>
 
         {providers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-brand-line border-dashed bg-brand-cream/50 px-4 py-8 text-center">
-            <Cpu className="h-8 w-8 text-brand-gold/60" aria-hidden />
-            <p className="mt-3 text-sm font-medium text-brand-ink">No providers configured</p>
-            <p className="mt-1 text-sm text-brand-ink/55">
-              Configure your API keys in the <strong>API keys</strong> tab to enable model selection.
-            </p>
-          </div>
+          providerTesting ? (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-brand-line border-dashed bg-brand-cream/50 px-4 py-8 text-sm text-brand-ink/50">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              Probing configured providers…
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-brand-line border-dashed bg-brand-cream/50 px-4 py-8 text-center">
+              <Cpu className="h-8 w-8 text-brand-gold/60" aria-hidden />
+              <p className="mt-3 text-sm font-medium text-brand-ink">No provider probes yet</p>
+              <p className="mt-1 max-w-md text-sm text-brand-ink/55">
+                Add keys in the <strong>API keys</strong> tab, then run the live checks to confirm
+                each provider responds.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-4"
+                onClick={() => void probeProviders()}
+              >
+                <Activity className="h-3.5 w-3.5" aria-hidden />
+                Run checks
+              </Button>
+            </div>
+          )
         ) : (
           <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {providers.map((p) => (
@@ -540,9 +610,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             className="rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:outline-none"
           >
             <option value="all">All price tiers</option>
-            {["free", "low", "medium", "high", "premium"].map((tier) => (
+            {COST_TIERS.map((tier) => (
               <option key={tier} value={tier}>
-                {costTierLabel(tier as any)}
+                {costTierLabel(tier)}
               </option>
             ))}
           </select>
@@ -556,44 +626,41 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             <p className="mt-1 text-sm text-brand-ink/55">Try clearing the search or adjusting the filters.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredCatalog.map((model) => {
-              const def = getModelById(model.modelId, catalogue?.models as ModelOption[] | undefined);
-              return (
-                <button
-                  key={model.modelId}
-                  onClick={() => setSelectedModel(model)}
-                  className="flex items-start gap-3 rounded-xl border border-brand-line bg-white p-3.5 text-left transition hover:border-brand-gold/50 hover:shadow-soft"
-                >
-                  <div className="mt-0.5 shrink-0">
-                    {model.isFree ? (
-                      <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden />
-                    ) : (
-                      <DollarSign className="h-4 w-4 text-amber-600" aria-hidden />
+          <div className="grid max-h-96 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredCatalog.map((model) => (
+              <button
+                key={model.modelId}
+                onClick={() => setSelectedModel(model)}
+                className="flex items-start gap-3 rounded-xl border border-brand-line bg-white p-3.5 text-left transition hover:border-brand-gold/50 hover:shadow-soft"
+              >
+                <div className="mt-0.5 shrink-0">
+                  {model.isFree ? (
+                    <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden />
+                  ) : (
+                    <DollarSign className="h-4 w-4 text-amber-600" aria-hidden />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-bold text-brand-ink">{model.name}</p>
+                    {model.isFree && (
+                      <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700">
+                        Free
+                      </span>
                     )}
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-bold text-brand-ink">{model.name}</p>
-                      {model.isFree && (
-                        <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700">
-                          Free
-                        </span>
-                      )}
-                    </div>
-                    <p className="truncate text-xs font-mono text-brand-ink/50">{model.modelId}</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      {costTierBadge(getCostTier(model.promptPrice, model.isFree))}
-                      {model.promptPrice && (
-                        <span className="text-[10px] font-semibold text-brand-ink/55">
-                          {priceLabel(model.promptPrice)} in
-                        </span>
-                      )}
-                    </div>
+                  <p className="truncate text-xs font-mono text-brand-ink/50">{model.modelId}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {costTierBadge(getCostTier(model.promptPrice, model.isFree))}
+                    {model.promptPrice !== null && (
+                      <span className="text-[10px] font-semibold text-brand-ink/55">
+                        {priceLabel(model.promptPrice)} in
+                      </span>
+                    )}
                   </div>
-                </button>
-              );
-            })}
+                </div>
+              </button>
+            ))}
           </div>
         )}
       </section>
@@ -633,16 +700,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             </div>
 
             <div className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-4">
-              <DetailStat
-                icon={DollarSign}
-                label="Input cost"
-                value={selectedModel.promptPrice ? priceLabel(selectedModel.promptPrice) : "—"}
-              />
-              <DetailStat
-                icon={DollarSign}
-                label="Output cost"
-                value={selectedModel.completionPrice ? priceLabel(selectedModel.completionPrice) : "—"}
-              />
+              <DetailStat icon={DollarSign} label="Input cost" value={priceLabel(selectedModel.promptPrice)} />
+              <DetailStat icon={DollarSign} label="Output cost" value={priceLabel(selectedModel.completionPrice)} />
               <DetailStat
                 icon={Maximize}
                 label="Context length"
@@ -652,16 +711,17 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     : "—"
                 }
               />
-              <DetailStat
-                icon={Cpu}
-                label="Provider"
-                value={selectedModel.provider}
-              />
+              <DetailStat icon={Cpu} label="Provider" value={selectedModel.provider} />
             </div>
 
             <div className="border-t border-brand-line bg-brand-cream/30 p-5">
               <h4 className="mb-3 text-sm font-bold text-brand-ink">Quick assign</h4>
-              <SelectWithAssignment />
+              <QuickAssign
+                model={selectedModel}
+                rows={rows}
+                editable={editable}
+                onAssign={assignFromModal}
+              />
             </div>
           </div>
         </div>
@@ -672,7 +732,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         {rows.map((row) => {
           const definition = AI_CAPABILITIES.find((c) => c.id === row.capability);
           const dirty = saved[row.capability] !== snapshot(row);
-          const model = getModelById(row.primaryModel, catalogue?.models as ModelOption[] | undefined);
+          const model = getModelById(row.primaryModel, catalogue?.models);
 
           return (
             <div
@@ -699,21 +759,25 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                   </div>
                   <p className="mt-1 text-sm text-brand-ink/55">{definition?.description}</p>
 
-                  {model && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-brand-ink/50">
-                      <span className="font-semibold text-brand-ink">{model.name}</span>
-                      <span className="font-mono">({model.id})</span>
-                      {model.free ? (
-                        <span className="flex items-center gap-1 text-emerald-700">
-                          <Sparkles className="h-3 w-3" aria-hidden />
-                          free
-                        </span>
-                      ) : (
-                        <span>{priceLabel(model.promptPrice)} / M</span>
-                      )}
-                      {row.probe && <ProbeBadge result={row.probe} />}
-                    </div>
-                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-brand-ink/50">
+                    {model ? (
+                      <>
+                        <span className="font-semibold text-brand-ink">{model.name}</span>
+                        <span className="font-mono">({model.id})</span>
+                        {model.free ? (
+                          <span className="flex items-center gap-1 text-emerald-700">
+                            <Sparkles className="h-3 w-3" aria-hidden />
+                            free
+                          </span>
+                        ) : (
+                          <span>{priceLabel(model.promptPrice)} / M</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="italic">No primary model yet — choose one below and save.</span>
+                    )}
+                    {row.probe && <ProbeBadge result={row.probe} />}
+                  </div>
                 </div>
 
                 <label className="flex shrink-0 items-center gap-2 rounded-lg border border-brand-line bg-white px-3 py-2 text-xs font-semibold">
@@ -740,25 +804,24 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       className="w-full pl-10"
                     >
                       <option value="">Select a model…</option>
-                      {groupedModels
-                        .filter((g) => availableProviders.includes(g.provider))
-                        .map((group) => (
-                          <optgroup
-                            key={group.provider}
-                            label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
-                          >
-                            {filterModelsBySearch(group.models, primarySearch[row.capability] || "")
-                              .filter((m) => availableProviders.includes(m.provider))
-                              .map((model) => (
-                                <option key={model.modelId} value={model.modelId}>
-                                  {model.name}
-                                  {" · "}
-                                  {model.modelId}
-                                  {model.isFree && " — free"}
-                                </option>
-                              ))}
-                          </optgroup>
-                        ))}
+                      {row.primaryModel && !catalogueIds.has(row.primaryModel) && (
+                        <option value={row.primaryModel}>{row.primaryModel} (not in catalogue)</option>
+                      )}
+                      {groupedModels.map((group) => (
+                        <optgroup
+                          key={`${group.provider}-${group.costTier}`}
+                          label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
+                        >
+                          {group.models.map((model) => (
+                            <option key={model.modelId} value={model.modelId}>
+                              {model.name}
+                              {" · "}
+                              {model.modelId}
+                              {model.isFree && " — free"}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
                     </Select>
                   </div>
                 </Field>
@@ -778,25 +841,24 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       className="w-full pl-10"
                     >
                       <option value="">No fallback</option>
-                      {groupedModels
-                        .filter((g) => availableProviders.includes(g.provider))
-                        .map((group) => (
-                          <optgroup
-                            key={group.provider}
-                            label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
-                          >
-                            {filterModelsBySearch(group.models, fallbackSearch[row.capability] || "")
-                              .filter((m) => availableProviders.includes(m.provider))
-                              .map((model) => (
-                                <option key={model.modelId} value={model.modelId}>
-                                  {model.name}
-                                  {" · "}
-                                  {model.modelId}
-                                  {model.isFree && " — free"}
-                                </option>
-                              ))}
-                          </optgroup>
-                        ))}
+                      {row.fallbackModel && !catalogueIds.has(row.fallbackModel) && (
+                        <option value={row.fallbackModel}>{row.fallbackModel} (not in catalogue)</option>
+                      )}
+                      {groupedModels.map((group) => (
+                        <optgroup
+                          key={`${group.provider}-${group.costTier}`}
+                          label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
+                        >
+                          {group.models.map((model) => (
+                            <option key={model.modelId} value={model.modelId}>
+                              {model.name}
+                              {" · "}
+                              {model.modelId}
+                              {model.isFree && " — free"}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
                     </Select>
                   </div>
                 </Field>
@@ -845,22 +907,22 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                   error={row.status === "error" ? row.message ?? "Save failed." : null}
                   success={row.status === "saved" ? "Saved — applies to the next request." : null}
                 />
-                {editable && (
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void probe(row.capability)}
-                      disabled={row.probing}
-                      title="Send a tiny real request through this capability's model chain"
-                    >
-                      {row.probing ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                      ) : (
-                        <Activity className="h-3.5 w-3.5" aria-hidden />
-                      )}
-                      Test
-                    </Button>
+                <div className="flex shrink-0 gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void probe(row.capability)}
+                    disabled={row.probing}
+                    title="Send a tiny real request through this capability's model chain"
+                  >
+                    {row.probing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <Activity className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    Test
+                  </Button>
+                  {editable && (
                     <Button
                       size="sm"
                       onClick={() => void save(row)}
@@ -874,8 +936,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       )}
                       Save
                     </Button>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             </div>
           );

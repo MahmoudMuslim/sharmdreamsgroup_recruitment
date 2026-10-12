@@ -37,11 +37,16 @@ export const aiConfig = {
   },
   openCode: {
     apiKey: optional("OPENCODE_API_KEY", process.env.OPENCODE_API_KEY),
-    baseUrl: "https://opencode.ai/api/v1/chat/completions",
+    baseUrl: "https://opencode.ai/inference/openai/v1/chat/completions",
+    timeoutMs: AI_REQUEST_TIMEOUT_MS,
+  },
+  qoder: {
+    apiKey: optional("QODER_API_KEY", process.env.QODER_API_KEY),
+    baseUrl: "https://api.qoder.com/api/v1",
     timeoutMs: AI_REQUEST_TIMEOUT_MS,
   },
   googleAiStudio: {
-    apiKey: optional("GOOGLE_AI_STUDIO_KEY", process.env.GOOGLE_AI_STUDIO_KEY),
+    apiKey: optional("GOOGLE_AI_STUDIO_API_KEY", process.env.GOOGLE_AI_STUDIO_API_KEY),
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     timeoutMs: AI_REQUEST_TIMEOUT_MS,
   },
@@ -49,7 +54,12 @@ export const aiConfig = {
 
 /** True when at least one AI provider is usable. */
 export function hasAiProvider(): boolean {
-  return Boolean(aiConfig.openRouter.apiKey || aiConfig.googleAiStudio.apiKey);
+  return Boolean(
+    aiConfig.openRouter.apiKey ||
+      aiConfig.googleAiStudio.apiKey ||
+      aiConfig.openCode.apiKey ||
+      aiConfig.qoder.apiKey
+  );
 }
 
 export function requireOpenRouterKey(): string {

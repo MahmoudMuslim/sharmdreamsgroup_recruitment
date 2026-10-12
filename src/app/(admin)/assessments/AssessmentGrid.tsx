@@ -1,8 +1,21 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ListChecks, Pencil, Plus, Target } from "lucide-react";
+import {
+  BookOpen,
+  CheckCircle2,
+  ClipboardCheck,
+  Clock,
+  ListChecks,
+  Pencil,
+  Plus,
+  Search,
+  Send,
+  Table2,
+  Video,
+  type LucideIcon,
+} from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -15,7 +28,7 @@ import {
 import { saveTemplate, assignTemplate } from "./assessment-actions";
 import type { TemplateSummary } from "./actions";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
-import { Badge, Card } from "@/modules/analytics/presentation/ui";
+import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 
 export interface TemplateOptions {
@@ -40,18 +53,45 @@ const EMPTY = {
   block_copy_paste: true,
 };
 
-const TYPE_LABEL: Record<string, string> = {
-  EXCEL_MODEL: "Excel model",
-  VIDEO_PITCH: "Video pitch",
-  CASE_STUDY: "Case study",
-  MULTIPLE_CHOICE: "Quiz",
+interface TypeMeta {
+  singular: string;
+  plural: string;
+  icon: LucideIcon;
+  chip: string;
+}
+
+const TYPE_META: Record<string, TypeMeta> = {
+  EXCEL_MODEL: {
+    singular: "Excel model",
+    plural: "Excel models",
+    icon: Table2,
+    chip: "bg-emerald-500/12 text-emerald-700",
+  },
+  VIDEO_PITCH: {
+    singular: "Video pitch",
+    plural: "Video pitches",
+    icon: Video,
+    chip: "bg-rose-500/12 text-rose-700",
+  },
+  CASE_STUDY: {
+    singular: "Case study",
+    plural: "Case studies",
+    icon: BookOpen,
+    chip: "bg-sky-500/12 text-sky-700",
+  },
+  MULTIPLE_CHOICE: {
+    singular: "Quiz",
+    plural: "Quizzes",
+    icon: CheckCircle2,
+    chip: "bg-amber-500/15 text-amber-700",
+  },
 };
 
 /**
  * Creates a new suite or edits an existing one.
  *
- * Editing is settings-only — the question editor itself is still not built, so
- * the copy says so plainly rather than implying a full builder.
+ * This drawer covers suite-level settings only; individual questions are
+ * managed by the Questions drawer on each suite card.
  */
 export function TemplateEditor({
   options,
@@ -387,14 +427,180 @@ export function AssignDrawer({
 }
 
 /* -------------------------------------------------------------------------- */
+/* Suite card                                                                 */
+/* -------------------------------------------------------------------------- */
+
+function TemplateCard({
+  template,
+  questions,
+  onQuestions,
+  onEdit,
+  onAssign,
+}: {
+  template: TemplateSummary;
+  questions: EditableQuestion[];
+  onQuestions: () => void;
+  onEdit: () => void;
+  onAssign: () => void;
+}) {
+  const typeCounts = new Map<string, number>();
+  for (const question of questions) {
+    typeCounts.set(question.question_type, (typeCounts.get(question.question_type) ?? 0) + 1);
+  }
+  const presentTypes = Object.keys(TYPE_META).filter((type) => (typeCounts.get(type) ?? 0) > 0);
+
+  const integrity = [
+    template.randomize_questions && "Order randomised",
+    template.randomize_options && "Options shuffled",
+    template.block_copy_paste && "Copy-paste blocked",
+  ].filter((entry): entry is string => Boolean(entry));
+
+  const assignable = template.question_count > 0;
+
+  return (
+    <Card className="group flex flex-col overflow-hidden transition hover:-translate-y-0.5 hover:border-brand-gold/50 hover:shadow-lg">
+      <div
+        className={cn(
+          "h-1 w-full",
+          template.is_active
+            ? "bg-gradient-to-r from-brand-gold-dark via-brand-gold to-brand-gold-light"
+            : "bg-brand-line"
+        )}
+      />
+      <div className="flex flex-1 flex-col gap-4 p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="font-display text-lg font-bold leading-snug">{template.name}</h2>
+            {template.description && (
+              <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-brand-ink/60">
+                {template.description}
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <Badge tone={template.is_active ? "success" : "neutral"}>
+              {template.is_active ? "Active" : "Paused"}
+            </Badge>
+            <span className="rounded-full bg-brand-sand px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-brand-ink/60">
+              {template.role_family}
+            </span>
+          </div>
+        </div>
+
+        <dl className="grid grid-cols-2 gap-3 rounded-xl bg-brand-cream px-4 py-3 sm:grid-cols-4">
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+              Duration
+            </dt>
+            <dd className="mt-0.5 font-display text-sm font-bold">
+              {template.time_limit_minutes} min
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+              Questions
+            </dt>
+            <dd className="mt-0.5 font-display text-sm font-bold">{template.question_count}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+              Points
+            </dt>
+            <dd className="mt-0.5 font-display text-sm font-bold">{template.total_points}</dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+              Assigned
+            </dt>
+            <dd className="mt-0.5 font-display text-sm font-bold">
+              {template.attempts}
+              {template.completed > 0 && (
+                <span className="ml-1.5 text-[10px] font-bold text-emerald-700">
+                  {template.completed} done
+                </span>
+              )}
+            </dd>
+          </div>
+        </dl>
+
+        {presentTypes.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {presentTypes.map((type) => {
+              const meta = TYPE_META[type];
+              const count = typeCounts.get(type) ?? 0;
+              return (
+                <span
+                  key={type}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-bold",
+                    meta.chip
+                  )}
+                >
+                  <meta.icon className="h-3.5 w-3.5" aria-hidden />
+                  {count} {count === 1 ? meta.singular : meta.plural}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {integrity.length > 0 && (
+          <p className="text-[11px] text-brand-ink/45">{integrity.join(" · ")}</p>
+        )}
+
+        {template.question_count === 0 && (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
+            This suite has no questions yet, so candidates would see an empty test.
+          </p>
+        )}
+
+        <div className="mt-auto flex flex-wrap gap-2 border-t border-brand-line pt-4">
+          <button
+            type="button"
+            onClick={onQuestions}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-cream px-2.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand"
+          >
+            <ListChecks className="h-3.5 w-3.5" aria-hidden />
+            Questions
+          </button>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand"
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden />
+            Edit suite
+          </button>
+          <button
+            type="button"
+            onClick={onAssign}
+            disabled={!assignable}
+            title={assignable ? "Assign this suite to candidates" : "Add questions before assigning"}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
+              assignable
+                ? "bg-brand-gold/15 text-brand-gold-dark hover:bg-brand-gold/25"
+                : "cursor-not-allowed bg-brand-sand text-brand-ink/40"
+            )}
+          >
+            <Send className="h-3.5 w-3.5" aria-hidden />
+            Assign
+          </button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Client wrapper                                                             */
 /* -------------------------------------------------------------------------- */
 
 /**
  * Assessment template grid with working actions.
  *
- * "Edit suite" and "Assign" were previously inert buttons; they now open real
- * drawers that persist to the database.
+ * Carries its own search, role-family and status filters plus an at-a-glance
+ * summary; every card action opens a real drawer that persists to the database.
  */
 export function AssessmentGrid({
   templates,
@@ -415,108 +621,173 @@ export function AssessmentGrid({
   const [assigning, setAssigning] = useState<TemplateSummary | null>(null);
   const [questionEditing, setQuestionEditing] = useState<TemplateSummary | null>(null);
 
+  const [query, setQuery] = useState("");
+  const [family, setFamily] = useState("ALL");
+  const [status, setStatus] = useState<"all" | "active" | "paused">("all");
+
+  const families = useMemo(() => {
+    const keys = new Set(templates.map((template) => template.role_family));
+    return [...keys].sort();
+  }, [templates]);
+
+  const familyLabel = (key: string) => {
+    const known = options.roleFamilies.find((entry) => entry.key === key)?.label;
+    if (known) return known;
+    // Master data may not cover every stored family — prettify the raw key.
+    return key
+      .toLowerCase()
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  };
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return templates.filter((template) => {
+      if (
+        needle &&
+        !`${template.name} ${template.description}`.toLowerCase().includes(needle)
+      ) {
+        return false;
+      }
+      if (family !== "ALL" && template.role_family !== family) return false;
+      if (status === "active" && !template.is_active) return false;
+      if (status === "paused" && template.is_active) return false;
+      return true;
+    });
+  }, [templates, query, family, status]);
+
+  const activeCount = templates.filter((template) => template.is_active).length;
+  const totalQuestions = templates.reduce((sum, template) => sum + template.question_count, 0);
+  const totalAssigned = templates.reduce((sum, template) => sum + template.attempts, 0);
+  const totalCompleted = templates.reduce((sum, template) => sum + template.completed, 0);
+  const avgDuration = templates.length
+    ? Math.round(
+        templates.reduce((sum, template) => sum + template.time_limit_minutes, 0) /
+          templates.length
+      )
+    : 0;
+
+  const filtersActive = query.trim() !== "" || family !== "ALL" || status !== "all";
+
+  function clearFilters() {
+    setQuery("");
+    setFamily("ALL");
+    setStatus("all");
+  }
+
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setCreating(true)}
-        className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90"
-      >
-        <Plus className="h-4 w-4" aria-hidden />
-        New template
-      </button>
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+          <StatTile
+            label="Suites"
+            value={templates.length}
+            hint={`${activeCount} active · ${templates.length - activeCount} paused`}
+            icon={<ClipboardCheck className="h-5 w-5" aria-hidden />}
+          />
+          <StatTile
+            label="Questions"
+            value={totalQuestions}
+            hint="Across every suite"
+            icon={<ListChecks className="h-5 w-5" aria-hidden />}
+          />
+          <StatTile
+            label="Assigned links"
+            value={totalAssigned}
+            hint={`${totalCompleted} completed run${totalCompleted === 1 ? "" : "s"}`}
+            icon={<Send className="h-5 w-5" aria-hidden />}
+          />
+          <StatTile
+            label="Avg duration"
+            value={`${avgDuration} min`}
+            hint="Per attempt"
+            icon={<Clock className="h-5 w-5" aria-hidden />}
+          />
+        </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        {templates.map((template) => (
-          <Card key={template.id} className="flex flex-col gap-4 p-5 sm:p-6">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h2 className="font-display text-lg font-bold leading-snug">{template.name}</h2>
-                {template.description && (
-                  <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-brand-ink/60">
-                    {template.description}
-                  </p>
-                )}
-              </div>
-              <Badge tone={template.is_active ? "success" : "neutral"}>
-                {template.is_active ? "Active" : "Paused"}
-              </Badge>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="relative sm:max-w-xs sm:flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/35"
+                aria-hidden
+              />
+              <TextInput
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search suites…"
+                aria-label="Search suites"
+                className="pl-9"
+              />
             </div>
+            <Select
+              value={family}
+              onChange={(e) => setFamily(e.target.value)}
+              aria-label="Filter by role family"
+              className="sm:w-44"
+            >
+              <option value="ALL">All families</option>
+              {families.map((key) => (
+                <option key={key} value={key}>
+                  {familyLabel(key)}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as "all" | "active" | "paused")}
+              aria-label="Filter by status"
+              className="sm:w-36"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="paused">Paused</option>
+            </Select>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90"
+          >
+            <Plus className="h-4 w-4" aria-hidden />
+            New template
+          </button>
+        </div>
 
-            <dl className="grid grid-cols-2 gap-3 rounded-xl bg-brand-cream px-4 py-3 sm:grid-cols-4">
-              <div>
-                <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
-                  Family
-                </dt>
-                <dd className="mt-0.5 truncate text-xs font-bold">{template.role_family}</dd>
+        {filtered.length === 0 ? (
+          <Card>
+            <EmptyState
+              title="No suites match"
+              description={`Nothing matches the current search and filters (${templates.length} suite${templates.length === 1 ? "" : "s"} in total).`}
+              icon={<Search className="h-8 w-8" aria-hidden />}
+            />
+            {filtersActive && (
+              <div className="flex justify-center pb-8">
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-4 py-2.5 text-sm font-semibold transition hover:bg-brand-sand"
+                >
+                  Clear filters
+                </button>
               </div>
-              <div>
-                <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
-                  Duration
-                </dt>
-                <dd className="mt-0.5 font-display text-sm font-bold">
-                  {template.time_limit_minutes} min
-                </dd>
-              </div>
-              <div>
-                <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
-                  Questions
-                </dt>
-                <dd className="mt-0.5 font-display text-sm font-bold">{template.question_count}</dd>
-              </div>
-              <div>
-                <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
-                  Points
-                </dt>
-                <dd className="mt-0.5 font-display text-sm font-bold">{template.total_points}</dd>
-              </div>
-            </dl>
-
-            {template.question_count === 0 && (
-              <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
-                This suite has no questions yet, so candidates would see an empty test.
-              </p>
             )}
-
-            <div className="mt-auto flex flex-wrap gap-2 border-t border-brand-line pt-4">
-              <button
-                type="button"
-                onClick={() => setQuestionEditing(template)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-cream px-2.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand"
-              >
-                <ListChecks className="h-3.5 w-3.5" aria-hidden />
-                Questions
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditing(template)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand"
-              >
-                <Pencil className="h-3.5 w-3.5" aria-hidden />
-                Edit suite
-              </button>
-              <button
-                type="button"
-                onClick={() => setAssigning(template)}
-                disabled={template.question_count === 0}
-                title={
-                  template.question_count === 0
-                    ? "Add questions before assigning"
-                    : "Assign this suite to candidates"
-                }
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
-                  template.question_count === 0
-                    ? "cursor-not-allowed bg-brand-sand text-brand-ink/40"
-                    : "bg-brand-cream text-brand-ink/70 hover:bg-brand-sand"
-                )}
-              >
-                <Target className="h-3.5 w-3.5" aria-hidden />
-                Assign
-              </button>
-            </div>
           </Card>
-        ))}
+        ) : (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {filtered.map((template) => (
+              <TemplateCard
+                key={template.id}
+                template={template}
+                questions={questionsByTemplate[template.id] ?? []}
+                onQuestions={() => setQuestionEditing(template)}
+                onEdit={() => setEditing(template)}
+                onAssign={() => setAssigning(template)}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {creating && (
@@ -554,5 +825,3 @@ export function AssessmentGrid({
     </>
   );
 }
-
-export { TYPE_LABEL };

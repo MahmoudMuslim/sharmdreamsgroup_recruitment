@@ -15,8 +15,9 @@ const SECRETS = [
   ["SUPABASE_DB_PASSWORD", get("SUPABASE_DB_PASSWORD")],
   ["SETTINGS_ENCRYPTION_KEY", get("SETTINGS_ENCRYPTION_KEY")],
   ["OPENROUTER_API_KEY", get("OPENROUTER_API_KEY")],
-  ["GOOGLE_AI_STUDIO_KEY", get("GOOGLE_AI_STUDIO_KEY")],
+  ["GOOGLE_AI_STUDIO_API_KEY", get("GOOGLE_AI_STUDIO_API_KEY")],
   ["OPENCODE_API_KEY", get("OPENCODE_API_KEY")],
+  ["QODER_API_KEY", get("QODER_API_KEY")],
   ["WHATSAPP (any EAAQB token)", "EAAQB"],
   ["service-role JWT payload", servicePayload],
 ].filter(([, v]) => v && v.length > 8);

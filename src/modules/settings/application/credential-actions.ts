@@ -601,7 +601,10 @@ export async function getModelCatalogue(): Promise<ModelCatalogue> {
     });
 
     return { models, fetchedAt: new Date().toISOString(), degraded: false };
-  } catch {
+  } catch (error) {
+    // The UI silently shows the offline list; log the cause so a degraded
+    // catalogue can be diagnosed from the server console.
+    console.error("getModelCatalogue failed:", error);
     return {
       models: [...FALLBACK_MODELS],
       fetchedAt: new Date().toISOString(),

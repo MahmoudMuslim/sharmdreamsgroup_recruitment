@@ -332,11 +332,18 @@ export function CredentialsConsole({
     createdAt: string;
   }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Re-reads the store (used by the Refresh button). */
+  /**
+   * Re-reads the store (used by the Refresh button and after any card action).
+   *
+   * Deliberately does NOT flip `loading`: that renders the full-screen spinner
+   * branch, unmounting every card and wiping their local state — which is what
+   * used to make a card's Test result disappear the instant it arrived.
+   */
   async function reload() {
-    setLoading(true);
+    setRefreshing(true);
     try {
       const [creds, entries] = await Promise.all([listCredentials(), listCredentialAudit(12)]);
       setCredentials(creds);
@@ -345,7 +352,7 @@ export function CredentialsConsole({
     } catch {
       setError("Could not load the credential store.");
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   }
 
@@ -406,8 +413,12 @@ export function CredentialsConsole({
           <span className="font-display text-lg font-bold text-brand-ink">{configured}</span> of{" "}
           {credentials.length} providers configured
         </p>
-        <Button size="sm" variant="ghost" onClick={() => void reload()}>
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+        <Button size="sm" variant="ghost" onClick={() => void reload()} disabled={refreshing}>
+          {refreshing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+          )}
           Refresh
         </Button>
       </div>
