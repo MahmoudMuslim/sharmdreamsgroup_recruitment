@@ -136,12 +136,99 @@ export async function enqueueStageChangeWhatsApp(
   return { queued: !error };
 }
 
+export type InterviewNoticeKind = "SCHEDULED" | "CHANGED" | "CANCELLED";
+
+const INTERVIEW_MESSAGES: Record<InterviewNoticeKind, string> = {
+  SCHEDULED:
+    "Hi {{candidate_name}}, your interview for {{job_title}} is confirmed for {{interview_when}} (about {{interview_duration}} minutes).{{interview_link}}",
+  CHANGED:
+    "Hi {{candidate_name}}, we have moved your interview for {{job_title}} to {{interview_when}} (about {{interview_duration}} minutes).{{interview_link}}",
+  CANCELLED:
+    "Hi {{candidate_name}}, we have cancelled your interview for {{job_title}} that was set for {{interview_when}}. We will be in touch to arrange another time.",
+};
+
+/**
+ * Renders an interview slot for a candidate who reads it on their phone.
+ *
+ * The server does not know the candidate's timezone, so the string names UTC
+ * out loud instead of printing a local time that would be wrong for them.
+ */
+function formatInterviewWhen(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "the agreed time";
+  const stamped = new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(date);
+  return `${stamped} UTC`;
+}
+
+export interface InterviewNoticeInput {
+  applicationId: string;
+  kind: InterviewNoticeKind;
+  scheduledAt: string;
+  durationMinutes: number;
+  meetingLink?: string | null;
+}
+
+/**
+ * Queues an interview notice for the candidate.
+ *
+ * Unlike a stage change this is gated only on WhatsApp being enabled — an
+ * interview moving is not a pipeline move. Returns false without touching the
+ * queue when the channel is off or the candidate has no phone on file, so the
+ * scheduling action can report honestly rather than claim a send.
+ */
+export async function enqueueInterviewNotice(
+  input: InterviewNoticeInput
+): Promise<{ queued: boolean }> {
+  const settings = await getNotificationSettings();
+  if (!settings.whatsappEnabled) return { queued: false };
+
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from("applications")
+    .select("id, full_name, phone, job_openings(title)")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
+  const application = data as {
+    full_name: string;
+    phone: string | null;
+    job_openings?: { title?: string } | { title?: string }[] | null;
+  } | null;
+  if (!application?.phone) return { queued: false };
+
+  const job = Array.isArray(application.job_openings)
+    ? application.job_openings[0]
+    : application.job_openings;
+
+  const link = input.kind === "CANCELLED" ? "" : input.meetingLink?.trim() ? ` Join here: ${input.meetingLink.trim()}` : "";
+
+  const body = INTERVIEW_MESSAGES[input.kind]
+    .replace(/\{\{\s*candidate_name\s*\}\}/g, application.full_name)
+    .replace(/\{\{\s*job_title\s*\}\}/g, job?.title ?? "the role")
+    .replace(/\{\{\s*interview_when\s*\}\}/g, formatInterviewWhen(input.scheduledAt))
+    .replace(/\{\{\s*interview_duration\s*\}\}/g, String(input.durationMinutes))
+    .replace(/\{\{\s*interview_link\s*\}\}/g, link)
+    .trim();
+
+  const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
+    application_id: input.applicationId,
+    recipient_phone: application.phone,
+    payload: { text: body },
+    status: "PENDING",
+  });
+
+  return { queued: !error };
+}
+
 export interface WhatsAppDispatchSummary {
   processed: number;
   sent: number;
   failed: number;
 }
-
 interface QueuedJob {
   id: string;
   application_id: string | null;

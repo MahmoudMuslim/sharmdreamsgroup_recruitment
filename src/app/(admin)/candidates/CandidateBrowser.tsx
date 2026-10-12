@@ -21,6 +21,7 @@ import {
 } from "./candidate-actions";
 import type { CandidateRow } from "./actions";
 import { IntegrityPanel } from "./IntegrityPanel";
+import { InterviewPanel } from "./InterviewPanel";
 import { cn } from "@/lib/utils";
 import type { SoftSkillReport } from "@/types";
 
@@ -528,10 +529,19 @@ function ProfileDrawer({
             {candidate.phone && <Badge tone="neutral">{candidate.phone}</Badge>}
             {candidate.attempt_token && (
               <IntegrityPanel
+                key={`integrity-${candidate.id}`}
                 accessToken={candidate.attempt_token}
                 candidateName={candidate.full_name}
               />
             )}
+            <InterviewPanel
+              key={`interviews-${candidate.id}`}
+              applicationId={candidate.id}
+              candidateName={candidate.full_name}
+              jobTitle={candidate.job_title}
+              initialInterviews={candidate.interviews}
+              canWrite={canWrite}
+            />
           </div>
 
           {canWrite && (
