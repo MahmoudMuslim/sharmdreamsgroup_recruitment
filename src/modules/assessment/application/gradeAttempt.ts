@@ -28,6 +28,7 @@ interface QuestionRow {
   points: number;
   config: {
     context?: string;
+    initial_sheet?: { data: (string | number | null)[][]; col_widths?: number[] };
     expected_outputs?: { cell: string; formula_hint?: string; description: string }[];
   } | null;
 }
@@ -50,6 +51,11 @@ interface GradedEvaluation {
 
 const clampPct = (value: number): number => Math.max(0, Math.min(100, Math.round(value)));
 
+const GRADING_PASSES = 3;
+const PASS_DELAY_MS = 20_000;
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 export async function gradeAttemptResponses(
   attemptId: string
 ): Promise<{ graded: number; failed: number }> {
@@ -58,6 +64,28 @@ export async function gradeAttemptResponses(
 
   const supabase = getSupabaseServiceClient();
 
+  let graded = 0;
+  let failed = 0;
+  // Provider capacity flaps (free-tier daily 429s, transient 503s), so failed
+  // responses are retried in later passes instead of leaving the attempt
+  // permanently half-graded — resubmission is blocked once SUBMITTED.
+  for (let pass = 0; pass < GRADING_PASSES; pass += 1) {
+    if (pass > 0) await delay(PASS_DELAY_MS);
+    const result = await gradePendingResponses(supabase, attemptId);
+    graded += result.graded;
+    failed = result.failed;
+    if (failed === 0) break;
+  }
+
+  await finalizeAttemptTotals(supabase, attemptId, failed === 0);
+  return { graded, failed };
+}
+
+/** Grades every not-yet-scored written/model response of the attempt. */
+async function gradePendingResponses(
+  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  attemptId: string
+): Promise<{ graded: number; failed: number }> {
   const { data: responses } = await supabase
     .from("candidate_responses")
     .select("id, question_id, answer_text, spreadsheet_state, score, max_score")
@@ -106,7 +134,6 @@ export async function gradeAttemptResponses(
     }
   }
 
-  await finalizeAttemptTotals(supabase, attemptId, failed === 0);
   return { graded, failed };
 }
 
@@ -137,7 +164,8 @@ async function gradeResponse(
     const result = await evaluateExcelModel(
       `${question.title}\n\n${question.prompt}`,
       candidateCells,
-      question.config?.expected_outputs ?? []
+      question.config?.expected_outputs ?? [],
+      question.config?.initial_sheet?.data
     );
     const correct = result.breakdown.filter((b) => b.correct);
     const missed = result.breakdown.filter((b) => !b.correct);

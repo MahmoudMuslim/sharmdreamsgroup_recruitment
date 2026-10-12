@@ -302,19 +302,43 @@ Evaluate and return:
 /**
  * Excel Model Evaluation: AI-examines the candidate's submitted cells against
  * the question's required outputs (cell, description, formula hint).
- * Required cells the candidate left empty fail deterministically; the model
- * judges the populated ones, and the final score is recomputed from the merged
- * breakdown rather than trusting the model's own score field.
+ * The pipeline may store formulas or computed values (Handsontable can
+ * persist either), so the examiner receives the model's input cells and
+ * verifies numeric answers against the expected math instead of demanding
+ * literal "=" formulas. Empty required cells fail deterministically, and the
+ * final score is recomputed from the merged breakdown rather than trusting
+ * the model's own score field.
  */
 export interface ExcelEvaluation {
   score: number;
   breakdown: { cell: string; expected: string; actual: string; correct: boolean }[];
 }
 
+function refsForGrid(grid: (string | number | null)[][]): string[] {
+  const colName = (index: number): string => {
+    let name = "";
+    let n = index;
+    while (n >= 0) {
+      name = String.fromCharCode(65 + (n % 26)) + name;
+      n = Math.floor(n / 26) - 1;
+    }
+    return name;
+  };
+  const lines: string[] = [];
+  grid.forEach((row, rowIndex) => {
+    row.forEach((value, colIndex) => {
+      if (value === null || value === undefined || value === "") return;
+      lines.push(`${colName(colIndex)}${rowIndex + 1} = ${value}`);
+    });
+  });
+  return lines;
+}
+
 export async function evaluateExcelModel(
   questionPrompt: string,
   candidateCells: Record<string, string | number | null>,
-  expectedOutputs: { cell: string; formulaHint?: string; description: string }[]
+  expectedOutputs: { cell: string; formulaHint?: string; description: string }[],
+  initialSheet?: (string | number | null)[][]
 ): Promise<ExcelEvaluation> {
   const breakdown: ExcelEvaluation["breakdown"] = [];
   const pending: typeof expectedOutputs = [];
@@ -334,10 +358,17 @@ export async function evaluateExcelModel(
   if (pending.length > 0) {
     const systemPrompt = `You are a financial modelling examiner grading a candidate's spreadsheet model.
 Return ONLY valid JSON. No markdown.
-For each required output, judge whether the candidate's cell value (which may be a formula or a computed number) satisfies the requirement described. Be strict about correctness: a plausible-looking but wrong number or a formula referencing the wrong inputs is incorrect.`;
+Submitted cells may contain either a formula (text starting with "=") or a final computed value (a number).
+Judge correctness as follows:
+- A formula is correct when it references the right inputs and operations for the requirement.
+- A numeric value is correct when it equals the expected result of the described computation given the model's input cells — compute the expected result yourself from those inputs and allow small rounding differences (about 1%).
+- A value that is a plausible-looking but wrong number is incorrect.`;
 
     const userPrompt = `QUESTION:
 ${questionPrompt}
+
+MODEL INPUT CELLS:
+${initialSheet ? refsForGrid(initialSheet).join("\n") : "(none provided)"}
 
 REQUIRED OUTPUTS:
 ${pending.map((o) => `- ${o.cell}: ${o.description}${o.formulaHint ? ` (hint: ${o.formulaHint})` : ""}`).join("\n")}
@@ -348,7 +379,7 @@ ${submittedLines.join("\n")}
 Grade and return:
 {
   "score": number (0-100, share of required outputs judged correct),
-  "breakdown": [{ "cell": string, "expected": string (what was required, short), "actual": string (what the candidate submitted, short), "correct": boolean }]
+  "breakdown": [{ "cell": string, "expected": string (what was required, max 12 words), "actual": string (what the candidate submitted, max 12 words), "correct": boolean }]
 }`;
 
     const request: CompletionRequest = {
@@ -358,7 +389,9 @@ Grade and return:
         { role: "user", content: userPrompt },
       ],
       temperature: 0.1,
-      maxTokens: 1200,
+      // Routing tables often cap max_tokens low; the per-cell breakdown needs
+      // room or the JSON arrives truncated and unparseable.
+      maxTokens: 2000,
       jsonMode: true,
     };
 
