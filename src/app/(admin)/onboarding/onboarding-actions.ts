@@ -276,6 +276,11 @@ function matchFamilyKey(title: string): string {
  *
  * Idempotent: refuses to create a second plan for the same application.
  */
+type JobEmbed = {
+  tenant_id?: string | null;
+  tenants_and_companies?: { id: string } | { id: string }[] | null;
+};
+
 export async function generateOnboardingPlan(
   applicationId: string,
   jobTitle: string | null
@@ -290,11 +295,19 @@ export async function generateOnboardingPlan(
 
   const supabase = await createSupabaseServerClient();
 
-  const { data: application } = await supabase
+  // `applications` has no tenant column — a hire belongs to a company through
+  // its opening, so the embed is the only route to the plan's tenant.
+  const { data: application, error: lookupError } = await supabase
     .from("applications")
-    .select("id, tenant_id, job_openings(tenants_and_companies(id))")
+    .select("id, job_id, job_openings(tenant_id, tenants_and_companies(id))")
     .eq("id", applicationId)
     .maybeSingle();
+
+  // A failed read is not a missing hire. Reporting it as one sends the admin
+  // looking for a row that is still there.
+  if (lookupError) {
+    return { ok: false, error: `Could not read this hire: ${lookupError.message}` };
+  }
 
   if (!application) return { ok: false, error: "That hire no longer exists." };
 
@@ -302,17 +315,16 @@ export async function generateOnboardingPlan(
   // depending on whether the relationship is to-many; normalise both.
   const row = application as unknown as {
     id: string;
-    tenant_id: string | null;
     job_openings?:
-      | { tenants_and_companies?: { id: string } | { id: string }[] | null }
-      | { tenants_and_companies?: { id: string } | { id: string }[] | null }[]
+      | JobEmbed
+      | JobEmbed[]
       | null;
   };
   const job = Array.isArray(row.job_openings) ? row.job_openings[0] : row.job_openings;
   const company = job?.tenants_and_companies;
 
   const tenantId =
-    (Array.isArray(company) ? company[0]?.id : company?.id) ?? row.tenant_id ?? null;
+    (Array.isArray(company) ? company[0]?.id : company?.id) ?? job?.tenant_id ?? null;
 
   if (!tenantId) {
     return { ok: false, error: "This hire is not linked to a company." };
