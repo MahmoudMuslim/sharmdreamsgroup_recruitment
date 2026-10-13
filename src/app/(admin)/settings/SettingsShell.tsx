@@ -97,7 +97,7 @@ export function SettingsShell({
   return (
     <div className="lg:grid lg:grid-cols-[252px_minmax(0,1fr)] lg:items-start lg:gap-8">
       {/* ---------------- Desktop dock ---------------- */}
-      <aside className="sticky top-8 hidden lg:block">
+      <aside className="rail-scroll sticky top-8 hidden max-h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain pr-1 lg:block">
         <p className="mb-3 px-3 text-[11px] font-bold uppercase tracking-[0.18em] text-brand-ink/40">
           Settings areas
         </p>

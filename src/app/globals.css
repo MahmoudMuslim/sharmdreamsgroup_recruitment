@@ -90,6 +90,25 @@ body {
   }
 }
 
+/* Navigation rails that must stay usable on short screens. WebKit-only
+   fallback for the rule above (Safari ignores scrollbar-width). */
+.rail-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+.rail-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.rail-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rail-scroll::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: var(--color-brand-gold-light);
+}
+
 /* Respect users who ask for less motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

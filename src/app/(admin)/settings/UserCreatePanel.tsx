@@ -144,7 +144,7 @@ export function UserCreatePanel({
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-5">
+        <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
           {/* Mode switch */}
           <div className="mb-4 rounded-xl border border-brand-line bg-brand-cream p-2">
             <div className="flex" role="radiogroup" aria-label="Creation mode">

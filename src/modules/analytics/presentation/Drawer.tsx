@@ -72,7 +72,9 @@ export function Drawer({
   // the footer belongs to it.
   const Body = (
     <>
-      <div className="flex-1 overflow-y-auto p-5">{children}</div>
+      <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
+        {children}
+      </div>
       {footer && (
         <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-brand-line bg-brand-cream p-5">
           {footer}

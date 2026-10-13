@@ -532,7 +532,7 @@ export function MasterDataConsole({
             </header>
 
             {/* Scrollable body keeps the actions pinned to the bottom on tall forms. */}
-            <div className="flex-1 overflow-y-auto p-5">
+            <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
               <div className="grid grid-cols-1 gap-4">
                 {FIELDS[tab].map((field) => {
                 const id = `master-${tab}-${field.name}`;
