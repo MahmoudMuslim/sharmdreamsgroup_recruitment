@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -708,5 +709,9 @@ export async function convertProspect(input: {
     .eq("id", prospect.id);
 
   if (linkError) return { ok: false, error: linkError.message };
+  // The new row lives on the Candidates board, which this mutation did not
+  // trigger a refresh for, so tell the router that page is no longer current.
+  revalidatePath("/candidates");
+  revalidatePath("/sourcing");
   return { ok: true, application_id: applicationId };
 }
