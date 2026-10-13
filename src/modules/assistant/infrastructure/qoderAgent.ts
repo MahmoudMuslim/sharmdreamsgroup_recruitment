@@ -16,6 +16,7 @@ import {
   type AssistantStep,
   type AssistantTurn,
 } from "@/modules/assistant/infrastructure/agent";
+import { linkForTool } from "@/modules/assistant/domain/links";
 import type { ChatCompletionMessage } from "@/types";
 
 /**
@@ -126,7 +127,13 @@ function definitionFor(
       const detail = asText(value);
       const ok =
         typeof value === "object" && value !== null && (value as { ok?: boolean }).ok !== false;
-      steps.push({ tool: tool.name, label: tool.label, ok, detail: detail.slice(0, 220) });
+      steps.push({
+        tool: tool.name,
+        label: tool.label,
+        ok,
+        detail: detail.slice(0, 220),
+        link: linkForTool(tool.name, input, value) ?? undefined,
+      });
       return { content: [{ type: "text", text: detail }], isError: !ok };
     } catch (error) {
       const detail = error instanceof Error ? error.message : "The tool failed.";

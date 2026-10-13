@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowUpRight,
   Briefcase,
@@ -119,16 +120,50 @@ function FilterChip({ label, onClear }: { label: string; onClear: () => void }) 
  * The funnel, channels and score buckets are all controls: clicking one filters
  * the candidate table below it, so the page answers "who is in this stage and
  * where did they come from?" without a second trip to the candidates portal.
+ *
+ * The same four filters can arrive in the URL (`?stage=`, `?source=`,
+ * `?bucket=`, `?q=`), which is how a link from the assistant — or a saved
+ * bookmark — opens the board already narrowed to the question being asked.
+ * Values that are not real options are ignored rather than emptied onto.
  */
 export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) {
-  const [stage, setStage] = useState<ApplicationStage | null>(null);
-  const [source, setSource] = useState<string | null>(null);
-  const [bucket, setBucket] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const params = useSearchParams();
+
+  const fromUrl = useMemo(
+    () => ({
+      stage: analytics.pipeline.some((step) => step.stage === params.get("stage"))
+        ? (params.get("stage") as ApplicationStage)
+        : null,
+      source: analytics.channels.some((channel) => channel.source === params.get("source"))
+        ? (params.get("source") as string)
+        : null,
+      bucket: analytics.fit_distribution.some((bucket) => bucket.range === params.get("bucket"))
+        ? (params.get("bucket") as string)
+        : null,
+      query: params.get("q") ?? "",
+    }),
+    [params, analytics]
+  );
+
+  const [stage, setStage] = useState<ApplicationStage | null>(fromUrl.stage);
+  const [source, setSource] = useState<string | null>(fromUrl.source);
+  const [bucket, setBucket] = useState<string | null>(fromUrl.bucket);
+  const [query, setQuery] = useState(fromUrl.query);
   const [sortKey, setSortKey] = useState<SortKey>("fit");
   const [sortDesc, setSortDesc] = useState(true);
   const [range, setRange] = useState<7 | 14>(14);
   const [hoverDay, setHoverDay] = useState<number | null>(null);
+
+  // Moving to /dashboard with a different filter query re-renders this board
+  // instead of remounting it, so the incoming filters are applied here too.
+  const [appliedFilters, setAppliedFilters] = useState(fromUrl);
+  if (appliedFilters !== fromUrl) {
+    setAppliedFilters(fromUrl);
+    setStage(fromUrl.stage);
+    setSource(fromUrl.source);
+    setBucket(fromUrl.bucket);
+    setQuery(fromUrl.query);
+  }
 
   const series = analytics.applications_last_14_days.slice(-range);
   const maxDay = Math.max(...series.map((d) => d.count), 1);

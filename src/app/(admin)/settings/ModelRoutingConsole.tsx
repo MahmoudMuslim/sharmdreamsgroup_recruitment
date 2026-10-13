@@ -368,12 +368,13 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         setRows((rs) =>
           rs.map((r) => (r.capability === row.capability ? { ...r, status: "saved" } : r))
         );
-        setTimeout(() =>
-          setRows((rs) =>
-            rs.map((r) => (r.capability === row.capability ? { ...r, status: "idle" } : r))
-          )
-        ),
-          1800;
+        setTimeout(
+          () =>
+            setRows((rs) =>
+              rs.map((r) => (r.capability === row.capability ? { ...r, status: "idle" } : r))
+            ),
+          1800
+        );
       } else {
         setRows((rs) =>
           rs.map((r) => (r.capability === row.capability ? { ...r, status: "error", message: result.error } : r))

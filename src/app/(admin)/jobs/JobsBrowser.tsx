@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { BriefcaseBusiness, CalendarClock, MapPin, Search, Users } from "lucide-react";
 import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -55,11 +56,24 @@ export function JobsBrowser({
   options: JobFormOptions;
   canManage: boolean;
 }) {
+  const params = useSearchParams();
   const [status, setStatus] = useState<string>("");
   const [company, setCompany] = useState<string>("");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
   const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
+
+  // `?job=` is where the assistant's "View the opening" link lands. The opening
+  // is ringed and brought into view rather than filtered to, so the recruiter
+  // still sees where it sits among the rest.
+  const focusId = params.get("job");
+
+  useEffect(() => {
+    if (!focusId) return;
+    document
+      .getElementById(`opening-${focusId}`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusId]);
 
   const companyNames = useMemo(() => {
     const map = new Map(options.companies.map((c) => [c.id, c.name]));
@@ -222,7 +236,14 @@ export function JobsBrowser({
               options.currencies
             );
             return (
-              <Card key={job.id} className="flex flex-col gap-4 p-5 sm:p-6">
+              <Card
+                key={job.id}
+                id={`opening-${job.id}`}
+                className={cn(
+                  "flex flex-col gap-4 p-5 sm:p-6",
+                  job.id === focusId && "ring-2 ring-brand-gold"
+                )}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">

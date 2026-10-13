@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowRightLeft,
   ExternalLink,
@@ -117,6 +117,7 @@ export function SourcingBoard({
   canSend: boolean;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
   const [pending, startTransition] = useTransition();
 
   const [query, setQuery] = useState("");
@@ -124,11 +125,21 @@ export function SourcingBoard({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<ProspectRow | "new" | null>(null);
-  const [profileId, setProfileId] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(params.get("prospect"));
   const [composerIds, setComposerIds] = useState<string[] | null>(null);
   // What the last import or send actually did. The drawer that reported it is
   // closed by the time the board refreshes, so the summary lives here.
   const [notice, setNotice] = useState<string | null>(null);
+
+  // `?prospect=` is where the assistant's "View the prospect" link lands. Same
+  // route with a new query re-renders rather than remounts, so the incoming id
+  // is tracked and applied here as well as in the initial state above.
+  const incomingProspect = params.get("prospect");
+  const [lastAppliedProspect, setLastAppliedProspect] = useState(incomingProspect);
+  if (incomingProspect && incomingProspect !== lastAppliedProspect) {
+    setLastAppliedProspect(incomingProspect);
+    setProfileId(incomingProspect);
+  }
 
   const liveProfile = profileId ? prospects.find((p) => p.id === profileId) ?? null : null;
   const composerRows = composerIds

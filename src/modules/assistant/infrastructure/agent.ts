@@ -8,6 +8,7 @@ import {
   toolByName,
   type ToolArgs,
 } from "@/modules/assistant/domain/tools";
+import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
 import type { ChatCompletionMessage } from "@/types";
 
 /**
@@ -27,6 +28,8 @@ export interface AssistantStep {
   ok: boolean;
   /** The tool's answer, or why it refused — short enough to render as a chip. */
   detail: string;
+  /** Where to inspect the record this step touched, when there is one. */
+  link?: AssistantLink;
 }
 
 /** Which engine actually served the turn, shown in the chat footer. */
@@ -64,6 +67,16 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   ambiguous about which record to change, ask instead of guessing.",
   "6. Quote real numbers from tool results. If a tool returned nothing, say so — do not fill the gap.",
   "7. Replies are read by recruiters: short, plain, specific. Use the record's real name and id.",
+  "8. Format the answer for the chat panel, which renders markdown: a table when the answer has",
+  "   more than two rows of the same shape (| Stage | Count | Conversion |), a bullet list of",
+  "   **Label**: value lines for one record, and **bold** on the number being asked for.",
+  "9. Point at screens with real links so the recruiter can click through:",
+  "   [the opening](/jobs?job=<id>), [this candidate](/candidates?application=<id>),",
+  "   [the prospect](/sourcing?prospect=<id>), [the outbox](/whatsapp),",
+  "   [the model routing](/settings?area=integrations&section=models).",
+  "   A filtered board is the same idea: [interview stage](/dashboard?stage=INTERVIEW) —",
+  "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q= and ?stage=.",
+  "10. Only put an id in a link that a tool actually returned this conversation.",
 ];
 
 function toolCatalogue(allowDestructive: boolean): string {
@@ -189,6 +202,7 @@ async function runTool(
         label: tool.label,
         ok: typeof value === "object" && value !== null && (value as { ok?: boolean }).ok !== false,
         detail: detail.slice(0, 220),
+        link: linkForTool(tool.name, args, value) ?? undefined,
       },
       result: detail,
     };
@@ -222,7 +236,10 @@ export async function runAssistantTurn(
       capability: "assistant",
       messages,
       temperature: 0.2,
-      maxTokens: 1500,
+      // A reply is now a markdown document — a pipeline table inside the JSON
+      // protocol is longer than the prose it replaced — so the chat asks for its
+      // own budget instead of inheriting the routing row's.
+      maxTokens: 2200,
       jsonMode: true,
     });
     model = completion.model;

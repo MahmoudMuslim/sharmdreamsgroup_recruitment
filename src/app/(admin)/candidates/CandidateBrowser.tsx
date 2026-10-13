@@ -127,9 +127,24 @@ export function CandidateBrowser({
   const [sourceFilter, setSourceFilter] = useState("");
   const [sortBy, setSortBy] = useState<"recent" | "fit" | "name">("recent");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [profile, setProfile] = useState<CandidateRow | null>(null);
+  // `?application=` is where the assistant's "Open the dossier" link lands, so
+  // the profile drawer is already showing the record the chat just touched.
+  const [profile, setProfile] = useState<CandidateRow | null>(() =>
+    candidates.find((c) => c.id === params.get("application")) ?? null
+  );
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
+
+  // Moving to the same page with a new `?application=` (the assistant's link
+  // while the recruiter is already on /candidates) re-renders this component
+  // rather than remounting it, so the incoming id is tracked and applied here
+  // instead of only in the initial state above.
+  const incomingApplication = params.get("application");
+  const [lastAppliedId, setLastAppliedId] = useState(incomingApplication);
+  if (incomingApplication && incomingApplication !== lastAppliedId) {
+    setLastAppliedId(incomingApplication);
+    setProfile(candidates.find((c) => c.id === incomingApplication) ?? profile);
+  }
 
   // The drawer keeps the row it was opened with; after router.refresh() the
   // fresh server data lives in `candidates`, so re-resolve by id to avoid
