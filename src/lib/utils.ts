@@ -19,6 +19,23 @@ export function formatDateTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
+/** Compact human size for stored files: `990 B`, `1.4 MB`, `566 KB`. */
+export function formatBytes(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return "—";
+  if (value < 1024) return `${value} B`;
+
+  const units = ["KB", "MB", "GB", "TB"] as const;
+  let size = value / 1024;
+  let unit: string = units[0];
+  for (const candidate of units.slice(1)) {
+    if (size < 1024) break;
+    size /= 1024;
+    unit = candidate;
+  }
+
+  return `${size >= 10 ? Math.round(size) : size.toFixed(1)} ${unit}`;
+}
+
 export function formatDuration(totalSeconds: number): string {
   const safe = Math.max(0, Math.floor(totalSeconds));
   const hours = Math.floor(safe / 3600);

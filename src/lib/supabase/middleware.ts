@@ -12,6 +12,7 @@ const PROTECTED_PREFIXES = [
   "/assessments",
   "/onboarding",
   "/jobs",
+  "/files",
   "/interviews",
   "/settings",
 ];
