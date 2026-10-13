@@ -14,6 +14,7 @@ import {
   Settings,
   Sparkles,
   UserRoundPlus,
+  UserRoundSearch,
   Users,
   X,
 } from "lucide-react";
@@ -32,6 +33,7 @@ interface NavItem {
 const NAV: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics" },
   { href: "/candidates", label: "Candidates", icon: Users, hint: "Pipeline & AI scores" },
+  { href: "/sourcing", label: "Sourcing", icon: UserRoundSearch, hint: "Outbound talent pool" },
   { href: "/assessments", label: "Assessments", icon: ClipboardCheck, hint: "Test suite builder" },
   { href: "/interviews", label: "Interviews", icon: CalendarDays, hint: "Scheduled panels" },
   { href: "/onboarding", label: "Onboarding", icon: UserRoundPlus, hint: "New-hire checklists" },

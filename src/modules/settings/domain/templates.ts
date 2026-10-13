@@ -169,6 +169,34 @@ export const TEMPLATE_DEFAULTS: Record<string, string> = {
     "Hi {{candidate_name}}, we have cancelled your interview for {{job_title}} that was set for {{interview_when}}. We will be in touch to arrange another time.",
 };
 
+/**
+ * First-touch copy for a LinkedIn-sourced prospect.
+ *
+ * Not a pipeline notification: nobody applied, so the letter introduces the
+ * role rather than acknowledging an application. Both keys are editable in
+ * Settings → Access & comms → Templates like any other row.
+ */
+export const PROSPECT_OUTREACH_TEMPLATES: Record<"EMAIL" | "WHATSAPP", string> = {
+  EMAIL: "prospect_outreach_email",
+  WHATSAPP: "prospect_outreach_whatsapp",
+};
+
+export const PROSPECT_OUTREACH_DEFAULTS: Record<
+  "EMAIL" | "WHATSAPP",
+  { subject: string; body: string }
+> = {
+  EMAIL: {
+    subject: "A role at {{company_name}} — {{job_title}}",
+    body:
+      "Hello {{candidate_name}},\n\nI came across your profile and your background looks like a strong match for {{job_title}} at {{company_name}}.\n\nWe are hiring for this role now. If you would like to hear more, reply to this email and I will send the details.\n\nBest regards,\n{{company_name}} Talent Team",
+  },
+  WHATSAPP: {
+    subject: "",
+    body:
+      "Hi {{candidate_name}}, this is {{company_name}}. Your profile looked like a strong match for {{job_title}} — are you open to hearing more?",
+  },
+};
+
 /** INTERVIEW -> "interview", AI_SCREENING -> "AI screening". */
 export function humanizeStage(stage: string): string {
   const words = stage.toLowerCase().split("_").join(" ");
@@ -190,6 +218,10 @@ Object.assign(TEMPLATE_PURPOSE, {
   assessment_invite: "Superseded by the assessment stage template",
   application_received: "Sent when a candidate submits an application",
   offer_letter: "Sent when a candidate moves to the offer stage",
+  prospect_outreach_email:
+    "First-touch email to a LinkedIn-sourced prospect, from the Sourcing board",
+  prospect_outreach_whatsapp:
+    "First-touch WhatsApp message to a LinkedIn-sourced prospect, from the Sourcing board",
 });
 
 /** Every key some channel reads, across all three wired channels. */
@@ -197,6 +229,7 @@ const WIRED_KEYS = new Set<string>([
   ...Object.values(WHATSAPP_STAGE_TEMPLATES),
   ...Object.values(WHATSAPP_INTERVIEW_TEMPLATES),
   ...Object.values(EMAIL_STAGE_TEMPLATES),
+  ...Object.values(PROSPECT_OUTREACH_TEMPLATES),
   STAGE_FALLBACK_TEMPLATE,
 ]);
 
