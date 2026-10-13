@@ -6,6 +6,7 @@ import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
 import { JobCardActions } from "./JobCardActions";
+import { JobApplicantsDrawer } from "./JobApplicantsDrawer";
 import type { JobForEdit, JobFormOptions } from "./JobFormDrawer";
 
 export interface JobRow extends JobForEdit {
@@ -58,6 +59,7 @@ export function JobsBrowser({
   const [company, setCompany] = useState<string>("");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
+  const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
 
   const companyNames = useMemo(() => {
     const map = new Map(options.companies.map((c) => [c.id, c.name]));
@@ -262,10 +264,18 @@ export function JobsBrowser({
 
                 <div>
                   <div className="mb-1.5 flex items-baseline justify-between text-sm">
-                    <span className="text-brand-ink/60">
-                      <strong className="font-display text-base text-brand-ink">{applicants}</strong>{" "}
+                    <button
+                      type="button"
+                      onClick={() => setApplicantsJob(job)}
+                      title="Everyone who applied to this role, and what they submitted"
+                      className="group inline-flex items-baseline gap-1.5 text-brand-ink/60 transition hover:text-brand-ink"
+                    >
+                      <Users className="h-3.5 w-3.5 self-center text-brand-gold-dark" aria-hidden />
+                      <strong className="font-display text-base text-brand-ink underline-offset-4 group-hover:underline">
+                        {applicants}
+                      </strong>
                       applicant{applicants === 1 ? "" : "s"}
-                    </span>
+                    </button>
                     {salary && (
                       <span className="font-mono text-xs text-brand-ink/50">{salary}</span>
                     )}
@@ -284,6 +294,14 @@ export function JobsBrowser({
             );
           })}
         </div>
+      )}
+
+      {applicantsJob && (
+        <JobApplicantsDrawer
+          key={applicantsJob.id}
+          job={applicantsJob}
+          onClose={() => setApplicantsJob(null)}
+        />
       )}
     </div>
   );
