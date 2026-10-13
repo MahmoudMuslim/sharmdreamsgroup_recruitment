@@ -4,6 +4,13 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { resolveSecret, resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
+import {
+  complete,
+  AiGatewayError,
+  type GatewayProvider,
+} from "@/modules/screening/infrastructure/aiGateway";
+import type { AiCapability } from "@/lib/config";
+import type { ChatCompletionMessage } from "@/types";
 
 /**
  * Live AI provider diagnostics.
@@ -38,7 +45,7 @@ export interface ChainTestResult {
   servedBy?: string;
 }
 
-const PROBE_PROMPT = [
+const PROBE_PROMPT: ChatCompletionMessage[] = [
   { role: "system", content: "You are a connectivity probe. Reply with exactly: AI_OK" },
   { role: "user", content: "Reply with AI_OK and nothing else." },
 ];
@@ -50,6 +57,14 @@ function excerpt(text: string, max = 60): string {
 const PROVIDER_NAMES: Record<string, string> = {
   openrouter: "OpenRouter",
   google_ai_studio: "Google AI Studio",
+  opencode: "OpenCode",
+  qoder: "Qoder",
+};
+
+/** The gateway's own provider keys, spelled for the test result's provenance line. */
+const GATEWAY_PROVIDER_NAMES: Record<GatewayProvider, string> = {
+  openrouter: "OpenRouter",
+  google: "Google AI Studio",
   opencode: "OpenCode",
   qoder: "Qoder",
 };
@@ -270,16 +285,39 @@ function reportFailure(
     ok: false,
     status: "all models failed",
     latencyMs: Date.now() - started,
-    detail: excerpt(attempts.join(" | "), 220),
+    // Clipped per hop, not once over the joined string: one provider that
+    // explains itself at length would otherwise push every later hop — and the
+    // reason the fallbacks failed too — off the end of the message.
+    detail: attempts.map((a) => excerpt(a, 110)).join(" | ").slice(0, 420),
   };
 }
 
-/** Runs a real completion through one capability's configured model chain. */
+/**
+ * Runs a real completion through one capability's configured model chain.
+ *
+ * This is the gateway's own `complete()`, not a second copy of its logic: the
+ * gateway owns the rule that decides which endpoint a routing id belongs to, and
+ * probing the providers by hand here is how this screen came to report on a model
+ * the admin never chose — a `qoder:` or `opencode:` id has no slash, so the old
+ * check read it as a Google model and posted it to Google's endpoint. Testing the
+ * real path is the only version that can keep agreeing with production.
+ */
 export async function testCapability(capability: string): Promise<ChainTestResult> {
   await requireStaff("/settings");
 
   const definition = AI_CAPABILITIES.find((c) => c.id === capability);
-  const label = definition?.label ?? capability;
+  if (!definition) {
+    return {
+      capability,
+      label: capability,
+      ok: false,
+      status: "unknown capability",
+      latencyMs: 0,
+      detail: `No capability named "${capability}".`,
+    };
+  }
+
+  const label = definition.label;
   const started = Date.now();
 
   const routing = await resolveModelRouting(capability);
@@ -295,189 +333,47 @@ export async function testCapability(capability: string): Promise<ChainTestResul
     };
   }
 
-  const openRouterKey = await resolveSecret("openrouter");
-  const googleKey = await resolveSecret("google_ai_studio");
+  try {
+    const result = await complete({
+      capability: definition.id as AiCapability,
+      messages: PROBE_PROMPT,
+      temperature: routing.temperature,
+      maxTokens: Math.min(routing.maxTokens, 64),
+    });
 
-  if (!openRouterKey && !googleKey) {
+    // A chain that recovered says as much: an early hop failing is the thing an
+    // operator needs to see before the daily quota turns it into a mystery.
+    const failures = result.attempts.filter((a) => !a.ok);
+
     return {
       capability,
       label,
-      ok: false,
-      status: "no provider",
-      latencyMs: 0,
+      ok: true,
+      status: "responded",
+      latencyMs: Date.now() - started,
       detail:
-        "No AI key configured. Add one in Settings → API keys, or set OPENROUTER_API_KEY in the environment.",
+        failures.length > 0
+          ? `${excerpt(result.content)} · ${failures.length} hop(s) failed first: ${excerpt(
+              failures.map((f) => `${f.model}: ${f.error ?? "failed"}`).join(" | "),
+              180
+            )}`
+          : excerpt(result.content),
+      servedBy: `${result.model} (${GATEWAY_PROVIDER_NAMES[result.provider]})`,
     };
-  }
-
-  const attempts: string[] = [];
-  const chain = [routing.primaryModel, routing.fallbackModel].filter(
-    (m): m is string => Boolean(m)
-  );
-
-  /**
-   * Probe each configured id on the provider that publishes it, in the order the
-   * routing table lists them — the same split the gateway makes. Probing every id
-   * through OpenRouter would report on a model the admin never chose: a Google id
-   * either gets answered by OpenRouter's own copy of it, or fails and the test
-   * silently answers with a different Gemini model below.
-   */
-  for (const model of chain) {
-    if (!model.includes("/")) {
-      if (!googleKey) continue;
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(googleKey)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              systemInstruction: {
-                parts: [{ text: "You are a connectivity probe. Reply with exactly: AI_OK" }],
-              },
-              contents: [{ role: "user", parts: [{ text: "Reply with AI_OK and nothing else." }] }],
-              generationConfig: {
-                temperature: routing.temperature,
-                maxOutputTokens: Math.min(routing.maxTokens, 64),
-              },
-            }),
-            signal: AbortSignal.timeout(40_000),
-          }
-        );
-
-        const body = (await res.json().catch(() => ({}))) as {
-          candidates?: { content?: { parts?: { text?: string }[] } }[];
-          error?: { message?: string };
-        };
-        const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
-
-        if (res.ok && text?.trim()) {
-          return {
-            capability,
-            label,
-            ok: true,
-            status: "responded",
-            latencyMs: Date.now() - started,
-            detail: excerpt(text),
-            servedBy: `${model} (Google AI Studio)`,
-          };
-        }
-
-        attempts.push(`${model}: ${body.error?.message ?? `HTTP ${res.status}`}`);
-
-        // 403 means the key is blocked outright; other models will fail too.
-        if (res.status === 403) {
-          return reportFailure(capability, label, started, attempts);
-        }
-      } catch (error) {
-        attempts.push(`${model}: ${error instanceof Error ? error.message : "network error"}`);
-      }
-      continue;
+  } catch (error) {
+    if (error instanceof AiGatewayError) {
+      return reportFailure(
+        capability,
+        label,
+        started,
+        error.attempts.map((a) => `${a.model}: ${a.error ?? "ok"}`)
+      );
     }
-
-    if (!openRouterKey) continue;
-    try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openRouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.APP_URL ?? "http://localhost:3000",
-          "X-Title": "Sharm Dreams Talent Cloud",
-        },
-        body: JSON.stringify({
-          model,
-          messages: PROBE_PROMPT,
-          temperature: routing.temperature,
-          max_tokens: Math.min(routing.maxTokens, 64),
-        }),
-        signal: AbortSignal.timeout(40_000),
-      });
-
-      const body = (await res.json().catch(() => ({}))) as {
-        choices?: { message?: { content?: string } }[];
-        error?: { message?: string };
-      };
-
-      const content = body.choices?.[0]?.message?.content;
-
-      if (res.ok && content?.trim()) {
-        return {
-          capability,
-          label,
-          ok: true,
-          status: "responded",
-          latencyMs: Date.now() - started,
-          detail: excerpt(content),
-          servedBy: `${model} (OpenRouter)`,
-        };
-      }
-
-      attempts.push(`${model}: ${body.error?.message ?? `HTTP ${res.status}`}`);
-    } catch (error) {
-      attempts.push(`${model}: ${error instanceof Error ? error.message : "network error"}`);
-    }
+    return reportFailure(capability, label, started, [
+      error instanceof Error ? error.message : "unknown error",
+    ]);
   }
-
-  // Google fallback. Model ids are walked newest-first because Google retires
-  // them without warning. gemini-3.8-flash is the id Google's own deprecation
-  // notice points at; gemini-2.5-flash is no longer available to new accounts.
-  const GOOGLE_CHAIN = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.0-flash"];
-
-  if (googleKey) {
-    for (const model of GOOGLE_CHAIN) {
-      if (chain.includes(model)) continue;
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(googleKey)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              systemInstruction: {
-                parts: [{ text: "You are a connectivity probe. Reply with exactly: AI_OK" }],
-              },
-              contents: [{ role: "user", parts: [{ text: "Reply with AI_OK and nothing else." }] }],
-              generationConfig: {
-                temperature: routing.temperature,
-                maxOutputTokens: Math.min(routing.maxTokens, 64),
-              },
-            }),
-            signal: AbortSignal.timeout(40_000),
-          }
-        );
-
-        const body = (await res.json().catch(() => ({}))) as {
-          candidates?: { content?: { parts?: { text?: string }[] } }[];
-          error?: { message?: string };
-        };
-        const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
-
-        if (res.ok && text?.trim()) {
-          return {
-            capability,
-            label,
-            ok: true,
-            status: "responded",
-            latencyMs: Date.now() - started,
-            detail: excerpt(text),
-            servedBy: `${model} (Google fallback)`,
-          };
-        }
-
-        attempts.push(`${model}: ${body.error?.message ?? `HTTP ${res.status}`}`);
-
-        // 403 means the key is blocked outright; other models will fail too.
-        if (res.status === 403) break;
-      } catch (error) {
-        attempts.push(`${model}: ${error instanceof Error ? error.message : "network error"}`);
-      }
-    }
-  }
-
-  return reportFailure(capability, label, started, attempts);
 }
-
 /** Convenience: run every provider probe in one call for the console. */
 export async function testAllProviders(): Promise<ProviderTestResult[]> {
   await requireStaff("/settings");

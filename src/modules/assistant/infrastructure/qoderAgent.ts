@@ -5,6 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 import type { CallToolResult, SdkMcpToolDefinition } from "@qoder-ai/qoder-agent-sdk";
 import { resolveSecret } from "@/modules/settings/infrastructure/credentialResolver";
+import { QODER_BUILTIN_TOOLS } from "@/modules/screening/infrastructure/qoderCompletion";
 import {
   ASSISTANT_TOOLS,
   type AssistantTool,
@@ -39,27 +40,10 @@ import type { ChatCompletionMessage } from "@/types";
 export class QoderAssistantError extends Error {}
 
 /**
- * The runtime's own tools. A name here that does not exist is ignored, so the
- * list is deliberately wider than the 13 tools the current build initialises.
+ * The runtime's own tools, blocked the same way the completion path blocks them.
+ * The list lives with the completion engine so the two cannot drift apart.
  */
-const BUILTIN_AGENT_TOOLS = [
-  "Bash",
-  "Read",
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "NotebookEdit",
-  "Glob",
-  "Grep",
-  "WebFetch",
-  "WebSearch",
-  "Task",
-  "Agent",
-  "TodoWrite",
-  "AskUserQuestion",
-  "ExitPlanMode",
-  "Plan",
-];
+const BUILTIN_AGENT_TOOLS = QODER_BUILTIN_TOOLS;
 
 const MCP_SERVER_NAME = "talentsphere";
 

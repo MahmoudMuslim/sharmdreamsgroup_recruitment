@@ -1,5 +1,5 @@
 /**
- * AI Gateway — OpenRouter client with multi-model and multi-key failover.
+ * AI Gateway — multi-provider client with model and key failover.
  * 
  * Walks the capability's model chain AND credential chain until a provider 
  * returns a valid completion. Each hop gets its own timeout. Falls back to 
@@ -8,6 +8,11 @@
  * Credentials and model routing are resolved per request from the encrypted
  * store first, falling back to the compiled-in environment variables. That is
  * what makes the Settings → API keys panel authoritative rather than cosmetic.
+ *
+ * Which provider serves a hop is decided by the model id itself: a routing row
+ * carries no provider column, so an id prefixed `opencode:` or `qoder:` names
+ * its provider explicitly, and everything else keeps the long-standing split
+ * between OpenRouter's namespaced ids and Google's bare ones.
  */
 import { aiConfig } from "@/lib/config.server";
 import { modelChains, type AiCapability } from "@/lib/config";
@@ -16,6 +21,10 @@ import {
   resolveSecret,
   resolveModelRouting,
 } from "@/modules/settings/infrastructure/credentialResolver";
+import {
+  callQoderCompletion,
+  QODER_COMPLETION_TIMEOUT_MS,
+} from "@/modules/screening/infrastructure/qoderCompletion";
 import type { ChatCompletionMessage, ChatCompletionResponse } from "@/types";
 
 export interface CompletionRequest {
@@ -26,10 +35,13 @@ export interface CompletionRequest {
   jsonMode?: boolean;
 }
 
+/** Which provider answered. Every member here has a caller in this file. */
+export type GatewayProvider = "openrouter" | "google" | "opencode" | "qoder";
+
 export interface CompletionResult {
   content: string;
   model: string;
-  provider: "openrouter" | "google";
+  provider: GatewayProvider;
   attempts: { model: string; ok: boolean; error?: string; credential?: string }[];
   /** The provider stopped at its output cap, so `content` is cut off mid-answer. */
   truncated: boolean;
@@ -113,6 +125,97 @@ const GOOGLE_WALK_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
  */
 function isGoogleNativeModel(model: string): boolean {
   return !model.includes("/");
+}
+
+/**
+ * Providers whose ids cannot be told apart by looking at them.
+ *
+ * OpenCode lists flat ids (`claude-haiku-4-5`), which is exactly the shape
+ * `isGoogleNativeModel` reads as "Google's own endpoint", and Qoder's ids are
+ * agent aliases (`qfmodel`) that no HTTP completion call accepts. Both are
+ * therefore stored in the routing table with their provider in front of them,
+ * and the prefix is stripped before the id goes on the wire.
+ */
+const ROUTING_PREFIXES: Record<string, GatewayProvider> = {
+  "opencode:": "opencode",
+  "qoder:": "qoder",
+};
+
+function routeFor(model: string): { provider: GatewayProvider; model: string } {
+  for (const [prefix, provider] of Object.entries(ROUTING_PREFIXES)) {
+    if (model.startsWith(prefix)) return { provider, model: model.slice(prefix.length) };
+  }
+  return { provider: isGoogleNativeModel(model) ? "google" : "openrouter", model };
+}
+
+/**
+ * OpenCode speaks the OpenAI wire format, so the request is the same body
+ * OpenRouter gets — minus `response_format`. OpenCode documents no JSON mode and
+ * a parameter it rejects would drop the hop, while `parseJsonResponse` already
+ * recovers the first balanced JSON value from a reply that carries prose.
+ */
+async function callOpenCode(
+  model: string,
+  request: CompletionRequest,
+  signal: AbortSignal,
+  apiKey: string
+): Promise<{ content: string; truncated: boolean }> {
+  const response = await fetch(aiConfig.openCode.baseUrl, {
+    method: "POST",
+    signal,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: request.messages,
+      temperature: request.temperature ?? 0.2,
+      max_tokens: request.maxTokens ?? 2048,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`OpenCode ${model} ${describeOpenCodeFailure(response.status, text)}`);
+  }
+
+  const payload = (await response.json()) as ChatCompletionResponse;
+  if (payload.error) {
+    throw new Error(`OpenCode ${model}: ${payload.error.message}`);
+  }
+  const choice = payload.choices?.[0];
+  const content = choice?.message?.content;
+  if (!content || content.trim().length === 0) {
+    throw new Error(`OpenCode ${model} returned an empty completion`);
+  }
+  return { content, truncated: choice?.finish_reason === "length" };
+}
+
+/**
+ * OpenCode's two rejections both say something the operator can act on, and
+ * neither is a code fault: its free tier answers only inside the OpenCode
+ * client, and a paid model on an account without credit fails at the upstream.
+ * The provider's own wording is kept; only the explanation is added.
+ */
+function describeOpenCodeFailure(status: number, body: string): string {
+  let message = body.slice(0, 200);
+  let type = "";
+  try {
+    const parsed = JSON.parse(body) as { error?: { type?: string; message?: string } };
+    message = parsed.error?.message ?? message;
+    type = parsed.error?.type ?? "";
+  } catch {
+    // Not JSON — report what came back.
+  }
+
+  if (status === 403 && type === "FreeTierError") {
+    return `HTTP 403: ${message} This id is on OpenCode's free tier, which its client alone may call; route a paid model id for server-side work.`;
+  }
+  if (status === 402) {
+    return `HTTP 402: ${message} The OpenCode account behind this key has no credit, so every paid model answers the same way.`;
+  }
+  return `HTTP ${status}: ${message}`;
 }
 
 async function callGoogleAiStudio(
@@ -300,14 +403,19 @@ export async function transcribeRecording(
 export async function complete(request: CompletionRequest): Promise<CompletionResult> {
   const attempts: { model: string; ok: boolean; error?: string; credential?: string }[] = [];
 
-  // Settings win over the environment; both are optional.
-  const [credentials, googleKey, routing] = await Promise.all([
+  // Settings win over the environment; every provider is optional. Resolved
+  // together so the wall clock costs one round trip, and all four are needed up
+  // front because the "nothing is configured" message has to be true for the
+  // provider the chain is actually about to try.
+  const [credentials, googleKey, openCodeKeys, qoderKey, routing] = await Promise.all([
     resolveCredentials("openrouter"),
     resolveSecret("google_ai_studio"),
+    resolveCredentials("opencode"),
+    resolveSecret("qoder"),
     resolveModelRouting(request.capability),
   ]);
 
-  if (credentials.length === 0 && !googleKey) {
+  if (credentials.length === 0 && !googleKey && openCodeKeys.length === 0 && !qoderKey) {
     throw new AiGatewayError(
       "No AI provider is configured. Add an OpenRouter key in Settings → API keys, " +
         "or set OPENROUTER_API_KEY in the environment.",
@@ -332,8 +440,84 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
   // the provider that publishes it. Sweeping every OpenRouter id first would let a
   // leftover OpenRouter fallback answer before a Google model set as primary — so
   // a choice made in the console would still silently never take effect.
-  for (const model of chain) {
-    if (isGoogleNativeModel(model)) {
+  for (const routed of chain) {
+    const { provider: hop, model } = routeFor(routed);
+
+    if (hop === "opencode") {
+      if (openCodeKeys.length === 0) {
+        attempts.push({
+          model: routed,
+          ok: false,
+          error: "no OpenCode key configured",
+          credential: "opencode",
+        });
+        continue;
+      }
+      for (const credential of openCodeKeys) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), aiConfig.openCode.timeoutMs);
+        try {
+          const reply = await callOpenCode(model, effective, controller.signal, credential.secret);
+          clearTimeout(timeout);
+          attempts.push({ model: routed, ok: true, credential: credential.secretHint });
+          return {
+            content: reply.content,
+            model,
+            provider: "opencode",
+            attempts,
+            truncated: reply.truncated,
+          };
+        } catch (error) {
+          clearTimeout(timeout);
+          attempts.push({
+            model: routed,
+            ok: false,
+            error: error instanceof Error ? error.message : "unknown error",
+            credential: credential.secretHint,
+          });
+        }
+      }
+      continue;
+    }
+
+    if (hop === "qoder") {
+      if (!qoderKey) {
+        attempts.push({
+          model: routed,
+          ok: false,
+          error: "no Qoder token configured",
+          credential: "qoder",
+        });
+        continue;
+      }
+      // An agent turn, not a completion: its runtime sets its own sampling, so
+      // `effective`'s temperature and token budget do not travel with it.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), QODER_COMPLETION_TIMEOUT_MS);
+      try {
+        const reply = await callQoderCompletion(model, effective.messages, qoderKey, controller);
+        clearTimeout(timeout);
+        attempts.push({ model: routed, ok: true, credential: "qoder" });
+        return {
+          content: reply.content,
+          model: reply.model,
+          provider: "qoder",
+          attempts,
+          truncated: false,
+        };
+      } catch (error) {
+        clearTimeout(timeout);
+        attempts.push({
+          model: routed,
+          ok: false,
+          error: error instanceof Error ? error.message : "unknown error",
+          credential: "qoder",
+        });
+      }
+      continue;
+    }
+
+    if (hop === "google") {
       if (!googleKey) {
         attempts.push({
           model,

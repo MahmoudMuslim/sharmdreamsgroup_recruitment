@@ -227,6 +227,16 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   // Expanded model detail
   const [selectedModel, setSelectedModel] = useState<ProviderModel | null>(null);
 
+  /**
+   * Everything the provider itself reported about the open model card — its
+   * caveat in particular. Said at the point of assignment rather than only as a
+   * chip tooltip, because "this tier is client-only" is the difference between
+   * a routing row that works and one that fails on every screening.
+   */
+  const selectedSource = selectedModel
+    ? catalogue?.sources.find((s) => s.id === selectedModel.provider)
+    : undefined;
+
   // Group models by provider and cost tier
   const groupedModels = useMemo(() => {
     if (!catalogue) return [];
@@ -252,16 +262,21 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   }, [catalogue]);
 
   /**
-   * Only providers the gateway can call appear in the routing pickers.
+   * What the routing pickers may offer.
    *
-   * Listing an OpenCode or Qoder model as routable would be a promise the code
-   * cannot keep — those credentials are stored and probed, never used for
-   * inference — so they stay visible in the browse list and nowhere else.
+   * `routable` is the gateway's own claim that a provider has a caller in its
+   * code, and `enabled: false` is the provider's claim that this account cannot
+   * use the model — Qoder lists aliases it has switched off. Neither belongs in
+   * a picker: choosing a row that cannot be served is a promise the console
+   * would break on the next screening.
    */
   const routableGroups = useMemo(
     () =>
       groupedModels
-        .map((group) => ({ ...group, models: group.models.filter((m) => m.routable) }))
+        .map((group) => ({
+          ...group,
+          models: group.models.filter((m) => m.routable && m.enabled !== false),
+        }))
         .filter((group) => group.models.length > 0),
     [groupedModels]
   );
@@ -783,10 +798,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               <DetailStat
                 icon={Cpu}
                 label="Provider"
-                value={
-                  catalogue?.sources.find((s) => s.id === selectedModel.provider)?.displayName ??
-                  selectedModel.provider
-                }
+                value={selectedSource?.displayName ?? selectedModel.provider}
               />
             </div>
 
@@ -798,6 +810,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     ? "As OpenCode reports it: "
                     : ""}
                 {selectedModel.detail}
+              </p>
+            )}
+
+            {selectedSource?.note && (
+              <p className="border-t border-brand-line px-5 py-3 text-xs leading-relaxed text-brand-ink/60">
+                {selectedSource.note}
               </p>
             )}
 
@@ -813,10 +831,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               ) : (
                 <p className="text-sm leading-relaxed text-brand-ink/60">
                   Not routable — this model is listed from{" "}
-                  {catalogue?.sources.find((s) => s.id === selectedModel.provider)?.displayName ??
-                    selectedModel.provider}
-                  , whose credentials the portal stores and probes but never sends an inference
-                  request to. Screening and grading run on OpenRouter and Google AI Studio.
+                  {selectedSource?.displayName ?? selectedModel.provider}
+                  , whose credentials the portal stores and probes but has no
+                  gateway code path that sends an inference request to.
                   {selectedModel.enabled === false &&
                     " This one is also switched off for the stored account."}
                 </p>

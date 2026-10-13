@@ -2,6 +2,7 @@ import {
   complete,
   parseJsonResponse,
   TruncatedJsonResponseError,
+  type GatewayProvider,
 } from "@/modules/screening/infrastructure/aiGateway";
 import {
   ASSISTANT_TOOLS,
@@ -33,7 +34,7 @@ export interface AssistantStep {
 }
 
 /** Which engine actually served the turn, shown in the chat footer. */
-export type AssistantProvider = "openrouter" | "google" | "qoder";
+export type AssistantProvider = GatewayProvider;
 
 export interface AssistantTurn {
   reply: string;

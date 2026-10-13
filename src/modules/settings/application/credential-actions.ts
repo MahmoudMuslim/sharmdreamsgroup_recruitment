@@ -597,9 +597,11 @@ export async function saveModelRouting(input: {
  * the provider — `google/gemma-4-31b-it:free` is an OpenRouter listing of a
  * Google model, while `gemini-2.5-flash` is Google's own endpoint.
  *
- * Providers whose credentials are stored but never called for inference are
- * still listed, tagged `routable: false`, so the console can say so out loud
- * instead of showing an empty group that looks like a broken integration.
+ * A provider that is listed but cannot be called by this codebase is still
+ * shown, tagged `routable: false`, so the console can say so out loud instead of
+ * showing an empty group that looks like a broken integration. Routability is a
+ * property of the gateway's code, not of the credentials: a stored key alone
+ * never earns it.
  *
  * A source that fails degrades only itself: one unreachable provider must not
  * blank out the picker, which falls back to a curated static list when
@@ -632,9 +634,20 @@ interface SourceResult {
   source: CatalogueSource;
 }
 
-/** The providers this portal can actually send an inference request to. */
+/**
+ * The providers this portal can actually send an inference request to.
+ *
+ * Every member here has a caller in `aiGateway.ts`. Adding a provider to the
+ * registry does not make it routable — that takes the gateway branch, and the
+ * catalogue's qualified id, as well.
+ */
 function isRoutableProvider(id: string): boolean {
-  return id === "openrouter" || id === "google_ai_studio";
+  return (
+    id === "openrouter" ||
+    id === "google_ai_studio" ||
+    id === "opencode" ||
+    id === "qoder"
+  );
 }
 
 /** A fetch failure that only degrades its own provider's rows. */
@@ -807,14 +820,18 @@ async function fetchOpenCodeModels(): Promise<SourceResult> {
 
     const payload = (await response.json()) as { data?: { id: string; created?: number }[] };
     const models: ModelOption[] = (payload.data ?? []).map((model) => ({
-      id: model.id,
+      // Qualified with its provider: OpenCode's ids are flat (`claude-haiku-4-5`),
+      // which is the shape the gateway reads as "Google's own endpoint", so an
+      // unqualified id would be stored in the routing table and then sent to the
+      // wrong provider.
+      id: `opencode:${model.id}`,
       name: model.id,
       promptPrice: null,
       completionPrice: null,
       contextLength: null,
       free: false,
       provider: "opencode",
-      routable: false,
+      routable: true,
       detail: model.created
         ? `listed ${new Date(model.created * 1000).toISOString().slice(0, 10)}`
         : undefined,
@@ -823,7 +840,7 @@ async function fetchOpenCodeModels(): Promise<SourceResult> {
     return okSource(
       "opencode",
       models,
-      "OpenCode's hosted list carries only model ids — no prices, context sizes or display names. Its documented v2 model API is served by the local OpenCode client, which a web server cannot reach, and its free models answer only inside that client (HTTP 403 server-side), so this portal has no OpenCode inference path."
+      "OpenCode's hosted list carries only model ids — no prices, context sizes or display names. Requests go to its OpenAI-compatible inference endpoint, so this portal does send to it; what decides the answer is the account. Its free-tier ids are rejected server-side (HTTP 403: that tier is only callable inside the OpenCode client) and paid ids need credit (HTTP 402 when the balance is empty). The routing log shows which of the two each hop hit."
     );
   } catch (error) {
     console.error("getModelCatalogue (opencode) failed:", error);
@@ -869,14 +886,17 @@ async function fetchQoderModels(): Promise<SourceResult> {
     };
 
     const models: ModelOption[] = (payload.data ?? []).map((model) => ({
-      id: model.id,
+      // Qualified like OpenCode's ids: `auto` and `qfmodel` carry no namespace,
+      // and the routing table has no provider column, so the prefix is the only
+      // thing that tells the gateway these are not a Google model.
+      id: `qoder:${model.id}`,
       name: model.display_name ?? model.id,
       promptPrice: null,
       completionPrice: null,
       contextLength: model.max_input_tokens ?? null,
       free: false,
       provider: "qoder",
-      routable: false,
+      routable: true,
       enabled: model.is_enabled !== false,
       detail: describeQoderModel(model),
     }));
@@ -886,7 +906,7 @@ async function fetchQoderModels(): Promise<SourceResult> {
     return okSource(
       "qoder",
       models,
-      `Qoder's agent model aliases — ${usable} of ${models.length} enabled on this account. These ids configure a Cloud Agent session or batch; Qoder publishes no endpoint that answers a completion request, so this portal cannot screen or grade with them.`
+      `Qoder's agent model aliases — ${usable} of ${models.length} enabled on this account. Qoder publishes no endpoint that answers a completion request, so a routed Qoder id is served by the Agent SDK runtime, the same engine the assistant runs on. That is an agent turn rather than a completion: the runtime picks its own sampling, so the temperature and max-token fields on this row do not travel with it, and JSON is asked for in the prompt instead of enforced by the API. An account out of credit answers every alias with its own limit message.`
     );
   } catch (error) {
     console.error("getModelCatalogue (qoder) failed:", error);
