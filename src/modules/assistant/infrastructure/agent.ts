@@ -29,17 +29,42 @@ export interface AssistantStep {
   detail: string;
 }
 
+/** Which engine actually served the turn, shown in the chat footer. */
+export type AssistantProvider = "openrouter" | "google" | "qoder";
+
 export interface AssistantTurn {
   reply: string;
   steps: AssistantStep[];
   model: string;
-  provider: "openrouter" | "google";
+  provider: AssistantProvider;
 }
 
 /** Model turns spent on tools before the loop gives up and asks for a retry. */
 const MAX_TOOL_ROUNDS = 6;
 /** A tool result is context, not a document — clip it so one read cannot eat the budget. */
 const MAX_RESULT_CHARS = 6000;
+
+/**
+ * The behaviour contract, shared by both engines: the gateway's JSON protocol
+ * and the Qoder agent get the same rules, so switching engines cannot change
+ * what the assistant is willing to claim or touch.
+ */
+export const ASSISTANT_RULES: readonly string[] = [
+  "You are the operations assistant inside the Sharm Dreams Talent Cloud admin portal.",
+  "You act on behalf of the signed-in staff member. Every tool runs the same server action the",
+  "matching button runs, so their role permissions apply to you exactly as they do to that person.",
+  "A tool that refuses for lack of permission is not a bug — report the refusal plainly.",
+  "",
+  "RULES",
+  "1. One tool per turn. Read the result, then decide the next step.",
+  "2. Never invent an id, a name or a setting key. Look it up with a read tool first.",
+  "3. Before editing a job, call get_job and send the whole record back with only the intended change.",
+  "4. Before creating or editing a job, call get_master_data for valid company, department, location and currency values.",
+  "5. Anything that changes data must come from what the user actually asked for. If a request is",
+  "   ambiguous about which record to change, ask instead of guessing.",
+  "6. Quote real numbers from tool results. If a tool returned nothing, say so — do not fill the gap.",
+  "7. Replies are read by recruiters: short, plain, specific. Use the record's real name and id.",
+];
 
 function toolCatalogue(allowDestructive: boolean): string {
   return ASSISTANT_TOOLS.filter((tool) => allowDestructive || !tool.destructive)
@@ -54,31 +79,22 @@ function toolCatalogue(allowDestructive: boolean): string {
     .join("\n");
 }
 
+function destructiveNote(allowDestructive: boolean): string {
+  return allowDestructive
+    ? "DESTRUCTIVE TOOLS ARE ENABLED for this session. Delete only what the user explicitly named, and say what was deleted."
+    : "DESTRUCTIVE TOOLS ARE DISABLED for this session. If the user asks you to delete something, reply that they need to switch on “Allow deletions” in the assistant panel first.";
+}
+
 function systemPrompt(allowDestructive: boolean): string {
   return [
-    "You are the operations assistant inside the Sharm Dreams Talent Cloud admin portal.",
-    "You act on behalf of the signed-in staff member. Every tool runs the same server action the",
-    "matching button runs, so their role permissions apply to you exactly as they do to that person.",
-    "A tool that refuses for lack of permission is not a bug — report the refusal plainly.",
+    ...ASSISTANT_RULES,
     "",
     "PROTOCOL — answer with exactly one JSON object and nothing else:",
     '- to use a tool: {"tool": "<name>", "args": {…}}',
     '- to answer the user: {"reply": "<your answer>"}',
     "Never put both keys in one object. Never answer in prose outside the JSON.",
     "",
-    "RULES",
-    "1. One tool per turn. Read the result, then decide the next step.",
-    "2. Never invent an id, a name or a setting key. Look it up with a read tool first.",
-    "3. Before editing a job, call get_job and send the whole record back with only the intended change.",
-    "4. Before creating or editing a job, call get_master_data for valid company, department, location and currency values.",
-    "5. Anything that changes data must come from what the user actually asked for. If a request is",
-    "   ambiguous about which record to change, ask in a reply instead of guessing.",
-    "6. Quote real numbers from tool results. If a tool returned nothing, say so — do not fill the gap.",
-    "7. Replies are read by recruiters: short, plain, specific. Use the record's real name and id.",
-    "",
-    allowDestructive
-      ? "DESTRUCTIVE TOOLS ARE ENABLED for this session. Delete only what the user explicitly named, and say what was deleted."
-      : "DESTRUCTIVE TOOLS ARE DISABLED for this session. If the user asks you to delete something, reply that they need to switch on “Allow deletions” in the assistant panel first.",
+    destructiveNote(allowDestructive),
     "",
     "TOOLS",
     toolCatalogue(allowDestructive),
@@ -199,7 +215,7 @@ export async function runAssistantTurn(
   ];
   const steps: AssistantStep[] = [];
   let model = "";
-  let provider: "openrouter" | "google" = "openrouter";
+  let provider: AssistantProvider = "openrouter";
 
   for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
     const completion = await complete({

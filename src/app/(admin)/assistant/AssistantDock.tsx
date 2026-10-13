@@ -37,6 +37,9 @@ interface Message {
   text: string;
   steps?: AssistantStep[];
   model?: string;
+  provider?: string;
+  /** Shown when the preferred engine failed and the other one answered. */
+  note?: string;
 }
 
 const STARTERS = [
@@ -244,6 +247,8 @@ export function AssistantDock() {
           text: result.reply ?? "",
           steps: result.steps,
           model: result.model,
+          provider: result.provider,
+          note: result.note,
         },
       ]);
     } catch {
@@ -350,9 +355,14 @@ export function AssistantDock() {
                     <p className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-brand-line bg-brand-cream px-3 py-2 text-sm leading-relaxed text-brand-ink">
                       {message.text}
                     </p>
+                    {message.note && (
+                      <p className="mt-1 pl-1 text-[11px] leading-relaxed text-amber-700">
+                        {message.note}
+                      </p>
+                    )}
                     {message.model && (
                       <p className="mt-1 pl-1 text-[10px] uppercase tracking-wide text-brand-ink/35">
-                        {message.model}
+                        {message.provider ? `${message.provider} · ${message.model}` : message.model}
                       </p>
                     )}
                   </div>
