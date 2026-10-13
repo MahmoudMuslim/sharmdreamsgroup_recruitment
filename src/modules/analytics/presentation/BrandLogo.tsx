@@ -1,7 +1,9 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Official Sharm Dreams Group wordmark, served from `/sdg-icon.png`
+ * Official Sharm Dreams Group wordmark. The pixels come from
+ * `/api/branding/logo`, which redirects to the path set under
+ * Settings → Organisation & branding and falls back to `/sdg-icon.png`
  * (the same asset used on sharmdreamsgroup.com).
  *
  * `tone` controls the backdrop behind the mark:
@@ -29,7 +31,7 @@ export function SdgMark({
       {/* next/image optimisation is unnecessary for a tiny, static asset. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/sdg-icon.png"
+        src="/api/branding/logo"
         alt="Sharm Dreams Group"
         width={size}
         height={size}

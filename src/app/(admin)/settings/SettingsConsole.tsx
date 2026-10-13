@@ -8,6 +8,8 @@ import {
   ClipboardCheck,
   Loader2,
   Plug,
+  RotateCcw,
+  Search,
   Shield,
   Sparkles,
 } from "lucide-react";
@@ -204,37 +206,57 @@ function Field({
 }
 
 /**
- * Settings console. Tabs are rendered from the declarative schema so a new
- * control only has to be declared once to appear in the UI.
+ * Settings console for one section of the Platform area.
+ *
+ * Which section is open comes from the URL, decided by the dock in
+ * `SettingsShell` — the console used to carry its own tab strip, which meant
+ * two navigation rows on screen at once and a settings page that scrolled
+ * horizontally twice.
  */
 export function SettingsConsole({
   initialValues,
   editable,
+  section,
 }: {
   initialValues: Record<string, unknown>;
   editable: boolean;
+  section: string;
 }) {
-  const [tab, setTab] = useState(SETTINGS_SCHEMA[0]?.id ?? "organisation");
   const [draft, setDraft] = useState<Draft>(initialValues);
   const [pending, startTransition] = useTransition();
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const active = SETTINGS_SCHEMA.find((s) => s.id === section) ?? SETTINGS_SCHEMA[0];
+  const Icon = ICONS[active?.icon ?? ""] ?? Sparkles;
 
   const dirty = useMemo(() => {
-    const section = SETTINGS_SCHEMA.find((s) => s.id === tab);
-    if (!section) return false;
-    return section.controls.some(
+    if (!active) return false;
+    return active.controls.some(
       (control) => JSON.stringify(draft[control.key]) !== JSON.stringify(initialValues[control.key])
     );
-  }, [draft, initialValues, tab]);
+  }, [draft, initialValues, active]);
 
-  const section = SETTINGS_SCHEMA.find((s) => s.id === tab);
+  const visible = useMemo(() => {
+    if (!active) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return active.controls;
+    return active.controls.filter(
+      (control) =>
+        control.label.toLowerCase().includes(q) ||
+        control.key.toLowerCase().includes(q) ||
+        (control.help ?? "").toLowerCase().includes(q)
+    );
+  }, [active, query]);
+
+  if (!active) return null;
 
   function save() {
-    if (!section) return;
+    if (!active) return;
     setError(null);
     const payload: Record<string, unknown> = {};
-    for (const control of section.controls) payload[control.key] = draft[control.key];
+    for (const control of active.controls) payload[control.key] = draft[control.key];
 
     startTransition(async () => {
       const result = await saveSettings(payload);
@@ -248,87 +270,114 @@ export function SettingsConsole({
     });
   }
 
+  /** Drops this section's edits only; other sections keep whatever is pending. */
+  function reset() {
+    setError(null);
+    setDraft((prev) => {
+      const next = { ...prev };
+      for (const control of active.controls) next[control.key] = initialValues[control.key];
+      return next;
+    });
+  }
+
   return (
-    <div className="space-y-5">
-      {/* Tabs */}
-      <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-        <div role="tablist" aria-label="Settings sections" className="flex min-w-max gap-1.5">
-          {SETTINGS_SCHEMA.map((item) => {
-            const Icon = ICONS[item.icon] ?? Sparkles;
-            const active = item.id === tab;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(item.id)}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
-                  active
-                    ? "border-brand-ink bg-brand-ink text-brand-cream"
-                    : "border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
-                )}
-              >
-                <Icon className="h-4 w-4" aria-hidden />
-                {item.title}
-              </button>
-            );
-          })}
+    <Card className="overflow-hidden">
+      {/* Mobile section heading — on desktop the dock already shows it. */}
+      <header className="flex items-center gap-2.5 border-b border-brand-line bg-brand-cream px-5 py-4 lg:hidden">
+        <Icon className="h-4 w-4 text-brand-gold-dark" aria-hidden />
+        <div className="min-w-0">
+          <h2 className="font-display text-base font-bold">{active.title}</h2>
+          <p className="truncate text-xs text-brand-ink/55">{active.description}</p>
         </div>
-      </div>
+      </header>
 
-      {section && (
-        <Card className="p-5 sm:p-6">
-          <header className="mb-5">
-            <h2 className="font-display text-lg font-bold">{section.title}</h2>
-            <p className="mt-1 text-sm text-brand-ink/60">{section.description}</p>
-          </header>
+      {active.controls.length > 4 && (
+        <div className="flex items-center gap-2 border-b border-brand-line px-5 py-3">
+          <Search className="h-4 w-4 shrink-0 text-brand-ink/35" aria-hidden />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={`Search ${active.controls.length} settings in “${active.title}”…`}
+            aria-label="Search settings"
+            className="w-full bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none"
+          />
+          {query && (
+            <span className="shrink-0 text-xs font-semibold text-brand-ink/45">
+              {visible.length}/{active.controls.length}
+            </span>
+          )}
+        </div>
+      )}
 
-          <div className="space-y-5">
-            {section.controls.map((control) => (
+      <div className="space-y-6 p-5 sm:p-6">
+        {visible.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-brand-line bg-brand-cream px-4 py-10 text-center text-sm text-brand-ink/55">
+            Nothing in “{active.title}” matches “{query}”.
+          </p>
+        ) : (
+          visible.map((control) => (
+            <div key={control.key} className="group -mx-2 rounded-xl px-2 py-1 transition hover:bg-brand-cream/70">
               <Field
-                key={control.key}
                 control={control}
                 value={draft[control.key]}
                 onChange={(next) => setDraft((prev) => ({ ...prev, [control.key]: next }))}
               />
-            ))}
-          </div>
+              <p className="mt-1 font-mono text-[10px] text-brand-ink/25 opacity-0 transition group-hover:opacity-100">
+                {control.key}
+              </p>
+            </div>
+          ))
+        )}
 
-          {error && (
-            <p role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </p>
-          )}
+        {error && (
+          <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
+          </p>
+        )}
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-brand-line pt-5">
-            <span className="text-xs text-brand-ink/45" aria-live="polite">
-              {pending
-                ? "Saving…"
-                : dirty
-                  ? "You have unsaved changes"
-                  : savedAt
-                    ? `All changes saved at ${savedAt}`
-                    : "All changes saved"}
-            </span>
-            <Button onClick={save} disabled={!dirty || pending || !editable}>
-              {pending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
-              Save changes
+        {!editable && (
+          <p className="rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-xs text-brand-ink/60">
+            Editing requires the
+            <code className="mx-1 rounded bg-brand-sand px-1 py-0.5 font-mono">
+              settings.manage_platform
+            </code>
+            permission.
+          </p>
+        )}
+      </div>
+
+      {/* Save bar stays visible while the section is scrolled. */}
+      <div className="sticky bottom-0 flex flex-wrap items-center justify-between gap-3 border-t border-brand-line bg-brand-cream/95 px-5 py-3.5 backdrop-blur">
+        <span className="flex items-center gap-2 text-xs text-brand-ink/55" aria-live="polite">
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full",
+              dirty ? "bg-amber-500" : "bg-emerald-500"
+            )}
+            aria-hidden
+          />
+          {pending
+            ? "Saving…"
+            : dirty
+              ? "Unsaved changes in this section"
+              : savedAt
+                ? `Saved at ${savedAt}`
+                : "Everything saved"}
+        </span>
+        <div className="flex items-center gap-2">
+          {dirty && (
+            <Button variant="ghost" size="sm" onClick={reset} disabled={pending}>
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+              Discard
             </Button>
-          </div>
-
-          {!editable && (
-            <p className="mt-3 rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-xs text-brand-ink/60">
-              Editing requires the
-              <code className="mx-1 rounded bg-brand-sand px-1 py-0.5 font-mono">
-                settings.manage_platform
-              </code>
-              permission.
-            </p>
           )}
-        </Card>
-      )}
-    </div>
+          <Button size="sm" onClick={save} disabled={!dirty || pending || !editable}>
+            {pending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+            Save changes
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }

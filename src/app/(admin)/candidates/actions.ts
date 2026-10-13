@@ -10,6 +10,8 @@ export type CandidateRow = Application & {
   /** Present only when an assessment has been assigned to this candidate. */
   attempt_token: string | null;
   attempt_status: string | null;
+  /** Null until the attempt is graded. */
+  attempt_score: number | null;
   /** Every interview booked for this candidate, soonest first. */
   interviews: InterviewRecord[];
 };
@@ -19,7 +21,7 @@ export async function getCandidateList(): Promise<CandidateRow[]> {
   const { data, error } = await supabase
     .from("applications")
     .select(
-      `*, job_openings(title), candidate_attempts(access_token, status), interview_schedules(${INTERVIEW_SELECT})`
+      `*, job_openings(title), candidate_attempts(access_token, status, total_score), interview_schedules(${INTERVIEW_SELECT})`
     )
     .order("created_at", { ascending: false })
     .limit(50);
@@ -30,7 +32,10 @@ export async function getCandidateList(): Promise<CandidateRow[]> {
     (
       row: Application & {
         job_openings?: { title?: string } | { title?: string }[] | null;
-        candidate_attempts?: { access_token: string; status: string } | { access_token: string; status: string }[] | null;
+        candidate_attempts?:
+          | { access_token: string; status: string; total_score: number | null }
+          | { access_token: string; status: string; total_score: number | null }[]
+          | null;
         interview_schedules?: Record<string, unknown>[] | null;
       }
     ) => {
@@ -46,6 +51,7 @@ export async function getCandidateList(): Promise<CandidateRow[]> {
         job_title: joined?.title ?? null,
         attempt_token: attempt?.access_token ?? null,
         attempt_status: attempt?.status ?? null,
+        attempt_score: attempt?.total_score ?? null,
         interviews: booked,
       };
     }

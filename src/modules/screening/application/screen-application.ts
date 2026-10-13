@@ -2,6 +2,8 @@ import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasAiProvider } from "@/lib/config.server";
+import { getBoolSetting, getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
 import {
   generateCandidateFeedback,
@@ -51,6 +53,8 @@ export interface ScreeningOutcome {
   error?: string;
   score?: number;
   decision?: CvScreeningResult["decision"];
+  /** Set when the score thresholds moved the candidate without a recruiter. */
+  auto_stage?: AutoDisposition | null;
 }
 
 interface ApplicationForScreening {
@@ -65,6 +69,74 @@ function asStringList(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item));
   if (typeof value === "string" && value.trim()) return [value];
   return [];
+}
+
+/** Stages the thresholds are allowed to choose on their own. */
+export type AutoDisposition = "ASSESSMENT" | "REJECTED";
+
+const DEFAULT_MATCH_THRESHOLD_ADVANCE = 75;
+const DEFAULT_MATCH_THRESHOLD_REJECT = 40;
+
+/**
+ * Picks the stage the score thresholds imply, or null when they say nothing.
+ *
+ * `0` on either side switches that side off, because a threshold of 0 would
+ * otherwise advance (or, for the reject side, never) every applicant, and an
+ * absent row must not automate a decision nobody configured.
+ */
+function dispositionForScore(
+  score: number,
+  advanceAt: number,
+  rejectBelow: number
+): AutoDisposition | null {
+  if (advanceAt > 0 && score >= advanceAt) return "ASSESSMENT";
+  if (rejectBelow > 0 && score < rejectBelow) return "REJECTED";
+  return null;
+}
+
+/**
+ * Applies the Settings → AI & screening thresholds to a fresh score.
+ *
+ * Only a candidate who has not been touched by a human moves: NEW and
+ * AI_SCREENING are the stages screening itself produces, so an application
+ * already at interview, offer or hire is never rewound by a model verdict.
+ * A rejection stores its reason because the candidate profile shows it, and the
+ * candidate is told through the shared messaging path: the WhatsApp leg only
+ * queues, so a Meta outage cannot change the screening result.
+ */
+async function applyScoreDisposition(input: {
+  applicationId: string;
+  stage: string;
+  score: number;
+  summary: string;
+}): Promise<AutoDisposition | null> {
+  if (input.stage !== "NEW" && input.stage !== "AI_SCREENING") return null;
+
+  const [advanceAt, rejectBelow] = await Promise.all([
+    getNumberSetting("ai.match_threshold_advance", DEFAULT_MATCH_THRESHOLD_ADVANCE),
+    getNumberSetting("ai.match_threshold_reject", DEFAULT_MATCH_THRESHOLD_REJECT),
+  ]);
+
+  const target = dispositionForScore(input.score, advanceAt, rejectBelow);
+  if (!target) return null;
+
+  const supabase = getSupabaseServiceClient();
+  const { error } = await supabase
+    .from("applications")
+    .update({
+      stage: target,
+      rejection_reason:
+        target === "REJECTED"
+          ? `Automatic CV screening scored this application ${input.score}% against the filter-out threshold of ${rejectBelow}%. ${input.summary}`.trim()
+          : null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.applicationId);
+
+  if (error) return null;
+
+  await notifyStageChange(input.applicationId, target);
+  return target;
 }
 
 function mimeForPath(path: string): string {
@@ -138,9 +210,15 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
     };
   }
 
+  // Settings → AI → Bias reduction. Recorded on the application rather than
+  // left implied, because "what did the model actually see about this
+  // candidate's gender, age or nationality?" is a question a recruiter has to
+  // be able to answer after the fact.
+  const anonymize = await getBoolSetting("ai.bias_reduction", true);
+
   let result: CvScreeningResult;
   try {
-    result = await screenCandidateCv(jobTitle, requirements, cvText);
+    result = await screenCandidateCv(jobTitle, requirements, cvText, { anonymize });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown model error";
     return { ok: false, error: `Screening failed: ${detail.slice(0, 200)}` };
@@ -154,13 +232,21 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
       ai_screening_summary: result.summary,
       ai_strengths: result.strengths,
       ai_gaps: result.gaps,
+      diversity_flags: { cv_anonymization: anonymize ? "applied" : "skipped" },
       ...(application.stage === "NEW" ? { stage: "AI_SCREENING" } : {}),
     })
     .eq("id", applicationId);
 
   if (updateError) return { ok: false, error: updateError.message };
 
-  return { ok: true, score, decision: result.decision };
+  const autoStage = await applyScoreDisposition({
+    applicationId,
+    stage: application.stage,
+    score,
+    summary: result.summary ?? "",
+  });
+
+  return { ok: true, score, decision: result.decision, auto_stage: autoStage };
 }
 
 export interface FeedbackOutcome {
@@ -186,7 +272,7 @@ export async function generateFeedbackForApplication(
   const { data } = await supabase
     .from("applications")
     .select(
-      "id, stage, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, job_openings(title), candidate_attempts(total_score, max_score)"
+      "id, stage, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, diversity_flags, job_openings(title), candidate_attempts(total_score, max_score)"
     )
     .eq("id", applicationId)
     .maybeSingle();
@@ -200,6 +286,7 @@ export async function generateFeedbackForApplication(
     ai_strengths: unknown;
     ai_gaps: unknown;
     ai_soft_skills: unknown;
+    diversity_flags?: Record<string, string> | null;
     job_openings?: { title?: string } | { title?: string }[] | null;
     candidate_attempts?: { total_score: number | null; max_score: number | null } | { total_score: number | null; max_score: number | null }[] | null;
   };
@@ -232,7 +319,7 @@ export async function generateFeedbackForApplication(
     key_competencies: [],
     strengths: asStringList(application.ai_strengths),
     gaps: asStringList(application.ai_gaps),
-    anonymization_applied: true,
+    anonymization_applied: application.diversity_flags?.cv_anonymization === "applied",
     model_used: "stored screening result",
   };
 

@@ -120,6 +120,12 @@ export async function resolveConfig(provider: string): Promise<Record<string, st
       phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID ?? "",
       verify_token: process.env.WHATSAPP_VERIFY_TOKEN ?? "",
     },
+    smtp: {
+      host: process.env.SMTP_HOST ?? "",
+      port: process.env.SMTP_PORT ?? "",
+      username: process.env.SMTP_USER ?? "",
+      from: process.env.EMAIL_FROM ?? "",
+    },
     frappe_hr: { base_url: process.env.FRAPPE_HR_BASE_URL ?? "" },
     google_calendar: {
       client_id: process.env.GOOGLE_CALENDAR_CLIENT_ID ?? "",

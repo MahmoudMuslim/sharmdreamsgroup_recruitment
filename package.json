@@ -14,6 +14,7 @@
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
     "@thelioo/opencode-balancer": "^0.2.18",
+    "@vercel/speed-insights": "^2.0.0",
     "clsx": "^2.1.1",
     "framer-motion": "^14.1.0",
     "handsontable": "^16.2.0",
@@ -21,6 +22,7 @@
     "lucide-react": "^1.55.0",
     "mammoth": "^1.13.0",
     "next": "16.4.0",
+    "nodemailer": "^10.1.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
@@ -33,6 +35,7 @@
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",

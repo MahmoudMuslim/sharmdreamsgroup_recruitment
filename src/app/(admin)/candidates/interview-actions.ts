@@ -5,10 +5,11 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import {
-  enqueueInterviewNotice,
-  processDueWhatsAppJobs,
-} from "@/modules/omnichannel/application/whatsapp-dispatch";
+  notifyInterviewUpdate,
+  type MessagingReport,
+} from "@/modules/omnichannel/application/candidate-notifications";
 import { INTERVIEW_SELECT, toInterviewRecord, type InterviewRecord } from "./interviews-model";
 
 export type { InterviewRecord } from "./interviews-model";
@@ -25,6 +26,8 @@ export interface InterviewMutation {
   interviews?: InterviewRecord[];
   /** True when a WhatsApp notice reached the candidate's queue. */
   notified?: boolean;
+  /** What each channel did with this notice, so the UI can say it out loud. */
+  channels?: MessagingReport;
 }
 
 const MIN_MINUTES = 15;
@@ -142,7 +145,7 @@ export async function scheduleInterview(input: {
 
   if (insertError) return { ok: false, error: insertError.message };
 
-  const notice = await enqueueInterviewNotice({
+  const channels = await notifyInterviewUpdate({
     applicationId: input.applicationId,
     kind: "SCHEDULED",
     scheduledAt: slot.iso,
@@ -150,13 +153,14 @@ export async function scheduleInterview(input: {
     meetingLink: slot.link,
   });
 
-  if (notice.queued) after(() => processDueWhatsAppJobs(5).then(() => undefined));
+  if (channels.whatsapp === "queued") after(() => processDueWhatsAppJobs(5).then(() => undefined));
 
   revalidatePath("/candidates");
   return {
     ok: true,
     interviews: await interviewsFor(supabase, input.applicationId),
-    notified: notice.queued,
+    notified: channels.whatsapp === "queued",
+    channels,
   };
 }
 
@@ -209,7 +213,7 @@ export async function rescheduleInterview(input: {
 
   if (error) return { ok: false, error: error.message };
 
-  const notice = await enqueueInterviewNotice({
+  const channels = await notifyInterviewUpdate({
     applicationId: existing.application_id,
     kind: "CHANGED",
     scheduledAt: slot.iso,
@@ -217,13 +221,14 @@ export async function rescheduleInterview(input: {
     meetingLink: slot.link,
   });
 
-  if (notice.queued) after(() => processDueWhatsAppJobs(5).then(() => undefined));
+  if (channels.whatsapp === "queued") after(() => processDueWhatsAppJobs(5).then(() => undefined));
 
   revalidatePath("/candidates");
   return {
     ok: true,
     interviews: await interviewsFor(supabase, existing.application_id),
-    notified: notice.queued,
+    notified: channels.whatsapp === "queued",
+    channels,
   };
 }
 
@@ -266,16 +271,17 @@ export async function setInterviewStatus(input: {
   if (error) return { ok: false, error: error.message };
 
   let notified = false;
+  let channels: MessagingReport | undefined;
   if (input.status === "CANCELLED") {
-    const notice = await enqueueInterviewNotice({
+    channels = await notifyInterviewUpdate({
       applicationId: existing.application_id,
       kind: "CANCELLED",
       scheduledAt: existing.scheduled_at,
       durationMinutes: existing.duration_minutes,
       meetingLink: existing.meeting_link,
     });
-    notified = notice.queued;
-    if (notice.queued) after(() => processDueWhatsAppJobs(5).then(() => undefined));
+    notified = channels.whatsapp === "queued";
+    if (channels.whatsapp === "queued") after(() => processDueWhatsAppJobs(5).then(() => undefined));
   }
 
   revalidatePath("/candidates");
@@ -283,6 +289,7 @@ export async function setInterviewStatus(input: {
     ok: true,
     interviews: await interviewsFor(supabase, existing.application_id),
     notified,
+    channels,
   };
 }
 

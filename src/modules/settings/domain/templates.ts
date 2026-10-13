@@ -78,6 +78,68 @@ export const WHATSAPP_INTERVIEW_TEMPLATES: Record<"SCHEDULED" | "CHANGED" | "CAN
 };
 
 /**
+ * Template key for each pipeline-stage email.
+ *
+ * Deliberately not a copy of the WhatsApp map: three of these rows already
+ * exist in `notification_templates` with letter-style copy and a subject line
+ * (`application_received`, `interview_scheduled`, `offer_letter`), so the email
+ * channel reads the copy the platform shipped rather than a shortened chat
+ * message. Keys with no row fall back to `EMAIL_TEMPLATE_DEFAULTS`.
+ */
+export const EMAIL_STAGE_TEMPLATES: Record<string, string> = {
+  NEW: "application_received",
+  AI_SCREENING: "stage_ai_screening",
+  ASSESSMENT: "stage_assessment",
+  INTERVIEW: "stage_interview",
+  OFFER: "offer_letter",
+  HIRED: "stage_hired",
+  REJECTED: "stage_rejected",
+};
+
+/** Same interview events, as email. */
+export const EMAIL_INTERVIEW_TEMPLATES: Record<"SCHEDULED" | "CHANGED" | "CANCELLED", string> = {
+  SCHEDULED: "interview_scheduled",
+  CHANGED: "interview_changed",
+  CANCELLED: "interview_cancelled",
+};
+
+/**
+ * Subjects shipped in code, used when the stored EMAIL row has no subject.
+ * An email without one is rejected by some relays, so this is never left blank.
+ */
+export const EMAIL_SUBJECT_DEFAULTS: Record<string, string> = {
+  application_received: "We received your application — {{job_title}}",
+  stage_ai_screening: "Your application is under review — {{job_title}}",
+  stage_assessment: "Next step: your assessment for {{job_title}}",
+  stage_interview: "Interview stage — {{job_title}}",
+  offer_letter: "Offer from {{company_name}}",
+  stage_hired: "Welcome to {{company_name}}",
+  stage_rejected: "Your application for {{job_title}}",
+  status_update: "Application update — {{job_title}}",
+  interview_scheduled: "Interview confirmed — {{job_title}}",
+  interview_changed: "Your interview time has moved — {{job_title}}",
+  interview_cancelled: "Interview cancelled — {{job_title}}",
+};
+
+/** Letter-style bodies used when no EMAIL row exists for the key. */
+export const EMAIL_TEMPLATE_DEFAULTS: Record<string, string> = {
+  stage_ai_screening:
+    "Dear {{candidate_name}},\n\nThank you for applying for {{job_title}}. Our team is reviewing your application now, and we will write to you as soon as we have a decision.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  stage_assessment:
+    "Dear {{candidate_name}},\n\nGood news — we would like you to move to the assessment stage for {{job_title}}.\n\n{{assessment_link}}\n\nThe assessment is timed, so please choose a moment when you can focus without interruption.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  stage_interview:
+    "Dear {{candidate_name}},\n\nYou have reached the interview stage for {{job_title}}. A member of the team will be in touch shortly to propose a time.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  stage_hired:
+    "Dear {{candidate_name}},\n\nWelcome aboard. The {{job_title}} team is looking forward to working with you, and your onboarding details will follow by email.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  stage_rejected:
+    "Dear {{candidate_name}},\n\nThank you for taking the time to apply for {{job_title}}. After careful review we will not be progressing your application on this occasion.\n\nWe appreciate the interest you have shown in {{company_name}} and wish you every success in your search.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  interview_changed:
+    "Dear {{candidate_name}},\n\nWe have moved your interview for {{job_title}} to {{interview_when}} (approximately {{interview_duration}} minutes).{{interview_link}}\n\nPlease let us know if the new time does not suit you.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  interview_cancelled:
+    "Dear {{candidate_name}},\n\nWe have had to cancel your interview for {{job_title}} that was set for {{interview_when}}. We will write again to arrange another time.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+};
+
+/**
  * Copy shipped in code, used when a template row is missing or inactive.
  * `{{interview_link}}` carries its own lead text here because the token is
  * replaced by a whole phrase, not just a URL.
@@ -126,20 +188,27 @@ Object.assign(TEMPLATE_PURPOSE, {
   interview_changed: "Sent when a booked panel moves",
   interview_cancelled: "Sent when a booked panel is cancelled",
   assessment_invite: "Superseded by the assessment stage template",
+  application_received: "Sent when a candidate submits an application",
+  offer_letter: "Sent when a candidate moves to the offer stage",
 });
 
+/** Every key some channel reads, across all three wired channels. */
+const WIRED_KEYS = new Set<string>([
+  ...Object.values(WHATSAPP_STAGE_TEMPLATES),
+  ...Object.values(WHATSAPP_INTERVIEW_TEMPLATES),
+  ...Object.values(EMAIL_STAGE_TEMPLATES),
+  STAGE_FALLBACK_TEMPLATE,
+]);
+
 /**
- * True when a row actually shapes something the platform sends. Email rows are
- * stored but unread until an email provider is configured, and a WHATSAPP key
- * outside the registry is copy no flow asks for.
+ * True when a row actually shapes something the platform sends.
+ *
+ * WhatsApp and email each have their own key map; an IN_APP row shares the
+ * email copy, since the portal shows the letter the candidate was emailed.
+ * A key outside those maps is copy no flow asks for.
  */
 export function templateIsWired(template: { key: string; channel: string }): boolean {
-  if (template.channel !== "WHATSAPP") return false;
-  const wired = new Set<string>([
-    ...Object.values(WHATSAPP_STAGE_TEMPLATES),
-    ...Object.values(WHATSAPP_INTERVIEW_TEMPLATES),
-    STAGE_FALLBACK_TEMPLATE,
-  ]);
-  return wired.has(template.key) && template.key !== "assessment_invite";
+  if (!WIRED_KEYS.has(template.key) || template.key === "assessment_invite") return false;
+  return template.channel === "WHATSAPP" || template.channel === "EMAIL" || template.channel === "IN_APP";
 }
 

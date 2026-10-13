@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronRight, FileText, Loader2, Search, Send, Sparkles } from "lucide-react";
+import { ChevronRight, FileText, Loader2, Search, Send, Sparkles, X } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -10,11 +10,13 @@ import {
   FormMessage,
   Select,
   TextArea,
+  TextInput,
 } from "@/modules/analytics/presentation/Form";
-import { Badge, Button, Card, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
+import { Badge, Button, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import {
   draftCandidateFeedback,
   screenApplication,
+  sendBulkEmail,
   sendBulkWhatsApp,
   updateApplicationStage,
   type PipelineStage,
@@ -34,6 +36,14 @@ function stageTone(stage: string) {
 
 const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
 
+function attemptTone(status: string) {
+  if (status === "GRADED") return "success" as const;
+  if (status === "EXPIRED") return "danger" as const;
+  if (status === "SUBMITTED") return "info" as const;
+  if (status === "IN_PROGRESS") return "gold" as const;
+  return "neutral" as const;
+}
+
 /** Forward move used by the one-click "Advance" buttons. */
 const NEXT_STAGE: Record<string, PipelineStage | null> = {
   NEW: "AI_SCREENING",
@@ -45,20 +55,28 @@ const NEXT_STAGE: Record<string, PipelineStage | null> = {
   REJECTED: null,
 };
 
+/**
+ * Draft copy for the bulk composer. `body` is sent on whichever channel the
+ * recruiter picks; `subject` only matters for email, which cannot be delivered
+ * without one.
+ */
 const TEMPLATES = [
   {
     id: "STATUS_UPDATE",
     label: "Status update",
+    subject: "Your application for {{job_title}}",
     body: "Hi {{candidate_name}}, your application for {{job_title}} is now at the {{stage}} stage. We will be in touch with the next steps.",
   },
   {
     id: "INTERVIEW_INVITE",
     label: "Interview invitation",
+    subject: "Interview for {{job_title}}",
     body: "Hi {{candidate_name}}, we would like to invite you to interview for {{job_title}}. Please reply with two times that suit you this week.",
   },
   {
     id: "ASSESSMENT_REMINDER",
     label: "Assessment reminder",
+    subject: "Your {{job_title}} assessment is still open",
     body: "Hi {{candidate_name}}, a reminder that your assessment for {{job_title}} is still open: {{assessment_link}}",
   },
 ];
@@ -99,11 +117,15 @@ export function CandidateBrowser({
   canWrite: boolean;
 }) {
   const router = useRouter();
-  // `?c=` arrives from the interviews agenda: open the page already filtered
-  // to that candidate.
-  const trackedCode = useSearchParams().get("c");
-  const [query, setQuery] = useState(trackedCode ?? "");
-  const [stageFilter, setStageFilter] = useState("");
+  const params = useSearchParams();
+  // `?c=` arrives from the interviews agenda and `?q=`/`?stage=` from the
+  // dashboard board: open the page already filtered to what the recruiter
+  // was looking at.
+  const trackedCode = params.get("c");
+  const [query, setQuery] = useState(params.get("q") ?? trackedCode ?? "");
+  const [stageFilter, setStageFilter] = useState(params.get("stage") ?? "");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [sortBy, setSortBy] = useState<"recent" | "fit" | "name">("recent");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [profile, setProfile] = useState<CandidateRow | null>(null);
   const [broadcastOpen, setBroadcastOpen] = useState(false);
@@ -131,10 +153,25 @@ export function CandidateBrowser({
     }
   }
 
+  /** Stage → count, for the rail. Computed over the unfiltered list. */
+  const stageCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of candidates) counts.set(c.stage, (counts.get(c.stage) ?? 0) + 1);
+    return counts;
+  }, [candidates]);
+
+  /** Source → count, busiest first, for the channel rail. */
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of candidates) counts.set(c.source, (counts.get(c.source) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [candidates]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return candidates.filter((c) => {
+    const rows = candidates.filter((c) => {
       if (stageFilter && c.stage !== stageFilter) return false;
+      if (sourceFilter && c.source !== sourceFilter) return false;
       if (!q) return true;
       return (
         c.full_name.toLowerCase().includes(q) ||
@@ -143,7 +180,14 @@ export function CandidateBrowser({
         c.tracking_code.toLowerCase().includes(q)
       );
     });
-  }, [candidates, query, stageFilter]);
+    // The server returns newest first, so "recent" needs no re-sort.
+    if (sortBy === "fit") {
+      rows.sort((a, b) => (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1));
+    } else if (sortBy === "name") {
+      rows.sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }
+    return rows;
+  }, [candidates, query, stageFilter, sourceFilter, sortBy]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -172,51 +216,99 @@ export function CandidateBrowser({
 
   return (
     <>
-      {/* Toolbar */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="relative min-w-[220px] flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40"
-            aria-hidden
-          />
-          <input
-            id="candidate-search"
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name, email, role or tracking code"
-            aria-label="Search candidates"
-            className="w-full rounded-xl border border-brand-line bg-white py-2.5 pl-10 pr-3 text-sm focus:border-brand-gold focus:outline-none"
-          />
+      {/* Toolbar — sticks below the mobile header so filters stay reachable */}
+      <div className="sticky top-[57px] z-20 -mx-4 mb-4 space-y-2.5 border-b border-brand-line bg-brand-ivory/95 px-4 pb-3 pt-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:top-0 lg:-mx-10 lg:px-10">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-[220px] flex-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40"
+              aria-hidden
+            />
+            <input
+              id="candidate-search"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name, email, role or tracking code"
+              aria-label="Search candidates"
+              className="w-full rounded-xl border border-brand-line bg-white py-2.5 pl-10 pr-3 text-sm focus:border-brand-gold focus:outline-none"
+            />
+          </div>
+
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            aria-label="Sort candidates"
+            className="rounded-xl border border-brand-line bg-white px-3 py-2.5 text-sm focus:border-brand-gold focus:outline-none"
+          >
+            <option value="recent">Newest first</option>
+            <option value="fit">Highest AI fit</option>
+            <option value="name">Name A–Z</option>
+          </select>
+
+          <span className="text-xs text-brand-ink/50">
+            {filtered.length} of {candidates.length}
+          </span>
+
+          {selected.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              className="inline-flex items-center gap-1 rounded-xl border border-brand-line bg-white px-2.5 py-2 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+              Clear
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setBroadcastOpen(true)}
+            disabled={selected.size === 0}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Send className="h-4 w-4" aria-hidden />
+            Bulk message{selected.size > 0 ? ` (${selected.size})` : ""}
+          </button>
         </div>
 
-        <select
-          value={stageFilter}
-          onChange={(e) => setStageFilter(e.target.value)}
-          aria-label="Filter by stage"
-          className="rounded-xl border border-brand-line bg-white px-3 py-2.5 text-sm focus:border-brand-gold focus:outline-none"
-        >
-          <option value="">All stages</option>
+        {/* Stage rail */}
+        <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5 sm:mx-0 sm:px-0">
+          <FilterRail
+            label="All stages"
+            count={candidates.length}
+            active={stageFilter === ""}
+            onClick={() => setStageFilter("")}
+          />
           {STAGES.map((s) => (
-            <option key={s} value={s}>
-              {s.replace("_", " ")}
-            </option>
+            <FilterRail
+              key={s}
+              label={s.replace("_", " ")}
+              count={stageCounts.get(s) ?? 0}
+              active={stageFilter === s}
+              onClick={() => setStageFilter(stageFilter === s ? "" : s)}
+            />
           ))}
-        </select>
+        </div>
 
-        <span className="text-xs text-brand-ink/50">
-          {filtered.length} of {candidates.length}
-        </span>
-
-        <button
-          type="button"
-          onClick={() => setBroadcastOpen(true)}
-          disabled={selected.size === 0}
-          className="inline-flex items-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Send className="h-4 w-4" aria-hidden />
-          Bulk WhatsApp{selected.size > 0 ? ` (${selected.size})` : ""}
-        </button>
+        {/* Channel rail */}
+        {sourceCounts.length > 1 && (
+          <div className="-mx-4 flex items-center gap-1.5 overflow-x-auto px-4 pb-0.5 sm:mx-0 sm:px-0">
+            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-brand-ink/40">
+              Sourced
+            </span>
+            {sourceCounts.map(([source, count]) => (
+              <FilterRail
+                key={source}
+                label={source.replace("_", " ")}
+                count={count}
+                tone="muted"
+                active={sourceFilter === source}
+                onClick={() => setSourceFilter(sourceFilter === source ? "" : source)}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -244,9 +336,11 @@ export function CandidateBrowser({
                   </th>
                   <th className="px-4 py-3">Candidate</th>
                   <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Tracking</th>
+                  <th className="px-4 py-3">Source</th>
+                  <th className="px-4 py-3">Applied</th>
                   <th className="px-4 py-3">Stage</th>
                   <th className="px-4 py-3">AI match</th>
+                  <th className="px-4 py-3">Assessment</th>
                   <th className="px-4 py-3 text-right">Profile</th>
                 </tr>
               </thead>
@@ -265,10 +359,17 @@ export function CandidateBrowser({
                     <td className="px-4 py-4">
                       <p className="font-semibold">{c.full_name}</p>
                       <p className="text-xs text-brand-ink/50">{c.email}</p>
+                      <p className="font-mono text-[11px] text-brand-ink/40">{c.tracking_code}</p>
                     </td>
                     <td className="px-4 py-4 text-brand-ink/65">{c.job_title ?? "—"}</td>
-                    <td className="px-4 py-4 font-mono text-xs text-brand-ink/45">
-                      {c.tracking_code}
+                    <td className="px-4 py-4 text-xs uppercase tracking-wide text-brand-ink/55">
+                      {c.source.replace("_", " ")}
+                    </td>
+                    <td className="px-4 py-4 text-xs text-brand-ink/55">
+                      {new Date(c.created_at).toLocaleDateString([], {
+                        month: "short",
+                        day: "numeric",
+                      })}
                     </td>
                     <td className="px-4 py-4">
                       <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
@@ -283,6 +384,22 @@ export function CandidateBrowser({
                         </div>
                       ) : (
                         <span className="text-xs text-brand-ink/35">Not screened</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      {c.attempt_token ? (
+                        <div className="flex items-center gap-2">
+                          <Badge tone={attemptTone(c.attempt_status ?? "NOT_STARTED")}>
+                            {(c.attempt_status ?? "NOT_STARTED").replace("_", " ")}
+                          </Badge>
+                          {c.attempt_score !== null && (
+                            <span className="font-display text-sm font-bold">
+                              {c.attempt_score}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-brand-ink/35">Not assigned</span>
                       )}
                     </td>
                     <td className="px-4 py-4 text-right">
@@ -340,7 +457,27 @@ export function CandidateBrowser({
                   <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
                 </div>
 
-                <p className="truncate text-sm text-brand-ink/65">{c.job_title ?? "—"}</p>
+                <div className="space-y-1.5">
+                  <p className="truncate text-sm text-brand-ink/65">{c.job_title ?? "—"}</p>
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] uppercase tracking-wide text-brand-ink/45">
+                    <span>{c.source.replace("_", " ")}</span>
+                    <span aria-hidden>·</span>
+                    <span>
+                      {new Date(c.created_at).toLocaleDateString([], {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                    {c.attempt_token && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <Badge tone={attemptTone(c.attempt_status ?? "NOT_STARTED")}>
+                          {(c.attempt_status ?? "NOT_STARTED").replace("_", " ")}
+                        </Badge>
+                      </>
+                    )}
+                  </p>
+                </div>
 
                 <div className="flex items-center gap-2">
                   <span className="w-10 text-right text-sm font-display font-bold text-brand-gold-dark">
@@ -461,7 +598,11 @@ function ProfileDrawer({
       if (result.ok) {
         setRejectOpen(false);
         setRejectReason("");
-        setDone("Candidate rejected. A feedback draft is being written in the background.");
+        setDone(
+          result.auto_feedback
+            ? "Candidate rejected. A feedback draft is being written in the background."
+            : "Candidate rejected. Personalised feedback is switched off in Settings, so no draft was written — use Draft feedback whenever you want one."
+        );
         router.refresh();
       } else {
         setError(result.error ?? "Could not reject the candidate.");
@@ -482,7 +623,10 @@ function ProfileDrawer({
       const result = await screenApplication(candidate.id);
       if (result.ok) {
         setDone(
-          `Screened: ${result.score}% fit${result.decision ? ` — ${result.decision.toLowerCase()}` : ""}.`
+          `Screened: ${result.score}% fit${result.decision ? ` — ${result.decision.toLowerCase()}` : ""}.` +
+            (result.auto_stage
+              ? ` The score crossed your AI thresholds, so the candidate moved to ${result.auto_stage.toLowerCase()} automatically.`
+              : "")
         );
         router.refresh();
       } else {
@@ -640,6 +784,16 @@ function ProfileDrawer({
                 {candidate.ai_screening_summary}
               </p>
             )}
+            {/* Recorded by the screen itself, so it reports the bias-reduction
+                setting as it stood when this score was produced. */}
+            {candidate.ai_match_score !== null &&
+              candidate.diversity_flags?.cv_anonymization && (
+                <p className="mt-2 text-xs text-brand-ink/45">
+                  {candidate.diversity_flags.cv_anonymization === "applied"
+                    ? "Demographic markers were stripped from the CV before the model scored it."
+                    : "Bias reduction was switched off for this screen — the model saw the CV as submitted."}
+                </p>
+              )}
 
             {canWrite && (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -741,6 +895,14 @@ function ProfileDrawer({
 
 /* -------------------------------------------------------------------------- */
 
+type BroadcastChannel = "WHATSAPP" | "EMAIL" | "BOTH";
+
+const CHANNEL_CHOICES: { id: BroadcastChannel; label: string; blurb: string }[] = [
+  { id: "WHATSAPP", label: "WhatsApp", blurb: "Chat message to the number on file." },
+  { id: "EMAIL", label: "Email", blurb: "Letter through the SMTP relay in Settings → API keys." },
+  { id: "BOTH", label: "Both", blurb: "Each candidate gets whichever of the two they have." },
+];
+
 function BroadcastDrawer({
   open,
   recipients,
@@ -754,14 +916,21 @@ function BroadcastDrawer({
 }) {
   const [template, setTemplate] = useState(TEMPLATES[0].id);
   const [body, setBody] = useState(TEMPLATES[0].body);
+  const [subject, setSubject] = useState(TEMPLATES[0].subject);
+  const [channel, setChannel] = useState<BroadcastChannel>("WHATSAPP");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  const needsSubject = channel !== "WHATSAPP";
+  const withoutEmail = recipients.filter((r) => !r.email).length;
+  const withoutPhone = recipients.filter((r) => !r.phone).length;
+
   function pickTemplate(id: string) {
-    setTemplate(id);
-    const found = TEMPLATES.find((t) => t.id === id);
-    if (found) setBody(found.body);
+    const found = TEMPLATES.find((t) => t.id === id) ?? TEMPLATES[0];
+    setTemplate(found.id);
+    setBody(found.body);
+    setSubject(found.subject);
     if (error) setError(null);
   }
 
@@ -774,25 +943,55 @@ function BroadcastDrawer({
       setError("The message cannot be empty.");
       return;
     }
+    if (needsSubject && !subject.trim()) {
+      setError("Email needs a subject line.");
+      return;
+    }
 
     setPending(true);
+    setError(null);
+    setDone(null);
+    const ids = recipients.map((r) => r.id);
+    const delivered: string[] = [];
+    let problem: string | null = null;
+
     try {
-      const result = await sendBulkWhatsApp({
-        applicationIds: recipients.map((r) => r.id),
-        templateKey: template,
-        message: body,
-      });
-      if (result.ok) {
-        setDone(
-          `Queued ${result.queued ?? recipients.length} message${(result.queued ?? 0) === 1 ? "" : "s"}.`
-        );
+      if (channel !== "EMAIL") {
+        const whatsapp = await sendBulkWhatsApp({
+          applicationIds: ids,
+          templateKey: template,
+          message: body,
+        });
+        if (whatsapp.ok) delivered.push(`WhatsApp queued for ${whatsapp.queued ?? 0}`);
+        else problem = whatsapp.error ?? "Could not send the WhatsApp batch.";
+      }
+
+      if (channel !== "WHATSAPP") {
+        const email = await sendBulkEmail({
+          applicationIds: ids,
+          subject,
+          message: body,
+        });
+        if (email.ok) {
+          delivered.push(
+            `email delivered to ${email.sent ?? 0}${email.failed ? `, rejected for ${email.failed}` : ""}`
+          );
+        } else {
+          problem = [problem, email.error].filter(Boolean).join(" ");
+        }
+      }
+
+      if (delivered.length > 0) {
+        setDone(`Sent — ${delivered.join(" and ")}.`);
         setTimeout(() => {
           setDone(null);
           onSent();
           onClose();
-        }, 900);
+        }, 2600);
       } else {
-        setError(result.error ?? "Could not send.");
+        setError(problem ?? "Nothing was sent.");
+        setPending(false);
+        return;
       }
     } catch {
       setError("Something went wrong sending the broadcast.");
@@ -806,7 +1005,7 @@ function BroadcastDrawer({
       open={open}
       onClose={onClose}
       eyebrow="Messaging"
-      title="Bulk WhatsApp"
+      title="Bulk message"
       subtitle={`${recipients.length} recipient${recipients.length === 1 ? "" : "s"} selected`}
       onSubmit={send}
       footer={
@@ -819,6 +1018,37 @@ function BroadcastDrawer({
       }
     >
       <div className="space-y-4">
+        <fieldset>
+          <legend className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-brand-ink/50">
+            Channel
+          </legend>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {CHANNEL_CHOICES.map((choice) => (
+              <label
+                key={choice.id}
+                className={`cursor-pointer rounded-xl border px-3 py-2.5 text-sm transition ${
+                  channel === choice.id
+                    ? "border-brand-gold bg-brand-gold/10 font-semibold"
+                    : "border-brand-line bg-white hover:bg-brand-cream"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="broadcast-channel"
+                  value={choice.id}
+                  checked={channel === choice.id}
+                  onChange={() => setChannel(choice.id)}
+                  className="sr-only"
+                />
+                {choice.label}
+                <span className="mt-0.5 block text-[11px] font-normal leading-snug text-brand-ink/55">
+                  {choice.blurb}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
         <Field label="Template" htmlFor="wa-template">
           <Select id="wa-template" value={template} onChange={(e) => pickTemplate(e.target.value)}>
             {TEMPLATES.map((t) => (
@@ -828,6 +1058,17 @@ function BroadcastDrawer({
             ))}
           </Select>
         </Field>
+
+        {needsSubject && (
+          <Field
+            label="Subject"
+            htmlFor="bulk-subject"
+            required
+            hint="{{job_title}} and {{candidate_name}} are replaced per recipient."
+          >
+            <TextInput id="bulk-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+          </Field>
+        )}
 
         <Field
           label="Message"
@@ -846,12 +1087,29 @@ function BroadcastDrawer({
             {recipients.map((r) => (
               <li key={r.id} className="flex items-center justify-between gap-2">
                 <span className="truncate">{r.full_name}</span>
-                {!r.phone && (
+                {channel !== "EMAIL" && !r.phone && (
                   <span className="shrink-0 text-[11px] text-rose-600">no number</span>
+                )}
+                {channel !== "WHATSAPP" && !r.email && (
+                  <span className="shrink-0 text-[11px] text-rose-600">no email</span>
                 )}
               </li>
             ))}
           </ul>
+          {(withoutEmail > 0 || withoutPhone > 0) && channel === "BOTH" && (
+            <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+              {withoutPhone > 0 && `${withoutPhone} without a number `}
+              {withoutPhone > 0 && withoutEmail > 0 && "and "}
+              {withoutEmail > 0 && `${withoutEmail} without an email `}
+              will be skipped on that channel.
+            </p>
+          )}
+          {channel !== "WHATSAPP" && recipients.length > 40 && (
+            <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+              Email is handed to the relay one message at a time, so this batch will take a minute or
+              two. Gmail accounts also cap out near 500 recipients a day.
+            </p>
+          )}
         </div>
 
         <FormMessage error={error} success={done} />

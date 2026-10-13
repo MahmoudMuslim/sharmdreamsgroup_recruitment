@@ -32,7 +32,7 @@ import {
  */
 
 /** Attempts before a job is parked as FAILED instead of retried forever. */
-const MAX_ATTEMPTS = 3;
+export const MAX_ATTEMPTS = 3;
 
 export interface StageChangeNotificationOutcome {
   queued: boolean;
@@ -179,7 +179,7 @@ export type InterviewNoticeKind = "SCHEDULED" | "CHANGED" | "CANCELLED";
  * The server does not know the candidate's timezone, so the string names UTC
  * out loud instead of printing a local time that would be wrong for them.
  */
-function formatInterviewWhen(iso: string): string {
+export function formatInterviewWhen(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "the agreed time";
   const stamped = new Intl.DateTimeFormat("en-GB", {

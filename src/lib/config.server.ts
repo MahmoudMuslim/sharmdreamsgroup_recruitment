@@ -77,6 +77,18 @@ export const omnichannelConfig = {
     ),
     graphApiVersion: "v21.0",
   },
+  /**
+   * SMTP relay for the email channel. Every value can be overridden by the
+   * encrypted store (Settings → API keys), which the connector reads first —
+   * this object is only the deployment-level default.
+   */
+  email: {
+    host: optional("SMTP_HOST", process.env.SMTP_HOST),
+    port: Number(process.env.SMTP_PORT ?? 587),
+    username: optional("SMTP_USER", process.env.SMTP_USER),
+    password: optional("SMTP_PASSWORD", process.env.SMTP_PASSWORD),
+    from: optional("EMAIL_FROM", process.env.EMAIL_FROM),
+  },
   greenhouse: {
     apiKey: optional("GREENHOUSE_API_KEY", process.env.GREENHOUSE_API_KEY),
     baseUrl: "https://harvest.greenhouse.io/v1",

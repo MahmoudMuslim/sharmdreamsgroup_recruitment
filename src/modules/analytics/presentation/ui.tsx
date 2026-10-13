@@ -211,3 +211,52 @@ export function StatTile({
     </Card>
   );
 }
+
+/**
+ * Filter pill carrying a live count, used by the rails on the candidates and
+ * jobs boards. The count is the point of the control, so it is never hidden.
+ */
+export function FilterRail({
+  label,
+  count,
+  active,
+  onClick,
+  tone = "solid",
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  tone?: "solid" | "muted";
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      disabled={count === 0 && !active}
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40",
+        active
+          ? tone === "muted"
+            ? "border-brand-gold bg-brand-gold/15 text-brand-gold-dark"
+            : "border-brand-ink bg-brand-ink text-brand-cream"
+          : "border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
+      )}
+    >
+      {label}
+      <span
+        className={cn(
+          "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+          active
+            ? tone === "muted"
+              ? "bg-brand-gold/25 text-brand-gold-dark"
+              : "bg-white/20 text-brand-cream"
+            : "bg-brand-sand text-brand-ink/55"
+        )}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}

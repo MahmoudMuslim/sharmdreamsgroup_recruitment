@@ -219,6 +219,11 @@ create table if not exists communication_logs (
   channel message_channel not null,
   direction message_direction not null,
   recipient text not null,
+  -- EMAIL only: the subject line the candidate was actually sent, so the
+  -- outbox can re-send a failed row without re-rendering a template.
+  subject text,
+  -- IN_APP only: null means the candidate has not opened the notice yet.
+  read_at timestamptz,
   body text not null,
   delivered boolean not null default false,
   error_message text,
@@ -226,6 +231,9 @@ create table if not exists communication_logs (
 );
 
 create index if not exists idx_communication_logs_application on communication_logs (application_id);
+create index if not exists idx_communication_logs_unread
+  on communication_logs (application_id, created_at desc)
+  where channel = 'IN_APP' and read_at is null;
 
 create table if not exists interview_schedules (
   id uuid primary key default gen_random_uuid(),

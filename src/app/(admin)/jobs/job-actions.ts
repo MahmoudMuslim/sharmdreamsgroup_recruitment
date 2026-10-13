@@ -31,13 +31,17 @@ export interface JobResult {
 const EMPLOYMENT_TYPES = new Set(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERNSHIP"]);
 const STATUSES = new Set(["DRAFT", "PUBLISHED", "PAUSED", "CLOSED"]);
 
-/** Creates a job opening. Requires the `jobs.manage` permission. */
-export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
-  await requireStaff("/jobs");
-  if (!(await hasPermissionForUser("jobs.manage"))) {
-    return { ok: false, error: "You need the Manage jobs permission." };
-  }
-
+/**
+ * Validates a job draft and turns it into the columns `job_openings` stores.
+ *
+ * Shared by create and edit so the two can never drift apart on what is
+ * acceptable — a rule enforced on one path and not the other is how a draft
+ * becomes undeletable once it has been saved.
+ */
+async function jobColumnsFrom(
+  draft: JobDraft,
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>
+): Promise<{ ok: true; columns: Record<string, unknown> } | { ok: false; error: string }> {
   const title = draft.title.trim();
   if (!title) return { ok: false, error: "A job title is required." };
 
@@ -50,6 +54,9 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   const description = draft.description.trim();
   if (!description) return { ok: false, error: "A description is required." };
 
+  if (!draft.tenant_id) {
+    return { ok: false, error: "Choose the company this role belongs to." };
+  }
   if (!isSector(draft.sector)) {
     return { ok: false, error: `Sector must be one of: ${SECTORS.join(", ")}.` };
   }
@@ -59,8 +66,6 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   if (!STATUSES.has(draft.status)) {
     return { ok: false, error: "Invalid status." };
   }
-
-  const supabase = await createSupabaseServerClient();
 
   // The salary pair is only meaningful with its currency, so the code is
   // validated against master data rather than trusted from the form.
@@ -80,6 +85,38 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     };
   }
 
+  return {
+    ok: true,
+    columns: {
+      tenant_id: draft.tenant_id,
+      title,
+      department,
+      sector: draft.sector,
+      location,
+      employment_type: draft.employment_type,
+      description,
+      requirements: draft.requirements ?? [],
+      min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
+      max_salary_usd: draft.max_salary_usd ? Number(draft.max_salary_usd) : null,
+      salary_currency: currency,
+      status: draft.status,
+    },
+  };
+}
+
+/** Creates a job opening. Requires the `jobs.manage` permission. */
+export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
+  await requireStaff("/jobs");
+  if (!(await hasPermissionForUser("jobs.manage"))) {
+    return { ok: false, error: "You need the Manage jobs permission." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const built = await jobColumnsFrom(draft, supabase);
+  if (!built.ok) return { ok: false, error: built.error };
+  const { columns } = built;
+
   // `job_openings.created_by` references user_profiles(id), not auth.users(id),
   // so the authenticated user must be resolved to their profile row. Passing the
   // auth id directly violates the foreign key.
@@ -94,25 +131,13 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     createdBy = profile?.id ?? null;
   }
 
-  const status = draft.status;
   const { data, error } = await supabase
     .from("job_openings")
     .insert({
-      tenant_id: draft.tenant_id,
-      title,
-      department,
-      sector: draft.sector,
-      location,
-      employment_type: draft.employment_type,
-      description,
-      requirements: draft.requirements,
-      min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
-      max_salary_usd: draft.max_salary_usd ? Number(draft.max_salary_usd) : null,
-      salary_currency: currency,
-      status,
+      ...columns,
       created_by: createdBy,
       // Only a published opening gets a posted date.
-      posted_at: status === "PUBLISHED" ? new Date().toISOString() : null,
+      posted_at: columns.status === "PUBLISHED" ? new Date().toISOString() : null,
     })
     .select("id")
     .single();
@@ -141,4 +166,147 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   // window expired, which reads as "the job I just posted never appeared".
   revalidatePath("/careers");
   return { ok: true, id: data?.id };
+}
+
+/** Staff session + `jobs.manage`, or the message explaining which is missing. */
+async function requireJobManager(): Promise<
+  { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>> } | { error: string }
+> {
+  await requireStaff("/jobs");
+  if (!(await hasPermissionForUser("jobs.manage"))) {
+    return { error: "You need the Manage jobs permission." };
+  }
+  return { supabase: await createSupabaseServerClient() };
+}
+
+/** Turns the two constraint errors this table can raise into recruiter language. */
+function describeWriteError(error: { code?: string; message: string }): string {
+  if (error.code === "23503") {
+    if (error.message.includes("tenant_id")) {
+      return "That company no longer exists — pick another.";
+    }
+    return "A linked record no longer exists.";
+  }
+  if (error.code === "23514") {
+    return "The employment type or status is not valid.";
+  }
+  return error.message;
+}
+
+export interface JobStatusResult {
+  ok: boolean;
+  error?: string;
+  status?: string;
+}
+
+/**
+ * Edits an existing opening.
+ *
+ * Validated exactly like a create, and the first-published date is preserved:
+ * republishing an old draft must not make it look newly posted on the board,
+ * which sorts by `posted_at`.
+ */
+export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<JobResult> {
+  const access = await requireJobManager();
+  if ("error" in access) return { ok: false, error: access.error };
+  const { supabase } = access;
+
+  const { data: existing } = await supabase
+    .from("job_openings")
+    .select("id, posted_at")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (!existing) return { ok: false, error: "That opening no longer exists." };
+
+  const built = await jobColumnsFrom(draft, supabase);
+  if (!built.ok) return { ok: false, error: built.error };
+
+  const columns: Record<string, unknown> = { ...built.columns };
+  if (built.columns.status === "PUBLISHED" && !existing.posted_at) {
+    columns.posted_at = new Date().toISOString();
+  }
+
+  const { error } = await supabase.from("job_openings").update(columns).eq("id", jobId);
+  if (error) return { ok: false, error: describeWriteError(error) };
+
+  revalidatePath("/jobs");
+  revalidatePath("/careers");
+  return { ok: true, id: jobId };
+}
+
+/**
+ * Changes only the status, for the one-click Publish / Pause / Close actions.
+ *
+ * `posted_at` is stamped on the first publication and never removed, so the
+ * careers board ordering stays stable when a role is paused and reopened.
+ */
+export async function setJobStatus(
+  jobId: string,
+  status: string
+): Promise<JobStatusResult> {
+  const access = await requireJobManager();
+  if ("error" in access) return { ok: false, error: access.error };
+  const { supabase } = access;
+
+  if (!STATUSES.has(status)) return { ok: false, error: "Unknown status." };
+
+  const { data: existing } = await supabase
+    .from("job_openings")
+    .select("id, status, posted_at")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (!existing) return { ok: false, error: "That opening no longer exists." };
+  if (existing.status === status) return { ok: true, status };
+
+  const patch: Record<string, unknown> = { status };
+  if (status === "PUBLISHED" && !existing.posted_at) {
+    patch.posted_at = new Date().toISOString();
+  }
+
+  const { error } = await supabase.from("job_openings").update(patch).eq("id", jobId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/jobs");
+  revalidatePath("/careers");
+  return { ok: true, status };
+}
+
+/**
+ * Deletes an opening — but never one that has taken applications.
+ *
+ * `applications.job_id` points at this row, so a delete would take every
+ * candidate record attached to the role with it. Closing the opening does the
+ * same job for a recruiter and keeps the trail, so the destructive path is
+ * refused rather than offered with a warning.
+ */
+export async function deleteJobOpening(jobId: string): Promise<JobResult> {
+  const access = await requireJobManager();
+  if ("error" in access) return { ok: false, error: access.error };
+  const { supabase } = access;
+
+  const { data: existing } = await supabase
+    .from("job_openings")
+    .select("id, title")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (!existing) return { ok: false, error: "That opening no longer exists." };
+
+  const { count } = await supabase
+    .from("applications")
+    .select("id", { count: "exact", head: true })
+    .eq("job_id", jobId);
+
+  if ((count ?? 0) > 0) {
+    return {
+      ok: false,
+      error: `“${existing.title}” has ${count} applicant${count === 1 ? "" : "s"} — deleting the opening would delete those records too. Close it instead to keep them.`,
+    };
+  }
+
+  const { error } = await supabase.from("job_openings").delete().eq("id", jobId);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/jobs");
+  revalidatePath("/careers");
+  return { ok: true, id: jobId };
 }

@@ -154,8 +154,9 @@ function Editor({
 }
 
 /**
- * Notification template editor. The WHATSAPP rows below are the bodies the
- * dispatch path renders — see `resolveTemplate` in whatsapp-dispatch.ts.
+ * Notification template editor. Rows are read at send time by the dispatch
+ * paths — `resolveTemplate` in whatsapp-dispatch.ts for WhatsApp and
+ * `resolveEmailCopy` in candidate-notifications.ts for email.
  */
 export function TemplatesConsole({
   templates,
@@ -172,9 +173,11 @@ export function TemplatesConsole({
       <header className="mb-4">
         <h2 className="font-display text-lg font-bold">Notification templates</h2>
         <p className="mt-1 text-sm text-brand-ink/60">
-          The WhatsApp rows below are the copy candidates actually receive: each alert looks its row up
-          at send time, so a save here changes the next message. Email rows are stored for reference —
-          no email provider is configured yet.
+          Every row below is live copy: each alert looks its row up at send time, so a save here
+          changes the next message. WhatsApp rows go to the candidate&apos;s phone, Email rows are
+          sent as letters with their subject line, and the portal notice shows the same email copy
+          when a channel cannot deliver. A stage or interview event with no stored row is sent using
+          the copy shipped in code.
         </p>
       </header>
 

@@ -14,10 +14,12 @@ import {
   resolveSecret,
   resolveConfig,
 } from "@/modules/settings/infrastructure/credentialResolver";
+import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import {
   FALLBACK_MODELS,
   PROVIDERS,
   providerById,
+  type CatalogueSource,
   type ModelCatalogue,
   type ModelOption,
   type ProviderGroup,
@@ -376,6 +378,45 @@ export interface VerifyResult {
 }
 
 /**
+ * Records a Test-button outcome on the credential row and in the audit trail.
+ * The message is what the admin saw, so it must never contain a secret.
+ */
+async function recordVerificationOutcome(
+  provider: string,
+  status: "working" | "failed",
+  message: string
+): Promise<void> {
+  const admin = getSupabaseServiceClient();
+  const session = await createSupabaseServerClient();
+  const { data: sessionData } = await session.auth.getUser();
+  const { data: profile } = sessionData.user
+    ? await session
+        .from("user_profiles")
+        .select("id")
+        .eq("auth_user_id", sessionData.user.id)
+        .maybeSingle()
+    : { data: null as { id: string } | null };
+
+  await admin
+    .from("provider_credentials")
+    .update({
+      last_verified_at: new Date().toISOString(),
+      last_verified_status: status,
+      last_verified_detail: message,
+    })
+    .eq("provider", provider);
+
+  await admin.from("credential_audit_log").insert({
+    provider,
+    action: "VERIFIED",
+    actor_id: profile?.id ?? null,
+    detail: message,
+  });
+
+  revalidatePath("/settings");
+}
+
+/**
  * Performs a live call to the provider to confirm the credential works.
  *
  * The secret is decrypted here and immediately attached to an outgoing request;
@@ -392,6 +433,14 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
       status: "unverifiable",
       message: "This provider cannot be verified automatically — check the settings carefully.",
     };
+  }
+
+  // SMTP has no "is this key valid" endpoint, so the probe signs in instead.
+  if (definition.verify.transport === "smtp") {
+    const outcome = await EmailConnector.verify();
+    const status = outcome.ok ? "working" : "failed";
+    await recordVerificationOutcome(definition.id, status, outcome.message);
+    return { ok: outcome.ok, status, message: outcome.message };
   }
 
   const secret = await resolveSecret(provider);
@@ -436,35 +485,12 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
       signal: AbortSignal.timeout(15_000),
     });
 
-    const admin = getSupabaseServiceClient();
-    const session = await createSupabaseServerClient();
-    const { data: sessionData } = await session.auth.getUser();
-    const { data: profile } = sessionData.user
-      ? await session.from("user_profiles").select("id").eq("auth_user_id", sessionData.user.id).maybeSingle()
-      : { data: null };
-
     const status = response.ok ? "working" : "failed";
     const message = response.ok
       ? `Connected (HTTP ${response.status}).`
       : `Rejected by the provider (HTTP ${response.status}).`;
 
-    await admin
-      .from("provider_credentials")
-      .update({
-        last_verified_at: new Date().toISOString(),
-        last_verified_status: status,
-        last_verified_detail: message,
-      })
-      .eq("provider", definition.id);
-
-    await admin.from("credential_audit_log").insert({
-      provider: definition.id,
-      action: "VERIFIED",
-      actor_id: profile?.id ?? null,
-      detail: message,
-    });
-
-    revalidatePath("/settings");
+    await recordVerificationOutcome(definition.id, status, message);
     return { ok: response.ok, status, message };
   } catch (error) {
     const message =
@@ -564,20 +590,92 @@ export async function saveModelRouting(input: {
 }
 
 /**
- * Fetches the live model catalogue from OpenRouter.
+ * Fetches the live model catalogue from every AI provider whose list this
+ * portal can read: OpenRouter, Google AI Studio, OpenCode and Qoder.
  *
- * Falls back to a curated static list when the gateway is unreachable so the
- * picker is never empty.
+ * Each row carries the provider that published it, because the id prefix is not
+ * the provider — `google/gemma-4-31b-it:free` is an OpenRouter listing of a
+ * Google model, while `gemini-2.5-flash` is Google's own endpoint.
+ *
+ * Providers whose credentials are stored but never called for inference are
+ * still listed, tagged `routable: false`, so the console can say so out loud
+ * instead of showing an empty group that looks like a broken integration.
+ *
+ * A source that fails degrades only itself: one unreachable provider must not
+ * blank out the picker, which falls back to a curated static list when
+ * OpenRouter — the default inference path — is the one that failed.
  */
 export async function getModelCatalogue(): Promise<ModelCatalogue> {
   await requireStaff("/settings");
 
+  const results = await Promise.all([
+    fetchOpenRouterModels(),
+    fetchGoogleModels(),
+    fetchOpenCodeModels(),
+    fetchQoderModels(),
+  ]);
+
+  const models = results.flatMap((r) => r.models);
+  const sources = results.map((r) => r.source);
+  const openRouter = sources[0];
+
+  return {
+    models,
+    sources,
+    fetchedAt: new Date().toISOString(),
+    degraded: openRouter.status !== "ok",
+  };
+}
+
+interface SourceResult {
+  models: ModelOption[];
+  source: CatalogueSource;
+}
+
+/** The providers this portal can actually send an inference request to. */
+function isRoutableProvider(id: string): boolean {
+  return id === "openrouter" || id === "google_ai_studio";
+}
+
+/** A fetch failure that only degrades its own provider's rows. */
+function failedSource(
+  id: string,
+  status: CatalogueSource["status"],
+  note: string
+): SourceResult {
+  return {
+    models: [],
+    source: {
+      id,
+      displayName: providerById(id)?.displayName ?? id,
+      count: 0,
+      routable: isRoutableProvider(id),
+      status,
+      note,
+    },
+  };
+}
+
+function okSource(id: string, models: ModelOption[], note?: string): SourceResult {
+  return {
+    models,
+    source: {
+      id,
+      displayName: providerById(id)?.displayName ?? id,
+      count: models.length,
+      routable: isRoutableProvider(id),
+      status: "ok",
+      ...(note ? { note } : {}),
+    },
+  };
+}
+
+async function fetchOpenRouterModels(): Promise<SourceResult> {
   try {
     const response = await fetch("https://openrouter.ai/api/v1/models", {
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
-
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
     const payload = (await response.json()) as {
@@ -596,25 +694,225 @@ export async function getModelCatalogue(): Promise<ModelCatalogue> {
       completionPrice: model.pricing?.completion ? Number(model.pricing.completion) * 1_000_000 : null,
       contextLength: model.context_length ?? null,
       free: (model.pricing?.prompt ?? "0") === "0",
+      provider: "openrouter",
+      routable: true,
     }));
 
     // Free models first (the group runs on free tiers), then cheapest.
     models.sort((a, b) => {
       if (a.free !== b.free) return a.free ? -1 : 1;
-      return (a.promptPrice ?? Infinity) - (b.promptPrice ?? Infinity);
+      return (a.promptPrice ?? Number.MAX_SAFE_INTEGER) - (b.promptPrice ?? Number.MAX_SAFE_INTEGER);
     });
 
-    return { models, fetchedAt: new Date().toISOString(), degraded: false };
+    return okSource("openrouter", models);
   } catch (error) {
     // The UI silently shows the offline list; log the cause so a degraded
     // catalogue can be diagnosed from the server console.
-    console.error("getModelCatalogue failed:", error);
+    console.error("getModelCatalogue (openrouter) failed:", error);
     return {
-      models: [...FALLBACK_MODELS],
-      fetchedAt: new Date().toISOString(),
-      degraded: true,
+      models: FALLBACK_MODELS.map((model) => ({ ...model })),
+      source: {
+        id: "openrouter",
+        displayName: providerById("openrouter")?.displayName ?? "openrouter",
+        count: FALLBACK_MODELS.length,
+        routable: true,
+        status: "degraded",
+        note: "OpenRouter's live list did not load, so the built-in list is shown.",
+      },
     };
   }
+}
+
+/** Google's list is paginated and caps at 100 rows, so two pages are fetched. */
+async function fetchGoogleModels(): Promise<SourceResult> {
+  const key = await resolveSecret("google_ai_studio");
+  if (!key) {
+    return failedSource("google_ai_studio", "no_key", "No key stored — add one under API keys to list Gemini models.");
+  }
+
+  try {
+    const rows: {
+      name?: string;
+      displayName?: string;
+      inputTokenLimit?: number;
+      supportedGenerationMethods?: string[];
+    }[] = [];
+
+    let pageToken = "";
+    for (let page = 0; page < 2; page += 1) {
+      const url =
+        `https://generativelanguage.googleapis.com/v1beta/models?pageSize=100` +
+        (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+      const response = await fetch(url, {
+        headers: { "x-goog-api-key": key },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.status === 401 || response.status === 403) {
+        return failedSource(
+          "google_ai_studio",
+          "unauthorized",
+          `Google rejected the stored key (HTTP ${response.status}).`
+        );
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const payload = (await response.json()) as {
+        models?: typeof rows;
+        nextPageToken?: string;
+      };
+      rows.push(...(payload.models ?? []));
+      pageToken = payload.nextPageToken ?? "";
+      if (!pageToken) break;
+    }
+
+    // Only models that can actually answer a chat request are useful here —
+    // the same endpoint list also carries embeddings, TTS and image models.
+    const models: ModelOption[] = rows
+      .filter((row) => row.name && row.supportedGenerationMethods?.includes("generateContent"))
+      .map((row) => ({
+        // The gateway puts this id straight into `/models/{id}:generateContent`,
+        // so it must be the bare id, not `models/gemini-…`.
+        id: String(row.name).replace(/^models\//, ""),
+        name: row.displayName ?? String(row.name).replace(/^models\//, ""),
+        promptPrice: null,
+        completionPrice: null,
+        contextLength: row.inputTokenLimit ?? null,
+        free: false,
+        provider: "google_ai_studio",
+        routable: true,
+      }));
+
+    return okSource("google_ai_studio", models, "Google does not publish per-model prices in this list.");
+  } catch (error) {
+    console.error("getModelCatalogue (google) failed:", error);
+    return failedSource("google_ai_studio", "unreachable", "Google AI Studio did not answer.");
+  }
+}
+
+async function fetchOpenCodeModels(): Promise<SourceResult> {
+  const key = await resolveSecret("opencode");
+  if (!key) {
+    return failedSource("opencode", "no_key", "No token stored for OpenCode.");
+  }
+
+  try {
+    const response = await fetch("https://opencode.ai/inference/v1/models", {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status === 401 || response.status === 403) {
+      return failedSource("opencode", "unauthorized", "OpenCode rejected the stored token.");
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const payload = (await response.json()) as { data?: { id: string; created?: number }[] };
+    const models: ModelOption[] = (payload.data ?? []).map((model) => ({
+      id: model.id,
+      name: model.id,
+      promptPrice: null,
+      completionPrice: null,
+      contextLength: null,
+      free: false,
+      provider: "opencode",
+      routable: false,
+      detail: model.created
+        ? `listed ${new Date(model.created * 1000).toISOString().slice(0, 10)}`
+        : undefined,
+    }));
+
+    return okSource(
+      "opencode",
+      models,
+      "OpenCode's hosted list carries only model ids — no prices, context sizes or display names. Its documented v2 model API is served by the local OpenCode client, which a web server cannot reach, and its free models answer only inside that client (HTTP 403 server-side), so this portal has no OpenCode inference path."
+    );
+  } catch (error) {
+    console.error("getModelCatalogue (opencode) failed:", error);
+    return failedSource("opencode", "unreachable", "OpenCode did not answer.");
+  }
+}
+
+/**
+ * Qoder's documented model list (GET /api/v1/cloud/models).
+ *
+ * The response carries relative pricing and capability metadata rather than
+ * USD rates, and it lists models the account has switched off, so both are
+ * surfaced verbatim instead of being folded into the price tiers.
+ */
+async function fetchQoderModels(): Promise<SourceResult> {
+  const key = await resolveSecret("qoder");
+  if (!key) {
+    return failedSource("qoder", "no_key", "No personal access token stored for Qoder.");
+  }
+
+  try {
+    const response = await fetch("https://api.qoder.com/api/v1/cloud/models", {
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status === 401 || response.status === 403) {
+      return failedSource("qoder", "unauthorized", "Qoder rejected the stored token.");
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const payload = (await response.json()) as {
+      data?: {
+        id: string;
+        display_name?: string;
+        is_enabled?: boolean;
+        is_vl?: boolean;
+        price_factor?: number;
+        efforts?: string[];
+        default_effort?: string;
+        max_input_tokens?: number;
+        available_context_windows?: number[];
+      }[];
+    };
+
+    const models: ModelOption[] = (payload.data ?? []).map((model) => ({
+      id: model.id,
+      name: model.display_name ?? model.id,
+      promptPrice: null,
+      completionPrice: null,
+      contextLength: model.max_input_tokens ?? null,
+      free: false,
+      provider: "qoder",
+      routable: false,
+      enabled: model.is_enabled !== false,
+      detail: describeQoderModel(model),
+    }));
+
+    const usable = models.filter((m) => m.enabled).length;
+
+    return okSource(
+      "qoder",
+      models,
+      `Qoder's agent model aliases — ${usable} of ${models.length} enabled on this account. These ids configure a Cloud Agent session or batch; Qoder publishes no endpoint that answers a completion request, so this portal cannot screen or grade with them.`
+    );
+  } catch (error) {
+    console.error("getModelCatalogue (qoder) failed:", error);
+    return failedSource("qoder", "unreachable", "Qoder did not answer.");
+  }
+}
+
+/** Compact, provider-worded metadata line: pricing is relative, never USD. */
+function describeQoderModel(model: {
+  is_vl?: boolean;
+  price_factor?: number;
+  efforts?: string[];
+  default_effort?: string;
+  available_context_windows?: number[];
+}): string | undefined {
+  const parts: string[] = [];
+  if (typeof model.price_factor === "number") parts.push(`${model.price_factor}× baseline price`);
+  if (model.is_vl) parts.push("vision input");
+  if (model.efforts?.length) {
+    const efforts = [...model.efforts].sort().join("/");
+    parts.push(`effort: ${efforts}${model.default_effort ? ` (default ${model.default_effort})` : ""}`);
+  }
+  if (model.available_context_windows?.length) {
+    parts.push(`context ${model.available_context_windows.map((t) => `${Math.round(t / 1000)}k`).join("/")}`);
+  }
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 export interface AuditEntryView {

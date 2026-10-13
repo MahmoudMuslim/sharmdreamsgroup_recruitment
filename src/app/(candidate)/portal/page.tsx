@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { PortalTracker } from "./PortalTracker";
 
 export const metadata: Metadata = {
@@ -6,9 +7,14 @@ export const metadata: Metadata = {
   description: "Check your application status, assessment and next steps",
 };
 
-export default function CandidatePortalPage() {
-  // The `?code=…` pre-fill is read on the client, not from `searchParams`.
-  // Reading it here would mark the whole portal request-time, costing every
-  // visitor a server render to save one field's typing.
-  return <PortalTracker />;
+/** Shown when Settings has no support address, so the help box is never empty. */
+const DEFAULT_SUPPORT_EMAIL = "careers@sharmdreamsgroup.com";
+
+export default async function CandidatePortalPage() {
+  // The support address is a runtime setting, so this page renders per request.
+  // The `?code=…` pre-fill is still read on the client rather than from
+  // `searchParams`, which keeps the lookup logic next to the form that owns it.
+  const supportEmail = await getStringSetting("organisation.support_email", DEFAULT_SUPPORT_EMAIL);
+
+  return <PortalTracker supportEmail={supportEmail} />;
 }

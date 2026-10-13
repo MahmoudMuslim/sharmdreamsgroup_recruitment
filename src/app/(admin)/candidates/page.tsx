@@ -49,10 +49,10 @@ export default async function CandidatesPage() {
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gold/15 text-brand-gold-dark">
             <Upload className="h-5 w-5" aria-hidden />
           </div>
-          <h3 className="font-display text-base font-bold">WhatsApp alerts</h3>
+          <h3 className="font-display text-base font-bold">Candidate alerts</h3>
           <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
-            Candidates receive automatic status updates via WhatsApp Cloud API at each pipeline
-            move.
+            Every pipeline move emails the candidate, queues a WhatsApp where one is enabled, and
+            leaves a notice in their portal inbox.
           </p>
         </Card>
 

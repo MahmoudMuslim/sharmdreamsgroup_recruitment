@@ -9,6 +9,7 @@ import {
   CalendarDays,
   ClipboardCheck,
   LayoutDashboard,
+  MessageCircle,
   Menu,
   Settings,
   Sparkles,
@@ -35,6 +36,7 @@ const NAV: readonly NavItem[] = [
   { href: "/interviews", label: "Interviews", icon: CalendarDays, hint: "Scheduled panels" },
   { href: "/onboarding", label: "Onboarding", icon: UserRoundPlus, hint: "New-hire checklists" },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness, hint: "Open positions" },
+  { href: "/whatsapp", label: "Outbox", icon: MessageCircle, hint: "Candidate alerts" },
   { href: "/settings", label: "Settings", icon: Settings, hint: "Configuration & access" },
 ] as const;
 

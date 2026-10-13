@@ -371,27 +371,34 @@ export interface TimeToHirePoint {
   avg_days: number;
 }
 
+/** One row of the dashboard candidate board. */
+export interface DashboardCandidate {
+  application_id: string;
+  full_name: string;
+  job_title: string;
+  department: string;
+  match_score: number;
+  stage: ApplicationStage;
+  source: ApplicationSource;
+  applied_at: string | null;
+  has_assessment: boolean;
+  assessment_score: number | null;
+}
+
 export interface DashboardAnalytics {
   total_applications: number;
   active_jobs: number;
   hires_this_quarter: number;
   avg_time_to_hire_days: number;
   avg_fit_score: number;
+  scored_applications: number;
   applications_last_14_days: { date: string; count: number }[];
   pipeline: PipelineFunnelStep[];
   channels: ChannelEffectiveness[];
   fit_distribution: FitScoreBucket[];
   diversity: DiversityMetric[];
   time_to_hire_trend: TimeToHirePoint[];
-  top_candidates: {
-    application_id: string;
-    full_name: string;
-    job_title: string;
-    match_score: number;
-    stage: ApplicationStage;
-    has_assessment: boolean;
-    assessment_score: number | null;
-  }[];
+  candidates: DashboardCandidate[];
 }
 
 // ---------------------------------------------------------------------------

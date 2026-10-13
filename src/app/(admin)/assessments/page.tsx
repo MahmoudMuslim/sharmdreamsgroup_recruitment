@@ -6,6 +6,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
+import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { connection } from "next/server";
 
 export const metadata = {
@@ -38,6 +39,10 @@ export default async function AssessmentsBuilderPage() {
   // forever and every button unclickable.
   const { templates, candidates, options, questionsByTemplate } = await loadTemplates();
   const canEdit = await hasPermissionForUser("assessments.create");
+  const defaultDurationMinutes = await getNumberSetting(
+    "assessment.default_duration_minutes",
+    60
+  );
 
   return (
     <AdminShell user={user}>
@@ -64,6 +69,7 @@ export default async function AssessmentsBuilderPage() {
             companies: options.companies,
           }}
           questionsByTemplate={questionsByTemplate}
+          defaultDurationMinutes={defaultDurationMinutes}
           canEdit={canEdit}
         />
       )}

@@ -96,10 +96,13 @@ const TYPE_META: Record<string, TypeMeta> = {
 export function TemplateEditor({
   options,
   template,
+  defaultDurationMinutes,
   onClose,
 }: {
   options: TemplateOptions;
   template: TemplateSummary | null;
+  /** `assessment.default_duration_minutes`, pre-filled on a new suite only. */
+  defaultDurationMinutes: number;
   onClose: () => void;
 }) {
   type DraftState = typeof EMPTY;
@@ -121,6 +124,7 @@ const [draft, setDraft] = useState<DraftState>(() =>
           ...EMPTY,
           tenant_id: options.companies[0]?.id ?? "",
           role_family: options.roleFamilies[0]?.key ?? "GENERAL",
+          time_limit_minutes: String(defaultDurationMinutes),
         }
   );
   const [error, setError] = useState<string | null>(null);
@@ -607,12 +611,14 @@ export function AssessmentGrid({
   candidates,
   options,
   questionsByTemplate,
+  defaultDurationMinutes,
   canEdit,
 }: {
   templates: TemplateSummary[];
   candidates: AssignableCandidate[];
   options: TemplateOptions;
   questionsByTemplate: Record<string, EditableQuestion[]>;
+  defaultDurationMinutes: number;
   canEdit: boolean;
 }) {
   const router = useRouter();
@@ -794,6 +800,7 @@ export function AssessmentGrid({
         <TemplateEditor
           options={options}
           template={null}
+          defaultDurationMinutes={defaultDurationMinutes}
           onClose={() => setCreating(false)}
         />
       )}
@@ -801,6 +808,7 @@ export function AssessmentGrid({
         <TemplateEditor
           options={options}
           template={editing}
+          defaultDurationMinutes={defaultDurationMinutes}
           onClose={() => setEditing(null)}
         />
       )}

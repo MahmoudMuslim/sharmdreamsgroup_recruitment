@@ -33,6 +33,11 @@ export interface ProviderVerifyConfig {
   url: string;
   method: "GET" | "POST";
   header: string;
+  /**
+   * Set when the probe is a protocol handshake rather than an HTTP call —
+   * SMTP has no "am I configured" endpoint, so the check logs in instead.
+   */
+  transport?: "smtp";
 }
 
 /** Complete provider definition. */
@@ -49,7 +54,7 @@ export interface ProviderDefinition {
   storedOnly?: boolean;
 }
 
-/** Model option from catalogue (e.g., OpenRouter). */
+/** Model option from a provider catalogue. */
 export interface ModelOption {
   id: string;
   name: string;
@@ -57,11 +62,41 @@ export interface ModelOption {
   completionPrice: number | null;
   contextLength: number | null;
   free: boolean;
+  /** Which configured provider publishes this model, e.g. `openrouter`. */
+  provider: string;
+  /**
+   * False when the portal stores the provider's credentials but has no code
+   * path that can call it, so the UI must never present the row as selectable.
+   */
+  routable: boolean;
+  /**
+   * False when the provider lists the model but this account cannot use it —
+   * Qoder returns disabled models alongside the enabled ones.
+   */
+  enabled?: boolean;
+  /**
+   * Provider-reported metadata with no equivalent in the fields above, e.g.
+   * "2× baseline · vision · effort: low…max". Display only; never inferred.
+   */
+  detail?: string;
+}
+
+/** Where one catalogue page came from, and what to say about it. */
+export interface CatalogueSource {
+  id: string;
+  displayName: string;
+  count: number;
+  routable: boolean;
+  /** `ok` — live list; `degraded` — static list; anything else — no models shown. */
+  status: "ok" | "degraded" | "no_key" | "unauthorized" | "unreachable";
+  /** Plain-language reason for a non-`ok` status, or the caveat for a routable false. */
+  note?: string;
 }
 
 /** Model catalogue response. */
 export interface ModelCatalogue {
   models: ModelOption[];
+  sources: CatalogueSource[];
   fetchedAt: string;
   degraded: boolean;
 }
@@ -87,6 +122,12 @@ export interface ProviderModel {
   capabilities: string[];
   isActive: boolean;
   fetchedAt: string;
+  /** False for credential-only providers — never offer these in a picker. */
+  routable: boolean;
+  /** False = listed by the provider, unusable by this account. */
+  enabled?: boolean;
+  /** Provider-reported metadata shown verbatim. */
+  detail?: string;
 }
 
 /** Grouped models by provider and cost tier. */
@@ -97,8 +138,13 @@ export interface GroupedModels {
   models: ProviderModel[];
 }
 
-/** Cost tier classification. */
-export type CostTier = "free" | "low" | "medium" | "high" | "premium";
+/**
+ * Cost tier classification.
+ *
+ * `unpriced` exists because some providers do not publish a price in their
+ * model list; calling that "free" would be a claim the code cannot support.
+ */
+export type CostTier = "free" | "low" | "medium" | "high" | "premium" | "unpriced";
 
 // ============================================================================
 // Constants
@@ -201,6 +247,50 @@ export const PROVIDERS: ProviderDefinition[] = [
     ],
   },
   {
+    id: "smtp",
+    displayName: "Email (SMTP)",
+    group: "communication",
+    envVar: "SMTP_PASSWORD",
+    description:
+      "Any SMTP relay — Gmail, Outlook, Zoho or your own mail server. Sends the email channel: pipeline alerts, interview notices and recruiter campaigns. Gmail needs an app password, not the account password.",
+    docsUrl: "https://nodemailer.com/smtp/",
+    verify: { url: "", method: "GET", header: "", transport: "smtp" },
+    fields: [
+      {
+        key: "host",
+        label: "SMTP host",
+        kind: "text",
+        placeholder: "smtp.gmail.com",
+        required: true,
+        hint: "Falls back to SMTP_HOST.",
+      },
+      {
+        key: "port",
+        label: "Port",
+        kind: "number",
+        placeholder: "587",
+        required: true,
+        hint: "587 starts with a plain connection and upgrades (STARTTLS); 465 is TLS from the first byte. Falls back to SMTP_PORT.",
+      },
+      {
+        key: "username",
+        label: "Sign-in account",
+        kind: "text",
+        placeholder: "talent@your-domain.com",
+        required: true,
+        hint: "The mailbox the server logs in as. Falls back to SMTP_USER.",
+      },
+      {
+        key: "from",
+        label: "From address",
+        kind: "text",
+        placeholder: "Sharm Dreams Group <talent@your-domain.com>",
+        required: true,
+        hint: "What candidates see and reply to. Falls back to EMAIL_FROM.",
+      },
+    ],
+  },
+  {
     id: "frappe_hr",
     displayName: "Frappe HR",
     group: "hr",
@@ -251,15 +341,15 @@ export const PROVIDERS: ProviderDefinition[] = [
   },
 ];
 
-/** Fallback models when OpenRouter catalogue is unavailable. */
+/** Fallback models when the OpenRouter catalogue is unreachable. */
 export const FALLBACK_MODELS: ModelOption[] = [
-  { id: "google/gemma-4-31b-it:free", name: "Gemma 4 31B (Free)", promptPrice: 0, completionPrice: 0, contextLength: 8192, free: true },
-  { id: "google/gemma-4-26b-a4b-it:free", name: "Gemma 4 26B MoE (Free)", promptPrice: 0, completionPrice: 0, contextLength: 8192, free: true },
-  { id: "meta-llama/llama-3.1-8b-instruct:free", name: "Llama 3.1 8B (Free)", promptPrice: 0, completionPrice: 0, contextLength: 131072, free: true },
-  { id: "microsoft/phi-3-mini-128k-instruct:free", name: "Phi-3 Mini 128K (Free)", promptPrice: 0, completionPrice: 0, contextLength: 131072, free: true },
-  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", promptPrice: 0.15, completionPrice: 0.6, contextLength: 128000, free: false },
-  { id: "anthropic/claude-3.5-haiku", name: "Claude 3.5 Haiku", promptPrice: 0.25, completionPrice: 1.25, contextLength: 200000, free: false },
-  { id: "google/gemini-flash-1.5", name: "Gemini 1.5 Flash", promptPrice: 0.075, completionPrice: 0.3, contextLength: 1000000, free: false },
+  { id: "google/gemma-4-31b-it:free", name: "Gemma 4 31B (Free)", promptPrice: 0, completionPrice: 0, contextLength: 8192, free: true, provider: "openrouter", routable: true },
+  { id: "google/gemma-4-26b-a4b-it:free", name: "Gemma 4 26B MoE (Free)", promptPrice: 0, completionPrice: 0, contextLength: 8192, free: true, provider: "openrouter", routable: true },
+  { id: "meta-llama/llama-3.1-8b-instruct:free", name: "Llama 3.1 8B (Free)", promptPrice: 0, completionPrice: 0, contextLength: 131072, free: true, provider: "openrouter", routable: true },
+  { id: "microsoft/phi-3-mini-128k-instruct:free", name: "Phi-3 Mini 128K (Free)", promptPrice: 0, completionPrice: 0, contextLength: 131072, free: true, provider: "openrouter", routable: true },
+  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", promptPrice: 0.15, completionPrice: 0.6, contextLength: 128000, free: false, provider: "openrouter", routable: true },
+  { id: "anthropic/claude-3.5-haiku", name: "Claude 3.5 Haiku", promptPrice: 0.25, completionPrice: 1.25, contextLength: 200000, free: false, provider: "openrouter", routable: true },
+  { id: "google/gemini-flash-1.5", name: "Gemini 1.5 Flash", promptPrice: 0.075, completionPrice: 0.3, contextLength: 1000000, free: false, provider: "openrouter", routable: true },
 ];
 
 /**
@@ -336,7 +426,8 @@ export function providerById(id: string): ProviderDefinition | undefined {
  * Determines the cost tier for a model based on its prompt price.
  */
 export function getCostTier(promptPrice: number | null, isFree: boolean): CostTier {
-  if (isFree || promptPrice === 0 || promptPrice === null) return "free";
+  if (isFree || promptPrice === 0) return "free";
+  if (promptPrice === null) return "unpriced";
   if (promptPrice < 0.5) return "low";
   if (promptPrice < 2) return "medium";
   if (promptPrice < 10) return "high";
@@ -353,6 +444,7 @@ export function costTierLabel(tier: CostTier): string {
     case "medium": return "Medium Cost";
     case "high": return "High Cost";
     case "premium": return "Premium";
+    case "unpriced": return "Price not listed";
   }
 }
 
@@ -381,16 +473,19 @@ export function groupModelsByProviderAndCost(models: ProviderModel[]): GroupedMo
     const providerDef = providerById(provider);
     const providerName = providerDef?.displayName ?? provider;
     
-    // Sort tiers: free first, then low to premium
-    const tierOrder: CostTier[] = ["free", "low", "medium", "high", "premium"];
+    // Sort tiers: free first, then low to premium, then unpriced last
+    const tierOrder: CostTier[] = ["free", "low", "medium", "high", "premium", "unpriced"];
     
     for (const tier of tierOrder) {
       const models = providerGroups.get(tier);
       if (models && models.length > 0) {
-        // Sort models within tier: free first, then by price
+        // Sort models within tier: free first, then by price (unpriced last, by name)
         models.sort((a, b) => {
           if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-          return (a.promptPrice ?? Infinity) - (b.promptPrice ?? Infinity);
+          const pa = a.promptPrice ?? Number.MAX_SAFE_INTEGER;
+          const pb = b.promptPrice ?? Number.MAX_SAFE_INTEGER;
+          if (pa !== pb) return pa - pb;
+          return a.name.localeCompare(b.name);
         });
         
         result.push({

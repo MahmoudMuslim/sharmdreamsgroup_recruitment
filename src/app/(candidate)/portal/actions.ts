@@ -27,6 +27,55 @@ export interface TrackedApplication {
   } | null;
 }
 
+/** A message the hiring team left in this candidate's portal inbox. */
+export interface PortalNotice {
+  id: string;
+  application_id: string;
+  subject: string | null;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface TrackResult {
+  ok: boolean;
+  applications: TrackedApplication[];
+  /** Portal notices for the returned applications, newest first. */
+  notices: PortalNotice[];
+  error?: string;
+}
+
+/**
+ * Messages the candidate was never emailed or messaged? No — this is a copy of
+ * every alert the platform recorded for their applications on the IN_APP
+ * channel. `communication_logs` is hidden from anonymous callers by RLS, so the
+ * read goes through the service-role client and is keyed on the applications the
+ * tracking code resolves to. A candidate can only ever list their own inbox.
+ */
+async function loadNotices(
+  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  applicationIds: string[]
+): Promise<PortalNotice[]> {
+  if (applicationIds.length === 0) return [];
+
+  const { data } = await supabase
+    .from("communication_logs")
+    .select("id, application_id, subject, body, created_at, read_at")
+    .eq("channel", "IN_APP")
+    .in("application_id", applicationIds)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  return ((data ?? []) as PortalNotice[]).map((row) => ({
+    id: row.id,
+    application_id: row.application_id,
+    subject: row.subject ?? null,
+    body: row.body,
+    created_at: row.created_at,
+    read_at: row.read_at ?? null,
+  }));
+}
+
 /**
  * Looks a candidate up by the tracking code issued when they applied.
  *
@@ -40,13 +89,11 @@ export interface TrackedApplication {
  * of secret that gates the assessment runner. No listing endpoint exists, so
  * the secret cannot be enumerated.
  */
-export async function trackApplication(
-  trackingCode: string
-): Promise<{ ok: boolean; applications: TrackedApplication[]; error?: string }> {
+export async function trackApplication(trackingCode: string): Promise<TrackResult> {
   const code = trackingCode.trim().toUpperCase();
 
   if (code.length < 4) {
-    return { ok: false, applications: [], error: "Enter the tracking code you were given when you applied." };
+    return { ok: false, applications: [], notices: [], error: "Enter the tracking code you were given when you applied." };
   }
 
   let supabase: ReturnType<typeof getSupabaseServiceClient>;
@@ -70,13 +117,14 @@ export async function trackApplication(
     .limit(5);
 
   if (error) {
-    return { ok: false, applications: [], error: error.message };
+    return { ok: false, applications: [], notices: [], error: error.message };
   }
 
   if (!data || data.length === 0) {
     return {
       ok: false,
       applications: [],
+      notices: [],
       error: "No application found for that tracking code. Check the code from your application confirmation.",
     };
   }
@@ -115,5 +163,51 @@ export async function trackApplication(
     };
   });
 
-  return { ok: true, applications };
+  const notices = await loadNotices(supabase, data.map((row) => row.id));
+
+  return { ok: true, applications, notices };
+}
+
+/**
+ * Stamps `read_at` on the candidate's unread portal notices.
+ *
+ * Keyed on the tracking code rather than the notice ids the page happens to
+ * show, so a crafted request cannot mark another candidate's inbox as read.
+ */
+export async function markPortalNoticesRead(
+  trackingCode: string
+): Promise<{ ok: boolean; unread: number }> {
+  const code = trackingCode.trim().toUpperCase();
+  if (code.length < 4) return { ok: false, unread: 0 };
+
+  let supabase: ReturnType<typeof getSupabaseServiceClient>;
+  try {
+    supabase = getSupabaseServiceClient();
+  } catch {
+    return { ok: false, unread: 0 };
+  }
+
+  const { data } = await supabase
+    .from("applications")
+    .select("id")
+    .eq("tracking_code", code);
+
+  const ids = (data ?? []).map((row) => row.id);
+  if (ids.length === 0) return { ok: false, unread: 0 };
+
+  const { data: unread } = await supabase
+    .from("communication_logs")
+    .select("id")
+    .eq("channel", "IN_APP")
+    .in("application_id", ids)
+    .is("read_at", null);
+
+  if (unread && unread.length > 0) {
+    await supabase
+      .from("communication_logs")
+      .update({ read_at: new Date().toISOString() })
+      .in("id", unread.map((row) => row.id));
+  }
+
+  return { ok: true, unread: unread?.length ?? 0 };
 }

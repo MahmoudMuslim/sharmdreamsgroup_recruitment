@@ -17,6 +17,33 @@ import {
 
 const DURATIONS = [30, 45, 60, 90];
 
+type ChannelReport = NonNullable<InterviewMutation["channels"]>;
+
+/**
+ * What the candidate actually received, in the recruiter's words.
+ *
+ * Says refused rather than sent when the relay rejected the email: the row is in
+ * the outbox with the relay's answer, and the portal notice still reached them.
+ */
+function channelSummary(channels: ChannelReport | undefined, notified: boolean | undefined) {
+  if (!channels) {
+    return notified
+      ? "The candidate was notified on the channels that are switched on."
+      : "(no channel delivered a note — WhatsApp is off or the candidate has no number.)";
+  }
+
+  const parts: string[] = [];
+  if (channels.whatsapp === "queued") parts.push("a WhatsApp note queued");
+  if (channels.email === "sent") parts.push("an email");
+  if (channels.email === "failed") parts.push("an email the relay refused (see Outbox)");
+  if (channels.inApp === "sent") parts.push("a portal notice");
+
+  if (parts.length === 0) {
+    return "(nothing reached the candidate — every channel is off, or the email and number are missing.)";
+  }
+  return `The candidate was sent ${parts.join(", ")}.`;
+}
+
 function statusTone(status: string) {
   if (status === "COMPLETED") return "success" as const;
   if (status === "NO_SHOW") return "danger" as const;
@@ -106,11 +133,7 @@ export function InterviewPanel({
 
   function applyResult(result: InterviewMutation, message: string) {
     if (result.interviews) setInterviews(result.interviews);
-    if (result.notified) {
-      setNotice(`${message} The candidate was queued a WhatsApp note.`);
-    } else {
-      setNotice(`${message} (no WhatsApp note — the channel is off or the candidate has no phone number.)`);
-    }
+    setNotice(`${message} ${channelSummary(result.channels, result.notified)}`);
     router.refresh();
   }
 
@@ -234,7 +257,7 @@ export function InterviewPanel({
             {interviews.length === 0 && !showForm && (
               <EmptyState
                 title="No interviews booked"
-                description="Book a slot and the candidate is notified on WhatsApp when that channel is enabled."
+                description="Book a slot and the candidate is emailed, messaged on WhatsApp if that channel is on, and left a notice in their portal inbox."
                 icon={<CalendarClock className="h-6 w-6" aria-hidden />}
               />
             )}

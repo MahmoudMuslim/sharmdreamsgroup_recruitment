@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   BriefcaseBusiness,
   Building2,
@@ -20,6 +20,7 @@ import {
   updateMasterRecord,
 } from "@/modules/settings/application/master-data-actions";
 import { SECTORS, SECTOR_LABELS } from "@/modules/settings/domain/vocabularies";
+import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
 import { Badge, Button } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 import type {
@@ -138,57 +139,23 @@ const FIELDS: Record<MasterEntity, FieldDef[]> = {
   ],
 };
 
-const TABS: {
+/**
+ * Per-entity bits the dock's nav entry cannot carry: the singular noun used in
+ * buttons and the icon. Labels and descriptions come from `SETTINGS_NAV` so the
+ * navigation and the panel can never call an entity two different things.
+ */
+const ENTITY_META: {
   entity: MasterEntity;
-  label: string;
   /** Explicit singular — naive plural-stripping mangles "Companies" to "Compani". */
   singular: string;
   icon: typeof Building2;
-  blurb: string;
 }[] = [
-  {
-    entity: "companies",
-    label: "Companies",
-    singular: "company",
-    icon: Building2,
-    blurb: "Legal entities in the group. Jobs, hires and onboarding plans are all scoped to one.",
-  },
-  {
-    entity: "departments",
-    label: "Departments",
-    singular: "department",
-    icon: Network,
-    blurb: "Organisational units. Replaces free-text department names on job openings.",
-  },
-  {
-    entity: "locations",
-    label: "Locations",
-    singular: "location",
-    icon: MapPin,
-    blurb: "Resorts, hubs and offices. Used by job locations and onboarding addresses.",
-  },
-  {
-    entity: "role_families",
-    label: "Role families",
-    singular: "role family",
-    icon: BriefcaseBusiness,
-    blurb: "Career tracks. Links roles to their expected skill profile for gap analysis.",
-  },
-  {
-    entity: "skills",
-    label: "Skills",
-    singular: "skill",
-    icon: GraduationCap,
-    blurb: "Shared skill vocabulary. Feeds AI screening, skill-gap analysis and reporting.",
-  },
-  {
-    entity: "currencies",
-    label: "Currencies",
-    singular: "currency",
-    icon: CircleDollarSign,
-    blurb:
-      "Currencies job salaries can be advertised in. Every job picks one, so a range is never ambiguous about what it is denominated in.",
-  },
+  { entity: "companies", singular: "company", icon: Building2 },
+  { entity: "departments", singular: "department", icon: Network },
+  { entity: "locations", singular: "location", icon: MapPin },
+  { entity: "role_families", singular: "role family", icon: BriefcaseBusiness },
+  { entity: "skills", singular: "skill", icon: GraduationCap },
+  { entity: "currencies", singular: "currency", icon: CircleDollarSign },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -288,11 +255,16 @@ function displayName(row: MasterRow): string {
 export function MasterDataConsole({
   data,
   editable,
+  section,
 }: {
   data: MasterData;
   editable: boolean;
+  /** Which entity is open, from the dock's URL — see `SETTINGS_NAV`. */
+  section: string;
 }) {
-  const [tab, setTab] = useState<MasterEntity>("departments");
+  const meta = ENTITY_META.find((m) => m.entity === section) ?? ENTITY_META[1];
+  const tab = meta.entity;
+  const navSection = sectionFor(areaById("organisation"), tab);
   const [editing, setEditing] = useState<MasterRow | null>(null);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<MasterPayload>({});
@@ -300,8 +272,20 @@ export function MasterDataConsole({
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  const rows = useMemo(() => rowsFor(data, tab), [data, tab]);
-  const activeTab = TABS.find((t) => t.entity === tab) ?? TABS[0];
+  const rows = rowsFor(data, tab);
+  const activeTab = meta;
+
+  // The section now comes from the URL, so switching entity can happen with the
+  // drawer still open. A draft half-filled for "Departments" must never be
+  // written to "Locations", so changing entity always closes the panel.
+  const [lastTab, setLastTab] = useState(tab);
+  if (lastTab !== tab) {
+    setLastTab(tab);
+    setCreating(false);
+    setEditing(null);
+    setError(null);
+    setSaved(false);
+  }
 
   function openCreate() {
     setCreating(true);
@@ -412,12 +396,17 @@ export function MasterDataConsole({
 
   return (
     <section className="rounded-2xl border border-brand-line bg-white p-5 shadow-soft sm:p-6">
-      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="font-display text-lg font-bold">Organisation structure</h2>
-          <p className="mt-1 max-w-2xl text-sm text-brand-ink/60">
-            The shared vocabularies the rest of the platform selects from — add an entry once
-            here and it becomes available in jobs, assessments, onboarding and reporting.
+          <p className="flex items-center gap-2 font-display text-lg font-bold">
+            <Icon className="h-[18px] w-[18px] text-brand-gold-dark" aria-hidden />
+            {navSection.label}
+            <span className="rounded-full bg-brand-sand px-2 py-0.5 text-[11px] font-bold text-brand-ink/55">
+              {rows.length}
+            </span>
+          </p>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-brand-ink/50 lg:hidden">
+            {navSection.hint}
           </p>
         </div>
         {editable && (
@@ -428,46 +417,6 @@ export function MasterDataConsole({
         )}
       </header>
 
-      {/* Entity tabs */}
-      <div className="-mx-1 mb-4 overflow-x-auto px-1">
-        <div role="tablist" aria-label="Master data types" className="flex min-w-max gap-1.5">
-          {TABS.map((item) => {
-            const TabIcon = item.icon;
-            const active = item.entity === tab;
-            const count = rowsFor(data, item.entity).length;
-            return (
-              <button
-                key={item.entity}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => {
-                  setTab(item.entity);
-                  close();
-                }}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
-                  active
-                    ? "border-brand-gold bg-brand-gold/15 text-brand-gold-dark"
-                    : "border-brand-line bg-white text-brand-ink/60 hover:bg-brand-sand"
-                )}
-              >
-                <TabIcon className="h-3.5 w-3.5" aria-hidden />
-                {item.label}
-                <span className="rounded-full bg-black/5 px-1.5 text-[10px] font-bold">
-                  {count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <p className="mb-3 flex items-start gap-2 text-xs leading-relaxed text-brand-ink/50">
-        <Icon className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-        {activeTab.blurb}
-      </p>
-
       {error && !open && (
         <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">
           {error}
@@ -477,7 +426,7 @@ export function MasterDataConsole({
       {/* List */}
       {rows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-brand-line bg-brand-cream px-4 py-8 text-center text-sm text-brand-ink/50">
-          No {activeTab.label.toLowerCase()} yet.
+          No {navSection.label.toLowerCase()} yet.
           {editable ? " Use “Add” to create the first one." : ""}
         </p>
       ) : (
@@ -559,7 +508,7 @@ export function MasterDataConsole({
             <header className="flex items-start justify-between gap-3 border-b border-brand-line p-5">
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
-                  {activeTab.label}
+                  {navSection.label}
                 </p>
                 <h3 id="master-panel-title" className="mt-0.5 truncate font-display text-lg font-bold">
                   {creating

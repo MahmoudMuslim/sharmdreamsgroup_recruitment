@@ -39,15 +39,21 @@ function anonymizeCvText(text: string): { text: string; anonymized: boolean } {
 }
 
 /**
- * CV Screening & Match Score (0-100%) with bias reduction.
- * Uses google/gemma-4-31b-it:free as primary.
+ * CV Screening & Match Score (0-100%).
+ *
+ * `anonymize` carries the `ai.bias_reduction` setting. When it is off the model
+ * receives the CV exactly as the candidate submitted it, and the prompt labels
+ * the block accordingly rather than still calling it anonymized.
  */
 export async function screenCandidateCv(
   jobTitle: string,
   jobRequirements: string[],
-  cvText: string
+  cvText: string,
+  { anonymize }: { anonymize: boolean }
 ): Promise<CvScreeningResult> {
-  const { text: anonymizedText, anonymized } = anonymizeCvText(cvText);
+  const { text: cvSection, anonymized } = anonymize
+    ? anonymizeCvText(cvText)
+    : { text: cvText, anonymized: false };
 
   const systemPrompt = `You are an expert technical recruiter evaluating candidates for ${jobTitle}.
 Return ONLY valid JSON matching the CvScreeningResult schema. No markdown, no commentary.
@@ -57,8 +63,8 @@ Be objective, focus on skills and experience. Ignore demographic information.`;
 REQUIREMENTS:
 ${jobRequirements.map((r) => `- ${r}`).join("\n")}
 
-CANDIDATE CV (ANONYMIZED):
-${anonymizedText}
+CANDIDATE CV${anonymize ? " (ANONYMIZED)" : ""}:
+${cvSection}
 
 Evaluate and return:
 {

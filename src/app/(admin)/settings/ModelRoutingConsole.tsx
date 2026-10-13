@@ -82,7 +82,7 @@ function contextLengthLabel(length: number | null): string {
   return length.toString();
 }
 
-const COST_TIERS: CostTier[] = ["free", "low", "medium", "high", "premium"];
+const COST_TIERS: CostTier[] = ["free", "low", "medium", "high", "premium", "unpriced"];
 
 function costTierBadge(tier: CostTier) {
   const colors: Record<CostTier, string> = {
@@ -91,6 +91,7 @@ function costTierBadge(tier: CostTier) {
     medium: "bg-amber-500/10 text-amber-700 border-amber-200",
     high: "bg-rose-500/10 text-rose-700 border-rose-200",
     premium: "bg-purple-500/10 text-purple-700 border-purple-200",
+    unpriced: "bg-brand-sand text-brand-ink/55 border-brand-line",
   };
   return (
     <span
@@ -232,7 +233,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     // Convert catalogue models to ProviderModel format
     const providerModels: ProviderModel[] = catalogue.models.map((m) => ({
       id: m.id,
-      provider: m.id.split("/")[0] || "unknown",
+      provider: m.provider,
       modelId: m.id,
       name: m.name,
       promptPrice: m.promptPrice,
@@ -243,9 +244,27 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       capabilities: [],
       isActive: true,
       fetchedAt: catalogue.fetchedAt,
+      routable: m.routable,
+      enabled: m.enabled,
+      detail: m.detail,
     }));
     return groupModelsByProviderAndCost(providerModels);
   }, [catalogue]);
+
+  /**
+   * Only providers the gateway can call appear in the routing pickers.
+   *
+   * Listing an OpenCode or Qoder model as routable would be a promise the code
+   * cannot keep — those credentials are stored and probed, never used for
+   * inference — so they stay visible in the browse list and nowhere else.
+   */
+  const routableGroups = useMemo(
+    () =>
+      groupedModels
+        .map((group) => ({ ...group, models: group.models.filter((m) => m.routable) }))
+        .filter((group) => group.models.length > 0),
+    [groupedModels]
+  );
 
   // Global filtered catalog for the modal
   const filteredCatalog = useMemo(() => {
@@ -269,8 +288,11 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   }, [groupedModels, selectedProvider, selectedCostTier, globalSearch]);
 
   const providersList = useMemo(() => {
-    return Array.from(new Set(groupedModels.map((g) => g.provider))).sort();
-  }, [groupedModels]);
+    const byId = new Map<string, string>();
+    for (const group of groupedModels) byId.set(group.provider, group.providerName);
+    for (const source of catalogue?.sources ?? []) if (!byId.has(source.id)) byId.set(source.id, source.displayName);
+    return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [groupedModels, catalogue]);
 
   const catalogueIds = useMemo(
     () => new Set(groupedModels.flatMap((g) => g.models.map((m) => m.modelId))),
@@ -576,6 +598,35 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           <p className="mt-1 text-sm text-brand-ink/55">
             {filteredCatalog.length.toLocaleString()} models available · browse, filter, and select for each capability below.
           </p>
+
+          {catalogue && (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {catalogue.sources.map((source) => (
+                <li
+                  key={source.id}
+                  title={source.note ?? undefined}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold",
+                    source.status === "ok" && source.routable
+                      ? "border-emerald-200 bg-emerald-500/10 text-emerald-800"
+                      : source.status === "ok"
+                        ? "border-brand-line bg-brand-sand text-brand-ink/60"
+                        : "border-rose-200 bg-rose-500/10 text-rose-700"
+                  )}
+                >
+                  {source.displayName}
+                  <span className="tabular-nums">{source.count}</span>
+                  {!source.routable && source.status === "ok" && (
+                    <span className="font-bold uppercase tracking-wide">credentials only</span>
+                  )}
+                  {source.status === "no_key" && <span className="font-bold uppercase tracking-wide">no key</span>}
+                  {source.status === "unauthorized" && <span className="font-bold uppercase tracking-wide">key rejected</span>}
+                  {source.status === "unreachable" && <span className="font-bold uppercase tracking-wide">no answer</span>}
+                  {source.status === "degraded" && <span className="font-bold uppercase tracking-wide">built-in list</span>}
+                </li>
+              ))}
+            </ul>
+          )}
         </header>
 
         {/* Search + filters */}
@@ -597,9 +648,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             className="rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:outline-none"
           >
             <option value="all">All providers</option>
-            {providersList.map((p) => (
-              <option key={p} value={p}>
-                {p}
+            {providersList.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
               </option>
             ))}
           </select>
@@ -629,7 +680,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           <div className="grid max-h-96 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
             {filteredCatalog.map((model) => (
               <button
-                key={model.modelId}
+                // Providers overlap: OpenCode proxies Google's ids, so the id alone
+                // is not unique across the flat, filtered list.
+                key={`${model.provider}:${model.modelId}`}
                 onClick={() => setSelectedModel(model)}
                 className="flex items-start gap-3 rounded-xl border border-brand-line bg-white p-3.5 text-left transition hover:border-brand-gold/50 hover:shadow-soft"
               >
@@ -648,6 +701,16 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                         Free
                       </span>
                     )}
+                    {!model.routable && (
+                      <span className="shrink-0 rounded bg-brand-sand px-1.5 py-0.5 text-[9px] font-bold uppercase text-brand-ink/55">
+                        Not routable
+                      </span>
+                    )}
+                    {model.enabled === false && (
+                      <span className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-700">
+                        Off for this account
+                      </span>
+                    )}
                   </div>
                   <p className="truncate text-xs font-mono text-brand-ink/50">{model.modelId}</p>
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -658,6 +721,11 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       </span>
                     )}
                   </div>
+                  {model.detail && (
+                    <p className="mt-1.5 truncate text-[11px] text-brand-ink/50" title={model.detail}>
+                      {model.detail}
+                    </p>
+                  )}
                 </div>
               </button>
             ))}
@@ -711,17 +779,47 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     : "—"
                 }
               />
-              <DetailStat icon={Cpu} label="Provider" value={selectedModel.provider} />
+              <DetailStat
+                icon={Cpu}
+                label="Provider"
+                value={
+                  catalogue?.sources.find((s) => s.id === selectedModel.provider)?.displayName ??
+                  selectedModel.provider
+                }
+              />
             </div>
+
+            {selectedModel.detail && (
+              <p className="border-t border-brand-line px-5 py-3 text-xs leading-relaxed text-brand-ink/60">
+                {selectedModel.provider === "qoder"
+                  ? "As Qoder reports it: "
+                  : selectedModel.provider === "opencode"
+                    ? "As OpenCode reports it: "
+                    : ""}
+                {selectedModel.detail}
+              </p>
+            )}
 
             <div className="border-t border-brand-line bg-brand-cream/30 p-5">
               <h4 className="mb-3 text-sm font-bold text-brand-ink">Quick assign</h4>
-              <QuickAssign
-                model={selectedModel}
-                rows={rows}
-                editable={editable}
-                onAssign={assignFromModal}
-              />
+              {selectedModel.routable ? (
+                <QuickAssign
+                  model={selectedModel}
+                  rows={rows}
+                  editable={editable}
+                  onAssign={assignFromModal}
+                />
+              ) : (
+                <p className="text-sm leading-relaxed text-brand-ink/60">
+                  Not routable — this model is listed from{" "}
+                  {catalogue?.sources.find((s) => s.id === selectedModel.provider)?.displayName ??
+                    selectedModel.provider}
+                  , whose credentials the portal stores and probes but never sends an inference
+                  request to. Screening and grading run on OpenRouter and Google AI Studio.
+                  {selectedModel.enabled === false &&
+                    " This one is also switched off for the stored account."}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -807,7 +905,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       {row.primaryModel && !catalogueIds.has(row.primaryModel) && (
                         <option value={row.primaryModel}>{row.primaryModel} (not in catalogue)</option>
                       )}
-                      {groupedModels.map((group) => (
+                      {routableGroups.map((group) => (
                         <optgroup
                           key={`${group.provider}-${group.costTier}`}
                           label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
@@ -844,7 +942,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       {row.fallbackModel && !catalogueIds.has(row.fallbackModel) && (
                         <option value={row.fallbackModel}>{row.fallbackModel} (not in catalogue)</option>
                       )}
-                      {groupedModels.map((group) => (
+                      {routableGroups.map((group) => (
                         <optgroup
                           key={`${group.provider}-${group.costTier}`}
                           label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}

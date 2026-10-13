@@ -6,6 +6,7 @@ import type {
   ApplicationSource,
   ChannelEffectiveness,
   DashboardAnalytics,
+  DashboardCandidate,
   FitScoreBucket,
   PipelineFunnelStep,
 } from "@/types";
@@ -28,7 +29,10 @@ interface ApplicationJoin {
   ai_match_score: number | null;
   created_at: string | null;
   hired_at: string | null;
-  job_openings?: { title?: string } | { title?: string }[] | null;
+  job_openings?:
+    | { title?: string; department?: string }
+    | { title?: string; department?: string }[]
+    | null;
 }
 
 interface AttemptJoin {
@@ -43,7 +47,7 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     supabase
       .from("applications")
       .select(
-        "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_openings(title)"
+        "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_openings(title, department)"
       ),
     supabase.from("candidate_attempts").select("application_id, total_score"),
     supabase.from("job_openings").select("id").eq("status", "PUBLISHED"),
@@ -153,23 +157,27 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     time_to_hire_trend.filter((p) => p.avg_days > 0).reduce((t, p) => t + p.avg_days, 0) /
     Math.max(time_to_hire_trend.filter((p) => p.avg_days > 0).length, 1);
 
-  // --- Top candidates --------------------------------------------------------
+  // --- Candidate board -------------------------------------------------------
+  // Every application, not just the ten best: the board filters and sorts
+  // client-side, so a stage or channel click has to work on the full set.
   const scoreByApplication = new Map(attempts.map((a) => [a.application_id, a.total_score]));
 
-  const top_candidates = [...applications]
+  const candidates: DashboardCandidate[] = [...applications]
     .sort((a, b) => (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1))
-    .slice(0, 10)
+    .slice(0, 200)
     .map((app) => {
       const job = Array.isArray(app.job_openings) ? app.job_openings[0] : app.job_openings;
-      const assessmentScore = scoreByApplication.get(app.id) ?? null;
       return {
         application_id: app.id,
         full_name: app.full_name,
         job_title: job?.title ?? "",
+        department: job?.department ?? "",
         match_score: app.ai_match_score ?? 0,
         stage: app.stage,
+        source: app.source,
+        applied_at: app.created_at,
         has_assessment: scoreByApplication.has(app.id),
-        assessment_score: assessmentScore,
+        assessment_score: scoreByApplication.get(app.id) ?? null,
       };
     });
 
@@ -179,12 +187,13 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     hires_this_quarter: applications.filter((a) => a.stage === "HIRED").length,
     avg_time_to_hire_days: Math.round(avgTimeToHire),
     avg_fit_score: avgFitScore,
+    scored_applications: scores.length,
     applications_last_14_days,
     pipeline,
     channels,
     fit_distribution,
     diversity: [],
     time_to_hire_trend,
-    top_candidates,
+    candidates,
   };
 }

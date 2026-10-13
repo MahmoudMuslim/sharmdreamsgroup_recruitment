@@ -258,6 +258,22 @@ export async function testProvider(provider: string): Promise<ProviderTestResult
   }
 }
 
+function reportFailure(
+  capability: string,
+  label: string,
+  started: number,
+  attempts: string[]
+): ChainTestResult {
+  return {
+    capability,
+    label,
+    ok: false,
+    status: "all models failed",
+    latencyMs: Date.now() - started,
+    detail: excerpt(attempts.join(" | "), 220),
+  };
+}
+
 /** Runs a real completion through one capability's configured model chain. */
 export async function testCapability(capability: string): Promise<ChainTestResult> {
   await requireStaff("/settings");
@@ -299,49 +315,107 @@ export async function testCapability(capability: string): Promise<ChainTestResul
     (m): m is string => Boolean(m)
   );
 
-  if (openRouterKey) {
-    for (const model of chain) {
+  /**
+   * Probe each configured id on the provider that publishes it, in the order the
+   * routing table lists them — the same split the gateway makes. Probing every id
+   * through OpenRouter would report on a model the admin never chose: a Google id
+   * either gets answered by OpenRouter's own copy of it, or fails and the test
+   * silently answers with a different Gemini model below.
+   */
+  for (const model of chain) {
+    if (!model.includes("/")) {
+      if (!googleKey) continue;
       try {
-        const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${openRouterKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": process.env.APP_URL ?? "http://localhost:3000",
-            "X-Title": "Sharm Dreams Talent Cloud",
-          },
-          body: JSON.stringify({
-            model,
-            messages: PROBE_PROMPT,
-            temperature: routing.temperature,
-            max_tokens: Math.min(routing.maxTokens, 64),
-          }),
-          signal: AbortSignal.timeout(40_000),
-        });
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(googleKey)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              systemInstruction: {
+                parts: [{ text: "You are a connectivity probe. Reply with exactly: AI_OK" }],
+              },
+              contents: [{ role: "user", parts: [{ text: "Reply with AI_OK and nothing else." }] }],
+              generationConfig: {
+                temperature: routing.temperature,
+                maxOutputTokens: Math.min(routing.maxTokens, 64),
+              },
+            }),
+            signal: AbortSignal.timeout(40_000),
+          }
+        );
 
         const body = (await res.json().catch(() => ({}))) as {
-          choices?: { message?: { content?: string } }[];
+          candidates?: { content?: { parts?: { text?: string }[] } }[];
           error?: { message?: string };
         };
+        const text = body.candidates?.[0]?.content?.parts?.map((p) => p.text).join("");
 
-        const content = body.choices?.[0]?.message?.content;
-
-        if (res.ok && content?.trim()) {
+        if (res.ok && text?.trim()) {
           return {
             capability,
             label,
             ok: true,
             status: "responded",
             latencyMs: Date.now() - started,
-            detail: excerpt(content),
-            servedBy: model,
+            detail: excerpt(text),
+            servedBy: `${model} (Google AI Studio)`,
           };
         }
 
         attempts.push(`${model}: ${body.error?.message ?? `HTTP ${res.status}`}`);
+
+        // 403 means the key is blocked outright; other models will fail too.
+        if (res.status === 403) {
+          return reportFailure(capability, label, started, attempts);
+        }
       } catch (error) {
         attempts.push(`${model}: ${error instanceof Error ? error.message : "network error"}`);
       }
+      continue;
+    }
+
+    if (!openRouterKey) continue;
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${openRouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.APP_URL ?? "http://localhost:3000",
+          "X-Title": "Sharm Dreams Talent Cloud",
+        },
+        body: JSON.stringify({
+          model,
+          messages: PROBE_PROMPT,
+          temperature: routing.temperature,
+          max_tokens: Math.min(routing.maxTokens, 64),
+        }),
+        signal: AbortSignal.timeout(40_000),
+      });
+
+      const body = (await res.json().catch(() => ({}))) as {
+        choices?: { message?: { content?: string } }[];
+        error?: { message?: string };
+      };
+
+      const content = body.choices?.[0]?.message?.content;
+
+      if (res.ok && content?.trim()) {
+        return {
+          capability,
+          label,
+          ok: true,
+          status: "responded",
+          latencyMs: Date.now() - started,
+          detail: excerpt(content),
+          servedBy: `${model} (OpenRouter)`,
+        };
+      }
+
+      attempts.push(`${model}: ${body.error?.message ?? `HTTP ${res.status}`}`);
+    } catch (error) {
+      attempts.push(`${model}: ${error instanceof Error ? error.message : "network error"}`);
     }
   }
 
@@ -352,6 +426,7 @@ export async function testCapability(capability: string): Promise<ChainTestResul
 
   if (googleKey) {
     for (const model of GOOGLE_CHAIN) {
+      if (chain.includes(model)) continue;
       try {
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(googleKey)}`,
@@ -400,14 +475,7 @@ export async function testCapability(capability: string): Promise<ChainTestResul
     }
   }
 
-  return {
-    capability,
-    label,
-    ok: false,
-    status: "all models failed",
-    latencyMs: Date.now() - started,
-    detail: excerpt(attempts.join(" | "), 220),
-  };
+  return reportFailure(capability, label, started, attempts);
 }
 
 /** Convenience: run every provider probe in one call for the console. */

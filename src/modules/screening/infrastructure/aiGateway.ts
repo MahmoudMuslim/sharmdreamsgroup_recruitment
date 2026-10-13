@@ -102,10 +102,24 @@ const GOOGLE_MODEL_CHAIN = [
 /** "This model can't serve you right now" — try the next id instead of giving up. */
 const GOOGLE_WALK_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
 
+/**
+ * True for ids that only Google's own endpoint serves — the ids its catalogue
+ * lists without a `models/` prefix: `gemini-2.5-flash`, `gemma-4-31b-it`,
+ * `nano-banana-pro-preview`, and the rest.
+ *
+ * Every OpenRouter id is namespaced (`google/gemini-flash-1.5`), so the slash is
+ * what tells the two apart — and it means a routing row written for OpenRouter
+ * keeps going down exactly the same path it always did.
+ */
+function isGoogleNativeModel(model: string): boolean {
+  return !model.includes("/");
+}
+
 async function callGoogleAiStudio(
   request: CompletionRequest,
   signal: AbortSignal,
-  apiKey: string
+  apiKey: string,
+  chain: readonly string[] = GOOGLE_MODEL_CHAIN
 ): Promise<{ content: string; model: string; truncated: boolean }> {
   const systemPrompt = request.messages
     .filter((m) => m.role === "system")
@@ -119,7 +133,7 @@ async function callGoogleAiStudio(
   let lastError = "";
   const walkErrors: string[] = [];
 
-  for (const model of GOOGLE_MODEL_CHAIN) {
+  for (const model of chain) {
     const response = await fetch(
       `${aiConfig.googleAiStudio.baseUrl}/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
@@ -314,9 +328,47 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
     maxTokens: request.maxTokens ?? routing.maxTokens,
   };
 
-  // Try OpenRouter with each credential (by priority) and each model
-  for (const credential of credentials) {
-    for (const model of chain) {
+  // Walk the chain in the order the routing table asks for it and send each id to
+  // the provider that publishes it. Sweeping every OpenRouter id first would let a
+  // leftover OpenRouter fallback answer before a Google model set as primary — so
+  // a choice made in the console would still silently never take effect.
+  for (const model of chain) {
+    if (isGoogleNativeModel(model)) {
+      if (!googleKey) {
+        attempts.push({
+          model,
+          ok: false,
+          error: "no Google AI Studio key configured",
+          credential: "google",
+        });
+        continue;
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), aiConfig.googleAiStudio.timeoutMs);
+      try {
+        const result = await callGoogleAiStudio(effective, controller.signal, googleKey, [model]);
+        clearTimeout(timeout);
+        attempts.push({ model: result.model, ok: true, credential: "google" });
+        return {
+          content: result.content,
+          model: result.model,
+          provider: "google",
+          attempts,
+          truncated: result.truncated,
+        };
+      } catch (error) {
+        clearTimeout(timeout);
+        attempts.push({
+          model,
+          ok: false,
+          error: error instanceof Error ? error.message : "unknown error",
+          credential: "google",
+        });
+      }
+      continue;
+    }
+
+    for (const credential of credentials) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), aiConfig.openRouter.timeoutMs);
       try {
@@ -342,7 +394,7 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
     }
   }
 
-  // Final fallback: Google AI Studio.
+  // Final fallback: Google's compiled-in chain, minus any id just tried.
   if (!googleKey) {
     throw new AiGatewayError(
       `All AI providers failed for capability "${request.capability}": ${attempts
@@ -352,27 +404,30 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
     );
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), aiConfig.googleAiStudio.timeoutMs);
-  try {
-    const result = await callGoogleAiStudio(effective, controller.signal, googleKey);
-    clearTimeout(timeout);
-    attempts.push({ model: result.model, ok: true, credential: "google" });
-    return {
-      content: result.content,
-      model: result.model,
-      provider: "google",
-      attempts,
-      truncated: result.truncated,
-    };
-  } catch (error) {
-    clearTimeout(timeout);
-    attempts.push({
-      model: "google-ai-studio",
-      ok: false,
-      error: error instanceof Error ? error.message : "unknown error",
-      credential: "google",
-    });
+  const remaining = GOOGLE_MODEL_CHAIN.filter((id) => !chain.includes(id));
+  if (remaining.length > 0) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), aiConfig.googleAiStudio.timeoutMs);
+    try {
+      const result = await callGoogleAiStudio(effective, controller.signal, googleKey, remaining);
+      clearTimeout(timeout);
+      attempts.push({ model: result.model, ok: true, credential: "google" });
+      return {
+        content: result.content,
+        model: result.model,
+        provider: "google",
+        attempts,
+        truncated: result.truncated,
+      };
+    } catch (error) {
+      clearTimeout(timeout);
+      attempts.push({
+        model: "google-ai-studio",
+        ok: false,
+        error: error instanceof Error ? error.message : "unknown error",
+        credential: "google",
+      });
+    }
   }
 
   throw new AiGatewayError(
