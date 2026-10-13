@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
+import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
 
@@ -296,6 +297,8 @@ export function AdminShell({
           {children}
         </div>
       </div>
+
+      <AssistantDock />
     </div>
   );
 }
