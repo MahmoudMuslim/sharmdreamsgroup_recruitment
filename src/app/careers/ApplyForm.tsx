@@ -1,8 +1,17 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { CheckCircle2, Loader2, Paperclip, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Inbox,
+  Loader2,
+  Paperclip,
+  Upload,
+  X,
+} from "lucide-react";
 import { submitApplication, type ApplyResult } from "./actions";
+import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
 
 /**
  * Public application form.
@@ -11,9 +20,16 @@ import { submitApplication, type ApplyResult } from "./actions";
  *   • attach a file, uploaded to a private bucket readable only by staff;
  *   • or paste the CV text, which is also what AI screening reads.
  *
+ * Above that sit the viability questions a recruiter authors for this role — no
+ * points, just requirements the applicant answers about themselves. They are
+ * fetched rather than rendered on the page, because the page itself is
+ * prerendered and its job payload is cached; see /api/careers/questions.
+ *
  * On success the tracking code is shown and copied to the clipboard — losing it
  * means losing access to the application, so it is surfaced prominently rather
- * than sent only to an email the candidate may not check.
+ * than sent only to an email the candidate may not check. An application that a
+ * question rules out gets a separate, polite panel instead: it is stored as
+ * rejected, and saying so plainly is kinder than a thank-you note that hides it.
  */
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -42,6 +58,57 @@ export function ApplyForm({
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [pending, setPending] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  const [questions, setQuestions] = useState<PublicGateQuestion[] | null>(null);
+  const [questionsError, setQuestionsError] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [questionsAttempt, setQuestionsAttempt] = useState(0);
+
+  /* ------------------------------------------------------ viability questions */
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      try {
+        const response = await fetch(
+          `/api/careers/questions?jobId=${encodeURIComponent(jobId)}`,
+          { cache: "no-store" }
+        );
+        const payload = (await response.json().catch(() => null)) as
+          | { questions?: unknown }
+          | null;
+
+        if (!active) return;
+
+        if (!response.ok || !Array.isArray(payload?.questions)) {
+          // Render no questions rather than pretending the role has none: the
+          // submit action reads the same rows and refuses an unanswered form, so
+          // this state can only ever be an inconvenience, never a silent pass.
+          setQuestions([]);
+          setQuestionsError("We could not load this role's application questions.");
+          return;
+        }
+        setQuestions(payload.questions as PublicGateQuestion[]);
+      } catch {
+        if (!active) return;
+        setQuestions([]);
+        setQuestionsError("We could not load this role's application questions.");
+      }
+    };
+
+    void load();
+    return () => {
+      active = false;
+    };
+  }, [jobId, questionsAttempt]);
+
+  /** Back to the loading state, then read the questions again. */
+  function retryQuestions() {
+    setQuestions(null);
+    setQuestionsError(null);
+    setQuestionsAttempt((attempt) => attempt + 1);
+  }
 
   function pickFile(selected: File | null) {
     setError(null);
@@ -99,6 +166,7 @@ export function ApplyForm({
         cvText,
         cvFilePath,
         source,
+        gateAnswers: answers,
       });
 
       if (response.ok) {
@@ -110,6 +178,10 @@ export function ApplyForm({
         }
       } else {
         setError(response.error ?? "Your application could not be submitted.");
+        // A refusal naming an unanswered question usually means the recruiter
+        // added one while this form was open, so re-read the set rather than
+        // leave the candidate submitting against a list they cannot see.
+        retryQuestions();
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -122,41 +194,11 @@ export function ApplyForm({
 
   // A submission without a tracking code would leave the candidate with no way
   // to follow their own application, so it is not treated as a success.
-  const trackingCode = result?.ok ? result.trackingCode : undefined;
-
-  if (result?.ok && trackingCode) {
-    return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 sm:p-8">
-        <CheckCircle2 className="h-9 w-9 text-emerald-700" aria-hidden />
-
-        <h2 className="mt-4 font-display text-2xl font-bold text-emerald-900">
-          Application received
-        </h2>
-        <p className="mt-2 text-sm leading-relaxed text-emerald-800">
-          Thank you for applying for <strong>{jobTitle}</strong>. Our people team will
-          review your application and contact you if there is a fit.
-        </p>
-
-        <div className="mt-6 rounded-xl border border-emerald-300 bg-white p-5">
-          <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-            Your tracking code
-          </p>
-          <p className="mt-2 select-all font-mono text-2xl font-bold tracking-wider text-brand-ink">
-            {trackingCode}
-          </p>
-          <p className="mt-3 text-xs leading-relaxed text-brand-ink/60">
-            Save this now — we have also copied it to your clipboard. Use it on the tracking
-            page to follow your application at any time. Without it we cannot show you your
-            progress.
-          </p>
-          <a
-            href={`/portal?code=${encodeURIComponent(trackingCode)}`}
-            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-ink px-5 py-2.5 text-sm font-bold text-brand-cream transition hover:bg-brand-ink/90"
-          >
-            Track this application
-          </a>
-        </div>
-      </div>
+  if (result?.ok && result.trackingCode) {
+    return result.outcome === "not-selected" ? (
+      <NotSelectedPanel jobTitle={jobTitle} trackingCode={result.trackingCode} />
+    ) : (
+      <ReceivedPanel jobTitle={jobTitle} trackingCode={result.trackingCode} />
     );
   }
 
@@ -235,6 +277,79 @@ export function ApplyForm({
           </select>
         </div>
       </div>
+
+      {/* ------------------------------------------------- viability questions */}
+      {questions === null && !questionsError && (
+        <p className="mt-6 flex items-center gap-2 text-xs text-brand-ink/45">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          Loading the application questions for this role…
+        </p>
+      )}
+
+      {questionsError && (
+        <div className="mt-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-amber-800">{questionsError}</p>
+            <button
+              type="button"
+              onClick={retryQuestions}
+              className="mt-1 text-xs font-bold text-amber-900 underline"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {questions && questions.length > 0 && (
+        <div className="mt-6 rounded-xl border border-brand-line bg-brand-sand/40 p-4 sm:p-5">
+          <h3 className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/55">
+            Before you apply
+          </h3>
+          <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/55">
+            A few requirements for this role, asked of everyone who applies. Please answer each one
+            — they decide whether we are able to consider your application.
+          </p>
+
+          {questions.map((question, index) => (
+            <fieldset key={question.id} className="mt-4">
+              <legend className="text-xs font-bold">
+                {index + 1}. {question.question} <span className="ml-1 text-rose-600">*</span>
+              </legend>
+              {question.helpText && (
+                <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/50">
+                  {question.helpText}
+                </p>
+              )}
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {question.options.map((option) => (
+                  <label
+                    key={option}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-brand-line bg-white px-3 py-2.5 text-sm transition hover:border-brand-gold"
+                  >
+                    <input
+                      type="radio"
+                      name={`gate-${question.id}`}
+                      value={option}
+                      required
+                      checked={answers[question.id] === option}
+                      onChange={(event) =>
+                        setAnswers((current) => ({
+                          ...current,
+                          [question.id]: event.target.value,
+                        }))
+                      }
+                      className="h-4 w-4 shrink-0 accent-brand-gold-dark"
+                    />
+                    <span className="min-w-0">{option}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ))}
+        </div>
+      )}
 
       {/* ---------------------------------------------------------- CV file */}
       <div className="mt-6">
@@ -318,5 +433,106 @@ export function ApplyForm({
         code on the next screen.
       </p>
     </form>
+  );
+}
+
+/* ------------------------------------------------------------------ panels */
+
+/** Every question answered acceptably: the application now waits on a person. */
+function ReceivedPanel({
+  jobTitle,
+  trackingCode,
+}: {
+  jobTitle: string;
+  trackingCode: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 sm:p-8">
+      <CheckCircle2 className="h-9 w-9 text-emerald-700" aria-hidden />
+
+      <h2 className="mt-4 font-display text-2xl font-bold text-emerald-900">
+        Application received
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-emerald-800">
+        Thank you for applying for <strong>{jobTitle}</strong>. Our people team will review
+        your application and contact you if there is a fit.
+      </p>
+
+      <div className="mt-6 rounded-xl border border-emerald-300 bg-white p-5">
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-emerald-700">
+          Your tracking code
+        </p>
+        <p className="mt-2 select-all font-mono text-2xl font-bold tracking-wider text-brand-ink">
+          {trackingCode}
+        </p>
+        <p className="mt-3 text-xs leading-relaxed text-brand-ink/60">
+          Save this now — we have also copied it to your clipboard. Use it on the tracking
+          page to follow your application at any time. Without it we cannot show you your
+          progress.
+        </p>
+        <a
+          href={`/portal?code=${encodeURIComponent(trackingCode)}`}
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-ink px-5 py-2.5 text-sm font-bold text-brand-cream transition hover:bg-brand-ink/90"
+        >
+          Track this application
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A viability answer ruled the application out, and it is said plainly.
+ *
+ * The polite alternative — the same "we will contact you if there is a fit" the
+ * accepted candidates get, to someone who will never be reviewed — is the version
+ * of this screen that is easy to write and unkind to receive. The row is stored
+ * and stays trackable, so a candidate who mis-clicked can still ask about it.
+ *
+ * It deliberately does not name the question: which answer the role accepts is
+ * kept server-side, and the requirement itself is in the advert.
+ */
+function NotSelectedPanel({
+  jobTitle,
+  trackingCode,
+}: {
+  jobTitle: string;
+  trackingCode: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-brand-line bg-brand-cream p-6 sm:p-8">
+      <Inbox className="h-9 w-9 text-brand-gold-dark" aria-hidden />
+
+      <h2 className="mt-4 font-display text-2xl font-bold">Thank you for applying</h2>
+      <p className="mt-2 text-sm leading-relaxed text-brand-ink/70">
+        We are not able to move your application for <strong>{jobTitle}</strong> forward,
+        because your answers to our application questions do not meet a requirement this role
+        has.
+      </p>
+      <p className="mt-3 text-sm leading-relaxed text-brand-ink/70">
+        That is about the requirements of the role, not about you. If one of your answers was a
+        mistake, or your situation changes, you are welcome to apply again — this application
+        does not block a new one.
+      </p>
+
+      <div className="mt-6 rounded-xl border border-brand-line bg-white p-4">
+        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/45">
+          Your reference
+        </p>
+        <p className="mt-2 select-all font-mono text-lg font-bold tracking-wider text-brand-ink">
+          {trackingCode}
+        </p>
+        <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
+          Your application and your answers are kept on record. Use this code on the tracking
+          page to see where it stands.
+        </p>
+        <a
+          href={`/portal?code=${encodeURIComponent(trackingCode)}`}
+          className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-brand-ink underline"
+        >
+          Track this application
+        </a>
+      </div>
+    </div>
   );
 }

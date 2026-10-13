@@ -10,6 +10,13 @@ import {
   getAiAutomationSettings,
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
+import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
+import {
+  evaluateGate,
+  gateRejectionReason,
+  parseGateRows,
+  type GateQuestion,
+} from "@/modules/careers/gate-questions";
 
 /**
  * Public careers site.
@@ -153,12 +160,12 @@ export async function getPublicJob(id: string): Promise<PublicJob | null> {
 /* Apply                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export interface ApplyResult {
-  ok: boolean;
-  /** Tracking code the candidate uses to follow their application. */
-  trackingCode?: string;
-  error?: string;
-}
+export type ApplyResult =
+  /** Stored and waiting for review. */
+  | { ok: true; outcome: "received"; trackingCode: string }
+  /** Stored, but a viability question ruled it out; the candidate is told politely. */
+  | { ok: true; outcome: "not-selected"; trackingCode: string }
+  | { ok: false; error: string };
 
 export interface ApplyInput {
   jobId: string;
@@ -170,9 +177,48 @@ export interface ApplyInput {
   /** Storage path of an uploaded CV, if one was attached. */
   cvFilePath: string | null;
   source: string;
+  /** Viability answers, keyed by question id. Scored against the stored options. */
+  gateAnswers: Record<string, string>;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The viability questions this role asks.
+ *
+ * Read with the service role, because the caller is anonymous and RLS scopes
+ * `applications` reads to staff — so `is_active` has to be part of the query
+ * rather than left to a policy. Job-scoped questions come back alongside the
+ * ones asked for every role, which is exactly the set `/api/careers/questions`
+ * rendered for the candidate, so the verdict always matches the form they saw.
+ */
+async function activeGateQuestions(
+  jobId: string
+): Promise<{ questions: GateQuestion[] } | { error: string }> {
+  // The id arrives from the public form and is interpolated into an OR filter,
+  // so its shape is checked rather than assumed.
+  if (!UUID_PATTERN.test(jobId)) {
+    return { error: "This role is no longer accepting applications." };
+  }
+
+  const { data, error } = await getSupabaseServiceClient()
+    .from("application_gate_questions")
+    .select("id, job_id, question, help_text, options, position, is_active")
+    .eq("is_active", true)
+    .or(`job_id.is.null,job_id.eq.${jobId}`)
+    .order("position", { ascending: true })
+    .limit(20);
+
+  if (error) {
+    console.error("[apply] viability questions unreadable:", error.message);
+    // Failing open would admit the one applicant the questions exist to filter
+    // out, so the submission is refused and the candidate can retry.
+    return { error: "We could not load the application questions. Please try again." };
+  }
+
+  return { questions: parseGateRows((data ?? []) as unknown as Record<string, unknown>[]) };
+}
 
 export async function submitApplication(input: ApplyInput): Promise<ApplyResult> {
   const fullName = input.fullName.trim();
@@ -210,6 +256,31 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   // how staff imported a record, and must not be forgeable from a public form.
   const allowedSources = new Set(["CAREER_SITE", "JOB_BOARD", "REFERRAL"]);
   const source = allowedSources.has(input.source) ? input.source : "CAREER_SITE";
+
+  // Viability gate: scored here, server-side, from the stored options rather
+  // than from anything the browser asserts. A blank answer and an answer that
+  // was never on offer are both treated as unanswered, which refuses the
+  // submission rather than rejecting someone for a form glitch — the form
+  // reloads its questions after a refusal, so a question added mid-fill shows up
+  // on the candidate's next attempt.
+  const gate = await activeGateQuestions(input.jobId);
+  if ("error" in gate) return { ok: false, error: gate.error };
+
+  const verdict = evaluateGate(gate.questions, input.gateAnswers);
+
+  if (verdict.missing.length) {
+    return {
+      ok: false,
+      error:
+        verdict.missing.length === 1
+          ? `Please answer “${verdict.missing[0]}” before submitting.`
+          : `Please answer all ${verdict.missing.length} application questions before submitting.`,
+    };
+  }
+
+  // One disqualifying answer is enough, and it is enough immediately: the role
+  // has a stated requirement this person does not meet.
+  const filteredOut = verdict.failed.length > 0;
 
   // The database owns tracking-code generation, so a public caller cannot
   // choose — or collide — a code.
@@ -270,7 +341,13 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
       cv_text: finalCvText || null,
       cv_file_path: input.cvFilePath,
       source,
-      stage: "NEW",
+      // A gated application is stored rather than discarded: a recruiter can
+      // reopen it when the candidate calls to say they mis-clicked, and a
+      // rejection nobody can point to later is not reviewable. REJECTED sits
+      // outside `applications_one_live_per_job`, so re-applying stays possible.
+      stage: filteredOut ? "REJECTED" : "NEW",
+      ...(filteredOut ? { rejection_reason: gateRejectionReason(verdict.failed) } : {}),
+      gate_answers: verdict.answers.length ? verdict.answers : null,
     })
     .select("id, tracking_code")
     .single();
@@ -298,17 +375,30 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   revalidatePath("/careers");
   revalidatePath("/jobs");
 
+  const applicationId = created?.id ? String(created.id) : "";
+  const trackingCode = created?.tracking_code ?? "";
+
+  if (filteredOut) {
+    // Told on every channel the platform is wired for, through the same path the
+    // AI auto-reject and the staff stage move use, so a candidate filtered out by
+    // a question does not depend on still having this tab open. A notification
+    // failure never changes the rejection that already happened.
+    if (applicationId) {
+      after(() => notifyStageChange(applicationId, "REJECTED").then(() => undefined));
+    }
+    return { ok: true, outcome: "not-selected", trackingCode };
+  }
+
   // Auto-screening runs after the candidate's response is sent, so submitting
   // an application never waits on a model call. Honour the Settings toggle —
   // recruiters can also screen any application on demand from the profile
   // drawer.
-  if (created?.id && hasAiProvider()) {
-    const applicationId = String(created.id);
+  if (applicationId && hasAiProvider()) {
     const settings = await getAiAutomationSettings();
     if (settings.aiEnabled && settings.autoScreen) {
       after(() => screenApplicationById(applicationId).then(() => undefined));
     }
   }
 
-  return { ok: true, trackingCode: created?.tracking_code ?? "" };
+  return { ok: true, outcome: "received", trackingCode };
 }
