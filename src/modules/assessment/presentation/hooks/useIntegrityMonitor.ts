@@ -106,12 +106,19 @@ export function useIntegrityMonitor({
   attemptToken,
   questionId,
   enabled,
+  trackFocusChanges,
   blockCopyPaste,
   onEvent,
 }: {
   attemptToken: string;
   questionId?: string | null;
   enabled: boolean;
+  /**
+   * Settings → Assessments → Record focus changes. Only an explicit `false`
+   * silences the attention listeners; copy/paste signals are unaffected because
+   * they are a different disclosure.
+   */
+  trackFocusChanges?: boolean;
   blockCopyPaste?: boolean;
   onEvent?: (event: IntegrityEventInput) => void;
 }) {
@@ -227,12 +234,16 @@ export function useIntegrityMonitor({
       if (blockCopyPaste) event.preventDefault();
     };
 
-    document.addEventListener("visibilitychange", onVisibility);
+    const trackAttention = trackFocusChanges !== false;
+
     document.addEventListener("copy", onCopy);
     document.addEventListener("paste", onPaste, true);
     document.addEventListener("paste", onPasteCapture, false);
-    document.addEventListener("fullscreenchange", onFullscreen);
-    window.addEventListener("blur", onBlur);
+    if (trackAttention) {
+      document.addEventListener("visibilitychange", onVisibility);
+      document.addEventListener("fullscreenchange", onFullscreen);
+      window.addEventListener("blur", onBlur);
+    }
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
@@ -242,7 +253,7 @@ export function useIntegrityMonitor({
       document.removeEventListener("fullscreenchange", onFullscreen);
       window.removeEventListener("blur", onBlur);
     };
-  }, [enabled, record, blockCopyPaste]);
+  }, [enabled, record, blockCopyPaste, trackFocusChanges]);
 
   // Best-effort final flush if the candidate submits immediately after an event.
   useEffect(() => {

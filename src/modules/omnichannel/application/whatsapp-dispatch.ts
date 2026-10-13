@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { WhatsAppConnector } from "@/modules/omnichannel/infrastructure/connectors";
 import {
   STAGE_FALLBACK_TEMPLATE,
@@ -86,19 +87,8 @@ async function resolveTemplate(keys: string[]): Promise<{ body: string; key: str
 }
 
 /** `{{company_name}}` reads the same setting the rest of the portals show. */
-async function getCompanyName(): Promise<string> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
-    .from("app_settings")
-    .select("value")
-    .eq("scope", "GLOBAL")
-    .eq("key", "organisation.name")
-    .maybeSingle();
-
-  return typeof data?.value === "string" && data.value.trim()
-    ? data.value.trim()
-    : "Sharm Dreams Group";
-}
+const getCompanyName = () =>
+  getStringSetting("organisation.name", "Sharm Dreams Group");
 
 /** Every token is always supplied; an unavailable value renders as nothing. */
 async function buildVars(application: { full_name: string }, jobTitle: string, stage: string) {

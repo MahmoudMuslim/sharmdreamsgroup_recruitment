@@ -28,9 +28,6 @@ import {
 } from "@/stores/useAssessmentStore";
 import { cn, formatDuration } from "@/lib/utils";
 
-/** Drafts are flushed to Supabase on this cadence while the candidate works. */
-const AUTOSAVE_INTERVAL_MS = 20_000;
-
 /** Plain-language disclosure shown to the candidate for each signal. */
 const INTEGRITY_COPY: Record<string, string> = {
   FOCUS_LOST: "You switched to another window or application",
@@ -71,11 +68,14 @@ export function AssessmentRunner() {
     void loadAttempt(token);
   }, [token, loadAttempt]);
 
-  // Keep the server-side draft fresh so a crashed tab loses nothing.
+  // Keep the server-side draft fresh so a crashed tab loses nothing. The cadence
+  // is Settings → Assessments → Autosave interval, delivered with the paper.
+  const autosaveIntervalMs = (payload?.settings.autosave_interval_seconds ?? 0) * 1000;
   useEffect(() => {
-    const id = setInterval(() => void syncDraft(), AUTOSAVE_INTERVAL_MS);
+    if (!autosaveIntervalMs) return;
+    const id = setInterval(() => void syncDraft(), autosaveIntervalMs);
     return () => clearInterval(id);
-  }, [syncDraft]);
+  }, [syncDraft, autosaveIntervalMs]);
 
   // Authoritative countdown lives on the server (expires_at); the client mirrors it.
   useEffect(() => {
@@ -155,7 +155,7 @@ export function AssessmentRunner() {
     return () => window.removeEventListener("keydown", onKey);
   }, [confirming]);
 
-  // --- Integrity: full monitoring, always disclosed to the candidate --------
+  // --- Integrity: every signal recorded is disclosed to the candidate -------
   const [integrityNotices, setIntegrityNotices] = useState<IntegrityEventInput[]>([]);
 
   const handleIntegrityEvent = useCallback((event: IntegrityEventInput) => {
@@ -166,6 +166,7 @@ export function AssessmentRunner() {
     attemptToken: token,
     questionId: currentQuestion?.id ?? null,
     enabled: started && !submittedAt,
+    trackFocusChanges: payload?.settings.track_focus_changes,
     blockCopyPaste: true,
     onEvent: handleIntegrityEvent,
   });

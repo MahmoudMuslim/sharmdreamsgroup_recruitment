@@ -1,10 +1,26 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { DEFAULT_PASSWORD_MIN_LENGTH } from "@/modules/settings/domain/schema";
+
+/**
+ * A CSPRNG password long enough to clear the configured minimum.
+ *
+ * base64url turns n bytes into ceil(n * 4 / 3) characters, so the byte count is
+ * solved from the required length instead of assumed. The fixed tail guarantees
+ * a symbol, a digit and mixed case, which the alphabet alone may miss.
+ */
+function generateStaffPassword(minLength: number): string {
+  const tail = "Aa1!";
+  const bytes = Math.max(16, Math.ceil(((minLength - tail.length) * 3) / 4));
+  return `${randomBytes(bytes).toString("base64url")}${tail}`;
+}
 
 export interface CreateUserPayload {
   email: string;
@@ -129,8 +145,21 @@ export async function createUser(
   }
 
   // Direct create: make the auth user, then the profile.
-  const tempPassword =
-    payload.password?.trim() ?? Math.random().toString(36).slice(-12) + "Aa1!";
+  // Settings → Security → Minimum password length is enforced here, at the only
+  // place a staff password is written, rather than in the form that posts it.
+  const minLength = await getNumberSetting(
+    "security.password_min_length",
+    DEFAULT_PASSWORD_MIN_LENGTH
+  );
+  const supplied = payload.password?.trim() ?? "";
+  if (supplied && supplied.length < minLength) {
+    return {
+      ok: false,
+      error: `Password must be at least ${minLength} characters — set under Settings → Security.`,
+    };
+  }
+
+  const tempPassword = supplied || generateStaffPassword(minLength);
 
   const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
     email,

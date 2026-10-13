@@ -35,6 +35,19 @@ export interface AttemptPayload {
   job_title: string;
   questions: AttemptQuestionClient[];
   draft: AttemptDraftClient | null;
+  /**
+   * Settings → Assessments, resolved server-side when the test is opened.
+   *
+   * These arrive with the payload rather than in a separate request because the
+   * candidate is already holding this connection, and a mid-test settings change
+   * should not move the rules under their feet.
+   */
+  settings: AttemptSettings;
+}
+
+export interface AttemptSettings {
+  autosave_interval_seconds: number;
+  track_focus_changes: boolean;
 }
 
 export interface AttemptDraftClient {

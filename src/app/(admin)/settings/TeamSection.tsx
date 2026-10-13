@@ -9,6 +9,7 @@ import type { Company, StaffMember } from "@/modules/settings/domain/types";
 interface TeamSectionProps {
   staff: StaffMember[];
   companies: Company[];
+  passwordMinLength: number;
   editable: boolean;
 }
 
@@ -21,7 +22,12 @@ const ROLE_BADGE: Record<string, "gold" | "neutral" | "info"> = {
   CANDIDATE: "neutral",
 };
 
-export function TeamSection({ staff, companies, editable }: TeamSectionProps) {
+export function TeamSection({
+  staff,
+  companies,
+  passwordMinLength,
+  editable,
+}: TeamSectionProps) {
   const [userPanelOpen, setUserPanelOpen] = useState(false);
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
 
@@ -71,6 +77,7 @@ export function TeamSection({ staff, companies, editable }: TeamSectionProps) {
 
       <UserCreatePanel
         companies={companies}
+        passwordMinLength={passwordMinLength}
         open={userPanelOpen}
         onClose={() => setUserPanelOpen(false)}
         onSuccess={() => setUserPanelOpen(false)}

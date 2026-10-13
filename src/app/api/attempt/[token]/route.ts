@@ -1,5 +1,7 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { buildPaper } from "@/modules/assessment/application/buildPaper";
+import { getAttemptSettings } from "@/modules/assessment/application/attemptSettings";
+import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
 import type { AttemptPayload } from "@/stores/useAssessmentStore";
 import { NextResponse } from "next/server";
 
@@ -17,8 +19,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     return NextResponse.json({ error: "Assessment not found" }, { status: 404 });
   }
 
-  // Expiry enforcement
+  // Expiry enforcement — two different clocks. An IN_PROGRESS attempt runs out
+  // of test time; a NOT_STARTED one runs out of *invitation* time, which is
+  // Settings → Assessments → Link validity measured from when the link was
+  // issued. Both park the attempt as EXPIRED so the runner shows one state.
   if (attempt.status === "IN_PROGRESS" && attempt.expires_at && new Date(attempt.expires_at) < new Date()) {
+    await supabase
+      .from("candidate_attempts")
+      .update({ status: "EXPIRED" })
+      .eq("id", attempt.id);
+    attempt.status = "EXPIRED";
+  }
+
+  if (attempt.status === "NOT_STARTED" && (await isLinkExpired(attempt.created_at))) {
     await supabase
       .from("candidate_attempts")
       .update({ status: "EXPIRED" })
@@ -145,6 +158,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     job_title: jobTitle ?? "",
     questions: sanitizedQuestions,
     draft,
+    settings: await getAttemptSettings(),
   };
 
   return NextResponse.json(payload);

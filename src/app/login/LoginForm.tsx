@@ -17,6 +17,7 @@ export function LoginForm() {
   const searchParams = useSearchParams();
   const next = safeRedirectTarget(searchParams.get("next"));
   const oauthError = searchParams.get("error");
+  const idleSignOut = searchParams.get("reason") === "idle";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,6 +77,16 @@ export function LoginForm() {
         </div>
 
         <div className="rounded-2xl border border-brand-line bg-white p-6 shadow-lift sm:p-7">
+          {idleSignOut && (
+            <p
+              role="status"
+              className="mb-4 rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-sm text-brand-ink/70"
+            >
+              You were signed out after a period of inactivity. Sign in again to
+              continue.
+            </p>
+          )}
+
           {oauthError && (
             <p
               role="alert"

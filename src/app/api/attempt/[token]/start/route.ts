@@ -1,4 +1,5 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
 import { NextResponse } from "next/server";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ token: string }> }) {
@@ -7,7 +8,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
 
   const { data: attempt, error } = await supabase
     .from("candidate_attempts")
-    .select("id, status, time_limit_minutes")
+    .select("id, status, time_limit_minutes, created_at")
     .eq("access_token", token)
     .single();
 
@@ -16,6 +17,14 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
   }
   if (attempt.status !== "NOT_STARTED") {
     return NextResponse.json({ ok: true, alreadyStarted: true });
+  }
+
+  // The runner marks the attempt EXPIRED when its link is opened late; this is
+  // the same window checked at the moment the clock would start, so a tab left
+  // open across the deadline cannot begin a test that is already spent.
+  if (await isLinkExpired(attempt.created_at)) {
+    await supabase.from("candidate_attempts").update({ status: "EXPIRED" }).eq("id", attempt.id);
+    return NextResponse.json({ error: "This invitation link has expired" }, { status: 409 });
   }
 
   const expiresAt = new Date(Date.now() + attempt.time_limit_minutes * 60 * 1000).toISOString();

@@ -11,6 +11,7 @@ import { connection } from "next/server";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { DEFAULT_PASSWORD_MIN_LENGTH } from "@/modules/settings/domain/schema";
 import { TeamSection } from "./TeamSection";
 
 export const metadata = {
@@ -29,6 +30,11 @@ export default async function SettingsPage() {
   const [bundle, master] = await Promise.all([loadSettings(), getMasterData()]);
 
   const editable = await hasPermissionForUser("settings.manage_platform");
+
+  // Shown by the create-user form, enforced again inside `createUser` — read from
+  // the same loaded row so the hint can never drift from the rule.
+  const passwordMinLength =
+    Number(bundle.values["security.password_min_length"]) || DEFAULT_PASSWORD_MIN_LENGTH;
 
   return (
     <AdminShell user={user}>
@@ -55,6 +61,7 @@ export default async function SettingsPage() {
             <TeamSection
               staff={bundle.staff}
               companies={bundle.companies}
+              passwordMinLength={passwordMinLength}
               editable={editable}
             />
 

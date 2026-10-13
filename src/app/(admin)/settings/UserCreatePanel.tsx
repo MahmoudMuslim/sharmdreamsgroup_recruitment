@@ -9,6 +9,7 @@ import type { Company } from "@/modules/settings/domain/types";
 
 interface UserCreatePanelProps {
   companies: Company[];
+  passwordMinLength: number;
   onSuccess: () => void;
   onClose: () => void;
   open: boolean;
@@ -24,6 +25,7 @@ const ROLE_OPTIONS = [
 
 export function UserCreatePanel({
   companies,
+  passwordMinLength,
   onSuccess,
   onClose,
   open,
@@ -128,7 +130,7 @@ export function UserCreatePanel({
             </h3>
             <p className="mt-1 text-xs text-brand-ink/50">
               {mode === "invite"
-                ? "They'll receive an email to set their password."
+                ? "Saves a pending invite — no email is sent yet, so nothing reaches them automatically."
                 : "You'll set their password now — share it securely."}
             </p>
           </div>
@@ -281,7 +283,7 @@ export function UserCreatePanel({
                   className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                 />
                 <p className="mt-1 text-[11px] text-brand-ink/45">
-                  Minimum 8 characters. You must share this securely.
+                  Minimum {passwordMinLength} characters. You must share this securely.
                 </p>
               </div>
             )}
@@ -295,7 +297,7 @@ export function UserCreatePanel({
           {saved && (
             <p role="status" className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">
               <UserPlus className="h-4 w-4" aria-hidden />
-              User created.
+              {mode === "invite" ? "Invite recorded as pending." : "User created."}
             </p>
           )}
         </div>
@@ -303,7 +305,7 @@ export function UserCreatePanel({
         <footer className="flex items-center justify-between gap-3 border-t border-brand-line bg-brand-cream p-5">
           <p className="text-[11px] leading-relaxed text-brand-ink/45">
             {mode === "invite"
-              ? "An invite expires after 7 days."
+              ? "No account is created yet, so this person cannot sign in."
               : "Credentials are not stored — share them now."}
           </p>
           <div className="flex shrink-0 gap-2">

@@ -146,7 +146,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         kind: "number",
         key: "assessment.link_validity_hours",
         label: "Link validity",
-        help: "How long an invitation link can be opened.",
+        help: "Hours an invitation link stays openable before it is marked expired.",
         min: 1,
         max: 168,
         unit: "h",
@@ -170,7 +170,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         kind: "toggle",
         key: "assessment.track_focus_changes",
         label: "Record focus changes",
-        help: "Candidates are told whenever the test window loses focus.",
+        help: "Records, and shows the candidate, when the test window loses focus, hides, or leaves full screen. Copy and paste signals are always kept.",
       },
     ],
   },
@@ -225,7 +225,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         kind: "number",
         key: "security.session_timeout_minutes",
         label: "Session timeout",
-        help: "Staff are signed out after this much inactivity.",
+        help: "Returns a staff session to the sign-in screen after this much inactivity in the recruiter portal.",
         min: 15,
         max: 1440,
         unit: "min",
@@ -234,6 +234,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         kind: "number",
         key: "security.password_min_length",
         label: "Minimum password length",
+        help: "Checked when a staff password is created under Settings → Team.",
         min: 8,
         max: 64,
       },
@@ -252,6 +253,14 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
     ],
   },
 ];
+
+/**
+ * Shipped fallback for `security.password_min_length`.
+ *
+ * The create-user form shows this number and `createUser` enforces it, so both
+ * sides of that form must fall back to the same value when no row exists yet.
+ */
+export const DEFAULT_PASSWORD_MIN_LENGTH = 12;
 
 /** Flat list of every controllable setting key — used to validate writes. */
 export const ALLOWED_SETTING_KEYS: ReadonlySet<string> = new Set(
@@ -277,18 +286,13 @@ export const UNENFORCED_SETTING_KEYS: ReadonlySet<string> = new Set([
   "ai.generate_feedback",
   "ai.interview_questions",
   "assessment.default_duration_minutes",
-  "assessment.link_validity_hours",
-  "assessment.autosave_interval_seconds",
   "assessment.lock_on_expiry",
-  "assessment.track_focus_changes",
   "notifications.email_enabled",
   "integrations.greenhouse.enabled",
   "integrations.lever.enabled",
   "integrations.frappe_hr.enabled",
   "integrations.google_calendar.enabled",
   "integrations.microsoft_calendar.enabled",
-  "security.session_timeout_minutes",
-  "security.password_min_length",
   "security.require_oauth",
   "security.mask_scores_for_reviewers",
 ]);
