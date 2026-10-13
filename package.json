@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@handsontable/react": "^16.2.0",
+    "@qoder-ai/qoder-agent-sdk": "^1.0.52",
     "@supabase/server": "^1.9.1",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
@@ -30,6 +31,7 @@
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
     "unpdf": "^1.8.1",
+    "zod": "^4.6.7",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
