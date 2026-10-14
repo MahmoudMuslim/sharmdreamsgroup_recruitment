@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Inbox, Loader2, Mail, MessageCircle } from "lucide-react";
 import { saveNotificationTemplate } from "@/app/(admin)/settings/actions";
 import { Badge, Button, Card } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -165,8 +165,21 @@ export function TemplatesConsole({
   templates: NotificationTemplate[];
   editable: boolean;
 }) {
+  const [tab, setTab] = useState("whatsapp");
+
   const whatsapp = templates.filter((template) => template.channel === "WHATSAPP");
-  const email = templates.filter((template) => template.channel !== "WHATSAPP");
+  const email = templates.filter((template) => template.channel === "EMAIL");
+  const portal = templates.filter((template) => template.channel === "IN_APP");
+
+  const tabs = [
+    { key: "whatsapp", label: "WhatsApp", icon: MessageCircle, rows: whatsapp },
+    { key: "email", label: "Email", icon: Mail, rows: email },
+    // An IN_APP row is edited as written copy even though no flow reads one
+    // today, so a stray row never becomes invisible and uneditable.
+    ...(portal.length > 0
+      ? [{ key: "portal", label: "Portal notices", icon: Inbox, rows: portal }]
+      : []),
+  ];
 
   return (
     <Card className="p-5 sm:p-6">
@@ -205,27 +218,51 @@ export function TemplatesConsole({
         </p>
       )}
 
-      {whatsapp.length > 0 && (
-        <section>
-          <h3 className="mb-2 font-display text-base font-bold">WhatsApp</h3>
-          <ul className="space-y-3">
-            {whatsapp.map((template) => (
-              <Editor key={template.id} template={template} editable={editable} />
-            ))}
-          </ul>
-        </section>
-      )}
+      <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Template channels">
+        {tabs.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            role="tab"
+            id={`templates-tab-${option.key}`}
+            aria-selected={tab === option.key}
+            aria-controls={`templates-panel-${option.key}`}
+            onClick={() => setTab(option.key)}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
+              tab === option.key
+                ? "bg-brand-ink text-brand-cream shadow-soft"
+                : "border border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
+            )}
+          >
+            <option.icon className="h-4 w-4" aria-hidden />
+            {`${option.label} (${option.rows.length})`}
+          </button>
+        ))}
+      </div>
 
-      {email.length > 0 && (
-        <section className="mt-5">
-          <h3 className="mb-2 font-display text-base font-bold">Email</h3>
-          <ul className="space-y-3">
-            {email.map((template) => (
-              <Editor key={template.id} template={template} editable={editable} />
-            ))}
-          </ul>
-        </section>
-      )}
+      {tabs.map((option) => (
+        <div
+          key={option.key}
+          role="tabpanel"
+          id={`templates-panel-${option.key}`}
+          aria-labelledby={`templates-tab-${option.key}`}
+          className={cn("mt-4", tab !== option.key && "hidden")}
+        >
+          {option.rows.length === 0 ? (
+            <p className="rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-xs text-brand-ink/60">
+              No {option.label.toLowerCase()} templates are stored yet, so every message on this
+              channel is sent using the copy shipped in code.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {option.rows.map((template) => (
+                <Editor key={template.id} template={template} editable={editable} />
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
     </Card>
   );
 }
