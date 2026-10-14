@@ -247,12 +247,6 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
       },
       {
         kind: "toggle",
-        key: "security.require_oauth",
-        label: "Require single sign-on",
-        help: "Force Google OAuth for every staff account.",
-      },
-      {
-        kind: "toggle",
         key: "security.mask_scores_for_reviewers",
         label: "Mask scores for interviewers",
         help: "Keep AI scores hidden from interviewers until shortlisting.",
@@ -292,7 +286,6 @@ export const UNENFORCED_SETTING_KEYS: ReadonlySet<string> = new Set([
   "integrations.frappe_hr.enabled",
   "integrations.google_calendar.enabled",
   "integrations.microsoft_calendar.enabled",
-  "security.require_oauth",
   "security.mask_scores_for_reviewers",
 ]);
 

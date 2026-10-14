@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { KeyRound, Loader2, LogIn, ShieldCheck } from "lucide-react";
+import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { SdgMark } from "@/modules/analytics/presentation/BrandLogo";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -16,7 +16,6 @@ function safeRedirectTarget(raw: string | null): string {
 export function LoginForm() {
   const searchParams = useSearchParams();
   const next = safeRedirectTarget(searchParams.get("next"));
-  const oauthError = searchParams.get("error");
   const idleSignOut = searchParams.get("reason") === "idle";
 
   const [email, setEmail] = useState("");
@@ -42,19 +41,6 @@ export function LoginForm() {
     }
 
     window.location.assign(next);
-  }
-
-  async function handleGoogleOAuth() {
-    setError(null);
-    const supabase = getSupabaseBrowserClient();
-    const { error: oauthFailure } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
-      },
-    });
-
-    if (oauthFailure) setError(oauthFailure.message);
   }
 
   const fieldClass =
@@ -87,15 +73,6 @@ export function LoginForm() {
             </p>
           )}
 
-          {oauthError && (
-            <p
-              role="alert"
-              className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
-            >
-              Single sign-on failed. Please try again or use your password.
-            </p>
-          )}
-
           {error && (
             <p
               role="alert"
@@ -104,21 +81,6 @@ export function LoginForm() {
               {error}
             </p>
           )}
-
-          <button
-            type="button"
-            onClick={() => void handleGoogleOAuth()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-line bg-white px-5 py-3 text-sm font-semibold text-brand-ink transition hover:bg-brand-sand"
-          >
-            <LogIn className="h-4 w-4" aria-hidden />
-            Continue with Google (OAuth 2.0)
-          </button>
-
-          <div className="my-5 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wider text-brand-ink/35">
-            <span className="h-px flex-1 bg-brand-line" aria-hidden />
-            or use your work email
-            <span className="h-px flex-1 bg-brand-line" aria-hidden />
-          </div>
 
           <form onSubmit={handleEmailPassword} className="space-y-4">
             <div>

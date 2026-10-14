@@ -3,7 +3,7 @@ import { LoginForm } from "./LoginForm";
 
 export const metadata = {
   title: "Recruiter sign-in",
-  description: "Secure OAuth 2.0 and password access for Sharm Dreams Talent Cloud staff",
+  description: "Password sign-in for Sharm Dreams Talent Cloud staff",
 };
 
 export default function LoginPage() {
