@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  Cpu,
   Eye,
   EyeOff,
   KeyRound,
   Loader2,
   Plug,
   RefreshCw,
+  Send,
   ShieldCheck,
   Trash2,
   TriangleAlert,
@@ -23,7 +25,7 @@ import {
   type CredentialKeyView,
   type CredentialView,
 } from "@/modules/settings/application/credential-actions";
-import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
+import { PROVIDER_GROUPS, type ProviderGroup } from "@/modules/settings/domain/providers";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
@@ -32,6 +34,12 @@ const SOURCE_BADGE: Record<CredentialView["source"], { label: string; tone: stri
   stored: { label: "Stored in platform", tone: "success" },
   environment: { label: "Using env var", tone: "info" },
   unset: { label: "Not configured", tone: "neutral" },
+};
+
+const GROUP_ICONS: Record<ProviderGroup, typeof Cpu> = {
+  ai: Cpu,
+  communication: Send,
+  other: Plug,
 };
 
 function CredentialCard({
@@ -323,6 +331,7 @@ export function CredentialsConsole({
   editable: boolean;
 }) {
   const [credentials, setCredentials] = useState<CredentialView[]>([]);
+  const [tab, setTab] = useState<ProviderGroup | null>(null);
   const [audit, setAudit] = useState<{
     id: string;
     provider: string | null;
@@ -391,6 +400,15 @@ export function CredentialsConsole({
 
   const configured = credentials.filter((c) => c.source !== "unset").length;
 
+  // A tab per provider group, but only for groups that hold credentials — an
+  // empty "Other" tab would advertise an integration that does not exist.
+  const groups = PROVIDER_GROUPS.map((group) => ({
+    ...group,
+    items: credentials.filter((c) => c.group === group.id),
+  })).filter((group) => group.items.length > 0);
+
+  const active = tab && groups.some((group) => group.id === tab) ? tab : groups[0]?.id;
+
   return (
     <div className="space-y-6">
       {!encryptionConfigured && (
@@ -429,29 +447,56 @@ export function CredentialsConsole({
         </p>
       )}
 
-      {PROVIDER_GROUPS.map((group) => {
-        const items = credentials.filter((c) => c.group === group.id);
-        if (items.length === 0) return null;
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Provider groups">
+          {groups.map((group) => {
+            const Icon = GROUP_ICONS[group.id];
+            return (
+              <button
+                key={group.id}
+                type="button"
+                role="tab"
+                id={`credentials-tab-${group.id}`}
+                aria-selected={active === group.id}
+                aria-controls={`credentials-panel-${group.id}`}
+                onClick={() => setTab(group.id)}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
+                  active === group.id
+                    ? "bg-brand-ink text-brand-cream shadow-soft"
+                    : "border border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
+                )}
+              >
+                <Icon className="h-4 w-4" aria-hidden />
+                {`${group.label} (${group.items.length})`}
+              </button>
+            );
+          })}
+        </div>
 
-        return (
-          <section key={group.id}>
-            <header className="mb-3">
-              <h3 className="font-display text-base font-bold">{group.label}</h3>
-              <p className="text-sm text-brand-ink/55">{group.blurb}</p>
-            </header>
-            <div className="space-y-3">
-              {items.map((credential) => (
-                <CredentialCard
-                  key={credential.provider}
-                  credential={credential}
-                  editable={editable}
-                  onChanged={() => void reload()}
-                />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+        {/* Every panel stays mounted and the inactive one is hidden, because a card
+            holds a half-typed secret and a Test result in local state — the same
+            reason `reload` refuses to show the full-screen spinner. */}
+        {groups.map((group) => (
+          <div
+            key={group.id}
+            role="tabpanel"
+            id={`credentials-panel-${group.id}`}
+            aria-labelledby={`credentials-tab-${group.id}`}
+            className={cn("space-y-3", active !== group.id && "hidden")}
+          >
+            <p className="text-sm text-brand-ink/55">{group.blurb}</p>
+            {group.items.map((credential) => (
+              <CredentialCard
+                key={credential.provider}
+                credential={credential}
+                editable={editable}
+                onChanged={() => void reload()}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
 
       {audit.length > 0 && (
         <section>
