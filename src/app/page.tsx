@@ -1,21 +1,26 @@
 import Link from "next/link";
-import { ArrowRight, BookOpen, Sparkles, Users, Zap } from "lucide-react";
+import { ArrowRight, BookOpen, Briefcase, Sparkles, Users } from "lucide-react";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 
+/**
+ * Every destination here is public. The platform's admin side is deliberately
+ * not advertised on the landing page, so none of these cards may point at a
+ * staff route: a candidate who clicks through would land on the sign-in screen.
+ */
 const CAPABILITIES = [
   {
-    href: "/dashboard",
-    icon: Zap,
-    eyebrow: "Analytics",
-    title: "Real-time hiring intelligence",
-    copy: "Pipeline conversion, channel effectiveness and AI fit-score distributions — live from the database.",
+    href: "/careers",
+    icon: Briefcase,
+    eyebrow: "Open roles",
+    title: "Hiring across the group",
+    copy: "Every published opening — resort operations, real estate and corporate services — with the salary range stated and an application that takes a few minutes.",
   },
   {
-    href: "/assessments",
+    href: "/careers",
     icon: BookOpen,
     eyebrow: "Assessments",
-    title: "Canditech-style test suites",
-    copy: "In-browser financial models with NPV and IRR, video pitches graded from what the candidate actually said, case studies and graded quizzes.",
+    title: "Tests graded on what you actually did",
+    copy: "Invited candidates run their assessment in the browser: financial models with NPV and IRR, video pitches, case studies and quizzes, marked from what they submit.",
   },
   {
     href: "/portal",
@@ -45,16 +50,16 @@ export default function Home() {
 
           <nav className="flex items-center gap-1 sm:gap-2">
             <Link
-              href="/portal"
+              href="/careers"
               className="rounded-lg px-3 py-2 text-sm font-semibold text-brand-ink/70 transition hover:bg-brand-sand hover:text-brand-ink"
             >
-              Candidate portal
+              Careers
             </Link>
             <Link
-              href="/login"
+              href="/portal"
               className="rounded-xl bg-brand-ink px-4 py-2 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90"
             >
-              Staff sign-in
+              Track an application
             </Link>
           </nav>
         </div>
@@ -89,10 +94,10 @@ export default function Home() {
 
           <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
             <Link
-              href="/login"
+              href="/careers"
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-ink px-7 py-3.5 text-sm font-bold text-brand-cream shadow-lift transition hover:bg-brand-ink/90"
             >
-              Open the admin panel
+              Careers
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
             <Link
@@ -112,7 +117,7 @@ export default function Home() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           {CAPABILITIES.map(({ href, icon: Icon, eyebrow, title, copy }) => (
             <Link
-              key={href}
+              key={title}
               href={href}
               className="group flex flex-col rounded-2xl border border-brand-line bg-white p-6 shadow-soft transition hover:-translate-y-0.5 hover:border-brand-gold/40 hover:shadow-lift"
             >
