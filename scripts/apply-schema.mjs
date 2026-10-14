@@ -1,10 +1,25 @@
-/**
- * Applies supabase/schema.sql to the live Supabase Postgres instance via the
- * Supavisor pooler, then seeds demo data (jobs, assessment templates,
- * questions, applications) and creates the admin auth user via the
- * management API.
+/*
+ * Applies supabase/schema.sql to the configured project, as one script.
  *
- * Usage: node scripts/apply-schema.mjs
+ * It used to do three more things, and all three were reasons not to run it:
+ * it applied supabase/seed.sql, so a real project collected demo applications;
+ * it created three staff accounts whose passwords are written into this file;
+ * and it upserted their user_profiles rows, overwriting the role and locale of
+ * whoever already owned those addresses. The schema file now carries the
+ * console's own reference rows, so this script does exactly what its name says
+ * and nothing else.
+ *
+ *   demo rows      -> supabase/seed.sql, applied by hand when you want them
+ *   staff accounts -> node scripts/create-staff.mjs <email> <name> [ROLE] [slug]
+ *
+ * Usage:
+ *   node scripts/apply-schema.mjs [file]      # default supabase/schema.sql
+ *
+ * The password is read from SB_DB, then SUPABASE_DB_PASSWORD from .env.local.
+ * Aim it at another database with ZZ_DB_URL — that is how this script gets
+ * proved on the throwaway instead of on the project.
+ * Confirm the result with:
+ *   node scripts/verify-schema.mjs supabase/schema.sql
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -12,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const file = process.argv[2] ?? join(root, "supabase", "schema.sql");
 
 function loadEnv() {
   const raw = readFileSync(join(root, ".env.local"), "utf8");
@@ -24,140 +40,67 @@ function loadEnv() {
 }
 
 const env = loadEnv();
+const ref = env.SUPABASE_PROJECT_REF;
+const password = process.env.SB_DB || env.SUPABASE_DB_PASSWORD;
+const POOLER = "aws-0-eu-west-1.pooler.supabase.com";
 
-const POOLER_HOST = process.env.POOLER_HOST || "aws-0-eu-west-1.pooler.supabase.com";
-const PROJECT_REF = env.SUPABASE_PROJECT_REF;
-const DB_PASSWORD = env.SUPABASE_DB_PASSWORD;
-const SERVICE_ROLE = env.SUPABASE_SERVICE_ROLE_KEY;
-const SUPABASE_URL = env.NEXT_PUBLIC_SUPABASE_URL;
-const APP_URL = env.APP_URL || "http://localhost:3000";
-
-if (!PROJECT_REF || !DB_PASSWORD || !SERVICE_ROLE || !SUPABASE_URL) {
-  console.error("Missing required env vars in .env.local");
+/* Same escape hatch verify-schema.mjs uses, so this script can be aimed at the
+ * throwaway database instead of the project. */
+const url = process.env.ZZ_DB_URL;
+if (!url && (!ref || !password)) {
+  console.error("Missing SUPABASE_PROJECT_REF or the database password in .env.local.");
   process.exit(1);
 }
 
-const sql = readFileSync(join(root, "supabase", "schema.sql"), "utf8");
+console.log(`Applying ${file}\nto ${url ? "the database in ZZ_DB_URL" : `project ${ref} via ${POOLER}`}…`);
 
-const client = new Client({
-  host: POOLER_HOST,
-  port: 5432,
-  user: `postgres.${PROJECT_REF}`,
-  password: DB_PASSWORD,
-  database: "postgres",
-  ssl: { rejectUnauthorized: false },
-});
+const c = new Client(
+  url
+    ? { connectionString: url, connectionTimeoutMillis: 20000 }
+    : {
+        host: POOLER,
+        port: 5432,
+        user: `postgres.${ref}`,
+        password,
+        database: "postgres",
+        ssl: { rejectUnauthorized: false },
+        connectionTimeoutMillis: 20000,
+      }
+);
 
-async function main() {
-  console.log(`Connecting to ${POOLER_HOST} (project ${PROJECT_REF})…`);
-  await client.connect();
+/* Supabase ships supabase_vault; a vanilla image cannot create it. Same skip
+ * apply-proof-schema.mjs makes, so one file can serve both targets. */
+const SUPABASE_ONLY = /^create extension if not exists "supabase_vault".*$/m;
 
-  console.log("Applying schema.sql…");
-  await client.query(sql);
-  console.log("Schema applied.");
-
-  const seedFile = readFileSync(join(root, "supabase", "seed.sql"), "utf8");
-  console.log("Applying seed.sql…");
-  await client.query(seedFile);
-  console.log("Seed applied.");
-
-  await client.end();
-
-  // ---------------------------------------------------------------------
-  // Create admin auth users via Supabase management API
-  // ---------------------------------------------------------------------
-  const managementBase = `https://api.supabase.com/v1/projects/${PROJECT_REF}`;
-
-  async function management(path, init) {
-    const response = await fetch(`${managementBase}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${DB_PASSWORD}`, // placeholder, replaced below
-        "Content-Type": "application/json",
-        ...init?.headers,
-      },
-    });
-    return response;
-  }
-  void management;
-
-  // Management API needs a Supabase platform access token which we do not
-  // have; instead we create auth users through the GoTrue admin endpoint
-  // using the service role key.
-  const users = [
-    { email: "admin@sharmdreams.com", password: "Admin#2024", full_name: "Mahmoud Muslim", role: "SUPER_ADMIN", tenant_id: null, locale: "en" },
-    { email: "recruiter@sharmdreams.com", password: "Recruit#2024", full_name: "Sara Hassan", role: "RECRUITER", tenant_id: "11111111-1111-1111-1111-111111111101", locale: "ar" },
-    { email: "manager@rowadmisr.com", password: "Manager#2024", full_name: "Omar Khaled", role: "HIRING_MANAGER", tenant_id: "11111111-1111-1111-1111-111111111102", locale: "en" },
-  ];
-
-  for (const user of users) {
-    const createResponse = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
-      method: "POST",
-      headers: {
-        apikey: SERVICE_ROLE,
-        Authorization: `Bearer ${SERVICE_ROLE}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: user.email,
-        password: user.password,
-        email_confirm: true,
-        user_metadata: { full_name: user.full_name },
-      }),
-    });
-
-    let authUserId = null;
-    if (createResponse.ok) {
-      const created = await createResponse.json();
-      authUserId = created.id;
-      console.log(`Created auth user ${user.email} (${authUserId})`);
-    } else if (createResponse.status === 422) {
-      // Already exists — look it up.
-      const listResponse = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?per_page=1000`, {
-        headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` },
-      });
-      const list = await listResponse.json();
-      const existing = (list.users ?? []).find((u) => u.email === user.email);
-      authUserId = existing?.id ?? null;
-      console.log(`Auth user ${user.email} already exists (${authUserId})`);
-    } else {
-      console.error(`Failed creating ${user.email}: ${createResponse.status} ${await createResponse.text()}`);
-      continue;
-    }
-
-    if (authUserId) {
-      await client2UpsertProfile(authUserId, user);
-    }
-  }
-
-  console.log("Done.");
-  console.log(`\nAdmin login: admin@sharmdreams.com / Admin#2024`);
-  console.log(`App URL: ${APP_URL}`);
+let sql = readFileSync(file, "utf8");
+if (url && SUPABASE_ONLY.test(sql)) {
+  sql = sql.replace(SUPABASE_ONLY, "-- (skipped: supabase_vault is hosted)");
+  console.log("note: skipping the hosted-only supabase_vault statement");
 }
 
-async function client2UpsertProfile(authUserId, user) {
-  const profileClient = new Client({
-    host: POOLER_HOST,
-    port: 5432,
-    user: `postgres.${PROJECT_REF}`,
-    password: DB_PASSWORD,
-    database: "postgres",
-    ssl: { rejectUnauthorized: false },
-  });
-  await profileClient.connect();
-  await profileClient.query(
-    `insert into user_profiles (auth_user_id, tenant_id, full_name, email, role, locale)
-     values ($1, $2, $3, $4, $5, $6)
-     on conflict (auth_user_id) do update
-       set tenant_id = excluded.tenant_id, full_name = excluded.full_name,
-           email = excluded.email, role = excluded.role, locale = excluded.locale`,
-    [authUserId, user.tenant_id, user.full_name, user.email, user.role, user.locale]
-  );
-  await profileClient.end();
-  console.log(`Profile upserted for ${user.email} (${user.role})`);
+try {
+  await c.connect();
+  await c.query(sql);
+  const census = (
+    await c.query(
+      `select
+         (select count(*) from pg_class cl join pg_namespace n on n.oid = cl.relnamespace
+           where n.nspname = 'public' and cl.relkind in ('r','p')) tables,
+         (select count(*) from pg_policy p join pg_class cl on cl.oid = p.polrelid
+           join pg_namespace n on n.oid = cl.relnamespace
+           where n.nspname in ('public','storage')) policies,
+         (select count(*) from storage.buckets) buckets,
+         (select count(*) from permissions) permissions,
+         (select count(*) from role_permissions) role_permissions,
+         (select count(*) from notification_templates) templates,
+         (select count(*) from app_settings) app_settings`
+    )
+  ).rows[0];
+  console.log("OK — the project now holds:", census);
+} catch (e) {
+  console.log("FAIL — " + (e instanceof Error ? e.message : String(e)));
+  console.log("Nothing was reported as applied; check the file with verify-schema.mjs.");
+  process.exitCode = 1;
+} finally {
+  await c.end();
 }
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});

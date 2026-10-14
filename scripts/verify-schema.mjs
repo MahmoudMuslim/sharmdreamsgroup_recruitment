@@ -273,7 +273,16 @@ report("storage policy helpers", neededHelpers, () =>
   neededHelpers.length === 0
     ? [...policyHelpers].map((h) => `no grantee row for called helper storage.${h}()`)
     : neededHelpers
-        .filter((r) => !lower.includes(`grant ${r.priv} on function storage.${r.name}(${r.args}) to ${r.grantee};`))
+        .filter((r) => {
+          const names = `function storage.${r.name}(${r.args})`;
+          /* Supabase leaves these ACLs at their default, which is EXECUTE to
+           * PUBLIC; a rebuild may hold them as per-role grants instead. Every
+           * role is a member of PUBLIC, so either form satisfies the policy. */
+          return (
+            !lower.includes(`grant ${r.priv} on ${names} to ${r.grantee};`) &&
+            !lower.includes(`grant ${r.priv} on ${names} to public;`)
+          );
+        })
         .map((r) => `${r.priv} on storage.${r.name}(${r.args}) -> ${r.grantee}`)
 );
 
