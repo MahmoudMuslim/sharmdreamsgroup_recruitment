@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { appConfig } from "@/lib/config";
 import { requireStaff } from "@/lib/auth/session";
@@ -393,4 +394,92 @@ export async function draftCandidateFeedback(applicationId: string): Promise<Scr
   }
 
   return generateFeedbackForApplication(applicationId);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Contact details                                                             */
+/* -------------------------------------------------------------------------- */
+
+/** The same pattern the public apply form enforces, so an edit cannot store
+ *  an address the candidate could never have submitted. */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+export interface CandidateContact {
+  full_name: string;
+  email: string;
+  phone: string | null;
+}
+
+export interface ContactResult {
+  ok: boolean;
+  error?: string;
+  /** What the row now holds, after trimming and lowercasing. */
+  contact?: CandidateContact;
+}
+
+/**
+ * Corrects the name, email or phone a candidate arrived with.
+ *
+ * A typo in a CV upload or a changed number is the one thing a recruiter must
+ * be able to fix before the first call goes out, because every notice, bulk
+ * message and portal sign-in reads these columns. Normalising here matches the
+ * apply flow: name trimmed, email trimmed and lowercased, blank phone stored as
+ * null so "no number on file" stays one value rather than two. Only these three
+ * columns are touched — stage, job, tracking code and the AI columns each have
+ * an action with the right side effects.
+ */
+export async function updateCandidateContact(input: {
+  applicationId: string;
+  fullName: string;
+  email: string;
+  phone?: string;
+}): Promise<ContactResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+
+  const fullName = input.fullName.trim();
+  const email = input.email.trim().toLowerCase();
+  const phone = input.phone?.trim() ?? "";
+
+  if (fullName.length < 2) return { ok: false, error: "The name needs at least two characters." };
+  if (fullName.length > 160) return { ok: false, error: "The name is too long." };
+  if (!EMAIL_PATTERN.test(email)) return { ok: false, error: "Enter a valid email address." };
+  if (email.length > 254) return { ok: false, error: "The email address is too long." };
+  if (phone.length > 40) return { ok: false, error: "The phone number is too long." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("applications")
+    .update({
+      full_name: fullName,
+      email,
+      phone: phone || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", input.applicationId)
+    .select("full_name, email, phone");
+
+  if (error) {
+    // `applications_one_live_per_job` keeps one live application per address per
+    // opening, so a merge of two duplicate rows surfaces here rather than as a
+    // raw constraint name.
+    if (error.code === "23505") {
+      return {
+        ok: false,
+        error: "That email already has a live application for this opening.",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  const stored = data?.[0] as CandidateContact | undefined;
+  if (!stored) {
+    return { ok: false, error: "This candidate record is no longer here." };
+  }
+
+  revalidatePath("/candidates");
+  return { ok: true, contact: stored };
 }

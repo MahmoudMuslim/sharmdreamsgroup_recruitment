@@ -19,6 +19,7 @@ import {
   sendBulkEmail,
   sendBulkWhatsApp,
   updateApplicationStage,
+  updateCandidateContact,
   type PipelineStage,
 } from "./candidate-actions";
 import type { CandidateRow } from "./actions";
@@ -616,6 +617,8 @@ function ProfileDrawer({
   const [feedbackPending, setFeedbackPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  /** Bumped by a contact edit so the full record below re-reads the row. */
+  const [contactRev, setContactRev] = useState(0);
 
   async function moveTo(stage: PipelineStage) {
     if (!candidate || stage === candidate.stage) return;
@@ -751,6 +754,14 @@ function ProfileDrawer({
           </div>
 
           {canWrite && (
+            <ContactSection
+              key={`contact-${candidate.id}`}
+              candidate={candidate}
+              onSaved={() => setContactRev((n) => n + 1)}
+            />
+          )}
+
+          {canWrite && (
             <section>
               <h3 className="mb-2 font-display text-sm font-bold">Pipeline</h3>
               <div className="flex flex-wrap gap-1.5">
@@ -824,7 +835,11 @@ function ProfileDrawer({
             </section>
           )}
 
-          <CandidateDossier key={`dossier-${candidate.id}`} applicationId={candidate.id} />
+          <CandidateDossier
+            key={`dossier-${candidate.id}`}
+            applicationId={candidate.id}
+            reloadKey={contactRev}
+          />
 
           <section>
             <h3 className="mb-2 font-display text-sm font-bold">AI screening</h3>
@@ -950,6 +965,143 @@ function ProfileDrawer({
         </div>
       )}
     </Drawer>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The three columns every outbound message is addressed to. The caller keys
+ * this by candidate id, so half-typed text in one profile never leaks into the
+ * next one opened, and renders it only for someone who can write.
+ */
+function ContactSection({
+  candidate,
+  onSaved,
+}: {
+  candidate: CandidateRow;
+  onSaved: () => void;
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [fullName, setFullName] = useState(candidate.full_name);
+  const [email, setEmail] = useState(candidate.email);
+  const [phone, setPhone] = useState(candidate.phone ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  function startEdit() {
+    setFullName(candidate.full_name);
+    setEmail(candidate.email);
+    setPhone(candidate.phone ?? "");
+    setError(null);
+    setSaved(null);
+    setEditing(true);
+  }
+
+  function cancelEdit() {
+    setError(null);
+    setEditing(false);
+  }
+
+  async function save() {
+    setPending(true);
+    setError(null);
+    try {
+      const result = await updateCandidateContact({
+        applicationId: candidate.id,
+        fullName,
+        email,
+        phone,
+      });
+      if (!result.ok || !result.contact) {
+        // A refused write keeps the form and its text on screen, so the reason
+        // reads against what was typed instead of forcing a retype from memory.
+        setError(result.error ?? "Could not save the contact details.");
+        return;
+      }
+      setSaved(
+        `Saved: ${result.contact.full_name} · ${result.contact.email}` +
+          (result.contact.phone ? ` · ${result.contact.phone}` : "")
+      );
+      setEditing(false);
+      onSaved();
+      router.refresh();
+    } catch {
+      setError("Something went wrong saving the contact details.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        {saved ? (
+          <p role="status" className="text-xs font-semibold text-emerald-800">
+            {saved}
+          </p>
+        ) : (
+          <p className="text-xs text-brand-ink/50">
+            Every notice, email and WhatsApp to this candidate goes to these details.
+          </p>
+        )}
+        <Button variant="outline" size="sm" onClick={startEdit}>
+          Edit contact details
+        </Button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-3 rounded-xl border border-brand-line bg-white p-3.5">
+      <h3 className="font-display text-sm font-bold">Contact details</h3>
+
+      <Field label="Full name" htmlFor="contact-name" required>
+        <TextInput
+          id="contact-name"
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          autoComplete="off"
+        />
+      </Field>
+
+      <Field label="Email" htmlFor="contact-email" required hint="Stored lowercase, like the apply form writes it.">
+        <TextInput
+          id="contact-email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          autoComplete="off"
+        />
+      </Field>
+
+      <Field label="Phone" htmlFor="contact-phone" hint="Leave empty when the candidate has no number on file.">
+        <TextInput
+          id="contact-phone"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          autoComplete="off"
+        />
+      </Field>
+
+      {error && (
+        <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {error}
+        </p>
+      )}
+
+      <div className="flex gap-2">
+        <Button size="sm" onClick={() => void save()} disabled={pending}>
+          {pending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+          Save
+        </Button>
+        <Button variant="outline" size="sm" onClick={cancelEdit} disabled={pending}>
+          Cancel
+        </Button>
+      </div>
+    </section>
   );
 }
 

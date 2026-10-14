@@ -325,7 +325,14 @@ function AttemptRow({
  * Loaded once when the profile drawer opens rather than with the list, so the
  * CV text of fifty candidates is never fetched to draw fifty rows.
  */
-export function CandidateDossier({ applicationId }: { applicationId: string }) {
+export function CandidateDossier({
+  applicationId,
+  reloadKey = 0,
+}: {
+  applicationId: string;
+  /** Bumped by an edit above it, so the two never disagree about the name. */
+  reloadKey?: number;
+}) {
   const [dossier, setDossier] = useState<DossierData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(true);
@@ -355,7 +362,7 @@ export function CandidateDossier({ applicationId }: { applicationId: string }) {
     return () => {
       active = false;
     };
-  }, [applicationId, retry]);
+  }, [applicationId, retry, reloadKey]);
 
   function reload() {
     setPending(true);
