@@ -76,6 +76,7 @@ export async function getOnboardingData(): Promise<OnboardingData> {
     .from("applications")
     .select("id, full_name, job_openings(title)")
     .eq("stage", "HIRED")
+    .is("archived_at", null)
     .order("hired_at", { ascending: false })
     .limit(10);
 

@@ -251,6 +251,7 @@ async function ownersFor(
       .from("applications")
       .select("full_name, stage, cv_file_path, job_openings(title)")
       .not("cv_file_path", "is", "null")
+      .is("archived_at", null)
       .limit(1000);
 
     if (error) {

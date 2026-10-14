@@ -131,6 +131,8 @@ create table if not exists applications (
   diversity_flags jsonb,
   rejection_reason text,
   hired_at timestamptz,
+  -- Staff filing door: set means hidden from every staff read, never deleted.
+  archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -138,6 +140,8 @@ create table if not exists applications (
 create index if not exists idx_applications_job on applications (job_id);
 create index if not exists idx_applications_stage on applications (stage);
 create index if not exists idx_applications_created on applications (created_at);
+create index if not exists idx_applications_live on applications (created_at desc)
+  where archived_at is null;
 
 create table if not exists assessment_templates (
   id uuid primary key default gen_random_uuid(),

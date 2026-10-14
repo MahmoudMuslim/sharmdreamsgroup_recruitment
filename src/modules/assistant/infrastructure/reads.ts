@@ -82,6 +82,7 @@ export async function listJobOpenings(): Promise<AssistantJobRow[]> {
   const { data, error } = await supabase
     .from("job_openings")
     .select(JOB_SELECT)
+    .is("applications.archived_at", null)
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -97,6 +98,7 @@ export async function getJobOpening(jobId: string): Promise<AssistantJobRow | nu
   const { data, error } = await supabase
     .from("job_openings")
     .select(JOB_SELECT)
+    .is("applications.archived_at", null)
     .eq("id", jobId)
     .maybeSingle();
 

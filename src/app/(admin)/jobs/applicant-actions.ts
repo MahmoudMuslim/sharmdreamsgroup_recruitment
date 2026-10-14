@@ -77,6 +77,7 @@ export async function getJobApplicants(jobId: string): Promise<ApplicantsResult>
       "id, full_name, email, phone, tracking_code, stage, source, created_at, cv_file_path, ai_match_score, candidate_attempts(access_token, status, total_score, max_score, assessment_templates(name))"
     )
     .eq("job_id", jobId)
+    .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(200);
 

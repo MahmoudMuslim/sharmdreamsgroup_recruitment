@@ -19,6 +19,7 @@ export const instant = false;
 /**
  * Deep links arrive from the job opening's applicant list (`?c=SDG-…`), the
  * interview agenda (`?c=…`) and the assistant (`?application=<id>`).
+ * `?archived=1` opens the archive the filing door emptied.
  */
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
@@ -38,10 +39,14 @@ export default async function CandidatesPage({
   };
   const hasRef = Boolean(ref.id || ref.trackingCode);
 
-  const [candidates, canWrite, focused, timeZone, canGenerateQuestions] = await Promise.all([
-    getCandidateList(),
+  // Resolved before the table so a link to a filed candidate can open the
+  // archive instead of landing the recruiter on a live list with no such row.
+  const focused = hasRef ? await getCandidateByRef(ref) : null;
+  const showArchived = params.archived === "1" || Boolean(focused?.archived_at);
+
+  const [candidates, canWrite, timeZone, canGenerateQuestions] = await Promise.all([
+    getCandidateList(showArchived),
     hasPermissionForUser("candidates.write"),
-    hasRef ? getCandidateByRef(ref) : Promise.resolve(null),
     getOrganisationTimeZone(),
     getBoolSetting("ai.interview_questions", true),
   ]);
@@ -63,6 +68,7 @@ export default async function CandidatesPage({
 
       <CandidateBrowser
         candidates={rows}
+        archivedView={showArchived}
         canWrite={canWrite}
         focusId={focused?.id ?? null}
         unresolvedRef={hasRef && !focused ? (ref.trackingCode ?? ref.id ?? null) : null}

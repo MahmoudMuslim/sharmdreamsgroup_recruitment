@@ -27,6 +27,9 @@ export default async function JobsPage() {
       .select(
         "id, title, tenant_id, department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applications(count)"
       )
+      // The badge has to agree with the applicant list it opens, which hides
+      // filed candidates.
+      .is("applications.archived_at", null)
       .order("created_at", { ascending: false }),
     hasPermissionForUser("jobs.manage"),
   ]);

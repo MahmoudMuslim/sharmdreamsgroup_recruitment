@@ -54,14 +54,24 @@ function flattenCandidate(row: CandidateJoin, masked: boolean): CandidateRow {
   };
 }
 
-export async function getCandidateList(): Promise<CandidateRow[]> {
+/**
+ * The candidate table, newest first.
+ *
+ * Two views, never mixed: the live pipeline, and the archive the filing door
+ * emptied. An archived row keeps every answer, notice and score it ever had —
+ * it is hidden from staff reads, not deleted — so it appears only when the
+ * recruiter asks for it and restores from there.
+ */
+export async function getCandidateList(archived = false): Promise<CandidateRow[]> {
   const [supabase, masked] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
-  const { data, error } = await supabase
-    .from("applications")
-    .select(CANDIDATE_SELECT)
+  const base = supabase.from("applications").select(CANDIDATE_SELECT);
+  const { data, error } = await (archived
+    ? base.not("archived_at", "is", null)
+    : base.is("archived_at", null)
+  )
     .order("created_at", { ascending: false })
     .limit(50);
 

@@ -2,7 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronRight, FileText, Loader2, Lock, Search, Send, Sparkles, X } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronRight,
+  FileText,
+  Loader2,
+  Lock,
+  Search,
+  Send,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -18,6 +29,7 @@ import {
   screenApplication,
   sendBulkEmail,
   sendBulkWhatsApp,
+  setCandidateArchive,
   updateApplicationStage,
   updateCandidateContact,
   type PipelineStage,
@@ -53,6 +65,47 @@ function LockedScore() {
       <Lock className="h-3 w-3" aria-hidden />
       Hidden
     </span>
+  );
+}
+
+/**
+ * Files a candidate out of the pipeline, or brings them back.
+ *
+ * One control for both directions so its label always states what pressing it
+ * does; the row it acts on is never removed by the click itself, only by the
+ * view it belongs to.
+ */
+function ArchiveButton({
+  candidate,
+  pending,
+  onToggle,
+}: {
+  candidate: CandidateRow;
+  pending: boolean;
+  onToggle: () => void;
+}) {
+  const archived = Boolean(candidate.archived_at);
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      disabled={pending}
+      title={
+        archived
+          ? "Return this candidate to the pipeline"
+          : "File this candidate away — the record and everything on it stays"
+      }
+      className="inline-flex items-center gap-1 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {pending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+      ) : archived ? (
+        <ArchiveRestore className="h-3.5 w-3.5" aria-hidden />
+      ) : (
+        <Archive className="h-3.5 w-3.5" aria-hidden />
+      )}
+      {archived ? "Restore" : "Archive"}
+    </button>
   );
 }
 
@@ -127,6 +180,7 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
  */
 export function CandidateBrowser({
   candidates,
+  archivedView,
   canWrite,
   focusId,
   unresolvedRef,
@@ -134,6 +188,8 @@ export function CandidateBrowser({
   canGenerateQuestions,
 }: {
   candidates: CandidateRow[];
+  /** True when this is the archive, not the live pipeline. */
+  archivedView: boolean;
   canWrite: boolean;
   focusId: string | null;
   unresolvedRef: string | null;
@@ -158,6 +214,8 @@ export function CandidateBrowser({
   );
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<string | null>(null);
+  const [archiveNote, setArchiveNote] = useState<string | null>(null);
 
   // Arriving with a different focus (the assistant's link, or "Other
   // applications" inside an open drawer) re-renders this component rather than
@@ -188,6 +246,36 @@ export function CandidateBrowser({
     } finally {
       setPendingAdvance(null);
     }
+  }
+
+  /**
+   * Files a candidate out of the pipeline, or brings one back.
+   *
+   * A refusal comes back as a sentence — an open assessment link or an
+   * interview still on the calendar has to be cleared first — and is shown
+   * above the table instead of disappearing, because the row looks unchanged
+   * either way.
+   */
+  async function toggleArchive(candidate: CandidateRow) {
+    setPendingArchive(candidate.id);
+    setArchiveNote(null);
+    try {
+      const result = await setCandidateArchive({
+        applicationId: candidate.id,
+        archived: !candidate.archived_at,
+      });
+      if (result.ok) router.refresh();
+      else setArchiveNote(result.error ?? "That candidate could not be filed.");
+    } finally {
+      setPendingArchive(null);
+    }
+  }
+
+  /** The two views never mix, so switching one clears the other's selection. */
+  function openView(archived: boolean) {
+    setSelected(new Set());
+    setArchiveNote(null);
+    router.push(archived ? "/candidates?archived=1" : "/candidates");
   }
 
   /** Stage → count, for the rail. Computed over the unfiltered list. */
@@ -244,9 +332,20 @@ export function CandidateBrowser({
     return (
       <Card>
         <EmptyState
-          title="No applications yet"
-          description="New submissions appear here as soon as they arrive, newest first."
+          title={archivedView ? "Nothing is filed away" : "No applications yet"}
+          description={
+            archivedView
+              ? "Filing a candidate takes them out of the pipeline without erasing their answers, scores or the notices they were sent. Anything filed shows up here."
+              : "New submissions appear here as soon as they arrive, newest first."
+          }
         />
+        {archivedView && (
+          <div className="flex justify-center pb-6">
+            <Button variant="outline" size="sm" onClick={() => openView(false)}>
+              Back to the live pipeline
+            </Button>
+          </div>
+        )}
       </Card>
     );
   }
@@ -256,7 +355,16 @@ export function CandidateBrowser({
       {unresolvedRef && (
         <div className="mb-4 rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-sm text-brand-ink/65">
           No candidate matches <span className="font-semibold">{unresolvedRef}</span>. The record
-          may have been deleted, or the link may predate it.
+          may have been filed away, or the link may predate it.
+        </div>
+      )}
+
+      {archiveNote && !liveProfile && (
+        <div
+          role="alert"
+          className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          {archiveNote}
         </div>
       )}
 
@@ -305,15 +413,17 @@ export function CandidateBrowser({
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={() => setBroadcastOpen(true)}
-            disabled={selected.size === 0}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Send className="h-4 w-4" aria-hidden />
-            Bulk message{selected.size > 0 ? ` (${selected.size})` : ""}
-          </button>
+          {!archivedView && (
+            <button
+              type="button"
+              onClick={() => setBroadcastOpen(true)}
+              disabled={selected.size === 0}
+              className="inline-flex items-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send className="h-4 w-4" aria-hidden />
+              Bulk message{selected.size > 0 ? ` (${selected.size})` : ""}
+            </button>
+          )}
         </div>
 
         {/* Stage rail */}
@@ -333,6 +443,21 @@ export function CandidateBrowser({
               onClick={() => setStageFilter(stageFilter === s ? "" : s)}
             />
           ))}
+
+          {/* The other view's count is not loaded, so this chip states no
+              number rather than inventing one. */}
+          <button
+            type="button"
+            onClick={() => openView(!archivedView)}
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink/65 transition hover:bg-brand-sand"
+          >
+            {archivedView ? (
+              <ArchiveRestore className="h-3.5 w-3.5" aria-hidden />
+            ) : (
+              <Archive className="h-3.5 w-3.5" aria-hidden />
+            )}
+            {archivedView ? "Live pipeline" : "Archived"}
+          </button>
         </div>
 
         {/* Channel rail */}
@@ -369,15 +494,17 @@ export function CandidateBrowser({
             <table className="w-full text-left text-sm">
               <thead className="bg-brand-sand/70 text-[11px] font-bold uppercase tracking-wider text-brand-ink/50">
                 <tr>
-                  <th className="w-10 px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={toggleAll}
-                      aria-label="Select all visible candidates"
-                      className="h-4 w-4 rounded border-brand-line"
-                    />
-                  </th>
+                  {!archivedView && (
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        onChange={toggleAll}
+                        aria-label="Select all visible candidates"
+                        className="h-4 w-4 rounded border-brand-line"
+                      />
+                    </th>
+                  )}
                   <th className="px-4 py-3">Candidate</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Source</th>
@@ -391,15 +518,17 @@ export function CandidateBrowser({
               <tbody className="divide-y divide-brand-line">
                 {filtered.map((c) => (
                   <tr key={c.id} className="transition hover:bg-brand-cream">
-                    <td className="px-4 py-4">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(c.id)}
-                        onChange={() => toggle(c.id)}
-                        aria-label={`Select ${c.full_name}`}
-                        className="h-4 w-4 rounded border-brand-line"
-                      />
-                    </td>
+                    {!archivedView && (
+                      <td className="px-4 py-4">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(c.id)}
+                          onChange={() => toggle(c.id)}
+                          aria-label={`Select ${c.full_name}`}
+                          className="h-4 w-4 rounded border-brand-line"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-4">
                       <p className="font-semibold">{c.full_name}</p>
                       <p className="text-xs text-brand-ink/50">{c.email}</p>
@@ -416,7 +545,10 @@ export function CandidateBrowser({
                       })}
                     </td>
                     <td className="px-4 py-4">
-                      <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
+                        {c.archived_at && <Badge tone="neutral">Filed</Badge>}
+                      </div>
                     </td>
                     <td className="px-4 py-4">
                       {c.scores_masked ? (
@@ -466,6 +598,13 @@ export function CandidateBrowser({
                             Advance
                           </button>
                         )}
+                        {canWrite && (
+                          <ArchiveButton
+                            candidate={c}
+                            pending={pendingArchive === c.id}
+                            onToggle={() => void toggleArchive(c)}
+                          />
+                        )}
                         <button
                           type="button"
                           onClick={() => setProfile(c)}
@@ -487,20 +626,25 @@ export function CandidateBrowser({
             {filtered.map((c) => (
               <li key={c.id} className="space-y-3 p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <label className="flex min-w-0 items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(c.id)}
-                      onChange={() => toggle(c.id)}
-                      aria-label={`Select ${c.full_name}`}
-                      className="mt-1 h-4 w-4 rounded border-brand-line"
-                    />
+                  <div className="flex min-w-0 items-start gap-3">
+                    {!archivedView && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(c.id)}
+                        onChange={() => toggle(c.id)}
+                        aria-label={`Select ${c.full_name}`}
+                        className="mt-1 h-4 w-4 rounded border-brand-line"
+                      />
+                    )}
                     <span className="min-w-0">
                       <span className="block truncate font-semibold">{c.full_name}</span>
                       <span className="block truncate text-xs text-brand-ink/55">{c.email}</span>
                     </span>
-                  </label>
-                  <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
+                    {c.archived_at && <Badge tone="neutral">Filed</Badge>}
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
@@ -556,6 +700,13 @@ export function CandidateBrowser({
                         Advance
                       </button>
                     )}
+                    {canWrite && (
+                      <ArchiveButton
+                        candidate={c}
+                        pending={pendingArchive === c.id}
+                        onToggle={() => void toggleArchive(c)}
+                      />
+                    )}
                     <button
                       type="button"
                       onClick={() => setProfile(c)}
@@ -577,6 +728,9 @@ export function CandidateBrowser({
         canWrite={canWrite}
         timeZone={timeZone}
         canGenerateQuestions={canGenerateQuestions}
+        pendingArchive={pendingArchive}
+        archiveNote={archiveNote}
+        onArchive={(c) => void toggleArchive(c)}
         onClose={() => setProfile(null)}
       />
 
@@ -597,12 +751,18 @@ function ProfileDrawer({
   canWrite,
   timeZone,
   canGenerateQuestions,
+  pendingArchive,
+  archiveNote,
+  onArchive,
   onClose,
 }: {
   candidate: CandidateRow | null;
   canWrite: boolean;
   timeZone: string;
   canGenerateQuestions: boolean;
+  pendingArchive: string | null;
+  archiveNote: string | null;
+  onArchive: (candidate: CandidateRow) => void;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -732,6 +892,7 @@ function ProfileDrawer({
         <div className="space-y-5">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={stageTone(candidate.stage)}>{candidate.stage.replace("_", " ")}</Badge>
+            {candidate.archived_at && <Badge tone="neutral">Filed away</Badge>}
             {candidate.job_title && <Badge tone="neutral">{candidate.job_title}</Badge>}
             {candidate.phone && <Badge tone="neutral">{candidate.phone}</Badge>}
             {candidate.attempt_token && (
@@ -831,6 +992,47 @@ function ProfileDrawer({
                     </Button>
                   </div>
                 </div>
+              )}
+            </section>
+          )}
+
+          {canWrite && (
+            <section>
+              <h3 className="mb-2 font-display text-sm font-bold">Filing</h3>
+              <p className="mb-2.5 text-xs leading-relaxed text-brand-ink/55">
+                {candidate.archived_at
+                  ? "Filed away: out of the pipeline, the dashboard and the job’s applicant list, with nothing deleted. Restore returns the record exactly where it was."
+                  : "Filing takes this candidate out of the pipeline, the dashboard and the job’s applicant list without erasing anything — their answers, scores and the notices they were sent all stay on the record."}
+              </p>
+              {candidate.archived_at && (
+                <p className="mb-2.5 text-xs text-brand-ink/45">
+                  Filed on{" "}
+                  {new Date(candidate.archived_at).toLocaleDateString([], {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                  })}
+                  .
+                </p>
+              )}
+              {archiveNote && (
+                <p
+                  role="alert"
+                  className="mb-2.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                >
+                  {archiveNote}
+                </p>
+              )}
+              <ArchiveButton
+                candidate={candidate}
+                pending={pendingArchive === candidate.id}
+                onToggle={() => onArchive(candidate)}
+              />
+              {!candidate.archived_at && (
+                <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/40">
+                  An open assessment link or an interview still on the calendar is cleared first —
+                  the button says which one is holding the record in place.
+                </p>
               )}
             </section>
           )}

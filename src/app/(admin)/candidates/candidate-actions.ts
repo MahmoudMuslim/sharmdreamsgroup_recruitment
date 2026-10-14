@@ -70,7 +70,8 @@ export async function sendBulkWhatsApp(input: {
   const { data, error } = await supabase
     .from("applications")
     .select("id, full_name, phone, stage, job_openings(title), candidate_attempts(access_token)")
-    .in("id", ids);
+    .in("id", ids)
+    .is("archived_at", null);
 
   if (error) {
     return { ok: false, error: error.message };
@@ -182,7 +183,8 @@ export async function sendBulkEmail(input: {
   const { data, error } = await supabase
     .from("applications")
     .select("id, full_name, email, stage, job_openings(title), candidate_attempts(access_token)")
-    .in("id", ids);
+    .in("id", ids)
+    .is("archived_at", null);
 
   if (error) return { ok: false, error: error.message };
 
@@ -482,4 +484,101 @@ export async function updateCandidateContact(input: {
 
   revalidatePath("/candidates");
   return { ok: true, contact: stored };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Archive                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface ArchiveResult {
+  ok: boolean;
+  error?: string;
+  /** What `archived_at` holds after the write — null means restored. */
+  archived_at?: string | null;
+}
+
+/**
+ * Files a candidate out of the pipeline, or brings them back.
+ *
+ * This is the only way a candidate record leaves the console, and it is
+ * deliberately not a delete. The row keeps its answers, its scores and every
+ * notice already sent to that person, so the group can still account for a real
+ * applicant — and a recruiter who filed the wrong person restores them with one
+ * click. `updated_at` moves with the write so the audit trail shows when.
+ *
+ * Two things stop an archive, because both would otherwise leave a live door
+ * attached to an invisible record: an open assessment link the candidate can
+ * still click (submitting it would write into a hidden pipeline), and an
+ * interview still on the calendar (it would vanish from the agenda while the
+ * candidate is told about it). Both already have their own controls — revoke
+ * the link, cancel the interview — so the refusal names them.
+ */
+export async function setCandidateArchive(input: {
+  applicationId: string;
+  archived: boolean;
+}): Promise<ArchiveResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: application } = await supabase
+    .from("applications")
+    .select("id, archived_at")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
+  if (!application) return { ok: false, error: "This candidate no longer exists." };
+
+  if (input.archived && !application.archived_at) {
+    const [{ count: openAttempts }, { count: bookedInterviews }] = await Promise.all([
+      supabase
+        .from("candidate_attempts")
+        .select("id", { count: "exact", head: true })
+        .eq("application_id", input.applicationId)
+        .in("status", ["NOT_STARTED", "IN_PROGRESS"]),
+      supabase
+        .from("interview_schedules")
+        .select("id", { count: "exact", head: true })
+        .eq("application_id", input.applicationId)
+        .eq("status", "SCHEDULED"),
+    ]);
+
+    if (openAttempts) {
+      return {
+        ok: false,
+        error:
+          "This candidate holds an open assessment link. Revoke it in the drawer first, so the link cannot write into a hidden record.",
+      };
+    }
+    if (bookedInterviews) {
+      return {
+        ok: false,
+        error:
+          "This candidate has an interview on the calendar. Record its outcome or cancel it first.",
+      };
+    }
+  }
+
+  const archivedAt = input.archived ? new Date().toISOString() : null;
+  const { data, error } = await supabase
+    .from("applications")
+    .update({ archived_at: archivedAt, updated_at: new Date().toISOString() })
+    .eq("id", input.applicationId)
+    .select("archived_at")
+    .maybeSingle();
+
+  if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: "This candidate record is no longer here." };
+
+  // The filed row leaves the dashboard KPIs, the job boards and the candidate
+  // table in the same breath, so all three re-render.
+  revalidatePath("/candidates");
+  revalidatePath("/dashboard");
+  revalidatePath("/jobs");
+
+  return { ok: true, archived_at: data.archived_at ?? null };
 }

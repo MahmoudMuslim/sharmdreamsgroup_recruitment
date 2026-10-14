@@ -52,7 +52,8 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
       .from("applications")
       .select(
         "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_openings(title, department)"
-      ),
+      )
+      .is("archived_at", null),
     supabase.from("candidate_attempts").select("application_id, total_score"),
     supabase.from("job_openings").select("id").eq("status", "PUBLISHED"),
   ]);

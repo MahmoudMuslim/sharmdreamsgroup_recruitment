@@ -76,6 +76,7 @@ export async function getAssignableCandidates(): Promise<AssignableCandidate[]> 
     .from("applications")
     .select("id, full_name, stage, job_openings(title)")
     .not("stage", "in", "(REJECTED,HIRED)")
+    .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(200);
 

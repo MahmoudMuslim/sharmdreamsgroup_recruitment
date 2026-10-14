@@ -291,6 +291,9 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
 
+  // Deliberately counted over filed candidates too: `applications.job_id`
+  // cascades, so deleting an opening a filed applicant still points at would
+  // erase the record the archive exists to keep.
   const { count } = await supabase
     .from("applications")
     .select("id", { count: "exact", head: true })

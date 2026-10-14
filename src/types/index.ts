@@ -107,6 +107,11 @@ export interface Application {
   gate_answers: GateAnswer[] | null;
   rejection_reason: string | null;
   hired_at: string | null;
+  /**
+   * Staff filing door. Set means the record is hidden from every staff surface
+   * but kept whole — answers, notices and scores included — and can be restored.
+   */
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -250,6 +250,7 @@ export async function getCandidateDossier(
       .select("id, tracking_code, stage, created_at, job_openings(title)")
       .eq("email", row.email)
       .neq("id", applicationId)
+      .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(10),
   ]);

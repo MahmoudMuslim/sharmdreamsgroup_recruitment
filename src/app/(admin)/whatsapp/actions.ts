@@ -97,6 +97,7 @@ export async function getOutbox(): Promise<{
       .from("applications")
       .select("id, full_name, phone, job_openings(title)")
       .not("phone", "is", null)
+      .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(300),
   ]);
