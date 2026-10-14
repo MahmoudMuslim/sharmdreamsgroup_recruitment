@@ -147,7 +147,7 @@ for (const k of constraints) {
 const tableInfo = await q(
   `select n.nspname s, c.relname t, a.attnum, a.attname name,
           format_type(a.atttypid, a.atttypmod) typ,
-          a.attnotnull notnull, nullif(a.attgenerated, '') generated,
+          a.attnotnull as "notnull", nullif(a.attgenerated, '') generated,
           a.attidentity identity,
           pg_get_expr(d.adbin, d.adrelid) default_expr,
           obj_description(c.oid) table_comment

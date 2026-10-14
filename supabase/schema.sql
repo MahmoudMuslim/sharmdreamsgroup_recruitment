@@ -103,35 +103,35 @@ create sequence if not exists public.application_tracking_seq;
 
 create table if not exists public.ai_model_config (
   capability text,
-  primary_model text,
+  primary_model text not null,
   fallback_model text,
-  temperature numeric(3,2) default 0.30,
-  max_tokens integer default 1200,
-  is_enabled boolean default true,
+  temperature numeric(3,2) default 0.30 not null,
+  max_tokens integer default 1200 not null,
+  is_enabled boolean default true not null,
   updated_by uuid,
-  updated_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (capability)
 );
 create table if not exists public.app_settings (
   id uuid default gen_random_uuid(),
-  scope settings_scope default 'GLOBAL'::settings_scope,
+  scope settings_scope default 'GLOBAL'::settings_scope not null,
   company_id uuid,
-  key text,
-  value jsonb default 'null'::jsonb,
+  key text not null,
+  value jsonb default 'null'::jsonb not null,
   description text,
-  is_secret boolean default false,
+  is_secret boolean default false not null,
   updated_by uuid,
-  updated_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.applicants (
   id text,
-  applicant_name text,
-  email_address text,
+  applicant_name text not null,
+  email_address text not null,
   phone_number text,
-  company text,
-  custom_business_sector text,
-  job_title text,
+  company text not null,
+  custom_business_sector text not null,
+  job_title text not null,
   custom_acquisition_source text default 'Direct Career Portal'::text,
   status text default 'Applied'::text,
   custom_ai_score numeric,
@@ -152,30 +152,43 @@ create table if not exists public.applicants (
   created_at timestamp with time zone default now(),
   PRIMARY KEY (id)
 );
+create table if not exists public.application_attachments (
+  id uuid default gen_random_uuid(),
+  application_id uuid not null,
+  bucket text not null,
+  storage_path text not null,
+  file_name text not null,
+  mime_type text,
+  bytes integer,
+  uploaded_by uuid,
+  created_at timestamp with time zone default now(),
+  PRIMARY KEY (id)
+);
+comment on table public.application_attachments is 'Files a recruiter attached to a candidate record after the application landed: extra CVs in resumes, voice notes in candidate-audio. One row per stored object.';
 create table if not exists public.application_gate_questions (
   id uuid default gen_random_uuid(),
   job_id uuid,
-  question text,
+  question text not null,
   help_text text,
-  options jsonb default '[]'::jsonb,
-  position integer default 0,
-  is_active boolean default true,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  options jsonb default '[]'::jsonb not null,
+  position integer default 0 not null,
+  is_active boolean default true not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 comment on table public.application_gate_questions is 'No-points viability questions shown on the public application form. An answer marked as not passing rejects the application at submission time.';
 create table if not exists public.applications (
   id uuid default gen_random_uuid(),
-  job_id uuid,
-  full_name text,
-  email text,
+  job_id uuid not null,
+  full_name text not null,
+  email text not null,
   phone text,
   cv_file_path text,
   cv_text text,
-  tracking_code text,
-  stage application_stage default 'NEW'::application_stage,
-  source application_source default 'CAREER_SITE'::application_source,
+  tracking_code text not null,
+  stage application_stage default 'NEW'::application_stage not null,
+  source application_source default 'CAREER_SITE'::application_source not null,
   ai_match_score numeric,
   ai_screening_summary text,
   ai_strengths jsonb,
@@ -185,129 +198,129 @@ create table if not exists public.applications (
   diversity_flags jsonb,
   rejection_reason text,
   hired_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   gate_answers jsonb,
   archived_at timestamp with time zone,
   PRIMARY KEY (id)
 );
 create table if not exists public.assessment_questions (
   id uuid default gen_random_uuid(),
-  template_id uuid,
-  question_type question_type,
-  title text,
-  prompt text,
-  config jsonb default '{}'::jsonb,
-  points integer default 10,
-  position integer default 0,
+  template_id uuid not null,
+  question_type question_type not null,
+  title text not null,
+  prompt text not null,
+  config jsonb default '{}'::jsonb not null,
+  points integer default 10 not null,
+  position integer default 0 not null,
   time_limit_minutes integer,
-  shuffle_options boolean default false,
+  shuffle_options boolean default false not null,
   instructions text,
   PRIMARY KEY (id)
 );
 create table if not exists public.assessment_templates (
   id uuid default gen_random_uuid(),
-  tenant_id uuid,
-  name text,
-  description text default ''::text,
-  role_family text default 'GENERAL'::text,
-  time_limit_minutes integer default 60,
-  is_active boolean default true,
-  created_at timestamp with time zone default now(),
-  randomize_questions boolean default false,
-  randomize_options boolean default false,
-  block_copy_paste boolean default true,
+  tenant_id uuid not null,
+  name text not null,
+  description text default ''::text not null,
+  role_family text default 'GENERAL'::text not null,
+  time_limit_minutes integer default 60 not null,
+  is_active boolean default true not null,
+  created_at timestamp with time zone default now() not null,
+  randomize_questions boolean default false not null,
+  randomize_options boolean default false not null,
+  block_copy_paste boolean default true not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.assistant_messages (
   id uuid default gen_random_uuid(),
-  session_id uuid,
-  owner_id uuid,
-  role text,
-  content text,
-  steps jsonb default '[]'::jsonb,
+  session_id uuid not null,
+  owner_id uuid not null,
+  role text not null,
+  content text not null,
+  steps jsonb default '[]'::jsonb not null,
   model text,
   provider text,
   note text,
   attachment_name text,
   attachment_text text,
-  created_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.assistant_sessions (
   id uuid default gen_random_uuid(),
-  owner_id uuid,
-  title text default 'New conversation'::text,
+  owner_id uuid not null,
+  title text default 'New conversation'::text not null,
   engine text,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 comment on table public.assistant_sessions is 'One saved assistant conversation per staff member. RLS: owner only.';
 create table if not exists public.ats_integrations (
   id uuid default gen_random_uuid(),
-  tenant_id uuid,
-  provider ats_provider,
-  status integration_status default 'PENDING'::integration_status,
+  tenant_id uuid not null,
+  provider ats_provider not null,
+  status integration_status default 'PENDING'::integration_status not null,
   credentials jsonb,
   webhook_secret text,
   last_synced_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.candidate_attempts (
   id uuid default gen_random_uuid(),
-  application_id uuid,
-  template_id uuid,
-  access_token text,
-  status attempt_status default 'NOT_STARTED'::attempt_status,
-  time_limit_minutes integer default 60,
+  application_id uuid not null,
+  template_id uuid not null,
+  access_token text not null,
+  status attempt_status default 'NOT_STARTED'::attempt_status not null,
+  time_limit_minutes integer default 60 not null,
   started_at timestamp with time zone,
   expires_at timestamp with time zone,
   submitted_at timestamp with time zone,
   total_score numeric,
   max_score numeric,
   draft_saved_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
-  current_index_hint integer default 0,
+  created_at timestamp with time zone default now() not null,
+  current_index_hint integer default 0 not null,
   integrity_score integer,
-  integrity_flags integer default 0,
+  integrity_flags integer default 0 not null,
   question_order uuid[],
   option_order jsonb,
   PRIMARY KEY (id)
 );
 create table if not exists public.candidate_responses (
   id uuid default gen_random_uuid(),
-  attempt_id uuid,
-  question_id uuid,
+  attempt_id uuid not null,
+  question_id uuid not null,
   answer_text text,
   spreadsheet_state jsonb,
   video_path text,
   video_duration_seconds integer,
   transcript text,
   score numeric,
-  max_score integer default 10,
+  max_score integer default 10 not null,
   ai_evaluation jsonb,
-  updated_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.candidate_skills (
   application_id uuid,
   skill_id uuid,
-  proficiency integer default 1,
-  source text default 'AI_SCREENING'::text,
+  proficiency integer default 1 not null,
+  source text default 'AI_SCREENING'::text not null,
   PRIMARY KEY (application_id, skill_id)
 );
 create table if not exists public.communication_logs (
   id uuid default gen_random_uuid(),
   application_id uuid,
-  channel message_channel,
-  direction message_direction,
-  recipient text,
-  body text,
-  delivered boolean default false,
+  channel message_channel not null,
+  direction message_direction not null,
+  recipient text not null,
+  body text not null,
+  delivered boolean default false not null,
   error_message text,
-  created_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
   subject text,
   read_at timestamp with time zone,
   prospect_id uuid,
@@ -316,90 +329,90 @@ create table if not exists public.communication_logs (
 create table if not exists public.credential_audit_log (
   id uuid default gen_random_uuid(),
   provider text,
-  action text,
+  action text not null,
   actor_id uuid,
   detail text,
-  created_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.currencies (
   id uuid default gen_random_uuid(),
-  code text,
-  symbol text,
-  label text,
-  is_active boolean default true,
-  sort_order integer default 100,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  code text not null,
+  symbol text not null,
+  label text not null,
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 comment on table public.currencies is 'ISO 4217 currencies job salaries can be denominated in. RLS is enabled with explicit policies because rls_auto_enable() only turns RLS on, it does not grant access.';
 create table if not exists public.departments (
   id uuid default gen_random_uuid(),
   tenant_id uuid,
-  name text,
-  slug text,
+  name text not null,
+  slug text not null,
   description text,
   head_profile_id uuid,
-  is_active boolean default true,
-  sort_order integer default 100,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.integrity_events (
   id uuid default gen_random_uuid(),
-  attempt_id uuid,
+  attempt_id uuid not null,
   question_id uuid,
-  event_type integrity_event_type,
-  severity integrity_severity default 'INFO'::integrity_severity,
+  event_type integrity_event_type not null,
+  severity integrity_severity default 'INFO'::integrity_severity not null,
   detail text,
   session_fingerprint text,
   device_label text,
-  occurred_at timestamp with time zone default now(),
+  occurred_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.interview_schedules (
   id uuid default gen_random_uuid(),
-  application_id uuid,
+  application_id uuid not null,
   interviewer_profile_id uuid,
-  scheduled_at timestamp with time zone,
-  duration_minutes integer default 45,
-  calendar_provider calendar_provider default 'MANUAL'::calendar_provider,
+  scheduled_at timestamp with time zone not null,
+  duration_minutes integer default 45 not null,
+  calendar_provider calendar_provider default 'MANUAL'::calendar_provider not null,
   calendar_event_id text,
   meeting_link text,
-  status interview_status default 'SCHEDULED'::interview_status,
-  created_at timestamp with time zone default now(),
+  status interview_status default 'SCHEDULED'::interview_status not null,
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.job_openings (
   id uuid default gen_random_uuid(),
-  tenant_id uuid,
-  title text,
-  department text,
-  sector business_sector,
-  location text,
-  employment_type text default 'FULL_TIME'::text,
-  description text,
-  requirements jsonb default '[]'::jsonb,
+  tenant_id uuid not null,
+  title text not null,
+  department text not null,
+  sector business_sector not null,
+  location text not null,
+  employment_type text default 'FULL_TIME'::text not null,
+  description text not null,
+  requirements jsonb default '[]'::jsonb not null,
   min_salary_usd integer,
   max_salary_usd integer,
-  status job_status default 'DRAFT'::job_status,
+  status job_status default 'DRAFT'::job_status not null,
   posted_at timestamp with time zone,
   closing_at timestamp with time zone,
   created_by uuid,
-  created_at timestamp with time zone default now(),
-  salary_currency text default 'USD'::text,
+  created_at timestamp with time zone default now() not null,
+  salary_currency text default 'USD'::text not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.jobs (
   id text,
-  title text,
-  department text,
-  company text,
-  business_sector text,
-  location text,
-  type text default 'Full-time'::text,
+  title text not null,
+  department text not null,
+  company text not null,
+  business_sector text not null,
+  location text not null,
+  type text default 'Full-time'::text not null,
   salary_range text,
   required_skills jsonb default '[]'::jsonb,
   preferred_skills jsonb default '[]'::jsonb,
@@ -413,70 +426,70 @@ create table if not exists public.jobs (
 create table if not exists public.locations (
   id uuid default gen_random_uuid(),
   tenant_id uuid,
-  name text,
+  name text not null,
   city text,
   governorate text,
-  country text default 'Egypt'::text,
-  timezone text default 'Africa/Cairo'::text,
+  country text default 'Egypt'::text not null,
+  timezone text default 'Africa/Cairo'::text not null,
   address text,
-  is_active boolean default true,
-  sort_order integer default 100,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.notification_templates (
   id uuid default gen_random_uuid(),
-  key text,
-  channel text,
+  key text not null,
+  channel text not null,
   subject text,
-  body text,
-  is_active boolean default true,
-  updated_at timestamp with time zone default now(),
+  body text not null,
+  is_active boolean default true not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.onboarding_plans (
   id uuid default gen_random_uuid(),
-  application_id uuid,
-  tenant_id uuid,
-  checklist jsonb default '[]'::jsonb,
-  skill_gaps jsonb default '[]'::jsonb,
-  internal_mobility_suggestions jsonb default '[]'::jsonb,
+  application_id uuid not null,
+  tenant_id uuid not null,
+  checklist jsonb default '[]'::jsonb not null,
+  skill_gaps jsonb default '[]'::jsonb not null,
+  internal_mobility_suggestions jsonb default '[]'::jsonb not null,
   retention_risk_score numeric,
-  progress numeric default 0,
-  generated_by_ai boolean default false,
-  created_at timestamp with time zone default now(),
+  progress numeric default 0 not null,
+  generated_by_ai boolean default false not null,
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.permissions (
   key text,
-  label text,
-  group_name text,
+  label text not null,
+  group_name text not null,
   description text,
   PRIMARY KEY (key)
 );
 create table if not exists public.provider_credentials (
   id uuid default gen_random_uuid(),
-  provider text,
-  priority integer default 1,
-  secret_encrypted text,
+  provider text not null,
+  priority integer default 1 not null,
+  secret_encrypted text not null,
   secret_hint text,
-  config jsonb default '{}'::jsonb,
+  config jsonb default '{}'::jsonb not null,
   extra_secrets_encrypted jsonb,
-  is_active boolean default true,
+  is_active boolean default true not null,
   last_verified_at timestamp with time zone,
   last_verified_status text,
   last_verified_detail text,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 comment on table public.provider_credentials is 'Multiple API keys per provider with priority-based failover. RLS enabled with zero policies — service role only.';
 create table if not exists public.provider_models (
   id uuid default gen_random_uuid(),
-  provider text,
-  model_id text,
-  name text,
+  provider text not null,
+  model_id text not null,
+  name text not null,
   prompt_price_per_million numeric,
   completion_price_per_million numeric,
   context_length integer,
@@ -484,79 +497,79 @@ create table if not exists public.provider_models (
   context_window_category text,
   capabilities text[] default '{}'::text[],
   is_active boolean default true,
-  fetched_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  fetched_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.role_families (
   id uuid default gen_random_uuid(),
-  key text,
-  label text,
+  key text not null,
+  label text not null,
   description text,
   department_id uuid,
-  is_active boolean default true,
-  sort_order integer default 100,
-  created_at timestamp with time zone default now(),
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.role_family_skills (
   role_family_id uuid,
   skill_id uuid,
-  required_level integer default 3,
-  weight numeric(3,2) default 1.00,
+  required_level integer default 3 not null,
+  weight numeric(3,2) default 1.00 not null,
   PRIMARY KEY (role_family_id, skill_id)
 );
 create table if not exists public.role_permissions (
   role_key app_role,
   permission_key text,
-  granted boolean default true,
+  granted boolean default true not null,
   PRIMARY KEY (role_key, permission_key)
 );
 create table if not exists public.roles (
   id uuid default gen_random_uuid(),
-  key app_role,
-  label text,
+  key app_role not null,
+  label text not null,
   description text,
-  is_system boolean default true,
+  is_system boolean default true not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.scheduled_whatsapp_jobs (
   id uuid default gen_random_uuid(),
   application_id uuid,
-  recipient_phone text,
-  scheduled_for timestamp with time zone default now(),
-  payload jsonb,
-  status text default 'PENDING'::text,
-  attempts integer default 0,
+  recipient_phone text not null,
+  scheduled_for timestamp with time zone default now() not null,
+  payload jsonb not null,
+  status text default 'PENDING'::text not null,
+  attempts integer default 0 not null,
   error_log text,
   sent_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.settings_audit_log (
   id uuid default gen_random_uuid(),
-  key text,
+  key text not null,
   company_id uuid,
   previous_value jsonb,
   next_value jsonb,
   changed_by uuid,
-  changed_at timestamp with time zone default now(),
+  changed_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.skills (
   id uuid default gen_random_uuid(),
-  name text,
+  name text not null,
   category text,
   description text,
-  is_active boolean default true,
-  sort_order integer default 100,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.sourced_prospects (
   id uuid default gen_random_uuid(),
-  full_name text,
+  full_name text not null,
   headline text,
   company text,
   location text,
@@ -564,14 +577,14 @@ create table if not exists public.sourced_prospects (
   phone text,
   linkedin_url text,
   notes text,
-  origin text default 'LINKEDIN'::text,
-  stage text default 'NEW'::text,
+  origin text default 'LINKEDIN'::text not null,
+  stage text default 'NEW'::text not null,
   job_id uuid,
   application_id uuid,
   created_by uuid,
   last_contacted_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
-  updated_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
   profile jsonb,
   profile_url text,
   profile_source text,
@@ -582,11 +595,11 @@ create table if not exists public.sourced_prospects (
 comment on table public.sourced_prospects is 'People a recruiter found off-pipeline (LinkedIn, an event, a referral) and loaded here to work on. Not applications: no tracking code, no candidate portal access until they are converted.';
 create table if not exists public.tenants_and_companies (
   id uuid default gen_random_uuid(),
-  name text,
-  slug text,
-  sector business_sector,
-  country text default 'Egypt'::text,
-  created_at timestamp with time zone default now(),
+  name text not null,
+  slug text not null,
+  sector business_sector not null,
+  country text default 'Egypt'::text not null,
+  created_at timestamp with time zone default now() not null,
   legal_name text,
   logo_url text,
   website text,
@@ -594,38 +607,44 @@ create table if not exists public.tenants_and_companies (
   contact_phone text,
   address text,
   city text,
-  is_active boolean default true,
-  sort_order integer default 100,
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.user_invites (
   id uuid default gen_random_uuid(),
-  email text,
-  full_name text,
-  role app_role default 'RECRUITER'::app_role,
+  email text not null,
+  full_name text not null,
+  role app_role default 'RECRUITER'::app_role not null,
   company_id uuid,
-  status invite_status default 'PENDING'::invite_status,
+  status invite_status default 'PENDING'::invite_status not null,
   invited_by uuid,
-  expires_at timestamp with time zone default (now() + '7 days'::interval),
+  expires_at timestamp with time zone default (now() + '7 days'::interval) not null,
   accepted_at timestamp with time zone,
-  created_at timestamp with time zone default now(),
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 create table if not exists public.user_profiles (
   id uuid default gen_random_uuid(),
-  auth_user_id uuid,
+  auth_user_id uuid not null,
   tenant_id uuid,
-  full_name text,
-  email text,
+  full_name text not null,
+  email text not null,
   phone text,
-  role user_role default 'CANDIDATE'::user_role,
+  role user_role default 'CANDIDATE'::user_role not null,
   avatar_url text,
-  locale text default 'en'::text,
-  created_at timestamp with time zone default now(),
+  locale text default 'en'::text not null,
+  created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
 do $$ begin
   alter table public.app_settings add constraint app_settings_scope_company_key_uniq UNIQUE NULLS NOT DISTINCT (scope, company_id, key);
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.application_attachments add constraint application_attachments_bucket_check CHECK ((bucket = ANY (ARRAY['resumes'::text, 'candidate-audio'::text])));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.application_attachments add constraint application_attachments_storage_path_key UNIQUE (storage_path);
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.application_gate_questions add constraint application_gate_questions_help_text_check CHECK (((help_text IS NULL) OR (char_length(btrim(help_text)) <= 400)));
@@ -728,6 +747,12 @@ do $$ begin
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.app_settings add constraint app_settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES user_profiles(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.application_attachments add constraint application_attachments_application_id_fkey FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.application_attachments add constraint application_attachments_uploaded_by_fkey FOREIGN KEY (uploaded_by) REFERENCES user_profiles(id) ON DELETE SET NULL;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.application_gate_questions add constraint application_gate_questions_job_id_fkey FOREIGN KEY (job_id) REFERENCES job_openings(id) ON DELETE CASCADE;
@@ -866,6 +891,7 @@ exception when duplicate_object or duplicate_table or undefined_object then null
 alter table public.ai_model_config enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.applicants enable row level security;
+alter table public.application_attachments enable row level security;
 alter table public.application_gate_questions enable row level security;
 alter table public.applications enable row level security;
 alter table public.assessment_questions enable row level security;
@@ -1100,6 +1126,7 @@ $function$;
 -- ============================================================================
 
 CREATE INDEX IF NOT EXISTS idx_app_settings_key ON public.app_settings USING btree (key);
+CREATE INDEX IF NOT EXISTS application_attachments_application_id_idx ON public.application_attachments USING btree (application_id);
 CREATE INDEX IF NOT EXISTS idx_gate_questions_active ON public.application_gate_questions USING btree (is_active);
 CREATE INDEX IF NOT EXISTS idx_gate_questions_scope ON public.application_gate_questions USING btree (job_id, "position");
 CREATE UNIQUE INDEX IF NOT EXISTS applications_one_live_per_job ON public.applications USING btree (job_id, lower(email)) WHERE ((stage = ANY (ARRAY['NEW'::application_stage, 'AI_SCREENING'::application_stage, 'ASSESSMENT'::application_stage, 'INTERVIEW'::application_stage, 'OFFER'::application_stage])) AND (archived_at IS NULL));
@@ -1183,6 +1210,26 @@ create policy "Allow public read applicants" on public.applicants
   for SELECT
   to public
   using (true);
+drop policy if exists "attachments_staff_add" on public.application_attachments;
+create policy "attachments_staff_add" on public.application_attachments
+  for INSERT
+  to authenticated
+  with check ((is_staff() AND has_permission('candidates.write'::text) AND (EXISTS ( SELECT 1
+   FROM applications ap
+  WHERE (ap.id = application_attachments.application_id)))));
+drop policy if exists "attachments_staff_read" on public.application_attachments;
+create policy "attachments_staff_read" on public.application_attachments
+  for SELECT
+  to authenticated
+  using ((is_staff() AND (is_super_admin() OR (user_tenant_id() IS NULL) OR (EXISTS ( SELECT 1
+   FROM (applications ap
+     JOIN job_openings jo ON ((jo.id = ap.job_id)))
+  WHERE ((ap.id = application_attachments.application_id) AND (jo.tenant_id = user_tenant_id())))))));
+drop policy if exists "attachments_staff_remove" on public.application_attachments;
+create policy "attachments_staff_remove" on public.application_attachments
+  for DELETE
+  to authenticated
+  using ((is_staff() AND has_permission('candidates.write'::text)));
 drop policy if exists "gate_questions_manager_write" on public.application_gate_questions;
 create policy "gate_questions_manager_write" on public.application_gate_questions
   for ALL
@@ -1616,6 +1663,11 @@ create policy "staff read candidate media" on storage.objects
   for SELECT
   to authenticated
   using (((bucket_id = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
+drop policy if exists "staff upload candidate media" on storage.objects;
+create policy "staff upload candidate media" on storage.objects
+  for INSERT
+  to authenticated
+  with check (((bucket_id = ANY (ARRAY['resumes'::text, 'candidate-audio'::text])) AND is_staff() AND has_permission('candidates.write'::text) AND ((storage.foldername(name))[1] = 'applications'::text)));
 
 -- ============================================================================
 -- TRIGGERS
@@ -1654,6 +1706,9 @@ CREATE TRIGGER trg_user_invites_email BEFORE INSERT OR UPDATE OF email ON public
 -- COMMENTS
 -- ============================================================================
 
+comment on column public.application_attachments.bucket is 'Which private bucket holds the object. Only the two this table was written for; CVs and video pitches keep their own columns on their own tables.';
+comment on column public.application_attachments.storage_path is 'Exact storage key, applications/<application id>/<uuid>-<filename>. Unique, so two rows can never claim one object and a delete can find the row from the key.';
+comment on column public.application_attachments.file_name is 'The name the uploader chose, kept so the console can show it after the random storage prefix has been stripped.';
 comment on column public.applications.gate_answers is '[{question, answer, passed}] as answered on the careers form. Stored even when every answer passed, so a later rejection can be read in context.';
 comment on column public.applications.archived_at is 'Set when staff file this candidate out of the pipeline. The row and every answer, notice and score on it stay; only staff reads hide it. Null = live.';
 comment on column public.assessment_questions.time_limit_minutes is 'Optional per-question limit. Null means the attempt-level limit applies.';
@@ -1682,6 +1737,9 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to service_role;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_attachments to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_attachments to postgres;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_attachments to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_gate_questions to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_gate_questions to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_gate_questions to postgres;

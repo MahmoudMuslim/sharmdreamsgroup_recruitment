@@ -61,6 +61,7 @@ report("tables", tables, () =>
 );
 
 const declaredCols = new Map();
+const declaredLines = new Map();
 const pkTables = new Set();
 const tre = /create table if not exists ([\w".]+) \(\n([\s\S]*?)\n\);/g;
 let m;
@@ -68,7 +69,13 @@ while ((m = tre.exec(text))) {
   const cols = new Set();
   for (const raw of m[2].split("\n")) {
     const name = raw.trim().match(/^"?([a-z_][a-z0-9_]*)"?\s/i);
-    if (name) cols.add(name[1].toLowerCase());
+    if (name) {
+      cols.add(name[1].toLowerCase());
+      declaredLines.set(
+        `${m[1].toLowerCase().replace(/^public\./, "")}.${name[1].toLowerCase()}`,
+        raw.trim().toLowerCase()
+      );
+    }
   }
   if (/primary key \(/i.test(m[2])) pkTables.add(m[1].toLowerCase().replace(/^public\./, ""));
   declaredCols.set(m[1].toLowerCase().replace(/^public\./, ""), cols);
@@ -80,6 +87,36 @@ const cols = await q(
 );
 report("columns", cols, () =>
   cols.filter((r) => !(declaredCols.get(r.t) ?? new Set()).has(r.col.toLowerCase())).map((r) => `${r.s}.${r.t}.${r.col}`)
+);
+
+/* --- column nullability ---
+ * NOT NULL lives on the column, not in pg_constraint, so the constraint set
+ * above cannot see it. Without this check a dump that silently dropped every
+ * `not null` still verified clean.
+ */
+const pkCols = await q(
+  `select c.relname t, a.attname col from pg_index x
+     join pg_class c on c.oid = x.indrelid
+     join pg_namespace n on n.oid = c.relnamespace
+     join unnest(x.indkey) with ordinality k(colid, pos) on true
+     join pg_attribute a on a.attrelid = c.oid and a.attnum = k.colid
+    where n.nspname = 'public' and x.indisprimary`
+);
+const pkSet = new Set(pkCols.map((r) => `${r.t}.${r.col}`.toLowerCase()));
+const nullability = await q(
+  `select n.nspname s, c.relname t, a.attname col, a.attnotnull nn from pg_attribute a
+     join pg_class c on c.oid=a.attrelid join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='public' and c.relkind in ('r','p') and a.attnum>0 and not a.attisdropped`
+);
+report("column nullability", nullability, () =>
+  nullability
+    .filter((r) => !pkSet.has(`${r.t}.${r.col}`.toLowerCase()))
+    .filter((r) => {
+      const line = declaredLines.get(`${r.t}.${r.col}`.toLowerCase());
+      if (line === undefined) return false;
+      return line.includes("not null") !== r.nn;
+    })
+    .map((r) => `${r.s}.${r.t}.${r.col} ${r.nn ? "NOT NULL" : "nullable"} in live`)
 );
 
 /* --- constraints --- */
