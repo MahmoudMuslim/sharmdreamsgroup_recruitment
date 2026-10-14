@@ -48,6 +48,7 @@ export interface AttemptPayload {
 export interface AttemptSettings {
   autosave_interval_seconds: number;
   track_focus_changes: boolean;
+  lock_on_expiry: boolean;
 }
 
 export interface AttemptDraftClient {
@@ -225,11 +226,12 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
   },
 
   decrementTimer() {
-    const { timeRemainingSeconds, isSubmitting, submittedAt } = get();
+    const { timeRemainingSeconds, isSubmitting, submittedAt, payload } = get();
     if (isSubmitting || submittedAt) return;
     const next = Math.max(0, timeRemainingSeconds - 1);
     set({ timeRemainingSeconds: next });
-    if (next === 0) {
+    // Only auto-submit when the setting says so; otherwise the timer just hits zero.
+    if (next === 0 && payload?.settings.lock_on_expiry) {
       void get().submitAttempt();
     }
   },

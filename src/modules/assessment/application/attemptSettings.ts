@@ -18,6 +18,7 @@ const AUTOSAVE_MAX_SECONDS = 120;
 
 const AUTOSAVE_KEY = "assessment.autosave_interval_seconds";
 const FOCUS_KEY = "assessment.track_focus_changes";
+const LOCK_KEY = "assessment.lock_on_expiry";
 
 /**
  * The assessment rules handed to a test as it opens.
@@ -26,12 +27,13 @@ const FOCUS_KEY = "assessment.track_focus_changes";
  * row leaves the candidate with the disclosure they were shown on screen.
  */
 export async function getAttemptSettings(): Promise<AttemptSettings> {
-  const settings = await readGlobalSettings([AUTOSAVE_KEY, FOCUS_KEY]);
+  const settings = await readGlobalSettings([AUTOSAVE_KEY, FOCUS_KEY, LOCK_KEY]);
   const seconds = coerceNumber(
     settings.get(AUTOSAVE_KEY),
     DEFAULT_AUTOSAVE_INTERVAL_SECONDS
   );
   const focus = settings.get(FOCUS_KEY);
+  const lock = settings.get(LOCK_KEY);
 
   return {
     autosave_interval_seconds: Math.min(
@@ -39,5 +41,6 @@ export async function getAttemptSettings(): Promise<AttemptSettings> {
       Math.max(AUTOSAVE_MIN_SECONDS, Math.round(seconds))
     ),
     track_focus_changes: !(focus === false || focus === "false"),
+    lock_on_expiry: lock === true || lock === "true",
   };
 }

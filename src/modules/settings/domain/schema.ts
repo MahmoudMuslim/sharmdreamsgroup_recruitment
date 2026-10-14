@@ -276,17 +276,11 @@ export const ALLOWED_SETTING_KEYS: ReadonlySet<string> = new Set(
  * from here the moment something starts reading it.
  */
 export const UNENFORCED_SETTING_KEYS: ReadonlySet<string> = new Set([
-  "organisation.locale",
-  "organisation.enabled_locales",
-  "organisation.timezone",
-  "ai.interview_questions",
-  "assessment.lock_on_expiry",
   "integrations.greenhouse.enabled",
   "integrations.lever.enabled",
   "integrations.frappe_hr.enabled",
   "integrations.google_calendar.enabled",
   "integrations.microsoft_calendar.enabled",
-  "security.mask_scores_for_reviewers",
 ]);
 
 /** Re-exported for consumers that only need the control union. */
