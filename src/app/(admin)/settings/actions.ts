@@ -109,10 +109,10 @@ export async function saveSettings(
 
   const { error } = await supabase
     .from("app_settings")
-    // Relies on the partial unique index on (key) WHERE scope = 'GLOBAL' —
-    // plain UNIQUE would never match GLOBAL rows because their company_id is
-    // NULL. See supabase/migrations/001_settings_rbac.sql lines 48-50.
-    .upsert(upserts, { onConflict: "key" });
+    // The GLOBAL scope uses the partial unique index app_settings_global_key_uniq
+    // on (key) WHERE scope = 'GLOBAL'. New rows get their UUID from
+    // gen_random_uuid() via the column default.
+    .upsert(upserts, { onConflict: "app_settings_global_key_uniq" });
 
   if (error) {
     return { ok: false, saved: [], error: error.message };
