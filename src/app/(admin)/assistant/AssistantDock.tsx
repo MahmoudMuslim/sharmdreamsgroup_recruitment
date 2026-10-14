@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { Maximize2, Minimize2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AssistantChat } from "./AssistantChat";
-import { AssistantCompanion } from "./AssistantCompanion";
 
 /**
  * The admin assistant as a panel: a dock you can pull up over any screen, so a
@@ -19,9 +18,6 @@ import { AssistantCompanion } from "./AssistantCompanion";
  * Turns are stored as they are written, so closing the panel or refreshing the
  * page is not the end of a conversation: this reopens the last one, and all of
  * them are listed on the Assistant page.
- *
- * `open` is also the companion orb's switch: it trails the pointer while this is
- * closed and holds perfectly still while the panel is up.
  */
 
 /** Dock sizing. The panel is anchored bottom-right, so a drag grows it up-left. */
@@ -150,10 +146,6 @@ export function AssistantDock() {
 
   return (
     <>
-      {/* The desktop launcher trails the pointer; below `md` there is no pointer
-          to trail, so the corner keeps its plain static button. */}
-      <AssistantCompanion open={open} onOpen={() => setOpen(true)} />
-
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
