@@ -115,6 +115,35 @@ function waLink(prospect: ProspectRow, body: string) {
   return `https://wa.me/${digits}?text=${encodeURIComponent(renderTemplate(body, varsFor(prospect)))}`;
 }
 
+/** The two fields a reach door needs, and the form inputs that hold them. */
+type ContactField = "email" | "phone";
+
+/**
+ * What a reach door can actually do now: open the composed first-touch letter,
+ * or name the field that is missing. A pasted LinkedIn profile rarely arrives
+ * with an address, so "nothing to send to" is the common case — the door should
+ * lead to the fix instead of quietly disappearing from the page.
+ */
+function reachDoor(
+  prospect: ProspectRow,
+  channel: OutreachChannel,
+  copy: Record<OutreachChannel, { subject: string; body: string }>
+): { field: ContactField; address: string; href: string } | { field: ContactField; address: null; href: null } {
+  if (channel === "EMAIL") {
+    const href = prospect.email
+      ? mailtoLink(prospect, copy.EMAIL.subject, copy.EMAIL.body)
+      : null;
+    return prospect.email && href
+      ? { field: "email", address: prospect.email, href }
+      : { field: "email", address: null, href: null };
+  }
+
+  const href = prospect.phone ? waLink(prospect, copy.WHATSAPP.body) : null;
+  return prospect.phone && href
+    ? { field: "phone", address: prospect.phone, href }
+    : { field: "phone", address: null, href: null };
+}
+
 /* -------------------------------------------------------------------------- */
 
 export function SourcingBoard({
@@ -140,7 +169,9 @@ export function SourcingBoard({
   const [stageFilter, setStageFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
-  const [editing, setEditing] = useState<ProspectRow | "new" | null>(null);
+  // Which record the editor holds, and the contact field a reach door sent the
+  // recruiter to fill in.
+  const [editing, setEditing] = useState<{ prospect: ProspectRow | "new"; focus: ContactField | null } | null>(null);
   const [profileId, setProfileId] = useState<string | null>(params.get("prospect"));
   const [composerIds, setComposerIds] = useState<string[] | null>(null);
   // What the last import or send actually did. The drawer that reported it is
@@ -295,7 +326,7 @@ export function SourcingBoard({
           )}
           {canWrite && (
             <>
-              <Button variant="outline" size="sm" onClick={() => { clearNotice(); setEditing("new"); }}>
+              <Button variant="outline" size="sm" onClick={() => { clearNotice(); setEditing({ prospect: "new", focus: null }); }}>
                 <Plus className="h-4 w-4" aria-hidden />
                 Add one
               </Button>
@@ -398,21 +429,53 @@ export function SourcingBoard({
                       </div>
                     </td>
                     <td className="px-2 py-3">
-                      <div className="flex items-center gap-2 text-brand-ink/55">
-                        {prospect.email ? (
-                          <a href={`mailto:${prospect.email}`} title={prospect.email}>
-                            <Mail className="h-4 w-4 hover:text-brand-gold-dark" aria-hidden />
-                          </a>
-                        ) : (
-                          <Mail className="h-4 w-4 opacity-25" aria-hidden />
-                        )}
-                        {prospect.phone ? (
-                          <a href={`tel:${prospect.phone}`} title={prospect.phone}>
-                            <MessageCircle className="h-4 w-4 hover:text-brand-gold-dark" aria-hidden />
-                          </a>
-                        ) : (
-                          <MessageCircle className="h-4 w-4 opacity-25" aria-hidden />
-                        )}
+                      <div className="flex items-center gap-1.5 text-brand-ink/55">
+                        {(["EMAIL", "WHATSAPP"] as const).map((channel) => {
+                          const door = reachDoor(prospect, channel, copy);
+                          const Icon = channel === "EMAIL" ? Mail : MessageCircle;
+                          const label = channel === "EMAIL" ? "email" : "WhatsApp";
+
+                          if (door.href) {
+                            return (
+                              <a
+                                key={channel}
+                                href={door.href}
+                                title={`Reach ${prospect.full_name} by ${label} — ${door.address}`}
+                                target={channel === "WHATSAPP" ? "_blank" : undefined}
+                                rel={channel === "WHATSAPP" ? "noopener noreferrer" : undefined}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-brand-sand"
+                              >
+                                <Icon className="h-4 w-4 hover:text-brand-gold-dark" aria-hidden />
+                              </a>
+                            );
+                          }
+
+                          const hint = `No ${door.field} on file for ${prospect.full_name}`;
+                          if (!canWrite) {
+                            return (
+                              <span
+                                key={channel}
+                                title={`${hint}, and this account cannot add one`}
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg"
+                              >
+                                <Icon className="h-4 w-4 opacity-25" aria-hidden />
+                              </span>
+                            );
+                          }
+
+                          return (
+                            <button
+                              key={channel}
+                              type="button"
+                              onClick={() => { clearNotice(); setEditing({ prospect, focus: door.field }); }}
+                              title={`${hint} — click to add it and reach them by ${label}`}
+                              aria-label={`Add ${prospect.full_name}'s ${door.field} to reach them by ${label}`}
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg transition hover:bg-brand-sand"
+                            >
+                              <Icon className="h-4 w-4 opacity-30 hover:opacity-70" aria-hidden />
+                            </button>
+                          );
+                        })}
                         {prospect.linkedin_url && (
                           <a
                             href={prospect.linkedin_url}
@@ -462,7 +525,7 @@ export function SourcingBoard({
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setEditing(prospect)}
+                            onClick={() => setEditing({ prospect, focus: null })}
                             aria-label={`Edit ${prospect.full_name}`}
                           >
                             <Pencil className="h-4 w-4" aria-hidden />
@@ -491,7 +554,8 @@ export function SourcingBoard({
       <p className="mt-3 text-xs leading-relaxed text-brand-ink/45">
         LinkedIn has no API for searching people, so nothing here arrives on its own: these are the
         profile links and exports you collected and pasted in. Outreach leaves through the email and
-        WhatsApp integrations configured in Settings → API keys.
+        WhatsApp integrations configured in Settings → API keys. A faded email or WhatsApp icon means
+        no address is on file yet — click it to add one, then the same door opens the letter.
       </p>
 
       <ImportDrawer
@@ -507,7 +571,8 @@ export function SourcingBoard({
 
       {editing && (
         <ProspectFormDrawer
-          prospect={editing === "new" ? null : editing}
+          prospect={editing.prospect === "new" ? null : editing.prospect}
+          focus={editing.focus}
           jobs={jobs}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -527,7 +592,7 @@ export function SourcingBoard({
           onClose={() => setProfileId(null)}
           onChanged={() => router.refresh()}
           onCompose={() => setComposerIds([liveProfile.id])}
-          onEdit={() => setEditing(liveProfile)}
+          onEdit={(field) => setEditing({ prospect: liveProfile, focus: field ?? null })}
         />
       )}
 
@@ -691,11 +756,14 @@ function ImportDrawer({
 
 function ProspectFormDrawer({
   prospect,
+  focus,
   jobs,
   onClose,
   onSaved,
 }: {
   prospect: ProspectRow | null;
+  /** Set when a reach door sent the recruiter here for one missing address. */
+  focus?: ContactField | null;
   jobs: JobOption[];
   onClose: () => void;
   onSaved: () => void;
@@ -713,6 +781,15 @@ function ProspectFormDrawer({
   });
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // A reach door that found no address lands the recruiter on the field that
+  // fixes it. Focus and scrolling are DOM concerns, so they stay in the effect.
+  useEffect(() => {
+    if (!focus) return;
+    const input = document.getElementById(`field-${focus}`);
+    input?.scrollIntoView({ block: "center" });
+    input?.focus();
+  }, [focus]);
 
   const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((prev) => ({ ...prev, [key]: event.target.value }));
@@ -829,7 +906,8 @@ function ProfileDrawer({
   onClose: () => void;
   onChanged: () => void;
   onCompose: () => void;
-  onEdit: () => void;
+  /** Opens the record editor; pass the field when a reach door needs an address. */
+  onEdit: (field?: ContactField) => void;
 }) {
   const [history, setHistory] = useState<ProspectHistoryRow[] | null>(null);
   const [jobId, setJobId] = useState(prospect.job_id ?? "");
@@ -881,26 +959,58 @@ function ProfileDrawer({
               Open on LinkedIn
             </a>
           )}
-          {mailtoLink(prospect, copy.EMAIL.subject, copy.EMAIL.body) && (
-            <a
-              href={mailtoLink(prospect, copy.EMAIL.subject, copy.EMAIL.body)!}
-              className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-3.5 py-2 text-sm font-semibold hover:bg-brand-sand"
-            >
-              <Mail className="h-4 w-4" aria-hidden />
-              Email client
-            </a>
-          )}
-          {waLink(prospect, copy.WHATSAPP.body) && (
-            <a
-              href={waLink(prospect, copy.WHATSAPP.body)!}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-3.5 py-2 text-sm font-semibold hover:bg-brand-sand"
-            >
-              <MessageCircle className="h-4 w-4" aria-hidden />
-              WhatsApp app
-            </a>
-          )}
+          {(["EMAIL", "WHATSAPP"] as const).map((channel) => {
+            const door = reachDoor(prospect, channel, copy);
+            const Icon = channel === "EMAIL" ? Mail : MessageCircle;
+            const label = channel === "EMAIL" ? "Email" : "WhatsApp";
+            const chrome =
+              "inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition";
+
+            if (door.href) {
+              return (
+                <a
+                  key={channel}
+                  href={door.href}
+                  target={channel === "WHATSAPP" ? "_blank" : undefined}
+                  rel={channel === "WHATSAPP" ? "noopener noreferrer" : undefined}
+                  title={`Opens the first-touch letter to ${door.address} in your own ${channel === "EMAIL" ? "mail" : "WhatsApp"} app`}
+                  className={cn(chrome, "border-brand-line bg-white hover:bg-brand-sand")}
+                >
+                  <Icon className="h-4 w-4" aria-hidden />
+                  Reach by {label}
+                </a>
+              );
+            }
+
+            if (!canWrite) {
+              return (
+                <span
+                  key={channel}
+                  title={`No ${door.field} on file for this prospect, and this account cannot add one`}
+                  className={cn(chrome, "border-dashed border-brand-line bg-white text-brand-ink/35")}
+                >
+                  <Icon className="h-4 w-4" aria-hidden />
+                  Reach by {label}
+                </span>
+              );
+            }
+
+            return (
+              <button
+                key={channel}
+                type="button"
+                onClick={() => onEdit(door.field)}
+                title={`No ${door.field} on file — add one and this door opens the letter`}
+                className={cn(
+                  chrome,
+                  "border-dashed border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
+                )}
+              >
+                <Icon className="h-4 w-4" aria-hidden />
+                Reach by {label}
+              </button>
+            );
+          })}
           {canSend && (
             <Button size="sm" className="ml-auto" onClick={onCompose}>
               <Send className="h-4 w-4" aria-hidden />
@@ -955,7 +1065,7 @@ function ProfileDrawer({
             <ArrowRightLeft className="h-4 w-4" aria-hidden />
             {prospect.application_id ? "Already converted" : "Convert"}
           </Button>
-          <Button variant="ghost" size="sm" onClick={onEdit}>
+          <Button variant="ghost" size="sm" onClick={() => onEdit()}>
             <Pencil className="h-4 w-4" aria-hidden />
             Edit
           </Button>
