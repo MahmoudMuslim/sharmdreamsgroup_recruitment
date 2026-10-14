@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { tasksOf, type ChecklistTask } from "./checklist";
 
 export interface OnboardingRow {
   id: string;
@@ -13,6 +14,9 @@ export interface OnboardingRow {
   checklist_total: number;
   checklist_done: number;
   skill_gap_count: number;
+  tasks: ChecklistTask[];
+  /** When the hire started — the reference every task's due offset counts from. */
+  hired_at: string | null;
 }
 
 export interface OnboardingSummary {
@@ -36,7 +40,7 @@ export async function getOnboardingData(): Promise<OnboardingData> {
   const { data } = await supabase
     .from("onboarding_plans")
     .select(
-      "id, application_id, progress, checklist, skill_gaps, applications(full_name, job_openings(title, tenants_and_companies(name)))"
+      "id, application_id, progress, checklist, skill_gaps, applications(full_name, hired_at, job_openings(title, tenants_and_companies(name)))"
     )
     .order("created_at", { ascending: false });
 
@@ -49,7 +53,7 @@ export async function getOnboardingData(): Promise<OnboardingData> {
       ? job.tenants_and_companies[0]
       : job?.tenants_and_companies;
 
-    const checklist = Array.isArray(row.checklist) ? row.checklist : [];
+    const tasks = tasksOf(row.checklist);
     const gaps = Array.isArray(row.skill_gaps) ? row.skill_gaps : [];
 
     return {
@@ -59,9 +63,11 @@ export async function getOnboardingData(): Promise<OnboardingData> {
       job_title: job?.title ?? null,
       company_name: company?.name ?? null,
       progress: Number(row.progress ?? 0),
-      checklist_total: checklist.length,
-      checklist_done: checklist.filter((item: { completed?: boolean }) => item.completed).length,
+      checklist_total: tasks.length,
+      checklist_done: tasks.filter((task) => task.completed).length,
       skill_gap_count: gaps.length,
+      tasks,
+      hired_at: application?.hired_at ?? null,
     };
   });
 

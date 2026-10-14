@@ -5,9 +5,12 @@ import {
   UserRoundPlus,
 } from "lucide-react";
 import { getOnboardingData } from "./actions";
+import { PlanChecklist } from "./components/PlanChecklist";
 import { GeneratePlanButton } from "./components/GeneratePlanButton";
 import type { OnboardingRow, OnboardingSummary } from "./actions";
 import { requireStaff } from "@/lib/auth/session";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import {
   Badge,
@@ -52,10 +55,14 @@ function OnboardingData({
   plans,
   summary,
   unplanned,
+  timeZone,
+  canEdit,
 }: {
   plans: OnboardingRow[];
   summary: OnboardingSummary;
   unplanned: { id: string; full_name: string; job_title: string | null }[];
+  timeZone: string;
+  canEdit: boolean;
 }) {
   if (plans.length === 0 && unplanned.length === 0) {
     return (
@@ -123,6 +130,8 @@ function OnboardingData({
                   {plan.checklist_done}/{plan.checklist_total} tasks complete
                   {plan.skill_gap_count > 0 && ` · ${plan.skill_gap_count} skill gaps identified`}
                 </p>
+
+                <PlanChecklist plan={plan} timeZone={timeZone} canEdit={canEdit} />
               </li>
             ))}
           </ul>
@@ -161,7 +170,11 @@ export default async function OnboardingPage() {
   // only produced a static shell whose hole the client had to re-fetch — and on
   // a hard load that fetch intermittently never landed, leaving the skeleton up
   // and every control unclickable.
-  const { plans, summary, unplanned } = await getOnboardingData();
+  const [{ plans, summary, unplanned }, timeZone, canEdit] = await Promise.all([
+    getOnboardingData(),
+    getOrganisationTimeZone(),
+    hasPermissionForUser("candidates.write"),
+  ]);
 
   return (
     <AdminShell user={user}>
@@ -171,7 +184,13 @@ export default async function OnboardingPage() {
         description="Turn accepted offers into structured, measurable journeys — checklist progress and skill gaps per hire."
       />
 
-      <OnboardingData plans={plans} summary={summary} unplanned={unplanned} />
+      <OnboardingData
+        plans={plans}
+        summary={summary}
+        unplanned={unplanned}
+        timeZone={timeZone}
+        canEdit={canEdit}
+      />
 
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
         {CAPABILITIES.map(({ icon: Icon, title, copy, points }) => (

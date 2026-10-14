@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import type { ChecklistTask } from "./checklist";
 
 export interface PlanResult {
   ok: boolean;
@@ -12,14 +13,7 @@ export interface PlanResult {
   gaps?: number;
 }
 
-interface ChecklistItem {
-  id: string;
-  title: string;
-  category: string;
-  owner: string;
-  due_offset_days: number;
-  completed: boolean;
-}
+type ChecklistItem = ChecklistTask;
 
 interface SkillGap {
   skill: string;
