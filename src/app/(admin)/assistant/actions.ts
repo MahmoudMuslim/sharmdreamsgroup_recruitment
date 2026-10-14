@@ -10,6 +10,16 @@ import {
   isQoderConfigured,
   runQoderAssistantTurn,
 } from "@/modules/assistant/infrastructure/qoderAgent";
+import {
+  deleteAssistantSession,
+  listAssistantSessions,
+  readAssistantSession,
+  renameAssistantSession,
+  saveAssistantTurn,
+  type AssistantSessionSummary,
+  type StoredAssistantMessage,
+} from "@/modules/assistant/infrastructure/transcriptStore";
+import { isAssistantEngine, type AssistantEngine } from "@/modules/assistant/domain/engine";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
 import {
   CvExtractionError,
@@ -32,6 +42,10 @@ import type { ChatCompletionMessage } from "@/types";
  * runtime cannot be reached, the same tools are driven through the completion
  * gateway's JSON protocol, so a Qoder outage degrades the assistant instead of
  * switching it off.
+ *
+ * A finished turn is stored as a saved conversation (see `transcriptStore`),
+ * which is what lets a recruiter close the panel and pick the question up
+ * tomorrow — from the dock or from the Assistant page.
  */
 
 export interface AssistantReply {
@@ -43,6 +57,10 @@ export interface AssistantReply {
   provider?: string;
   /** Set when the preferred engine failed and the other one answered instead. */
   note?: string;
+  /** The saved conversation this turn went into — null while nothing is stored. */
+  sessionId?: string;
+  /** Why the turn was not saved. The answer above it is still real. */
+  saveError?: string;
 }
 
 export interface AssistantCapability {
@@ -52,15 +70,17 @@ export interface AssistantCapability {
   destructive: boolean;
 }
 
+export interface OpenedAssistantSession {
+  title: string;
+  engine: AssistantEngine | null;
+  messages: StoredAssistantMessage[];
+}
+
 /**
- * Which engine the recruiter wants for this turn.
- *
- * `auto` prefers Qoder and falls back to the gateway, which is the normal case.
- * The other two are for when one engine is being compared against the other, or
- * when the fallback itself is what is being diagnosed — a forced engine reports
- * its own failure instead of silently answering from the other one.
+ * Which engine the recruiter wants for this turn. See
+ * `@/modules/assistant/domain/engine` — the same choice is stored on the session.
  */
-export type AssistantEngine = "auto" | "qoder" | "gateway";
+export type { AssistantEngine, AssistantSessionSummary, StoredAssistantMessage };
 
 export interface AssistantAttachment {
   name: string;
@@ -183,6 +203,8 @@ export async function sendAssistantMessage(input: {
   allowDestructive: boolean;
   engine?: AssistantEngine;
   attachment?: AssistantAttachment;
+  /** The saved conversation to append to; a first turn with none starts one. */
+  sessionId?: string | null;
 }): Promise<AssistantReply> {
   await requireStaff("/dashboard");
 
@@ -192,8 +214,7 @@ export async function sendAssistantMessage(input: {
     return { ok: false, error: `Keep the question under ${MAX_MESSAGE_CHARS} characters.` };
   }
 
-  const engine: AssistantEngine =
-    input.engine === "qoder" || input.engine === "gateway" ? input.engine : "auto";
+  const engine: AssistantEngine = isAssistantEngine(input.engine) ? input.engine : "auto";
 
   const history: ChatCompletionMessage[] = [
     ...sanitize(input.history),
@@ -243,6 +264,18 @@ export async function sendAssistantMessage(input: {
       }
     }
 
+    const saved = await saveAssistantTurn({
+      sessionId: typeof input.sessionId === "string" ? input.sessionId : null,
+      engine,
+      prompt,
+      attachment: input.attachment,
+      reply: turn.reply,
+      steps: turn.steps,
+      model: turn.model,
+      provider: turn.provider,
+      note,
+    });
+
     return {
       ok: true,
       reply: turn.reply,
@@ -250,6 +283,10 @@ export async function sendAssistantMessage(input: {
       model: turn.model,
       provider: turn.provider,
       note,
+      sessionId: saved.ok ? saved.sessionId : undefined,
+      // Saying nothing here would leave the recruiter believing a conversation
+      // they cannot open tomorrow is in fact saved.
+      saveError: saved.ok ? undefined : saved.error,
     };
   } catch (error) {
     return {
@@ -257,6 +294,53 @@ export async function sendAssistantMessage(input: {
       error: error instanceof Error ? error.message : "The assistant could not be reached.",
     };
   }
+}
+
+/** The recruiter's own saved conversations, newest first. */
+export async function getAssistantSessions(): Promise<AssistantSessionSummary[]> {
+  await requireStaff("/assistant");
+  return listAssistantSessions();
+}
+
+/**
+ * One saved conversation, or null when it is not this person's to read.
+ *
+ * Turns come back oldest first and clipped to what the model is allowed to be
+ * shown, so opening an old thread costs the same as starting it fresh.
+ */
+export async function openAssistantSession(sessionId: string): Promise<OpenedAssistantSession | null> {
+  await requireStaff("/assistant");
+  if (typeof sessionId !== "string" || sessionId.length < 8) return null;
+  return readAssistantSession(sessionId);
+}
+
+export async function renameSavedSession(
+  sessionId: string,
+  title: string
+): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/assistant");
+  if (typeof title !== "string" || title.trim().length === 0) {
+    return { ok: false, error: "Give the conversation a name first." };
+  }
+  const renamed = await renameAssistantSession(sessionId, title);
+  return renamed
+    ? { ok: true }
+    : { ok: false, error: "That conversation could not be renamed — it may have been deleted." };
+}
+
+/**
+ * Deletes one saved conversation.
+ *
+ * This is the assistant's own history, not a portal record: no job, candidate or
+ * message goes with it, and the audit trail for anything the assistant *changed*
+ * stays where the buttons that changed it write it.
+ */
+export async function deleteSavedSession(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/assistant");
+  const deleted = await deleteAssistantSession(sessionId);
+  return deleted
+    ? { ok: true }
+    : { ok: false, error: "That conversation could not be deleted — it may already be gone." };
 }
 
 /** What the assistant can actually do — rendered in the panel's capability list. */

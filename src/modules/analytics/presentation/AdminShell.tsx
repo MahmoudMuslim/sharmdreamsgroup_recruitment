@@ -44,6 +44,7 @@ const NAV: readonly NavItem[] = [
   { href: "/apply-questions", label: "Apply Questions", icon: ListChecks, hint: "Viability gate on the form" },
   { href: "/files", label: "Files", icon: FolderOpen, hint: "Stored CVs & recordings" },
   { href: "/whatsapp", label: "Outbox", icon: MessageCircle, hint: "Candidate alerts" },
+  { href: "/assistant", label: "Assistant", icon: Sparkles, hint: "Ask, change, and revisit" },
   { href: "/settings", label: "Settings", icon: Settings, hint: "Configuration & access" },
 ] as const;
 
