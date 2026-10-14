@@ -152,7 +152,11 @@ function ApplicantDetail({
         <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
           AI screening
         </h4>
-        {applicant.ai_match_score !== null ? (
+        {applicant.scores_masked ? (
+          <p className="mt-2 text-xs text-brand-ink/50">
+            Hidden — your role is not granted &ldquo;View unmasked scores&rdquo;.
+          </p>
+        ) : applicant.ai_match_score !== null ? (
           <div className="mt-2 flex items-center gap-2">
             <span className="w-10 font-display text-sm font-bold text-brand-gold-dark">
               {applicant.ai_match_score}%

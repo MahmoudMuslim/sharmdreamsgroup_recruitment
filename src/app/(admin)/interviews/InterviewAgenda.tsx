@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CalendarDays, Clock, Video } from "lucide-react";
 import { Badge, Card, EmptyState } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
+import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import type { AgendaInterview } from "./actions";
 
 type Range = "today" | "week" | "month" | "past";
@@ -23,42 +24,53 @@ function statusTone(status: string) {
   return "info" as const;
 }
 
-/** Local midnight, so a booking is grouped on the day the recruiter sees it. */
-function startOfDay(date: Date): number {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy.getTime();
+/**
+ * Midnight of the day the instant falls on in `timeZone`, as a comparable number.
+ *
+ * Built from the zone's own calendar parts rather than the browser's, so a
+ * 01:00-Cairo booking stays on the Cairo date even for a recruiter reading the
+ * agenda from Berlin.
+ */
+function zoneDayMs(iso: string, timeZone: string): number {
+  const key = dayKeyInZone(iso, timeZone);
+  if (!key) return NaN;
+  const [y, mo, d] = key.split("-").map(Number);
+  return Date.UTC(y, mo - 1, d);
 }
 
-function dayLabel(iso: string): string {
-  const date = new Date(iso);
-  const today = startOfDay(new Date());
-  const thisDay = startOfDay(date);
-  const offset = Math.round((thisDay - today) / 86_400_000);
+function dayOffset(iso: string, timeZone: string): number {
+  return Math.round(
+    (zoneDayMs(iso, timeZone) - zoneDayMs(new Date().toISOString(), timeZone)) / 86_400_000
+  );
+}
+
+function dayLabel(iso: string, timeZone: string): string {
+  const offset = dayOffset(iso, timeZone);
   if (offset === 0) return "Today";
   if (offset === 1) return "Tomorrow";
   if (offset === -1) return "Yesterday";
-  return date.toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
+  return formatInZone(iso, timeZone, { weekday: "long", day: "numeric", month: "long" });
 }
 
 /**
  * Day-grouped interview agenda.
  *
  * Read-only by design: booking changes happen on the candidate's profile so a
- * slot, its notes and its history are edited in one place.
+ * slot, its notes and its history are edited in one place. Days and clocks follow
+ * `organisation.timezone`, which is the zone the panels physically run in.
  */
-export function InterviewAgenda({ interviews }: { interviews: AgendaInterview[] }) {
+export function InterviewAgenda({
+  interviews,
+  timeZone,
+}: {
+  interviews: AgendaInterview[];
+  timeZone: string;
+}) {
   const [range, setRange] = useState<Range>("week");
 
   const groups = useMemo(() => {
-    const today = startOfDay(new Date());
     const within = (row: AgendaInterview) => {
-      const day = startOfDay(new Date(row.scheduled_at));
-      const offsetDays = Math.round((day - today) / 86_400_000);
+      const offsetDays = dayOffset(row.scheduled_at, timeZone);
       if (range === "past") return offsetDays < 0 && offsetDays >= -30;
       if (range === "today") return offsetDays === 0;
       if (range === "week") return offsetDays >= 0 && offsetDays <= 7;
@@ -67,19 +79,19 @@ export function InterviewAgenda({ interviews }: { interviews: AgendaInterview[] 
 
     const byDay = new Map<string, AgendaInterview[]>();
     for (const row of interviews.filter(within)) {
-      const key = String(startOfDay(new Date(row.scheduled_at)));
+      const key = dayKeyInZone(row.scheduled_at, timeZone);
       const bucket = byDay.get(key);
       if (bucket) bucket.push(row);
       else byDay.set(key, [row]);
     }
 
     return [...byDay.entries()]
-      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([, rows]) => ({
-        label: dayLabel(rows[0].scheduled_at),
+        label: dayLabel(rows[0].scheduled_at, timeZone),
         rows: rows.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)),
       }));
-  }, [interviews, range]);
+  }, [interviews, range, timeZone]);
 
   const visible = groups.reduce((sum, group) => sum + group.rows.length, 0);
   const pending = interviews.filter((row) => row.status === "SCHEDULED").length;
@@ -130,7 +142,7 @@ export function InterviewAgenda({ interviews }: { interviews: AgendaInterview[] 
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="inline-flex items-center gap-1.5 font-display text-base font-bold">
                         <Clock className="h-4 w-4 text-brand-gold-dark" aria-hidden />
-                        {new Date(row.scheduled_at).toLocaleTimeString(undefined, {
+                        {formatInZone(row.scheduled_at, timeZone, {
                           hour: "2-digit",
                           minute: "2-digit",
                         })}

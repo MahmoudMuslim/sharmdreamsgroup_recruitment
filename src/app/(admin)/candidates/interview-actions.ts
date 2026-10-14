@@ -3,8 +3,12 @@
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { getBoolSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { generateInterviewQuestions } from "@/modules/screening/infrastructure/openRouterEngine";
+import type { CvScreeningResult, GeneratedInterviewQuestions } from "@/types";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import {
   notifyInterviewUpdate,
@@ -313,4 +317,155 @@ export async function listInterviewers(): Promise<InterviewerOption[]> {
     full_name: row.full_name,
     role: row.role,
   }));
+}
+
+export interface InterviewGuideQuestion {
+  question: string;
+  rationale: string;
+  skill_probed: string;
+}
+
+export interface InterviewGuide {
+  ok: boolean;
+  error?: string;
+  questions?: InterviewGuideQuestion[];
+}
+
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  return [];
+}
+
+/**
+ * Writes an interview guide for one candidate, on demand.
+ *
+ * Gated on `ai.interview_questions`: with that switch off the recruiter gets
+ * the setting named in the reply rather than a model call behind their back.
+ * The questions are built from the gaps AI screening recorded, so screening has
+ * to have run, and from whatever the candidate wrote in their assessment.
+ * Nothing is stored — there is no column for a guide — so the panel keeps the
+ * result in the open drawer and says so.
+ */
+export async function generateInterviewGuide(input: {
+  applicationId: string;
+}): Promise<InterviewGuide> {
+  await requireStaff("/candidates");
+
+  if (!(await getBoolSetting("ai.interview_questions", true))) {
+    return {
+      ok: false,
+      error:
+        "Question generation is switched off — turn on Settings → AI & screening → Generate interview questions.",
+    };
+  }
+  if (!hasAiProvider()) return { ok: false, error: "No AI provider key is configured." };
+
+  const supabase = await createSupabaseServerClient();
+  const { data } = await supabase
+    .from("applications")
+    .select(
+      "id, cv_text, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, diversity_flags, job_openings(title, requirements)"
+    )
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
+  if (!data) return { ok: false, error: "This candidate no longer exists." };
+
+  const application = data as unknown as {
+    cv_text: string | null;
+    ai_match_score: number | null;
+    ai_screening_summary: string | null;
+    ai_strengths: unknown;
+    ai_gaps: unknown;
+    diversity_flags?: Record<string, string> | null;
+    job_openings?: { title?: string; requirements?: unknown } | { title?: string; requirements?: unknown }[] | null;
+  };
+
+  if (application.ai_match_score === null) {
+    return {
+      ok: false,
+      error: "Run AI screening first — the questions probe the gaps that screening found.",
+    };
+  }
+  if (!application.cv_text?.trim()) {
+    return { ok: false, error: "No CV text is stored for this candidate, so there are no gaps to probe." };
+  }
+
+  const job = Array.isArray(application.job_openings)
+    ? application.job_openings[0]
+    : application.job_openings;
+
+  const screening: CvScreeningResult = {
+    match_score: Number(application.ai_match_score),
+    decision: "BORDERLINE",
+    summary: application.ai_screening_summary ?? "",
+    key_competencies: [],
+    strengths: toStringList(application.ai_strengths),
+    gaps: toStringList(application.ai_gaps),
+    anonymization_applied: application.diversity_flags?.cv_anonymization === "applied",
+    model_used: "stored screening result",
+  };
+
+  // The candidate's own latest attempt, so a weak answer becomes a question.
+  const { data: attempt } = await supabase
+    .from("candidate_attempts")
+    .select("id")
+    .eq("application_id", input.applicationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const { data: rows } = attempt
+    ? await supabase
+        .from("candidate_responses")
+        .select("answer_text, score, max_score, assessment_questions(title)")
+        .eq("attempt_id", attempt.id)
+        .limit(20)
+    : { data: null };
+
+  const responses = ((rows ?? []) as {
+    answer_text: string | null;
+    score: number | null;
+    max_score: number | null;
+    assessment_questions?: { title?: string } | null;
+  }[]).map((row) => ({
+    questionTitle: row.assessment_questions?.title ?? "Question",
+    answerPreview: row.answer_text ?? "(no written answer)",
+    score:
+      row.score !== null && row.max_score
+        ? Math.round((row.score / row.max_score) * 100)
+        : null,
+  }));
+
+  let guide: GeneratedInterviewQuestions;
+  try {
+    guide = await generateInterviewQuestions(
+      job?.title ?? "the role",
+      toStringList(job?.requirements),
+      application.cv_text,
+      screening,
+      responses
+    );
+  } catch (cause) {
+    return {
+      ok: false,
+      error: cause instanceof Error ? cause.message : "The model did not return a guide.",
+    };
+  }
+
+  const questions = (guide.questions ?? [])
+    .filter((item) => typeof item?.question === "string" && item.question.trim().length > 0)
+    .map((item) => ({
+      question: item.question.trim(),
+      rationale: (item.rationale ?? "").trim(),
+      skill_probed: (item.skill_probed ?? "").trim(),
+    }))
+    .slice(0, 10);
+
+  if (questions.length === 0) {
+    return { ok: false, error: "The model returned no usable questions — try again." };
+  }
+
+  return { ok: true, questions };
 }

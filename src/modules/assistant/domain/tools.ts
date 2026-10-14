@@ -169,6 +169,8 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         hires_this_quarter: analytics.hires_this_quarter,
         avg_fit_score: analytics.avg_fit_score,
         scored_applications: analytics.scored_applications,
+        // When masked the two figures above are withheld, not zero — say so.
+        scores_masked: analytics.scores_masked,
         avg_time_to_hire_days: analytics.avg_time_to_hire_days,
         pipeline: analytics.pipeline,
         channels: analytics.channels,
@@ -226,19 +228,23 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     args: {},
     run: async () => {
       const rows = await getCandidateList();
-      return rows.map((row) => ({
-        id: row.id,
-        tracking_code: row.tracking_code,
-        full_name: row.full_name,
-        email: row.email,
-        phone: row.phone,
-        stage: row.stage,
-        job_title: row.job_title,
-        ai_match_score: row.ai_match_score,
-        attempt_status: row.attempt_status,
-        attempt_score: row.attempt_score,
-        interviews: row.interviews.length,
-      }));
+      return {
+        // So a hidden score is never described to the recruiter as "not screened".
+        scores_masked: rows[0]?.scores_masked ?? false,
+        candidates: rows.map((row) => ({
+          id: row.id,
+          tracking_code: row.tracking_code,
+          full_name: row.full_name,
+          email: row.email,
+          phone: row.phone,
+          stage: row.stage,
+          job_title: row.job_title,
+          ai_match_score: row.ai_match_score,
+          attempt_status: row.attempt_status,
+          attempt_score: row.attempt_score,
+          interviews: row.interviews.length,
+        })),
+      };
     },
   },
   {
@@ -511,7 +517,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "assign_assessment",
     label: "Assigning an assessment",
     description:
-      "Issue an assessment attempt to one or more applications. Candidates who already have an open attempt on that suite are skipped.",
+      "Issue an assessment attempt to one or more applications. Candidates who already have an open attempt on that suite are skipped. Everyone who gets a new attempt is then invited by the channels that are switched on, and the invitation carries the start link.",
     args: {
       template_id: "string — suite id from list_assessment_suites",
       application_ids: "string[] — application ids",

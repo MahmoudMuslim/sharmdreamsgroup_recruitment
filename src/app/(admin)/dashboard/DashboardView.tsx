@@ -46,7 +46,8 @@ function shortDate(iso: string | null) {
 }
 
 /** True when a score falls inside a bucket range label such as "50–79". */
-function inBucket(range: string, score: number) {
+function inBucket(range: string, score: number | null) {
+  if (score === null) return false;
   const [lo, hi] = range.split(/[–-]/).map((n) => Number(n.trim()));
   return score >= lo && score <= hi;
 }
@@ -137,9 +138,11 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
       source: analytics.channels.some((channel) => channel.source === params.get("source"))
         ? (params.get("source") as string)
         : null,
-      bucket: analytics.fit_distribution.some((bucket) => bucket.range === params.get("bucket"))
-        ? (params.get("bucket") as string)
-        : null,
+      bucket:
+        !analytics.scores_masked &&
+        analytics.fit_distribution.some((bucket) => bucket.range === params.get("bucket"))
+          ? (params.get("bucket") as string)
+          : null,
       query: params.get("q") ?? "",
     }),
     [params, analytics]
@@ -203,7 +206,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
             (new Date(a.applied_at ?? 0).getTime() - new Date(b.applied_at ?? 0).getTime()) * dir
           );
         default:
-          return (a.match_score - b.match_score) * dir;
+          return ((a.match_score ?? -1) - (b.match_score ?? -1)) * dir;
       }
     });
   }, [analytics.candidates, stage, source, bucket, query, sortKey, sortDesc]);
@@ -249,8 +252,12 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         />
         <Tile
           label="Avg AI fit"
-          value={`${analytics.avg_fit_score}%`}
-          hint={`${analytics.scored_applications} of ${analytics.total_applications} scored`}
+          value={analytics.scores_masked ? "Hidden" : `${analytics.avg_fit_score}%`}
+          hint={
+            analytics.scores_masked
+              ? "Masked for your role"
+              : `${analytics.scored_applications} of ${analytics.total_applications} scored`
+          }
           icon={<Sparkles className="h-5 w-5" aria-hidden />}
         />
         <Tile
@@ -447,38 +454,47 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         <Card>
           <CardHeader title="AI fit distribution" meta={`${analytics.scored_applications} scored`} />
           <div className="space-y-4 p-5 sm:p-6">
-            {analytics.fit_distribution.map((item) => {
-              const active = bucket === item.range;
-              return (
-                <button
-                  key={item.range}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setBucket(active ? null : item.range)}
-                  className={cn(
-                    "w-full rounded-xl border px-3 py-2 text-left transition",
-                    active
-                      ? "border-brand-gold bg-brand-gold/10"
-                      : "border-transparent hover:border-brand-line hover:bg-brand-cream"
-                  )}
-                >
-                  <div className="mb-1.5 flex items-baseline justify-between text-xs">
-                    <span className="font-semibold text-brand-ink/70">{item.range}</span>
-                    <span className="font-display font-bold">{item.count}</span>
-                  </div>
-                  <Meter
-                    value={item.count}
-                    max={Math.max(analytics.scored_applications, 1)}
-                    tone={item.range.startsWith("80") ? "success" : "gold"}
-                  />
-                </button>
-              );
-            })}
-            {analytics.scored_applications === 0 && (
+            {analytics.scores_masked ? (
               <EmptyState
-                title="No scores yet"
-                description="Run AI screening on an application to populate this chart."
+                title="Scores are hidden"
+                description="Your role is not granted “View unmasked scores”, so the fit buckets are withheld."
               />
+            ) : (
+              <>
+                {analytics.fit_distribution.map((item) => {
+                  const active = bucket === item.range;
+                  return (
+                    <button
+                      key={item.range}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setBucket(active ? null : item.range)}
+                      className={cn(
+                        "w-full rounded-xl border px-3 py-2 text-left transition",
+                        active
+                          ? "border-brand-gold bg-brand-gold/10"
+                          : "border-transparent hover:border-brand-line hover:bg-brand-cream"
+                      )}
+                    >
+                      <div className="mb-1.5 flex items-baseline justify-between text-xs">
+                        <span className="font-semibold text-brand-ink/70">{item.range}</span>
+                        <span className="font-display font-bold">{item.count}</span>
+                      </div>
+                      <Meter
+                        value={item.count}
+                        max={Math.max(analytics.scored_applications, 1)}
+                        tone={item.range.startsWith("80") ? "success" : "gold"}
+                      />
+                    </button>
+                  );
+                })}
+                {analytics.scored_applications === 0 && (
+                  <EmptyState
+                    title="No scores yet"
+                    description="Run AI screening on an application to populate this chart."
+                  />
+                )}
+              </>
             )}
           </div>
         </Card>
@@ -591,7 +607,11 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                 </thead>
                 <tbody className="divide-y divide-brand-line">
                   {filtered.map((candidate) => (
-                    <CandidateRow key={candidate.application_id} candidate={candidate} />
+                    <CandidateRow
+                      key={candidate.application_id}
+                      candidate={candidate}
+                      masked={analytics.scores_masked}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -612,9 +632,19 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-10 text-right text-sm font-display font-bold text-brand-gold-dark">
-                      {candidate.match_score}%
+                      {candidate.match_score === null
+                        ? analytics.scores_masked
+                          ? "—"
+                          : "0"
+                        : `${candidate.match_score}%`}
                     </span>
-                    <Meter value={candidate.match_score} className="flex-1" />
+                    {analytics.scores_masked ? (
+                      <span className="flex-1 text-[10px] uppercase tracking-wide text-brand-ink/35">
+                        Scores hidden
+                      </span>
+                    ) : (
+                      <Meter value={candidate.match_score ?? 0} className="flex-1" />
+                    )}
                     <span className="text-[10px] uppercase tracking-wide text-brand-ink/40">
                       {prettyStage(candidate.source)} · {shortDate(candidate.applied_at)}
                     </span>
@@ -629,7 +659,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
   );
 }
 
-function CandidateRow({ candidate }: { candidate: DashboardCandidate }) {
+function CandidateRow({ candidate, masked }: { candidate: DashboardCandidate; masked: boolean }) {
   return (
     <tr className="transition hover:bg-brand-cream">
       <td className="py-3.5 pl-6 pr-4">
@@ -649,15 +679,25 @@ function CandidateRow({ candidate }: { candidate: DashboardCandidate }) {
       </td>
       <td className="px-4 py-3.5 text-xs text-brand-ink/55">{shortDate(candidate.applied_at)}</td>
       <td className="px-4 py-3.5">
-        <div className="flex w-28 items-center gap-2">
-          <span className="w-9 text-right font-display font-bold text-brand-gold-dark">
-            {candidate.match_score}%
+        {masked ? (
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
+            Hidden
           </span>
-          <Meter value={candidate.match_score} className="flex-1" />
-        </div>
+        ) : (
+          <div className="flex w-28 items-center gap-2">
+            <span className="w-9 text-right font-display font-bold text-brand-gold-dark">
+              {candidate.match_score === null ? "0" : `${candidate.match_score}%`}
+            </span>
+            <Meter value={candidate.match_score ?? 0} className="flex-1" />
+          </div>
+        )}
       </td>
       <td className="py-3.5 pl-4 pr-6">
-        {candidate.has_assessment ? (
+        {masked ? (
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
+            Hidden
+          </span>
+        ) : candidate.has_assessment ? (
           <span className="font-display font-bold">{candidate.assessment_score ?? "—"}</span>
         ) : (
           <span className="text-xs text-brand-ink/35">Pending</span>

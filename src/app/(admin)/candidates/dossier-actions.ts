@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 import type { GateAnswer } from "@/modules/careers/gate-questions";
 
@@ -98,6 +99,8 @@ export interface CandidateDossier {
   alerts: DossierAlert[];
   onboarding: DossierOnboarding | null;
   other_applications: DossierSibling[];
+  /** True when `security.mask_scores_for_reviewers` hid the scores in here. */
+  scores_masked: boolean;
 }
 
 export type DossierResult =
@@ -147,7 +150,10 @@ export async function getCandidateDossier(
   applicationId: string
 ): Promise<DossierResult> {
   await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const [supabase, masked] = await Promise.all([
+    createSupabaseServerClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
 
   const { data: row, error } = await supabase
     .from("applications")
@@ -272,7 +278,7 @@ export async function getCandidateDossier(
         access_token: asString(attempt.access_token),
         template_name: asNullableString(one<{ name?: unknown }>(attempt.assessment_templates)?.name),
         status: asString(attempt.status, "NOT_STARTED"),
-        score: asNumber(attempt.total_score),
+        score: masked ? null : asNumber(attempt.total_score),
         max_score: asNumber(attempt.max_score),
         time_limit_minutes: asNumber(attempt.time_limit_minutes) ?? 0,
         started_at: asNullableString(attempt.started_at),
@@ -288,7 +294,7 @@ export async function getCandidateDossier(
             tasks_done: checklist.filter(
               (item: Record<string, unknown>) => item && item.completed === true
             ).length,
-            risk_score: asNumber(plan.retention_risk_score),
+            risk_score: masked ? null : asNumber(plan.retention_risk_score),
             generated_by_ai: plan.generated_by_ai === true,
             created_at: asString(plan.created_at),
           }
@@ -300,6 +306,7 @@ export async function getCandidateDossier(
         stage: asString(sibling.stage, "NEW"),
         applied_at: asString(sibling.created_at),
       })),
+      scores_masked: masked,
     },
   };
 }

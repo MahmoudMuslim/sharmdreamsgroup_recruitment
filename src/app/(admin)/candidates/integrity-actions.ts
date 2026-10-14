@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 
 export interface IntegrityFlag {
   id: string;
@@ -23,6 +24,8 @@ export interface AttemptIntegrity {
   job_title: string | null;
   integrity_score: number | null;
   integrity_flags: number;
+  /** `security.mask_scores_for_reviewers` — the numbers above were dropped, not absent. */
+  scores_masked: boolean;
   events: IntegrityFlag[];
 }
 
@@ -31,12 +34,20 @@ export interface AttemptIntegrity {
  *
  * These are advisory signals for human review, never an automatic rejection
  * basis — the recruiter weighs them alongside the rest of the application.
+ *
+ * With `security.mask_scores_for_reviewers` on and no `scores.view_unmasked`
+ * grant, the three numbers are replaced by nulls here rather than hidden in
+ * JSX, so a masked score never travels to the browser at all. The recorded
+ * events stay: they describe what happened, not how the candidate scored.
  */
 export async function getAttemptIntegrity(
   accessToken: string
 ): Promise<AttemptIntegrity | null> {
   await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const [supabase, masked] = await Promise.all([
+    createSupabaseServerClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
@@ -66,12 +77,13 @@ export async function getAttemptIntegrity(
     attempt_id: attempt.id,
     access_token: attempt.access_token,
     status: attempt.status,
-    score: attempt.total_score ?? null,
-    max_score: attempt.max_score ?? null,
+    score: masked ? null : (attempt.total_score ?? null),
+    max_score: masked ? null : (attempt.max_score ?? null),
     candidate_name: application?.full_name ?? "Unknown",
     job_title: job?.title ?? null,
-    integrity_score: attempt.integrity_score ?? null,
+    integrity_score: masked ? null : (attempt.integrity_score ?? null),
     integrity_flags: attempt.integrity_flags ?? 0,
+    scores_masked: masked,
     events: ((events ?? []) as unknown[]).map((row) => {
       const event = row as {
         id: string;
@@ -96,26 +108,4 @@ export async function getAttemptIntegrity(
       };
     }),
   };
-}
-
-/** Attempt-level integrity rollup across all candidates, for the candidates table. */
-export async function getIntegritySummary(): Promise<
-  Record<string, { score: number | null; flags: number }>
-> {
-  await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
-
-  const { data } = await supabase
-    .from("candidate_attempts")
-    .select("application_id, integrity_score, integrity_flags");
-
-  const summary: Record<string, { score: number | null; flags: number }> = {};
-  for (const row of data ?? []) {
-    if (!row.application_id) continue;
-    summary[row.application_id] = {
-      score: row.integrity_score ?? null,
-      flags: row.integrity_flags ?? 0,
-    };
-  }
-  return summary;
 }

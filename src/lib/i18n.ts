@@ -55,6 +55,54 @@ const en: Dictionary = {
   "portal.title": "Track Your Application",
   "portal.code": "Tracking code",
   "portal.search": "Search",
+  "portal.eyebrow": "Candidate portal",
+  "portal.intro":
+    "Enter the tracking code you were given when you applied to see your current stage, assessment and next steps.",
+  "portal.codeHint": "Looks like",
+  "portal.track": "Track",
+  "portal.searching": "Searching…",
+  "portal.lookupFailed": "Something went wrong. Please try again.",
+  "portal.hello": "Hello, {name}",
+  "portal.positionUnderReview": "Position under review",
+  "portal.matchScore": "Match score",
+  "portal.assessmentScore": "Assessment score",
+  "portal.notSelected": "Not selected",
+  "portal.actionNeeded": "Action needed",
+  "portal.inProgress": "In progress",
+  "portal.applied": "applied {when}",
+  "portal.startAssessment": "Start assessment",
+  "portal.resumeAssessment": "Resume assessment",
+  "portal.progress": "Application progress: {stage}",
+  "portal.messages": "Messages from the hiring team",
+  "portal.newCount": "{count} new",
+  "portal.markAllRead": "Mark all read",
+  "portal.marking": "Marking…",
+  "portal.noSubject": "An update on your application",
+  "portal.badgeNew": "New",
+  "portal.needHelp": "Need help?",
+  "portal.helpText":
+    "If your link has expired or you cannot find your tracking code, email the talent team and they will look it up for you.",
+  "portal.language": "Language",
+  "portal.next.rejected":
+    "Thank you for applying. After careful review we were not able to move forward with your application for this role. We appreciate the time you took, and we wish you every success in your search.",
+  "portal.next.hired": "Congratulations — our people team will be in touch about your offer.",
+  "portal.next.interview":
+    "Your interview is being scheduled. We will confirm the time and joining link with you.",
+  "portal.next.submitted": "Your assessment was submitted and is now with the hiring team.",
+  "portal.next.inProgress": "Assessment in progress — {time} remaining.",
+  "portal.next.closedWindow": "Your assessment window has closed.",
+  "portal.next.invited":
+    "You have been invited to complete an assessment. Open your secure link below.",
+  "portal.next.screening": "Your application is with our screening team.",
+  "stage.new": "Application",
+  "stage.ai_screening": "AI screening",
+  "stage.assessment": "Assessment",
+  "stage.interview": "Interview",
+  "stage.offer": "Offer",
+  "stage.hired": "Hired",
+  "time.today": "today",
+  "time.daysAgo": "{count} days ago",
+  "time.monthsAgo": "{count} months ago",
   "login.title": "Sign in",
   "login.email": "Email",
   "login.password": "Password",
@@ -105,6 +153,52 @@ const ar: Dictionary = {
   "portal.title": "تابع طلبك",
   "portal.code": "رمز التتبع",
   "portal.search": "بحث",
+  "portal.eyebrow": "بوابة المرشح",
+  "portal.intro":
+    "أدخل رمز التتبع الذي حصلت عليه عند التقديم لتعرف مرحلتك الحالية وتقييمك والخطوات التالية.",
+  "portal.codeHint": "الشكل مشابه لـ",
+  "portal.track": "تتبّع",
+  "portal.searching": "جارٍ البحث…",
+  "portal.lookupFailed": "حدث خطأ ما. حاول مرة أخرى.",
+  "portal.hello": "مرحبًا، {name}",
+  "portal.positionUnderReview": "وظيفة قيد المراجعة",
+  "portal.matchScore": "درجة الملاءمة",
+  "portal.assessmentScore": "درجة التقييم",
+  "portal.notSelected": "لم يتم الاختيار",
+  "portal.actionNeeded": "مطلوب إجراء",
+  "portal.inProgress": "قيد التنفيذ",
+  "portal.applied": "تم التقديم {when}",
+  "portal.startAssessment": "ابدأ التقييم",
+  "portal.resumeAssessment": "أكمل التقييم",
+  "portal.progress": "تقدم الطلب: {stage}",
+  "portal.messages": "رسائل من فريق التوظيف",
+  "portal.newCount": "{count} جديدة",
+  "portal.markAllRead": "تحديد الكل كمقروء",
+  "portal.marking": "جارٍ التحديد…",
+  "portal.noSubject": "مستجد بخصوص طلبك",
+  "portal.badgeNew": "جديد",
+  "portal.needHelp": "تحتاج مساعدة؟",
+  "portal.helpText":
+    "إذا انتهى رابطك أو لم تعثر على رمز التتبع، راسل فريق المواهب وسيقوم بالبحث نيابةً عنك.",
+  "portal.language": "اللغة",
+  "portal.next.rejected":
+    "شكرًا لتقديمك. بعد مراجعة دقيقة لم نتمكن من المضي في طلبك لهذه الوظيفة. نقدّر وقتك ونتمنى لك كل التوفيق في بحثك.",
+  "portal.next.hired": "مبروك — سيتواصل معك فريق الموارد البشرية بخصوص العرض.",
+  "portal.next.interview": "يتم الآن تحديد موعد مقابلتك. سنؤكد لك الوقت ورابط الانضمام.",
+  "portal.next.submitted": "تم إرسال تقييمك وهو الآن لدى فريق التوظيف.",
+  "portal.next.inProgress": "التقييم قيد التنفيذ — متبقٍ {time}.",
+  "portal.next.closedWindow": "انتهت مدة التقييم.",
+  "portal.next.invited": "لديك دعوة لإكمال تقييمك. افتح الرابط الآمن بالأسفل.",
+  "portal.next.screening": "طلبك حاليًا لدى فريق الفرز.",
+  "stage.new": "الطلب",
+  "stage.ai_screening": "الفرز بالذكاء الاصطناعي",
+  "stage.assessment": "التقييم",
+  "stage.interview": "المقابلة",
+  "stage.offer": "العرض",
+  "stage.hired": "التعيين",
+  "time.today": "اليوم",
+  "time.daysAgo": "قبل {count} يوم",
+  "time.monthsAgo": "منذ {count} شهر",
   "login.title": "تسجيل الدخول",
   "login.email": "البريد الإلكتروني",
   "login.password": "كلمة المرور",
@@ -155,6 +249,52 @@ const ru: Dictionary = {
   "portal.title": "Отслеживание заявки",
   "portal.code": "Код отслеживания",
   "portal.search": "Поиск",
+  "portal.eyebrow": "Портал кандидата",
+  "portal.intro":
+    "Введите код отслеживания, полученный при подаче заявки, чтобы увидеть текущий этап, оценку и следующие шаги.",
+  "portal.codeHint": "Формат:",
+  "portal.track": "Отследить",
+  "portal.searching": "Поиск…",
+  "portal.lookupFailed": "Что-то пошло не так. Попробуйте снова.",
+  "portal.hello": "Здравствуйте, {name}",
+  "portal.positionUnderReview": "Должность на рассмотрении",
+  "portal.matchScore": "Балл соответствия",
+  "portal.assessmentScore": "Балл оценки",
+  "portal.notSelected": "Не выбрано",
+  "portal.actionNeeded": "Нужно действие",
+  "portal.inProgress": "В процессе",
+  "portal.applied": "заявка {when}",
+  "portal.startAssessment": "Начать оценку",
+  "portal.resumeAssessment": "Продолжить оценку",
+  "portal.progress": "Прогресс заявки: {stage}",
+  "portal.messages": "Сообщения от команды найма",
+  "portal.newCount": "Новых: {count}",
+  "portal.markAllRead": "Прочитать все",
+  "portal.marking": "Отмечаем…",
+  "portal.noSubject": "Обновление по вашей заявке",
+  "portal.badgeNew": "Новое",
+  "portal.needHelp": "Нужна помощь?",
+  "portal.helpText":
+    "Если ссылка истекла или вы не нашли код отслеживания, напишите команде по подбору — они всё найдут.",
+  "portal.language": "Язык",
+  "portal.next.rejected":
+    "Спасибо за заявку. После тщательного рассмотрения мы не можем продолжить её по этой вакансии. Ценим ваше время и желаем успехов в поиске.",
+  "portal.next.hired": "Поздравляем — команда персонала свяжется с вами по офферу.",
+  "portal.next.interview": "Собеседование планируется. Мы подтвердим время и ссылку подключения.",
+  "portal.next.submitted": "Ваша оценка отправлена и находится у команды найма.",
+  "portal.next.inProgress": "Оценка выполняется — осталось {time}.",
+  "portal.next.closedWindow": "Срок выполнения оценки истёк.",
+  "portal.next.invited": "Вам предложено пройти оценку. Откройте безопасную ссылку ниже.",
+  "portal.next.screening": "Ваша заявка у команды скрининга.",
+  "stage.new": "Заявка",
+  "stage.ai_screening": "ИИ-скрининг",
+  "stage.assessment": "Оценка",
+  "stage.interview": "Собеседование",
+  "stage.offer": "Оффер",
+  "stage.hired": "Найм",
+  "time.today": "сегодня",
+  "time.daysAgo": "{count} дн. назад",
+  "time.monthsAgo": "{count} мес. назад",
   "login.title": "Вход",
   "login.email": "Эл. почта",
   "login.password": "Пароль",
@@ -205,6 +345,54 @@ const de: Dictionary = {
   "portal.title": "Bewerbung verfolgen",
   "portal.code": "Tracking-Code",
   "portal.search": "Suchen",
+  "portal.eyebrow": "Bewerberportal",
+  "portal.intro":
+    "Geben Sie den Tracking-Code ein, den Sie bei der Bewerbung erhalten haben, um Stadium, Test und nächste Schritte zu sehen.",
+  "portal.codeHint": "Beispiel:",
+  "portal.track": "Verfolgen",
+  "portal.searching": "Sucht…",
+  "portal.lookupFailed": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.",
+  "portal.hello": "Hallo, {name}",
+  "portal.positionUnderReview": "Stelle in Prüfung",
+  "portal.matchScore": "Match-Score",
+  "portal.assessmentScore": "Test-Score",
+  "portal.notSelected": "Keine Auswahl",
+  "portal.actionNeeded": "Aktion nötig",
+  "portal.inProgress": "In Bearbeitung",
+  "portal.applied": "Bewerbung {when}",
+  "portal.startAssessment": "Test starten",
+  "portal.resumeAssessment": "Test fortsetzen",
+  "portal.progress": "Bewerbungsfortschritt: {stage}",
+  "portal.messages": "Nachrichten des Hiring-Teams",
+  "portal.newCount": "{count} neu",
+  "portal.markAllRead": "Alle als gelesen",
+  "portal.marking": "Wird markiert…",
+  "portal.noSubject": "Neuigkeiten zu Ihrer Bewerbung",
+  "portal.badgeNew": "Neu",
+  "portal.needHelp": "Brauchen Sie Hilfe?",
+  "portal.helpText":
+    "Wenn Ihr Link abgelaufen ist oder Sie Ihren Tracking-Code nicht finden, schreiben Sie dem Talent-Team – es sucht ihn für Sie heraus.",
+  "portal.language": "Sprache",
+  "portal.next.rejected":
+    "Vielen Dank für Ihre Bewerbung. Nach sorgfältiger Prüfung können wir sie für diese Rolle nicht weiterverfolgen. Wir schätzen Ihre Zeit und wünschen viel Erfolg.",
+  "portal.next.hired": "Herzlichen Glückwunsch – unser People-Team meldet sich wegen Ihres Angebots.",
+  "portal.next.interview":
+    "Ihr Interview wird geplant. Wir bestätigen Ihnen Zeit und Link zum Beitritt.",
+  "portal.next.submitted": "Ihr Test wurde eingereicht und liegt beim Hiring-Team.",
+  "portal.next.inProgress": "Test läuft – noch {time}.",
+  "portal.next.closedWindow": "Ihr Testzeitraum ist abgelaufen.",
+  "portal.next.invited":
+    "Sie sind zu einem Test eingeladen. Öffnen Sie den sicheren Link unten.",
+  "portal.next.screening": "Ihre Bewerbung liegt beim Screening-Team.",
+  "stage.new": "Bewerbung",
+  "stage.ai_screening": "KI-Screening",
+  "stage.assessment": "Test",
+  "stage.interview": "Interview",
+  "stage.offer": "Angebot",
+  "stage.hired": "Einstellung",
+  "time.today": "heute",
+  "time.daysAgo": "vor {count} Tagen",
+  "time.monthsAgo": "vor {count} Monaten",
   "login.title": "Anmelden",
   "login.email": "E-Mail",
   "login.password": "Passwort",
@@ -213,6 +401,33 @@ const de: Dictionary = {
 
 const dictionaries: Record<Locale, Dictionary> = { en, ar, ru, de };
 
-export function translate(locale: Locale, key: string): string {
-  return dictionaries[locale][key] ?? dictionaries.en[key] ?? key;
+/** Narrow an untrusted string (a settings row) to a locale we ship a dictionary for. */
+export function isLocale(value: unknown): value is Locale {
+  return typeof value === "string" && (locales as readonly string[]).includes(value);
+}
+
+/** Arabic is the only right-to-left language here, so the check stays a set. */
+const RTL_LOCALES: readonly Locale[] = ["ar"];
+
+export function dirForLocale(locale: Locale): "rtl" | "ltr" {
+  return RTL_LOCALES.includes(locale) ? "rtl" : "ltr";
+}
+
+/**
+ * Look a phrase up, substituting `{name}` placeholders.
+ *
+ * Missing keys fall back to English so a half-translated language still reads,
+ * and a key nobody defined comes back verbatim rather than blank.
+ */
+export function translate(
+  locale: Locale,
+  key: string,
+  vars?: Record<string, string | number>
+): string {
+  const text = dictionaries[locale][key] ?? dictionaries.en[key] ?? key;
+  if (!vars) return text;
+  return Object.entries(vars).reduce(
+    (acc, [name, value]) => acc.split(`{${name}}`).join(String(value)),
+    text
+  );
 }

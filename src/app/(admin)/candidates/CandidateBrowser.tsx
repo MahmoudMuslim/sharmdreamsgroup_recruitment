@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronRight, FileText, Loader2, Search, Send, Sparkles, X } from "lucide-react";
+import { ChevronRight, FileText, Loader2, Lock, Search, Send, Sparkles, X } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -43,6 +43,16 @@ function attemptTone(status: string) {
   if (status === "SUBMITTED") return "info" as const;
   if (status === "IN_PROGRESS") return "gold" as const;
   return "neutral" as const;
+}
+
+/** Stands in for an AI score the signed-in staff member may not read. */
+function LockedScore() {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
+      <Lock className="h-3 w-3" aria-hidden />
+      Hidden
+    </span>
+  );
 }
 
 /** Forward move used by the one-click "Advance" buttons. */
@@ -119,11 +129,17 @@ export function CandidateBrowser({
   canWrite,
   focusId,
   unresolvedRef,
+  timeZone,
+  canGenerateQuestions,
 }: {
   candidates: CandidateRow[];
   canWrite: boolean;
   focusId: string | null;
   unresolvedRef: string | null;
+  /** `organisation.timezone` — the wall clock interviews are booked against. */
+  timeZone: string;
+  /** `ai.interview_questions` — decides whether the drawer can ask the model. */
+  canGenerateQuestions: boolean;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -402,7 +418,9 @@ export function CandidateBrowser({
                       <Badge tone={stageTone(c.stage)}>{c.stage.replace("_", " ")}</Badge>
                     </td>
                     <td className="px-4 py-4">
-                      {c.ai_match_score !== null ? (
+                      {c.scores_masked ? (
+                        <LockedScore />
+                      ) : c.ai_match_score !== null ? (
                         <div className="flex w-32 items-center gap-2">
                           <span className="w-9 text-right font-display font-bold text-brand-gold-dark">
                             {c.ai_match_score}%
@@ -508,9 +526,15 @@ export function CandidateBrowser({
 
                 <div className="flex items-center gap-2">
                   <span className="w-10 text-right text-sm font-display font-bold text-brand-gold-dark">
-                    {c.ai_match_score !== null ? `${c.ai_match_score}%` : "—"}
+                    {c.scores_masked ? "—" : c.ai_match_score !== null ? `${c.ai_match_score}%` : "—"}
                   </span>
-                  <Meter value={c.ai_match_score ?? 0} className="flex-1" />
+                  {c.scores_masked ? (
+                    <span className="flex-1 text-[11px] uppercase tracking-wide text-brand-ink/35">
+                      Scores hidden
+                    </span>
+                  ) : (
+                    <Meter value={c.ai_match_score ?? 0} className="flex-1" />
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between gap-3">
@@ -550,6 +574,8 @@ export function CandidateBrowser({
       <ProfileDrawer
         candidate={liveProfile}
         canWrite={canWrite}
+        timeZone={timeZone}
+        canGenerateQuestions={canGenerateQuestions}
         onClose={() => setProfile(null)}
       />
 
@@ -568,10 +594,14 @@ export function CandidateBrowser({
 function ProfileDrawer({
   candidate,
   canWrite,
+  timeZone,
+  canGenerateQuestions,
   onClose,
 }: {
   candidate: CandidateRow | null;
   canWrite: boolean;
+  timeZone: string;
+  canGenerateQuestions: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
@@ -715,6 +745,8 @@ function ProfileDrawer({
               jobTitle={candidate.job_title}
               initialInterviews={candidate.interviews}
               canWrite={canWrite}
+              timeZone={timeZone}
+              canGenerateQuestions={canGenerateQuestions}
             />
           </div>
 
@@ -796,7 +828,13 @@ function ProfileDrawer({
 
           <section>
             <h3 className="mb-2 font-display text-sm font-bold">AI screening</h3>
-            {candidate.ai_match_score !== null ? (
+            {candidate.scores_masked ? (
+              <p className="text-sm text-brand-ink/45">
+                Scores are hidden for your role. Ask an administrator for the
+                &ldquo;View unmasked scores&rdquo; permission, or switch
+                &ldquo;Mask scores for interviewers&rdquo; off in Settings.
+              </p>
+            ) : candidate.ai_match_score !== null ? (
               <div className="flex items-center gap-3">
                 <span className="w-12 text-right font-display text-2xl font-extrabold text-brand-gold-dark">
                   {candidate.ai_match_score}%
@@ -815,7 +853,7 @@ function ProfileDrawer({
             )}
             {/* Recorded by the screen itself, so it reports the bias-reduction
                 setting as it stood when this score was produced. */}
-            {candidate.ai_match_score !== null &&
+            {candidate.screened &&
               candidate.diversity_flags?.cv_anonymization && (
                 <p className="mt-2 text-xs text-brand-ink/45">
                   {candidate.diversity_flags.cv_anonymization === "applied"
@@ -836,9 +874,9 @@ function ProfileDrawer({
                   ) : (
                     <Sparkles className="h-3.5 w-3.5" aria-hidden />
                   )}
-                  {candidate.ai_match_score !== null ? "Re-screen" : "Screen with AI"}
+                  {candidate.screened ? "Re-screen" : "Screen with AI"}
                 </Button>
-                {candidate.ai_match_score !== null && (
+                {candidate.screened && (
                   <Button
                     variant="outline"
                     size="sm"

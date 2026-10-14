@@ -120,6 +120,16 @@ html[data-nav-animated] .rail-shift {
   transition: padding-left 200ms ease-out;
 }
 
+/* Amiri is the only Arabic face in the build (Inter and Montserrat ship no
+   Arabic subset), so right-to-left copy falls to it. Written as an attribute
+   rule rather than a utility so a per-element class such as `font-mono` still
+   wins on that element: inheritance never beats a declaration of its own.
+   `.font-display` is named because headings carry it directly. */
+[dir="rtl"],
+[dir="rtl"] .font-display {
+  font-family: var(--font-amiri), var(--font-sans);
+}
+
 /* Respect users who ask for less motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

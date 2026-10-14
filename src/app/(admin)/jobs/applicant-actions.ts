@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 
 /**
@@ -34,6 +35,8 @@ export interface JobApplicant {
   attempt_score: number | null;
   attempt_max: number | null;
   template_name: string | null;
+  /** True when `security.mask_scores_for_reviewers` hid the two scores above. */
+  scores_masked: boolean;
 }
 
 /** The bulk of one application: the CV as submitted and the AI screening report. */
@@ -63,7 +66,10 @@ function attemptTemplate(attempt: Record<string, unknown> | null): string | null
 
 export async function getJobApplicants(jobId: string): Promise<ApplicantsResult> {
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const [supabase, masked] = await Promise.all([
+    createSupabaseServerClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
 
   const { data, error } = await supabase
     .from("applications")
@@ -97,12 +103,14 @@ export async function getJobApplicants(jobId: string): Promise<ApplicantsResult>
         source: String(row.source ?? "CAREER_SITE"),
         applied_at: String(row.created_at ?? ""),
         cv_name: cvDisplayName(typeof row.cv_file_path === "string" ? row.cv_file_path : null),
-        ai_match_score: row.ai_match_score === null ? null : Number(row.ai_match_score),
+        ai_match_score: masked || row.ai_match_score === null ? null : Number(row.ai_match_score),
         attempt_status: attempt?.status ? String(attempt.status) : null,
         attempt_token: attempt?.access_token ? String(attempt.access_token) : null,
-        attempt_score: attempt?.total_score == null ? null : Number(attempt.total_score),
+        attempt_score:
+          masked || attempt?.total_score == null ? null : Number(attempt.total_score),
         attempt_max: attempt?.max_score == null ? null : Number(attempt.max_score),
         template_name: attemptTemplate(attempt),
+        scores_masked: masked,
       } satisfies JobApplicant;
     }
   );

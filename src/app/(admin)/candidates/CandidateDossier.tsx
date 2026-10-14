@@ -254,11 +254,17 @@ export function CandidateDossier({ applicationId }: { applicationId: string }) {
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  {attempt.score !== null && (
-                    <span className="font-display text-sm font-bold text-brand-gold-dark">
-                      {attempt.score}
-                      {attempt.max_score !== null ? `/${attempt.max_score}` : ""}
+                  {dossier.scores_masked ? (
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
+                      Score hidden
                     </span>
+                  ) : (
+                    attempt.score !== null && (
+                      <span className="font-display text-sm font-bold text-brand-gold-dark">
+                        {attempt.score}
+                        {attempt.max_score !== null ? `/${attempt.max_score}` : ""}
+                      </span>
+                    )
                   )}
                   <Badge tone={attemptTone(attempt.status)}>{humanizeStage(attempt.status)}</Badge>
                 </div>

@@ -3,6 +3,7 @@ import { getCandidateByRef, getCandidateList } from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { connection } from "next/server";
@@ -37,10 +38,12 @@ export default async function CandidatesPage({
   };
   const hasRef = Boolean(ref.id || ref.trackingCode);
 
-  const [candidates, canWrite, focused] = await Promise.all([
+  const [candidates, canWrite, focused, timeZone, canGenerateQuestions] = await Promise.all([
     getCandidateList(),
     hasPermissionForUser("candidates.write"),
     hasRef ? getCandidateByRef(ref) : Promise.resolve(null),
+    getOrganisationTimeZone(),
+    getBoolSetting("ai.interview_questions", true),
   ]);
 
   // The table only loads the newest 50 applications; a link to anyone older is
@@ -63,6 +66,8 @@ export default async function CandidatesPage({
         canWrite={canWrite}
         focusId={focused?.id ?? null}
         unresolvedRef={hasRef && !focused ? (ref.trackingCode ?? ref.id ?? null) : null}
+        timeZone={timeZone}
+        canGenerateQuestions={canGenerateQuestions}
       />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">

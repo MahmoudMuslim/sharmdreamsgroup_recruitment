@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { isValidTimeZone } from "@/lib/timezone";
 
 /**
  * Reads `app_settings` for code that has no user session — API routes, cron
@@ -50,4 +51,39 @@ export async function getStringSetting(key: string, fallback: string): Promise<s
   const settings = await readGlobalSettings([key]);
   const value = settings.get(key);
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+/**
+ * The wall clock the group operates on.
+ *
+ * Falls back to UTC when the row is missing or holds a zone `Intl` does not
+ * know, so a hand-edited setting cannot throw inside the agenda or a dispatch.
+ */
+export async function getOrganisationTimeZone(): Promise<string> {
+  const zone = await getStringSetting("organisation.timezone", "UTC");
+  return isValidTimeZone(zone) ? zone : "UTC";
+}
+
+/**
+ * The languages a candidate may pick.
+ *
+ * Stored as a JSON array by the multi-select; a legacy comma string and an
+ * unwrapped single value both work, and `fallback` covers a missing row. The
+ * order is kept, so the admin controls which option the switcher shows first.
+ */
+export async function getStringListSetting(key: string, fallback: string[]): Promise<string[]> {
+  const settings = await readGlobalSettings([key]);
+  const value = settings.get(key);
+
+  const list = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.includes(",")
+        ? value.split(",")
+        : [value]
+      : null;
+
+  if (!list) return fallback;
+  const cleaned = list.map((item) => String(item).trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned : fallback;
 }

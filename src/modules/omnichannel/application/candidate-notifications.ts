@@ -4,12 +4,14 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getBoolSetting, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import {
+  enqueueAssessmentInvite,
   enqueueInterviewNotice,
   enqueueStageChangeWhatsApp,
   formatInterviewWhen,
   type InterviewNoticeInput,
 } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import {
+  ASSESSMENT_INVITE_TEMPLATE,
   EMAIL_INTERVIEW_TEMPLATES,
   EMAIL_STAGE_TEMPLATES,
   EMAIL_SUBJECT_DEFAULTS,
@@ -74,6 +76,11 @@ async function loadCandidate(applicationId: string): Promise<Candidate | null> {
   return { id: row.id, full_name: row.full_name, email: row.email, job_title: job?.title ?? "the role" };
 }
 
+/** The sentence both channels put in front of a test link. */
+function startTestLink(accessToken: string): string {
+  return `Start it here: ${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/test/${accessToken}`;
+}
+
 /** Same link the WhatsApp path builds, so one template reads correctly on both. */
 async function assessmentLink(applicationId: string): Promise<string> {
   const { data } = await getSupabaseServiceClient()
@@ -86,7 +93,7 @@ async function assessmentLink(applicationId: string): Promise<string> {
 
   const token = (data as { access_token?: string } | null)?.access_token;
   if (!token) return "";
-  return `Start it here: ${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/test/${token}`;
+  return startTestLink(token);
 }
 
 /**
@@ -251,7 +258,7 @@ export async function notifyInterviewUpdate(input: InterviewNoticeInput): Promis
   if (!copy) return { ...report, email: "off", inApp: "off" };
 
   const vars = await buildVars(candidate, "interview");
-  vars.interview_when = formatInterviewWhen(input.scheduledAt);
+  vars.interview_when = await formatInterviewWhen(input.scheduledAt);
   vars.interview_duration = String(input.durationMinutes);
   vars.interview_link =
     input.kind === "CANCELLED"
@@ -284,6 +291,102 @@ export async function notifyInterviewUpdate(input: InterviewNoticeInput): Promis
       error: outcome.error,
     });
   }
+
+  if (inAppEnabled) {
+    await record({
+      applicationId: input.applicationId,
+      channel: "IN_APP",
+      recipient: candidate.email ?? "portal",
+      subject,
+      body,
+      delivered: true,
+    });
+    report.inApp = "sent";
+  }
+
+  return report;
+}
+
+/**
+ * Posts one letter and writes its history row.
+ *
+ * Kept separate from `notifyStageChange` because those flows grew their own
+ * ordering; new notices should call this so a refused relay reports the same way.
+ */
+async function deliverEmail(input: {
+  applicationId: string;
+  candidate: Candidate;
+  subject: string;
+  body: string;
+  emailEnabled: boolean;
+}): Promise<{ email: ChannelOutcome; error?: string }> {
+  if (!input.emailEnabled) return { email: "off" };
+  if (!input.candidate.email) return { email: "skipped" };
+  if (!(await EmailConnector.isConfigured())) {
+    return {
+      email: "off",
+      error: "Email is switched on but no SMTP relay is configured (Settings → API keys).",
+    };
+  }
+
+  const outcome = await EmailConnector.send({
+    to: input.candidate.email,
+    subject: input.subject,
+    text: input.body,
+  });
+  await record({
+    applicationId: input.applicationId,
+    channel: "EMAIL",
+    recipient: input.candidate.email,
+    subject: input.subject,
+    body: input.body,
+    delivered: outcome.success,
+    error: outcome.error,
+  });
+
+  return { email: outcome.success ? "sent" : "failed", error: outcome.error };
+}
+
+/**
+ * Tells a candidate that a test has been issued for them.
+ *
+ * This is the notice whose link definitely opens: it is minted in the same
+ * action that inserts the attempt, whereas the stage alert fired earlier, often
+ * while no attempt existed yet and `{{assessment_link}}` rendered as nothing.
+ */
+export async function notifyAssessmentInvite(input: {
+  applicationId: string;
+  accessToken: string;
+}): Promise<MessagingReport> {
+  const [emailEnabled, inAppEnabled] = await Promise.all([
+    getBoolSetting("notifications.email_enabled", true),
+    getBoolSetting("notifications.in_app_enabled", true),
+  ]);
+
+  const whatsapp = (await enqueueAssessmentInvite(input)).queued ? "queued" : "skipped";
+  const report: MessagingReport = { whatsapp, email: "skipped", inApp: "skipped" };
+
+  const candidate = await loadCandidate(input.applicationId);
+  if (!candidate) return report;
+
+  const copy = await resolveEmailCopy([ASSESSMENT_INVITE_TEMPLATE, STAGE_FALLBACK_TEMPLATE]);
+  if (!copy) return { ...report, email: "off", inApp: "off" };
+
+  const vars = await buildVars(candidate, "assessment");
+  vars.assessment_link = startTestLink(input.accessToken);
+
+  const body = renderTemplate(copy.body, vars).trim();
+  const subject = renderTemplate(copy.subject, vars).trim();
+
+  const email = await deliverEmail({
+    applicationId: input.applicationId,
+    candidate,
+    subject,
+    body,
+    emailEnabled,
+  });
+  report.email = email.email;
+  if (email.error) report.error = email.error;
 
   if (inAppEnabled) {
     await record({

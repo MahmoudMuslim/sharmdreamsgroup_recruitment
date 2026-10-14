@@ -351,7 +351,10 @@ export function AssignDrawer({
         timeLimitMinutes: Number(minutes),
       });
       if (result.ok) {
-        setDone(`${result.created ?? selected.size} assessment link${(result.created ?? 0) === 1 ? "" : "s"} issued.`);
+        const count = result.created ?? selected.size;
+        setDone(
+          `${count} assessment link${count === 1 ? "" : "s"} issued — candidates are being invited on the channels that are switched on.`
+        );
         setTimeout(onClose, 1200);
       } else {
         setError(result.error ?? "Could not assign the suite.");

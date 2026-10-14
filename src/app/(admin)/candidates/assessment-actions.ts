@@ -3,13 +3,14 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 
 export interface QuestionGrade {
   id: string;
   title: string;
   question_type: string;
   score: number | null;
-  max_score: number;
+  max_score: number | null;
   rationale: string | null;
   strengths: string[];
   improvements: string[];
@@ -25,6 +26,8 @@ export interface AttemptGrades {
   status: string;
   total_score: number | null;
   max_score: number | null;
+  /** `security.mask_scores_for_reviewers` — marks were dropped from these rows. */
+  scores_masked: boolean;
   grades: QuestionGrade[];
 }
 
@@ -32,10 +35,18 @@ export interface AttemptGrades {
  * Per-question AI grades for one attempt, newest structure aside — ordered by
  * the template's question position so the recruiter reads it like the exam.
  * Rationale text is capped client-side; the full answer stays in the database.
+ *
+ * The marks themselves follow the same rule as the candidate table: under
+ * `security.mask_scores_for_reviewers` they are dropped here, so a reviewer
+ * without `scores.view_unmasked` cannot recover them from this report either.
+ * Answers, recordings and the AI's written feedback stay visible.
  */
 export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGrades | null> {
   await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const [supabase, masked] = await Promise.all([
+    createSupabaseServerClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
@@ -85,8 +96,8 @@ export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGr
       id: row.question_id,
       title: question?.title ?? "Question",
       question_type: question?.question_type ?? "MULTIPLE_CHOICE",
-      score: row.score,
-      max_score: row.max_score,
+      score: masked ? null : row.score,
+      max_score: masked ? null : row.max_score,
       rationale: row.ai_evaluation?.rationale ?? null,
       strengths: row.ai_evaluation?.strengths ?? [],
       improvements: row.ai_evaluation?.improvements ?? [],
@@ -102,8 +113,9 @@ export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGr
     attempt_id: attempt.id,
     template_name: template?.name ?? "Assessment",
     status: attempt.status,
-    total_score: attempt.total_score === null ? null : Number(attempt.total_score),
-    max_score: attempt.max_score === null ? null : Number(attempt.max_score),
+    total_score: masked || attempt.total_score === null ? null : Number(attempt.total_score),
+    max_score: masked || attempt.max_score === null ? null : Number(attempt.max_score),
+    scores_masked: masked,
     grades,
   };
 }

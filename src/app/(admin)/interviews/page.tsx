@@ -2,6 +2,7 @@ import { CalendarDays } from "lucide-react";
 import { getInterviewAgenda } from "./actions";
 import { InterviewAgenda } from "./InterviewAgenda";
 import { requireStaff } from "@/lib/auth/session";
+import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { connection } from "next/server";
@@ -16,18 +17,21 @@ export const instant = false;
 
 export default async function InterviewsPage() {
   await connection();
-  const user = await requireStaff("/interviews");
-  const interviews = await getInterviewAgenda();
+  const [user, interviews, timeZone] = await Promise.all([
+    requireStaff("/interviews"),
+    getInterviewAgenda(),
+    getOrganisationTimeZone(),
+  ]);
 
   return (
     <AdminShell user={user}>
       <PageHeader
         eyebrow="Hiring calendar"
         title="Interviews"
-        description="Scheduled panels for the whole group. Times show in your own timezone."
+        description={`Scheduled panels for the whole group. Times and day boundaries follow the organisation timezone (${timeZone}).`}
       />
 
-      <InterviewAgenda interviews={interviews} />
+      <InterviewAgenda interviews={interviews} timeZone={timeZone} />
 
       <Card className="mt-6 flex items-start gap-4 p-5">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-gold/15 text-brand-gold-dark">

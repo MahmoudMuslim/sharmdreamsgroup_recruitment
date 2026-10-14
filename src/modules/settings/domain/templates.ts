@@ -39,7 +39,7 @@ export const TEMPLATE_TOKENS: { token: string; renders: string }[] = [
   { token: "{{stage}}", renders: "pipeline stage, human-readable" },
   { token: "{{company_name}}", renders: "Settings → Organisation name" },
   { token: "{{assessment_link}}", renders: "start-test link, empty if none" },
-  { token: "{{interview_when}}", renders: "slot time in UTC, e.g. '12 Oct 2026, 10:30 UTC'" },
+  { token: "{{interview_when}}", renders: "slot time in the organisation timezone, e.g. '21 Oct 2026, 21:00 EEST'" },
   { token: "{{interview_duration}}", renders: "slot length in minutes" },
   { token: "{{interview_link}}", renders: "' Join here: <url>', empty when no link" },
 ];
@@ -51,7 +51,7 @@ export const TEMPLATE_PREVIEW_VARS: TemplateVars = {
   stage: "interview",
   company_name: "Sharm Dreams Group",
   assessment_link: "Start it here: https://example.com/test/ab12cd34",
-  interview_when: "12 Oct 2026, 10:30 UTC",
+  interview_when: "21 Oct 2026, 21:00 EEST",
   interview_duration: "45",
   interview_link: " Join here: https://meet.example.com/panel",
 };
@@ -76,6 +76,15 @@ export const WHATSAPP_INTERVIEW_TEMPLATES: Record<"SCHEDULED" | "CHANGED" | "CAN
   CHANGED: "interview_changed",
   CANCELLED: "interview_cancelled",
 };
+
+/**
+ * The one notice that is not a pipeline move: a recruiter issuing a test.
+ *
+ * A stage alert fires when the candidate *reaches* Assessment, which is usually
+ * before anybody has issued a suite, so `{{assessment_link}}` renders empty in
+ * that message. This row is what carries a working start link.
+ */
+export const ASSESSMENT_INVITE_TEMPLATE = "assessment_invite";
 
 /**
  * Template key for each pipeline-stage email.
@@ -119,6 +128,7 @@ export const EMAIL_SUBJECT_DEFAULTS: Record<string, string> = {
   interview_scheduled: "Interview confirmed — {{job_title}}",
   interview_changed: "Your interview time has moved — {{job_title}}",
   interview_cancelled: "Interview cancelled — {{job_title}}",
+  assessment_invite: "Your assessment for {{job_title}}",
 };
 
 /** Letter-style bodies used when no EMAIL row exists for the key. */
@@ -137,6 +147,8 @@ export const EMAIL_TEMPLATE_DEFAULTS: Record<string, string> = {
     "Dear {{candidate_name}},\n\nWe have moved your interview for {{job_title}} to {{interview_when}} (approximately {{interview_duration}} minutes).{{interview_link}}\n\nPlease let us know if the new time does not suit you.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
   interview_cancelled:
     "Dear {{candidate_name}},\n\nWe have had to cancel your interview for {{job_title}} that was set for {{interview_when}}. We will write again to arrange another time.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  assessment_invite:
+    "Dear {{candidate_name}},\n\nYour assessment for {{job_title}} is ready.\n\n{{assessment_link}}\n\nIt is timed, so please choose a moment when you can work without interruption, and start it as soon as you can — the link stops working once the window closes.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
 };
 
 /**
@@ -167,6 +179,8 @@ export const TEMPLATE_DEFAULTS: Record<string, string> = {
     "Hi {{candidate_name}}, we have moved your interview for {{job_title}} to {{interview_when}} (about {{interview_duration}} minutes).{{interview_link}}",
   interview_cancelled:
     "Hi {{candidate_name}}, we have cancelled your interview for {{job_title}} that was set for {{interview_when}}. We will be in touch to arrange another time.",
+  assessment_invite:
+    "Hi {{candidate_name}}, your assessment for {{job_title}} is ready. {{assessment_link}}",
 };
 
 /**
@@ -215,7 +229,7 @@ Object.assign(TEMPLATE_PURPOSE, {
   interview_scheduled: "Sent when a recruiter books a panel",
   interview_changed: "Sent when a booked panel moves",
   interview_cancelled: "Sent when a booked panel is cancelled",
-  assessment_invite: "Superseded by the assessment stage template",
+  assessment_invite: "Sent when a recruiter issues a test — carries the start link",
   application_received: "Sent when a candidate submits an application",
   offer_letter: "Sent when a candidate moves to the offer stage",
   prospect_outreach_email:
@@ -230,6 +244,7 @@ const WIRED_KEYS = new Set<string>([
   ...Object.values(WHATSAPP_INTERVIEW_TEMPLATES),
   ...Object.values(EMAIL_STAGE_TEMPLATES),
   ...Object.values(PROSPECT_OUTREACH_TEMPLATES),
+  ASSESSMENT_INVITE_TEMPLATE,
   STAGE_FALLBACK_TEMPLATE,
 ]);
 
@@ -241,7 +256,7 @@ const WIRED_KEYS = new Set<string>([
  * A key outside those maps is copy no flow asks for.
  */
 export function templateIsWired(template: { key: string; channel: string }): boolean {
-  if (!WIRED_KEYS.has(template.key) || template.key === "assessment_invite") return false;
+  if (!WIRED_KEYS.has(template.key)) return false;
   return template.channel === "WHATSAPP" || template.channel === "EMAIL" || template.channel === "IN_APP";
 }
 

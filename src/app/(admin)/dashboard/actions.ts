@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import type {
   ApplicationStage,
   ApplicationSource,
@@ -41,7 +42,10 @@ interface AttemptJoin {
 }
 
 export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
-  const supabase = await createSupabaseServerClient();
+  const [supabase, masked] = await Promise.all([
+    createSupabaseServerClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
 
   const [applicationsResult, attemptsResult, jobsResult] = await Promise.all([
     supabase
@@ -163,7 +167,13 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   const scoreByApplication = new Map(attempts.map((a) => [a.application_id, a.total_score]));
 
   const candidates: DashboardCandidate[] = [...applications]
-    .sort((a, b) => (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1))
+    .sort((a, b) =>
+      // Ranking by a hidden score would leak its order, so a masked caller gets
+      // the board newest-first instead.
+      masked
+        ? String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
+        : (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1)
+    )
     .slice(0, 200)
     .map((app) => {
       const job = Array.isArray(app.job_openings) ? app.job_openings[0] : app.job_openings;
@@ -172,12 +182,12 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
         full_name: app.full_name,
         job_title: job?.title ?? "",
         department: job?.department ?? "",
-        match_score: app.ai_match_score ?? 0,
+        match_score: masked ? null : app.ai_match_score,
         stage: app.stage,
         source: app.source,
         applied_at: app.created_at,
         has_assessment: scoreByApplication.has(app.id),
-        assessment_score: scoreByApplication.get(app.id) ?? null,
+        assessment_score: masked ? null : scoreByApplication.get(app.id) ?? null,
       };
     });
 
@@ -186,12 +196,17 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     active_jobs: activeJobs,
     hires_this_quarter: applications.filter((a) => a.stage === "HIRED").length,
     avg_time_to_hire_days: Math.round(avgTimeToHire),
-    avg_fit_score: avgFitScore,
+    // A masked caller gets the count of scored applications, never the numbers
+    // themselves — not even averaged into a single figure on the server.
+    avg_fit_score: masked ? 0 : avgFitScore,
     scored_applications: scores.length,
+    scores_masked: masked,
     applications_last_14_days,
     pipeline,
     channels,
-    fit_distribution,
+    fit_distribution: masked
+      ? fit_distribution.map((bucket) => ({ ...bucket, count: 0 }))
+      : fit_distribution,
     diversity: [],
     time_to_hire_trend,
     candidates,

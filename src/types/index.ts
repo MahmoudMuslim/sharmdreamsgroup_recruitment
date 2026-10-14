@@ -385,7 +385,8 @@ export interface DashboardCandidate {
   full_name: string;
   job_title: string;
   department: string;
-  match_score: number;
+  /** Null when unscored, or when `security.mask_scores_for_reviewers` hides it. */
+  match_score: number | null;
   stage: ApplicationStage;
   source: ApplicationSource;
   applied_at: string | null;
@@ -400,6 +401,8 @@ export interface DashboardAnalytics {
   avg_time_to_hire_days: number;
   avg_fit_score: number;
   scored_applications: number;
+  /** True when `security.mask_scores_for_reviewers` hid every AI score above. */
+  scores_masked: boolean;
   applications_last_14_days: { date: string; count: number }[];
   pipeline: PipelineFunnelStep[];
   channels: ChannelEffectiveness[];

@@ -1,10 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { randomBytes } from "crypto";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { notifyAssessmentInvite } from "@/modules/omnichannel/application/candidate-notifications";
+import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 
 export interface TemplateResult {
   ok: boolean;
@@ -91,6 +94,8 @@ export interface AssignResult {
  *
  * Each attempt gets a cryptographically random access token — the candidate
  * portal is authorised by that token alone, so it must be unguessable.
+ * Everyone who receives a new attempt is then invited on the channels that are
+ * switched on, because the token is only useful once the candidate has it.
  */
 export async function assignTemplate(input: {
   templateId: string;
@@ -160,5 +165,26 @@ export async function assignTemplate(input: {
 
   revalidatePath("/assessments");
   revalidatePath("/candidates");
+
+  // Issuing the test is the news the candidate actually needs: the stage alert
+  // usually went out before any attempt existed, so its link token was empty.
+  // Letters and portal notices are written after the recruiter's click has been
+  // answered, and one candidate's relay refusal must not stop the rest.
+  const invitations = rows.map((row) => ({
+    applicationId: row.application_id,
+    accessToken: row.access_token,
+  }));
+
+  after(async () => {
+    for (const invitation of invitations) {
+      try {
+        await notifyAssessmentInvite(invitation);
+      } catch {
+        // Recorded nowhere else: the outbox still shows the WhatsApp queue.
+      }
+    }
+    await processDueWhatsAppJobs(invitations.length);
+  });
+
   return { ok: true, created: rows.length };
 }

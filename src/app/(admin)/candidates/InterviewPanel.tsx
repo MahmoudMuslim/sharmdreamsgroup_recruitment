@@ -2,15 +2,18 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarClock, CalendarPlus, Loader2, X } from "lucide-react";
+import { CalendarClock, CalendarPlus, Loader2, ScrollText, X } from "lucide-react";
 import { Badge, Button, EmptyState } from "@/modules/analytics/presentation/ui";
+import { formatInZone, fromZoneInputValue, toZoneInputValue } from "@/lib/timezone";
 import { Field, FormMessage, Select, TextInput } from "@/modules/analytics/presentation/Form";
 import {
+  generateInterviewGuide,
   listInterviewers,
   rescheduleInterview,
   scheduleInterview,
   setInterviewStatus,
   type InterviewerOption,
+  type InterviewGuideQuestion,
   type InterviewMutation,
   type InterviewRecord,
 } from "./interview-actions";
@@ -33,7 +36,7 @@ function channelSummary(channels: ChannelReport | undefined, notified: boolean |
   }
 
   const parts: string[] = [];
-  if (channels.whatsapp === "queued") parts.push("a WhatsApp note queued");
+  if (channels.whatsapp === "queued") parts.push("a queued WhatsApp note");
   if (channels.email === "sent") parts.push("an email");
   if (channels.email === "failed") parts.push("an email the relay refused (see Outbox)");
   if (channels.inApp === "sent") parts.push("a portal notice");
@@ -41,7 +44,8 @@ function channelSummary(channels: ChannelReport | undefined, notified: boolean |
   if (parts.length === 0) {
     return "(nothing reached the candidate — every channel is off, or the email and number are missing.)";
   }
-  return `The candidate was sent ${parts.join(", ")}.`;
+  const last = parts.pop() as string;
+  return `The candidate was sent ${parts.length ? `${parts.join(", ")} and ${last}` : last}.`;
 }
 
 function statusTone(status: string) {
@@ -51,30 +55,19 @@ function statusTone(status: string) {
   return "info" as const;
 }
 
-/** Reads an ISO instant as the wall clock the recruiter's browser is on. */
-function formatSlot(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-/** Prefills a `datetime-local` input from a stored instant. */
-function toLocalInputValue(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
+/** Reads an ISO instant as the wall clock the organisation books against. */
+function formatSlot(iso: string, timeZone: string): string {
+  return formatInZone(iso, timeZone, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /**
  * Interview scheduling for one candidate.
  *
  * Bookings are stored on `interview_schedules`; the candidate hears about them
- * over the same WhatsApp queue the pipeline uses. Times are shown in the
- * recruiter's own timezone and sent as absolute instants, so a booking never
- * shifts on the way to the database.
+ * over the same WhatsApp queue the pipeline uses. Times are read and typed in
+ * `organisation.timezone` — the zone the interview physically happens in — and
+ * converted to an absolute instant before they leave the browser, so a recruiter
+ * on holiday books the same slot as one at the desk.
  */
 export function InterviewPanel({
   applicationId,
@@ -82,12 +75,18 @@ export function InterviewPanel({
   jobTitle,
   initialInterviews,
   canWrite,
+  timeZone,
+  canGenerateQuestions,
 }: {
   applicationId: string;
   candidateName: string;
   jobTitle: string | null;
   initialInterviews: InterviewRecord[];
   canWrite: boolean;
+  /** `organisation.timezone`, passed down from the page that reads the setting. */
+  timeZone: string;
+  /** `ai.interview_questions` — the button only appears while that switch is on. */
+  canGenerateQuestions: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -98,6 +97,27 @@ export function InterviewPanel({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<InterviewGuideQuestion[] | null>(null);
+  const [guideError, setGuideError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  async function makeGuide() {
+    setGenerating(true);
+    setGuideError(null);
+    try {
+      const result = await generateInterviewGuide({ applicationId });
+      if (result.ok) setQuestions(result.questions ?? []);
+      else {
+        setQuestions(null);
+        setGuideError(result.error ?? "The model did not return a guide.");
+      }
+    } catch {
+      setQuestions(null);
+      setGuideError("The question service did not answer.");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("45");
@@ -118,7 +138,7 @@ export function InterviewPanel({
     setNotice(null);
     if (existing) {
       setEditingId(existing.id);
-      setWhen(toLocalInputValue(existing.scheduled_at));
+      setWhen(toZoneInputValue(existing.scheduled_at, timeZone));
       setDuration(String(existing.duration_minutes));
       setMeetingLink(existing.meeting_link ?? "");
     } else {
@@ -142,14 +162,14 @@ export function InterviewPanel({
       setError("Pick a date and time.");
       return;
     }
-    const instant = new Date(when);
-    if (Number.isNaN(instant.getTime())) {
+    const scheduledAt = fromZoneInputValue(when, timeZone);
+    if (!scheduledAt) {
       setError("Pick a valid date and time.");
       return;
     }
 
     const payload = {
-      scheduledAt: instant.toISOString(),
+      scheduledAt,
       durationMinutes: Number(duration),
       meetingLink,
       interviewerProfileId: interviewerId || null,
@@ -267,7 +287,9 @@ export function InterviewPanel({
                 {interviews.map((row) => (
                   <li key={row.id} className="rounded-xl border border-brand-line bg-brand-cream p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="font-display text-sm font-bold">{formatSlot(row.scheduled_at)}</p>
+                      <p className="font-display text-sm font-bold">
+                        {formatSlot(row.scheduled_at, timeZone)}
+                      </p>
                       <Badge tone={statusTone(row.status)}>{row.status.replace("_", " ")}</Badge>
                     </div>
                     <p className="mt-1 text-xs text-brand-ink/60">
@@ -312,7 +334,12 @@ export function InterviewPanel({
                   {editingId ? "Move this interview" : "New interview"}
                 </h3>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label="Date and time" htmlFor="interview-when" required hint="Shown in your timezone and sent as an absolute time.">
+                  <Field
+                    label="Date and time"
+                    htmlFor="interview-when"
+                    required
+                    hint={`Typed against the organisation timezone (${timeZone}) and sent as an absolute time.`}
+                  >
                     <TextInput
                       id="interview-when"
                       type="datetime-local"
@@ -394,6 +421,52 @@ export function InterviewPanel({
                   </div>
                 )}
               </>
+            )}
+
+            {canGenerateQuestions && (
+              <section className="mt-5 rounded-xl border border-brand-line bg-brand-cream p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-1.5 font-display text-sm font-bold">
+                    <ScrollText className="h-4 w-4 text-brand-gold-dark" aria-hidden />
+                    Interview questions
+                  </h3>
+                  <Button size="sm" variant="outline" disabled={generating} onClick={() => void makeGuide()}>
+                    {generating && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+                    {questions ? "Regenerate" : "Generate from the CV gaps"}
+                  </Button>
+                </div>
+                <p className="mt-1 text-xs text-brand-ink/55">
+                  Asked of the model behind Settings → AI & screening: it reads the gaps AI screening
+                  found in this CV, the role&rsquo;s requirements and the answers from the test. The
+                  guide is not stored — copy what you need into your notes before closing this panel.
+                </p>
+
+                {guideError && <p className="mt-3 text-xs font-semibold text-rose-700">{guideError}</p>}
+
+                {questions && questions.length > 0 && (
+                  <ol className="mt-3 space-y-2.5">
+                    {questions.map((item, index) => (
+                      <li key={index} className="rounded-lg border border-brand-line bg-white p-3">
+                        <p className="text-sm font-semibold leading-snug">
+                          {index + 1}. {item.question}
+                        </p>
+                        {item.rationale && (
+                          <p className="mt-1.5 text-xs leading-relaxed text-brand-ink/60">{item.rationale}</p>
+                        )}
+                        {item.skill_probed && (
+                          <p className="mt-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-gold-dark">
+                            {item.skill_probed}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+
+                {questions && questions.length === 0 && !guideError && (
+                  <p className="mt-3 text-xs text-brand-ink/55">The model returned no questions.</p>
+                )}
+              </section>
             )}
           </div>
         </div>

@@ -139,8 +139,8 @@ export function IntegrityPanel({
                       Integrity
                     </p>
                     <p className="mt-1 font-display text-2xl font-extrabold">
-                      {report.integrity_score ?? "—"}
-                      {report.integrity_score !== null && (
+                      {report.scores_masked ? "Hidden" : (report.integrity_score ?? "—")}
+                      {!report.scores_masked && report.integrity_score !== null && (
                         <span className="text-sm text-brand-ink/40">/100</span>
                       )}
                     </p>
@@ -158,8 +158,8 @@ export function IntegrityPanel({
                       Score
                     </p>
                     <p className="mt-1 font-display text-2xl font-extrabold">
-                      {report.score ?? "—"}
-                      {report.max_score ? (
+                      {report.scores_masked ? "Hidden" : (report.score ?? "—")}
+                      {!report.scores_masked && report.max_score ? (
                         <span className="text-sm text-brand-ink/40">/{report.max_score}</span>
                       ) : null}
                     </p>
@@ -171,6 +171,14 @@ export function IntegrityPanel({
                     <p className="mt-1 text-sm font-bold">{report.status}</p>
                   </div>
                 </div>
+
+                {report.scores_masked && (
+                  <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/60">
+                    The marks are withheld because “Mask scores for interviewers” is on and your
+                    role is not granted “View unmasked scores”. Answers, recordings and the AI’s
+                    written feedback are still here.
+                  </p>
+                )}
 
                 {grades && grades.grades.length > 0 && (
                   <section className="space-y-3">
@@ -200,8 +208,19 @@ export function IntegrityPanel({
                                 {QUESTION_TYPE_LABELS[grade.question_type] ?? grade.question_type}
                               </p>
                             </div>
-                            <Badge tone={scoreTone(grade.max_score > 0 && grade.score !== null ? Math.round((grade.score / grade.max_score) * 100) : null)} className="shrink-0">
-                              {grade.score === null ? "Not graded" : `${grade.score}/${grade.max_score}`}
+                            <Badge
+                              tone={
+                                grades.scores_masked || grade.score === null || !grade.max_score
+                                  ? "neutral"
+                                  : scoreTone(Math.round((grade.score / grade.max_score) * 100))
+                              }
+                              className="shrink-0"
+                            >
+                              {grades.scores_masked
+                                ? "Hidden"
+                                : grade.score === null || !grade.max_score
+                                  ? "Not graded"
+                                  : `${grade.score}/${grade.max_score}`}
                             </Badge>
                           </div>
 
@@ -281,7 +300,9 @@ export function IntegrityPanel({
                     <div className="flex items-center gap-2">
                       <Badge tone={scoreTone(report.integrity_score)}>
                         <ShieldAlert className="h-3 w-3" aria-hidden />
-                        Integrity {report.integrity_score ?? "?"}/100
+                        {report.scores_masked
+                          ? "Signals recorded"
+                          : `Integrity ${report.integrity_score ?? "?"}/100`}
                       </Badge>
                       <span className="text-xs text-brand-ink/45">
                         {report.events.length} event

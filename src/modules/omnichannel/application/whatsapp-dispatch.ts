@@ -1,9 +1,14 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { formatInZone } from "@/lib/timezone";
+import {
+  getOrganisationTimeZone,
+  getStringSetting,
+} from "@/modules/settings/infrastructure/settingsReader";
 import { WhatsAppConnector } from "@/modules/omnichannel/infrastructure/connectors";
 import {
+  ASSESSMENT_INVITE_TEMPLATE,
   STAGE_FALLBACK_TEMPLATE,
   TEMPLATE_DEFAULTS,
   WHATSAPP_INTERVIEW_TEMPLATES,
@@ -135,6 +140,9 @@ export async function enqueueStageChangeWhatsApp(
     .from("applications")
     .select("id, full_name, phone, job_openings(title), candidate_attempts(access_token)")
     .eq("id", applicationId)
+    // A re-issued candidate has several attempts; the link must be the newest,
+    // and an unordered embed is whichever row the database happened to read.
+    .order("created_at", { referencedTable: "candidate_attempts", ascending: false })
     .maybeSingle();
 
   const application = data as ApplicationForAlert | null;
@@ -170,24 +178,75 @@ export async function enqueueStageChangeWhatsApp(
   return { queued: !error };
 }
 
+/**
+ * Queues the invitation a candidate gets when a recruiter issues a test.
+ *
+ * The stage alert usually went out before any attempt existed, so its
+ * `{{assessment_link}}` rendered as nothing. This message is the one that
+ * carries a link which opens the test, and it takes the token the issuing
+ * action just minted rather than looking one up.
+ */
+export async function enqueueAssessmentInvite(input: {
+  applicationId: string;
+  accessToken: string;
+}): Promise<{ queued: boolean }> {
+  const settings = await getNotificationSettings();
+  if (!settings.whatsappEnabled) return { queued: false };
+
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from("applications")
+    .select("id, full_name, phone, job_openings(title)")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
+  const application = data as ApplicationForAlert | null;
+  if (!application?.phone) return { queued: false };
+
+  const job = Array.isArray(application.job_openings)
+    ? application.job_openings[0]
+    : application.job_openings;
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
+  const { body, key } = await resolveTemplate([ASSESSMENT_INVITE_TEMPLATE]);
+  const vars = await buildVars(application, job?.title ?? "the role", "assessment");
+  vars.assessment_link = `Start it here: ${siteUrl}/test/${input.accessToken}`;
+
+  const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
+    application_id: input.applicationId,
+    recipient_phone: application.phone,
+    payload: { text: renderTemplate(body, vars).trim(), template: key },
+    status: "PENDING",
+  });
+
+  return { queued: !error };
+}
 
 export type InterviewNoticeKind = "SCHEDULED" | "CHANGED" | "CANCELLED";
 
 /**
  * Renders an interview slot for a candidate who reads it on their phone.
  *
- * The server does not know the candidate's timezone, so the string names UTC
- * out loud instead of printing a local time that would be wrong for them.
+ * The group's operating timezone (`organisation.timezone`) is the only one it
+ * can name credibly, and it is printed as an abbreviation so a candidate in a
+ * different zone can still convert it.
  */
-export function formatInterviewWhen(iso: string): string {
+export async function formatInterviewWhen(iso: string): Promise<string> {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "the agreed time";
-  const stamped = new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC",
-  }).format(date);
-  return `${stamped} UTC`;
+  const zone = await getOrganisationTimeZone();
+  // `dateStyle`/`timeStyle` cannot be mixed with `timeZoneName`, so the fields
+  // are asked for explicitly — and h23 keeps midnight printing as 00, not 24.
+  return formatInZone(iso, zone, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZoneName: "short",
+  });
 }
 
 export interface InterviewNoticeInput {
@@ -240,7 +299,7 @@ export async function enqueueInterviewNotice(
   const templateKey = WHATSAPP_INTERVIEW_TEMPLATES[input.kind];
   const { body, key } = await resolveTemplate([templateKey]);
   const vars = await buildVars(application, job?.title ?? "the role", "interview");
-  vars.interview_when = formatInterviewWhen(input.scheduledAt);
+  vars.interview_when = await formatInterviewWhen(input.scheduledAt);
   vars.interview_duration = String(input.durationMinutes);
   vars.interview_link = link;
 
