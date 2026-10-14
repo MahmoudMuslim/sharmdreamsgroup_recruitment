@@ -184,7 +184,10 @@ export function normalizeProspectProfile(raw: unknown): ProspectProfile {
         /^(present|current|now|ongoing)$/i.test(String(item.end ?? "")),
       detail: block(item.detail ?? item.description ?? item.summary, LIMITS.detail),
     }))
-    .filter((role) => role.title.length > 1)
+    // A page that only states an affiliation echoes it into both halves of the
+    // role. That is a company, not a job, and "Linux Foundation — Linux
+    // Foundation" in the CV text would mislead the screening step that follows.
+    .filter((role) => role.title.length > 1 && role.title.toLowerCase() !== (role.company ?? "").toLowerCase())
     .slice(0, LIMITS.roles);
 
   const education: ProfileEducation[] = list(source.education)

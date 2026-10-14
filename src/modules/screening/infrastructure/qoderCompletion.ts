@@ -122,6 +122,49 @@ export function qoderRuntimeStatus(): { ok: boolean; reason: string } {
 }
 
 /**
+ * Where the Qoder runtime is allowed to keep its state.
+ *
+ * The worker resolves its directory in this order — `QODER_CONFIG_DIR`, else
+ * `QODER_CLI_HOME`/`os.homedir()` joined with `.qoder` — and creates whatever it
+ * picked. Vercel's home (`/home/sbx_user1051`) does not exist and cannot be
+ * created, so the worker dies on that `mkdirSync` before it speaks, and all the
+ * admin sees is exit code 1. Redirecting it to `/tmp`, the one directory a
+ * serverless host guarantees writable, is what makes the difference: the
+ * environment is the only lever that reaches a worker thread, because the SDK's
+ * in-process override is a `globalThis` symbol and every worker starts with its
+ * own. A host whose home already works is left exactly as it was.
+ */
+let statePrepared = false;
+
+export function prepareQoderState(): void {
+  if (statePrepared) return;
+  statePrepared = true;
+  // An operator who mounted a writable volume told the runtime where to live.
+  if (process.env.QODER_CONFIG_DIR) return;
+
+  const intended = path.join(process.env.QODER_CLI_HOME ?? os.homedir(), ".qoder");
+  if (isWritable(intended)) return;
+
+  const fallback = path.join(os.tmpdir(), "qoder-state");
+  if (!isWritable(fallback)) return;
+
+  process.env.QODER_CONFIG_DIR = fallback;
+  process.env.QODER_CLI_HOME = fallback;
+  process.env.HOME = fallback;
+  process.env.USERPROFILE = fallback;
+}
+
+function isWritable(dir: string): boolean {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.accessSync(dir, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The SDK's transport errors carry the worker's own stderr on the error object
  * but keep it out of `message`, so the cause of an exit code is exactly the part
  * that would be thrown away. The message is read structurally, not by
@@ -171,6 +214,7 @@ export async function callQoderCompletion(
   if (!runtime.ok) {
     throw new QoderCompletionError(`Qoder cannot be started here: ${runtime.reason}.`);
   }
+  prepareQoderState();
 
   const systemPrompt = messages
     .filter((m) => m.role === "system")

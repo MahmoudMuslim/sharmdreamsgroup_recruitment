@@ -8,6 +8,7 @@ import { resolveSecret } from "@/modules/settings/infrastructure/credentialResol
 import {
   QODER_BUILTIN_TOOLS,
   describeQoderFailure,
+  prepareQoderState,
   qoderRuntimeStatus,
 } from "@/modules/screening/infrastructure/qoderCompletion";
 import {
@@ -221,6 +222,7 @@ export async function runQoderAssistantTurn(
 
   const runtime = qoderRuntimeStatus();
   if (!runtime.ok) throw new QoderAssistantError(`Qoder cannot be started here: ${runtime.reason}.`);
+  prepareQoderState();
 
   let sdk: typeof import("@qoder-ai/qoder-agent-sdk");
   try {

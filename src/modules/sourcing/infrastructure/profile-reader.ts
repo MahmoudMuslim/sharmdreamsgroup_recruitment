@@ -407,7 +407,7 @@ export async function readProfileFromUrl(raw: string): Promise<ProfileReadOutcom
     } catch {
       return blocked(
         "LinkedIn did not answer the request.",
-        "Open the profile in your browser, select the page, copy it and paste it into “Paste profile text”."
+        "Open the profile in your browser, select the page, copy it and paste it into “Pasted text”."
       );
     }
 
@@ -427,7 +427,7 @@ export async function readProfileFromUrl(raw: string): Promise<ProfileReadOutcom
         : `LinkedIn answered with HTTP ${page.status}${
             /json/i.test(page.type) ? "" : ` (“${page.type.split(";")[0] || "no content type"}” returned)`
           } — the profile itself sits behind a login, so it is not readable by any automated request.`,
-      "You can see the profile in your own browser: open it, select the page, copy it and use “Paste profile text”. LinkedIn's own “Save to PDF” or account export works too, under “Upload export”."
+      "You can see the profile in your own browser: open it, select the page, copy it and use “Pasted text”. LinkedIn's own “Save to PDF” or account export works too, under “Upload export”."
     );
   }
 

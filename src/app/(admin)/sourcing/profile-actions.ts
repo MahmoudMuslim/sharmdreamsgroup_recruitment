@@ -239,7 +239,7 @@ export async function readProspectProfile(input: {
     return {
       ok: false,
       error: "There is no link on this prospect to read.",
-      hint: "Add a profile URL, or paste their history in through “Paste profile text”.",
+      hint: "Add a profile URL, or paste their history in through “Pasted text”.",
     };
   }
 
