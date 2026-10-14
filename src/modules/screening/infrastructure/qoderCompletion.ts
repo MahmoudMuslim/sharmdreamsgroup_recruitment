@@ -2,6 +2,7 @@ import "server-only";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import type { ChatCompletionMessage } from "@/types";
 
 /**
@@ -49,6 +50,97 @@ export const QODER_BUILTIN_TOOLS = [
 /** Raised when Qoder cannot serve this completion, so the gateway can move on. */
 export class QoderCompletionError extends Error {}
 
+/** Cached: the answer cannot change during one process's life. */
+let runtimeStatus: { ok: boolean; reason: string } | null = null;
+
+/** Where the SDK looks for the runtime it starts by default. */
+const WORKER_RUNTIME = ["dist", "_worker", "qoder-worker-runtime.obf.mjs"];
+
+/**
+ * The SDK is kept out of the server bundle (`serverExternalPackages`), so it is
+ * resolved from `node_modules` at call time — which is also where its downloaded
+ * runtime would have to be.
+ */
+function packageRoot(): string | null {
+  try {
+    const req = createRequire(path.join(process.cwd(), "noop.js"));
+    return path.dirname(path.dirname(req.resolve("@qoder-ai/qoder-agent-sdk")));
+  } catch {
+    return null;
+  }
+}
+
+function detectRuntimeStatus(): { ok: boolean; reason: string } {
+  const root = packageRoot();
+  if (!root) {
+    return { ok: false, reason: "the Qoder SDK is not installed on this host" };
+  }
+
+  const runtime = path.join(root, ...WORKER_RUNTIME);
+  if (!fs.existsSync(runtime) || fs.statSync(runtime).size === 0) {
+    return {
+      ok: false,
+      reason:
+        `this host has no Qoder agent runtime (${WORKER_RUNTIME.join("/")} is missing). ` +
+        "The SDK's install script downloads one per platform, and a serverless bundle carries only " +
+        "the package's own JavaScript — run this engine on a host that installs the runtime.",
+    };
+  }
+
+  try {
+    const info = JSON.parse(
+      fs.readFileSync(path.join(path.dirname(runtime), "runtime-info.json"), "utf8")
+    ) as { target?: string };
+    const here = `${process.platform}-${process.arch}`;
+    if (info.target && info.target !== here) {
+      return {
+        ok: false,
+        reason: `the Qoder runtime on this host was built for ${info.target}, not ${here}`,
+      };
+    }
+  } catch {
+    // A runtime without a manifest still gets the chance to start and speak.
+  }
+
+  return { ok: true, reason: "" };
+}
+
+/**
+ * Whether this process can start Qoder at all, before a turn is spent finding
+ * out the hard way.
+ *
+ * Qoder's default transport is not an HTTP call: the SDK starts a ~33 MB worker
+ * runtime that its postinstall script downloads into the package's own
+ * `dist/_worker`, built for the OS and CPU of the machine that ran
+ * `npm install`. On a serverless host that runtime is absent, and the worker
+ * dies with exit code 1 — which the SDK documents as "general or unclassified
+ * failure, investigate stderr".
+ */
+export function qoderRuntimeStatus(): { ok: boolean; reason: string } {
+  runtimeStatus ??= detectRuntimeStatus();
+  return runtimeStatus;
+}
+
+/**
+ * The SDK's transport errors carry the worker's own stderr on the error object
+ * but keep it out of `message`, so the cause of an exit code is exactly the part
+ * that would be thrown away. The message is read structurally, not by
+ * `instanceof Error`: an error that crossed a worker-thread boundary is not an
+ * `Error` on this side of it. Truncated because a crashing runtime can print a
+ * lot, and this text reaches the admin's screen.
+ */
+export function describeQoderFailure(error: unknown): string {
+  const reported = (error as { message?: unknown } | null)?.message;
+  const message =
+    typeof reported === "string" && reported.trim()
+      ? reported.trim()
+      : "The Qoder runtime could not be reached.";
+  const stderr = (error as { stderr?: unknown } | null)?.stderr;
+  if (typeof stderr !== "string") return message;
+  const tail = stderr.replace(/\s+/g, " ").trim().slice(-1_200);
+  return tail ? `${message} — runtime stderr: ${tail}` : message;
+}
+
 /** One text-only agent turn; a few extra in case the runtime needs to settle. */
 const MAX_COMPLETION_TURNS = 4;
 
@@ -73,6 +165,11 @@ export async function callQoderCompletion(
     throw new QoderCompletionError(
       `The Qoder runtime could not be loaded: ${error instanceof Error ? error.message : "unknown error"}`
     );
+  }
+
+  const runtime = qoderRuntimeStatus();
+  if (!runtime.ok) {
+    throw new QoderCompletionError(`Qoder cannot be started here: ${runtime.reason}.`);
   }
 
   const systemPrompt = messages
@@ -146,6 +243,11 @@ export async function callQoderCompletion(
           }
         }
       }
+    } catch (error) {
+      // A runtime that dies on the way in reports an exit code; its stderr, which
+      // says why, sits on the error object and would otherwise be discarded.
+      if (error instanceof QoderCompletionError) throw error;
+      throw new QoderCompletionError(describeQoderFailure(error));
     } finally {
       await query.close().catch(() => undefined);
     }

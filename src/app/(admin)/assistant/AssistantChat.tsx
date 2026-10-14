@@ -68,8 +68,12 @@ const STARTERS = [
 ] as const;
 
 const ENGINES: readonly { id: AssistantEngine; label: string; hint: string }[] = [
-  { id: "auto", label: "Auto", hint: "Qoder when it is configured, the model gateway otherwise." },
-  { id: "qoder", label: "Qoder", hint: "Always the Qoder agent. Fails if no token is stored." },
+  { id: "auto", label: "Auto", hint: "Qoder when this host can run it, the model gateway otherwise." },
+  {
+    id: "qoder",
+    label: "Qoder",
+    hint: "Always the Qoder agent. Needs a stored token and the Qoder agent runtime installed on the server.",
+  },
   {
     id: "gateway",
     label: "Gateway",

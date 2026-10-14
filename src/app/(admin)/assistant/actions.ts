@@ -7,7 +7,7 @@ import {
   type AssistantTurn,
 } from "@/modules/assistant/infrastructure/agent";
 import {
-  isQoderConfigured,
+  qoderEngineStatus,
   runQoderAssistantTurn,
 } from "@/modules/assistant/infrastructure/qoderAgent";
 import {
@@ -234,7 +234,19 @@ export async function sendAssistantMessage(input: {
     let note: string | undefined;
 
     if (engine !== "gateway") {
-      if (await isQoderConfigured()) {
+      const status = await qoderEngineStatus();
+      if (!status.ok) {
+        if (engine === "qoder") {
+          return { ok: false, error: `Qoder could not serve this turn: ${status.reason}.` };
+        }
+        // A missing token is what "Auto" already says it works around, so the
+        // gateway simply answers. A host that cannot run the runtime is different:
+        // the key is stored and Qoder was clearly intended, so the recruiter is
+        // told which engine actually answered.
+        if (status.hostCannotRun) {
+          note = `Qoder was not tried (${status.reason}); answered through the model gateway instead.`;
+        }
+      } else {
         try {
           turn = await runQoderAssistantTurn(history, allowDestructive);
         } catch (error) {
@@ -244,11 +256,6 @@ export async function sendAssistantMessage(input: {
           }
           note = `Qoder could not serve this turn (${message}); answered through the model gateway instead.`;
         }
-      } else if (engine === "qoder") {
-        return {
-          ok: false,
-          error: "That engine needs a Qoder token in Settings → API keys.",
-        };
       }
     }
 

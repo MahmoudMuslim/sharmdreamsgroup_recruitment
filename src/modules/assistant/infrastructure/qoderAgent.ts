@@ -5,7 +5,11 @@ import path from "node:path";
 import { z } from "zod";
 import type { CallToolResult, SdkMcpToolDefinition } from "@qoder-ai/qoder-agent-sdk";
 import { resolveSecret } from "@/modules/settings/infrastructure/credentialResolver";
-import { QODER_BUILTIN_TOOLS } from "@/modules/screening/infrastructure/qoderCompletion";
+import {
+  QODER_BUILTIN_TOOLS,
+  describeQoderFailure,
+  qoderRuntimeStatus,
+} from "@/modules/screening/infrastructure/qoderCompletion";
 import {
   ASSISTANT_TOOLS,
   type AssistantTool,
@@ -178,9 +182,32 @@ function systemPromptFor(allowDestructive: boolean): string {
   ].join("\n");
 }
 
-/** True when a Qoder token exists, so the caller can skip the engine entirely. */
-export async function isQoderConfigured(): Promise<boolean> {
-  return Boolean(await resolveSecret("qoder"));
+/**
+ * Whether this turn has any chance of reaching Qoder, before a turn is spent on
+ * it: the runtime Qoder is driven by, and a stored token for it.
+ *
+ * `hostCannotRun` separates the two ways this fails. A missing token is a choice
+ * the recruiter made; a missing runtime means they asked for Qoder, stored its
+ * key, and the server underneath still has nothing to start — which is worth
+ * saying out loud, and only on this host.
+ */
+export async function qoderEngineStatus(): Promise<{
+  ok: boolean;
+  reason: string;
+  hostCannotRun: boolean;
+}> {
+  const runtime = qoderRuntimeStatus();
+  if (!runtime.ok) {
+    return { ok: false, reason: runtime.reason, hostCannotRun: true };
+  }
+  if (!(await resolveSecret("qoder"))) {
+    return {
+      ok: false,
+      reason: "no Qoder token is stored in Settings → API keys",
+      hostCannotRun: false,
+    };
+  }
+  return { ok: true, reason: "", hostCannotRun: false };
 }
 
 export async function runQoderAssistantTurn(
@@ -191,6 +218,9 @@ export async function runQoderAssistantTurn(
   if (!token) {
     throw new QoderAssistantError("No Qoder token is stored in Settings → API keys.");
   }
+
+  const runtime = qoderRuntimeStatus();
+  if (!runtime.ok) throw new QoderAssistantError(`Qoder cannot be started here: ${runtime.reason}.`);
 
   let sdk: typeof import("@qoder-ai/qoder-agent-sdk");
   try {
@@ -274,9 +304,7 @@ export async function runQoderAssistantTurn(
     }
   } catch (error) {
     if (error instanceof QoderAssistantError) throw error;
-    throw new QoderAssistantError(
-      error instanceof Error ? error.message : "The Qoder runtime could not be reached."
-    );
+    throw new QoderAssistantError(describeQoderFailure(error));
   } finally {
     clearTimeout(timer);
     fs.rmSync(cwd, { recursive: true, force: true });
