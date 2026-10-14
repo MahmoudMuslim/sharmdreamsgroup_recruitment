@@ -8,7 +8,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
 
   const { data: attempt, error } = await supabase
     .from("candidate_attempts")
-    .select("id, status, time_limit_minutes, created_at")
+    .select("id, status, time_limit_minutes, created_at, expires_at")
     .eq("access_token", token)
     .single();
 
@@ -20,9 +20,13 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
   }
 
   // The runner marks the attempt EXPIRED when its link is opened late; this is
-  // the same window checked at the moment the clock would start, so a tab left
-  // open across the deadline cannot begin a test that is already spent.
-  if (await isLinkExpired(attempt.created_at)) {
+  // the same deadline checked at the moment the clock would start, so a tab
+  // left open across the window cannot begin a test that is already spent.
+  const overdue = attempt.expires_at
+    ? new Date(attempt.expires_at) < new Date()
+    : await isLinkExpired(attempt.created_at);
+
+  if (overdue) {
     await supabase.from("candidate_attempts").update({ status: "EXPIRED" }).eq("id", attempt.id);
     return NextResponse.json({ error: "This invitation link has expired" }, { status: 409 });
   }

@@ -2,12 +2,32 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Download, ExternalLink, FileText, Loader2, RefreshCw } from "lucide-react";
+import {
+  Ban,
+  CalendarClock,
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  FileText,
+  KeyRound,
+  Loader2,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { Badge, Button, Meter } from "@/modules/analytics/presentation/ui";
 import { FormMessage } from "@/modules/analytics/presentation/Form";
 import { formatDateTime, sourceLabel, truncate } from "@/lib/utils";
 import { humanizeStage } from "@/modules/settings/domain/templates";
 import { getCandidateDossier, type CandidateDossier as DossierData } from "./dossier-actions";
+import type { DossierAttempt } from "./dossier-actions";
+import {
+  deleteAttempt,
+  extendAttemptLink,
+  reissueAttemptLink,
+  revokeAttempt,
+  type AttemptResult,
+} from "./attempt-actions";
 
 const CHANNEL_LABELS: Record<string, string> = {
   WHATSAPP: "WhatsApp",
@@ -57,6 +77,242 @@ function Detail({ label, value }: { label: string; value: string }) {
         {value}
       </dd>
     </div>
+  );
+}
+
+const EXTENSIONS = [
+  { hours: "24", label: "24 hours" },
+  { hours: "48", label: "2 days" },
+  { hours: "168", label: "7 days" },
+];
+
+const LINK_ACTION =
+  "inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-50";
+
+/**
+ * One issued assessment link, with the recruiter's controls over it.
+ *
+ * The deadline is the organisation's own clock: whatever the last extension
+ * stamped, otherwise issue time plus Settings → Assessments → Link validity.
+ */
+function AttemptRow({
+  attempt,
+  scoresMasked,
+  canManage,
+  onChanged,
+}: {
+  attempt: DossierAttempt;
+  scoresMasked: boolean;
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [hours, setHours] = useState("24");
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const open = attempt.status === "NOT_STARTED" || attempt.status === "IN_PROGRESS";
+  const untouched = !attempt.started_at && !attempt.submitted_at;
+
+  async function run(action: string, fn: () => Promise<AttemptResult>) {
+    setPending(action);
+    setError(null);
+    setCopied(false);
+    try {
+      const result = await fn();
+      if (!result.ok) {
+        setError(result.error ?? `Could not ${action.toLowerCase()}.`);
+        return;
+      }
+      if (result.access_token) {
+        setLink(`${window.location.origin}/test/${result.access_token}`);
+      }
+      onChanged();
+    } catch {
+      setError(`Something went wrong while trying to ${action.toLowerCase()}.`);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  function copyLink() {
+    if (!link) return;
+    navigator.clipboard.writeText(link).then(
+      () => setCopied(true),
+      () => setError("Your browser blocked the copy — select the link below and copy it by hand.")
+    );
+  }
+
+  return (
+    <li className="p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{attempt.template_name ?? "Assessment"}</p>
+          <p className="mt-0.5 text-[11px] text-brand-ink/50">
+            Assigned {formatDateTime(attempt.created_at)}
+            {attempt.started_at ? ` · started ${formatDateTime(attempt.started_at)}` : ""}
+            {attempt.submitted_at ? ` · submitted ${formatDateTime(attempt.submitted_at)}` : ""}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {scoresMasked ? (
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
+              Score hidden
+            </span>
+          ) : (
+            attempt.score !== null && (
+              <span className="font-display text-sm font-bold text-brand-gold-dark">
+                {attempt.score}
+                {attempt.max_score !== null ? `/${attempt.max_score}` : ""}
+              </span>
+            )
+          )}
+          <Badge tone={attemptTone(attempt.status)}>{humanizeStage(attempt.status)}</Badge>
+        </div>
+      </div>
+
+      {(open || attempt.status === "EXPIRED") && (
+        <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-brand-ink/50">
+          <CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          {attempt.status === "IN_PROGRESS"
+            ? `Must be handed in by ${attempt.deadline}`
+            : open
+              ? `Link closes ${attempt.deadline}`
+              : `Link closed ${attempt.deadline}`}
+          {attempt.time_limit_minutes > 0
+            ? ` · ${attempt.time_limit_minutes} min to answer`
+            : ""}
+        </p>
+      )}
+
+      {canManage && (open || untouched) && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          {open && (
+            <>
+              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-brand-ink/55">
+                Extend by
+                <select
+                  value={hours}
+                  onChange={(e) => setHours(e.target.value)}
+                  className="rounded-lg border border-brand-line bg-white px-2 py-1 text-xs font-semibold"
+                >
+                  {EXTENSIONS.map((option) => (
+                    <option key={option.hours} value={option.hours}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => run("Extend link", () => extendAttemptLink(attempt.id, Number(hours)))}
+                className={LINK_ACTION}
+              >
+                {pending === "Extend link" && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                )}
+                Apply
+              </button>
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Revoke this link?\n\nThe candidate can no longer open the test. Anything they already answered is kept."
+                    )
+                  )
+                    return;
+                  run("Revoke link", () => revokeAttempt(attempt.id));
+                }}
+                className={`${LINK_ACTION} text-rose-700 hover:bg-rose-50`}
+              >
+                {pending === "Revoke link" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Ban className="h-3.5 w-3.5" aria-hidden />
+                )}
+                Revoke
+              </button>
+            </>
+          )}
+          {untouched && (
+            <>
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Re-issue this link?\n\nThe link the candidate holds stops working at once and a fresh one is sent on the channels that are switched on."
+                    )
+                  )
+                    return;
+                  run("Re-issue link", () => reissueAttemptLink(attempt.id));
+                }}
+                className={LINK_ACTION}
+              >
+                {pending === "Re-issue link" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <KeyRound className="h-3.5 w-3.5" aria-hidden />
+                )}
+                Re-issue link
+              </button>
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Delete this attempt?\n\nThe record of the assignment goes with it. Attempts that already have answers are refused — revoke those instead."
+                    )
+                  )
+                    return;
+                  run("Delete attempt", () => deleteAttempt(attempt.id));
+                }}
+                className={`${LINK_ACTION} text-rose-700 hover:bg-rose-50`}
+              >
+                {pending === "Delete attempt" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                )}
+                Delete
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {link && (
+        <div className="mt-2.5 rounded-xl border border-brand-line bg-brand-cream p-2.5">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-brand-ink/45">
+            New link · sent to the candidate
+          </p>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              readOnly
+              value={link}
+              onFocus={(e) => e.currentTarget.select()}
+              className="min-w-0 flex-1 rounded-lg border border-brand-line bg-white px-2 py-1 font-mono text-[11px]"
+            />
+            <button type="button" onClick={copyLink} className={LINK_ACTION}>
+              {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">
+          {error}
+        </p>
+      )}
+    </li>
   );
 }
 
@@ -240,35 +496,13 @@ export function CandidateDossier({ applicationId }: { applicationId: string }) {
         <Section title="Assessments">
           <ul className="divide-y divide-brand-line rounded-xl border border-brand-line bg-white">
             {dossier.attempts.map((attempt) => (
-              <li key={attempt.id} className="flex items-center justify-between gap-3 p-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">
-                    {attempt.template_name ?? "Assessment"}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-brand-ink/50">
-                    Assigned {formatDateTime(attempt.created_at)}
-                    {attempt.started_at ? ` · started ${formatDateTime(attempt.started_at)}` : ""}
-                    {attempt.submitted_at
-                      ? ` · submitted ${formatDateTime(attempt.submitted_at)}`
-                      : ""}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {dossier.scores_masked ? (
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
-                      Score hidden
-                    </span>
-                  ) : (
-                    attempt.score !== null && (
-                      <span className="font-display text-sm font-bold text-brand-gold-dark">
-                        {attempt.score}
-                        {attempt.max_score !== null ? `/${attempt.max_score}` : ""}
-                      </span>
-                    )
-                  )}
-                  <Badge tone={attemptTone(attempt.status)}>{humanizeStage(attempt.status)}</Badge>
-                </div>
-              </li>
+              <AttemptRow
+                key={attempt.id}
+                attempt={attempt}
+                scoresMasked={dossier.scores_masked}
+                canManage={dossier.can_manage_links}
+                onChanged={reload}
+              />
             ))}
           </ul>
           <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/45">

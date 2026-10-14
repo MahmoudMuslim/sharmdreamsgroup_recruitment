@@ -2,7 +2,14 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
+import {
+  getNumberSetting,
+  getOrganisationTimeZone,
+} from "@/modules/settings/infrastructure/settingsReader";
+import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
+import { formatInZone } from "@/lib/timezone";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 import type { GateAnswer } from "@/modules/careers/gate-questions";
 
@@ -51,6 +58,12 @@ export interface DossierAttempt {
   submitted_at: string | null;
   expires_at: string | null;
   created_at: string;
+  /**
+   * When this link stops working, already in the organisation's clock: the
+   * recruiter's extension if there is one, otherwise issue time plus Settings →
+   * Assessments → Link validity.
+   */
+  deadline: string;
 }
 
 /**
@@ -101,6 +114,8 @@ export interface CandidateDossier {
   other_applications: DossierSibling[];
   /** True when `security.mask_scores_for_reviewers` hid the scores in here. */
   scores_masked: boolean;
+  /** Whether this recruiter may revoke, extend or re-issue an attempt link. */
+  can_manage_links: boolean;
 }
 
 export type DossierResult =
@@ -113,6 +128,25 @@ function asString(value: unknown, fallback = ""): string {
 
 function asNullableString(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
+}
+
+/** The instant the link dies, printed in the organisation's own timezone. */
+function linkDeadline(
+  stamped: string | null,
+  issuedAt: string,
+  validityHours: number,
+  timeZone: string
+): string {
+  const fallback = new Date(
+    new Date(issuedAt).getTime() + Math.max(1, validityHours) * 3_600_000
+  ).toISOString();
+  return formatInZone(stamped ?? fallback, timeZone, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
 }
 
 function asNumber(value: unknown): number | null {
@@ -150,9 +184,12 @@ export async function getCandidateDossier(
   applicationId: string
 ): Promise<DossierResult> {
   await requireStaff("/candidates");
-  const [supabase, masked] = await Promise.all([
+  const [supabase, masked, zone, validityHours, canManageLinks] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
+    getOrganisationTimeZone(),
+    getNumberSetting("assessment.link_validity_hours", DEFAULT_LINK_VALIDITY_HOURS),
+    hasPermissionForUser("assessments.assign"),
   ]);
 
   const { data: row, error } = await supabase
@@ -285,6 +322,12 @@ export async function getCandidateDossier(
         submitted_at: asNullableString(attempt.submitted_at),
         expires_at: asNullableString(attempt.expires_at),
         created_at: asString(attempt.created_at),
+        deadline: linkDeadline(
+          asNullableString(attempt.expires_at),
+          asString(attempt.created_at),
+          validityHours,
+          zone
+        ),
       })),
       alerts,
       onboarding: plan
@@ -307,6 +350,7 @@ export async function getCandidateDossier(
         applied_at: asString(sibling.created_at),
       })),
       scores_masked: masked,
+      can_manage_links: canManageLinks,
     },
   };
 }

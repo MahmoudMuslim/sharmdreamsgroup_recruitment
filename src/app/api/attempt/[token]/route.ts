@@ -31,12 +31,32 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     attempt.status = "EXPIRED";
   }
 
-  if (attempt.status === "NOT_STARTED" && (await isLinkExpired(attempt.created_at))) {
-    await supabase
-      .from("candidate_attempts")
-      .update({ status: "EXPIRED" })
-      .eq("id", attempt.id);
-    attempt.status = "EXPIRED";
+  if (attempt.status === "NOT_STARTED") {
+    // A recruiter's extension puts a deadline on the row; without one the
+    // invitation window is measured from when the link was issued.
+    const overdue = attempt.expires_at
+      ? new Date(attempt.expires_at) < new Date()
+      : await isLinkExpired(attempt.created_at);
+
+    if (overdue) {
+      await supabase
+        .from("candidate_attempts")
+        .update({ status: "EXPIRED" })
+        .eq("id", attempt.id);
+      attempt.status = "EXPIRED";
+    }
+  }
+
+  // A closed link must not hand out the paper. Until this, an EXPIRED attempt
+  // still loaded, and the runner's start step let the clock run anyway.
+  if (attempt.status === "EXPIRED") {
+    return NextResponse.json(
+      {
+        error:
+          "This invitation is closed. If the recruitment team sent you a new link, use the most recent one.",
+      },
+      { status: 410 }
+    );
   }
 
   const { data: template } = await supabase
