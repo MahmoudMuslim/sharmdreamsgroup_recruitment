@@ -83,12 +83,81 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
   return { ok: true, id: payload.id ?? undefined };
 }
 
+export interface TemplateStatusResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Pause or resume a suite.
+ *
+ * Pausing closes the assign door; a link already in a candidate's inbox stays
+ * open, because a recruiter's toggle must not lock someone out mid-test.
+ */
+export async function setTemplateActive(
+  templateId: string,
+  active: boolean
+): Promise<TemplateStatusResult> {
+  await requireStaff("/assessments");
+
+  if (!(await hasPermissionForUser("assessments.create"))) {
+    return { ok: false, error: "You need the Create assessments permission." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase
+    .from("assessment_templates")
+    .update({ is_active: active })
+    .eq("id", templateId);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/assessments");
+  return { ok: true };
+}
+
+/**
+ * Delete a suite, and with it its questions.
+ *
+ * Refused as soon as a candidate holds a link: the attempt is the record of what
+ * that person was asked, so the answer to "get rid of this suite" is to pause it.
+ */
+export async function deleteTemplate(templateId: string): Promise<TemplateStatusResult> {
+  await requireStaff("/assessments");
+
+  if (!(await hasPermissionForUser("assessments.create"))) {
+    return { ok: false, error: "You need the Create assessments permission." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: issued } = await supabase
+    .from("candidate_attempts")
+    .select("id")
+    .eq("template_id", templateId)
+    .limit(1);
+
+  if ((issued ?? []).length > 0) {
+    return {
+      ok: false,
+      error:
+        "Candidates already hold links for this suite, so it cannot be deleted. Pause it instead: new assignments stop, issued tests stay open.",
+    };
+  }
+
+  const { error } = await supabase.from("assessment_templates").delete().eq("id", templateId);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/assessments");
+  return { ok: true };
+}
+
 export interface AssignResult {
   ok: boolean;
   error?: string;
   created?: number;
 }
-
 /**
  * Issues an assessment attempt for each selected application.
  *
@@ -120,11 +189,17 @@ export async function assignTemplate(input: {
 
   const { data: template } = await supabase
     .from("assessment_templates")
-    .select("id")
+    .select("id, is_active")
     .eq("id", input.templateId)
     .maybeSingle();
 
   if (!template) return { ok: false, error: "That assessment suite no longer exists." };
+  if (template.is_active === false) {
+    return {
+      ok: false,
+      error: "This suite is paused. Resume it before assigning it to anyone.",
+    };
+  }
 
   // Skip anyone who already has a live attempt on this suite.
   const { data: existing } = await supabase

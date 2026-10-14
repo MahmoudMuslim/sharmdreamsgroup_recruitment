@@ -8,11 +8,14 @@ import {
   ClipboardCheck,
   Clock,
   ListChecks,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Search,
   Send,
   Table2,
+  Trash2,
   Video,
   type LucideIcon,
 } from "lucide-react";
@@ -25,7 +28,7 @@ import {
   TextArea,
   TextInput,
 } from "@/modules/analytics/presentation/Form";
-import { saveTemplate, assignTemplate } from "./assessment-actions";
+import { saveTemplate, assignTemplate, deleteTemplate, setTemplateActive } from "./assessment-actions";
 import type { TemplateSummary } from "./actions";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
@@ -440,16 +443,22 @@ export function AssignDrawer({
 function TemplateCard({
   template,
   questions,
+  canEdit,
   onQuestions,
   onEdit,
   onAssign,
 }: {
   template: TemplateSummary;
   questions: EditableQuestion[];
+  canEdit: boolean;
   onQuestions: () => void;
   onEdit: () => void;
   onAssign: () => void;
 }) {
+  const router = useRouter();
+  const [pending, setPending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   const typeCounts = new Map<string, number>();
   for (const question of questions) {
     typeCounts.set(question.question_type, (typeCounts.get(question.question_type) ?? 0) + 1);
@@ -462,7 +471,36 @@ function TemplateCard({
     template.block_copy_paste && "Copy-paste blocked",
   ].filter((entry): entry is string => Boolean(entry));
 
-  const assignable = template.question_count > 0;
+  const assignable = template.is_active && template.question_count > 0;
+  const assignHint = !template.is_active
+    ? "This suite is paused — resume it to assign"
+    : "Add questions before assigning";
+
+  async function run(action: string, fn: () => Promise<{ ok: boolean; error?: string }>) {
+    setPending(action);
+    setError(null);
+    try {
+      const result = await fn();
+      if (!result.ok) setError(result.error ?? `Could not ${action.toLowerCase()}.`);
+      else router.refresh();
+    } catch {
+      setError(`Something went wrong while trying to ${action.toLowerCase()}.`);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  function confirmDelete() {
+    if (
+      !window.confirm(
+        `Delete “${template.name}”?\n\nThis removes the suite and its ${template.question_count} question${
+          template.question_count === 1 ? "" : "s"
+        }. Once candidates have links, the delete is refused and the suite should be paused instead.`
+      )
+    )
+      return;
+    run("Delete suite", () => deleteTemplate(template.id));
+  }
 
   return (
     <Card className="group flex flex-col overflow-hidden transition hover:-translate-y-0.5 hover:border-brand-gold/50 hover:shadow-lg">
@@ -561,6 +599,19 @@ function TemplateCard({
           </p>
         )}
 
+        {error && (
+          <p role="alert" className="text-xs font-semibold text-rose-700">
+            {error}
+          </p>
+        )}
+
+        {!error && !template.is_active && template.attempts > 0 && (
+          <p className="text-[11px] text-brand-ink/45">
+            Paused: the {template.attempts} link{template.attempts === 1 ? "" : "s"} already issued
+            stay{template.attempts === 1 ? "s" : ""} open, so nobody is locked out mid-test.
+          </p>
+        )}
+
         <div className="mt-auto flex flex-wrap gap-2 border-t border-brand-line pt-4">
           <button
             type="button"
@@ -582,7 +633,7 @@ function TemplateCard({
             type="button"
             onClick={onAssign}
             disabled={!assignable}
-            title={assignable ? "Assign this suite to candidates" : "Add questions before assigning"}
+            title={assignable ? "Assign this suite to candidates" : assignHint}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition",
               assignable
@@ -593,6 +644,42 @@ function TemplateCard({
             <Send className="h-3.5 w-3.5" aria-hidden />
             Assign
           </button>
+          {canEdit && (
+            <button
+              type="button"
+              disabled={pending !== null}
+              onClick={() =>
+                run(template.is_active ? "Pause suite" : "Resume suite", () =>
+                  setTemplateActive(template.id, !template.is_active)
+                )
+              }
+              className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {template.is_active ? (
+                <Pause className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Play className="h-3.5 w-3.5" aria-hidden />
+              )}
+              {template.is_active
+                ? pending === "Pause suite"
+                  ? "Pausing…"
+                  : "Pause"
+                : pending === "Resume suite"
+                  ? "Resuming…"
+                  : "Resume"}
+            </button>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              disabled={pending !== null}
+              onClick={confirmDelete}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+              Delete
+            </button>
+          )}
         </div>
       </div>
     </Card>
@@ -767,9 +854,21 @@ export function AssessmentGrid({
         {filtered.length === 0 ? (
           <Card>
             <EmptyState
-              title="No suites match"
-              description={`Nothing matches the current search and filters (${templates.length} suite${templates.length === 1 ? "" : "s"} in total).`}
-              icon={<Search className="h-8 w-8" aria-hidden />}
+              title={templates.length === 0 ? "No assessment suites yet" : "No suites match"}
+              description={
+                templates.length === 0
+                  ? "Create a suite to start evaluating candidates with Excel models, video pitches and case studies. The New template button above opens a blank one."
+                  : `Nothing matches the current search and filters (${templates.length} suite${
+                      templates.length === 1 ? "" : "s"
+                    } in total).`
+              }
+              icon={
+                templates.length === 0 ? (
+                  <ClipboardCheck className="h-8 w-8" aria-hidden />
+                ) : (
+                  <Search className="h-8 w-8" aria-hidden />
+                )
+              }
             />
             {filtersActive && (
               <div className="flex justify-center pb-8">
@@ -790,6 +889,7 @@ export function AssessmentGrid({
                 key={template.id}
                 template={template}
                 questions={questionsByTemplate[template.id] ?? []}
+                canEdit={canEdit}
                 onQuestions={() => setQuestionEditing(template)}
                 onEdit={() => setEditing(template)}
                 onAssign={() => setAssigning(template)}

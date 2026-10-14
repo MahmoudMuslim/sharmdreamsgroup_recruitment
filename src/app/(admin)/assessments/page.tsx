@@ -1,10 +1,9 @@
-import { ClipboardCheck } from "lucide-react";
 import { getTemplates, getAssignableCandidates, getQuestionsForEditor } from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
-import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
+import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { connection } from "next/server";
@@ -52,27 +51,20 @@ export default async function AssessmentsBuilderPage() {
         description="Every suite currently defined for the group, with live question counts and assignment activity."
       />
 
-      {templates.length === 0 ? (
-        <Card>
-          <EmptyState
-            title="No assessment suites yet"
-            description="Create a suite to start evaluating candidates with Excel models, video pitches and case studies."
-            icon={<ClipboardCheck className="h-8 w-8" aria-hidden />}
-          />
-        </Card>
-      ) : (
-        <AssessmentGrid
-          templates={templates}
-          candidates={candidates}
-          options={{
-            roleFamilies: options.roleFamilies,
-            companies: options.companies,
-          }}
-          questionsByTemplate={questionsByTemplate}
-          defaultDurationMinutes={defaultDurationMinutes}
-          canEdit={canEdit}
-        />
-      )}
+      {/* Rendered even with zero suites: the create drawer lives inside the
+          grid, so hiding the grid behind an empty state made the very first
+          suite impossible to create from the portal. */}
+      <AssessmentGrid
+        templates={templates}
+        candidates={candidates}
+        options={{
+          roleFamilies: options.roleFamilies,
+          companies: options.companies,
+        }}
+        questionsByTemplate={questionsByTemplate}
+        defaultDurationMinutes={defaultDurationMinutes}
+        canEdit={canEdit}
+      />
     </AdminShell>
   );
 }
