@@ -109,6 +109,17 @@ body {
   background: var(--color-brand-gold-light);
 }
 
+/* The nav rail slides when a recruiter folds it deliberately. It must not slide
+   when hydration applies the saved preference on load — that would look like the
+   panel moving on its own — so the transition waits for the first click. */
+html[data-nav-animated] .rail-fold {
+  transition: width 200ms ease-out;
+}
+
+html[data-nav-animated] .rail-shift {
+  transition: padding-left 200ms ease-out;
+}
+
 /* Respect users who ask for less motion. */
 @media (prefers-reduced-motion: reduce) {
   *,
