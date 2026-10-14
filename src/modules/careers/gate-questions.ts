@@ -7,10 +7,10 @@
  *   • the submit action, which scores the answers and rejects the application;
  *   • the admin console, which authors them.
  *
- * `which answer passes` is deliberately absent from the public projection. It
- * is not a secret (the candidate has to answer honestly), but shipping it to
- * the browser would let the form be driven from a script that picks the
- * acceptable option without ever answering it.
+ * `which answer passes` is kept out of the public projection on purpose. It is
+ * the one thing that makes the form gameable: an applicant who learns which
+ * option the role accepts can submit again until they hit it, so the answer set
+ * stays on the server and no candidate-facing surface hints at the gate either.
  */
 
 export interface GateOption {
@@ -172,7 +172,10 @@ export function evaluateGate(
  * The recruiter-facing reason stored in `applications.rejection_reason`.
  *
  * Names the question and the answer given, because "failed screening" is not
- * something a recruiter can act on or a candidate can be told fairly.
+ * something a recruiter can act on — reopen the right application, or answer a
+ * candidate who calls saying they mis-clicked. It is never sent to the
+ * candidate: the applicant-facing surfaces stay silent about which answer ended
+ * it, and say nothing about the gate at all.
  */
 export function gateRejectionReason(failed: readonly GateAnswer[]): string {
   return failed
@@ -181,9 +184,4 @@ export function gateRejectionReason(failed: readonly GateAnswer[]): string {
         `Application question “${item.question}”: answered “${item.answer}”, which this role does not accept.`
     )
     .join(" ");
-}
-
-/** Answers the role accepts, for the admin list and the public help text. */
-export function acceptableAnswers(question: GateQuestion): string[] {
-  return question.options.filter((option) => option.passes).map((option) => option.label);
 }

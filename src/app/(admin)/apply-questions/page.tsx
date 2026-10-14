@@ -27,7 +27,7 @@ export default async function ApplyQuestionsPage() {
       <PageHeader
         eyebrow="Careers site"
         title="Apply form questions"
-        description="Ask a role's requirements before anyone spends a CV read on them. These questions carry no points: an answer the role cannot accept records the application as rejected and tells the candidate politely, instead of leaving it in the pipeline."
+        description="Ask a role's requirements before anyone spends a CV read on them. These questions carry no points: an answer the role cannot accept records the application as rejected for your team to see, while the applicant is shown the ordinary receipt screen — nothing tells them which answer decided it."
       />
 
       {!canManage || !data ? (

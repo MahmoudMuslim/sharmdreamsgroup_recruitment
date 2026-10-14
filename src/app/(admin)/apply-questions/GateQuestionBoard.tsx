@@ -250,8 +250,11 @@ export function GateQuestionBoard({
                 reason, and the AI screening step is skipped.
               </li>
               <li>
-                The candidate is told politely on the form, and the rejection also runs through the
-                standard stage-change notice path that the automatic screening rejection uses.
+                Nothing is said to the candidate about it. They get the same “application
+                received” screen as everyone else and no rejection notice, because telling an
+                applicant that a particular answer ended it shows them which one, and they can
+                apply again having changed it. The tracking page shows the application as closed,
+                the same as any other rejection, without a reason.
               </li>
               <li>
                 Candidates see the question and its possible answers. Which answer the role accepts
@@ -339,7 +342,7 @@ export function GateQuestionBoard({
               onCancel={() => setDraft(null)}
               submitLabel={draft.id ? "Save changes" : "Add question"}
               pending={pending}
-              note="Candidates are told they were not selected in polite terms, without being shown which answer decided it."
+              note="An applicant is never told that an answer ruled them out — that would show them which answer to change."
             />
           }
         >

@@ -10,7 +10,6 @@ import {
   getAiAutomationSettings,
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
-import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import {
   evaluateGate,
   gateRejectionReason,
@@ -161,10 +160,17 @@ export async function getPublicJob(id: string): Promise<PublicJob | null> {
 /* -------------------------------------------------------------------------- */
 
 export type ApplyResult =
-  /** Stored and waiting for review. */
+  /**
+   * Stored and waiting for review — the only outcome a candidate is ever shown.
+   *
+   * An application a viability question rules out returns through this same
+   * branch: the row is stored REJECTED with the reason on it, but the reply,
+   * the panel and the notifications are indistinguishable from a normal
+   * submission. Telling someone seconds after they clicked "Submit" that an
+   * answer disqualified them names the question that did it, and invites them
+   * to answer again until the acceptable option is found.
+   */
   | { ok: true; outcome: "received"; trackingCode: string }
-  /** Stored, but a viability question ruled it out; the candidate is told politely. */
-  | { ok: true; outcome: "not-selected"; trackingCode: string }
   | { ok: false; error: string };
 
 export interface ApplyInput {
@@ -379,14 +385,15 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   const trackingCode = created?.tracking_code ?? "";
 
   if (filteredOut) {
-    // Told on every channel the platform is wired for, through the same path the
-    // AI auto-reject and the staff stage move use, so a candidate filtered out by
-    // a question does not depend on still having this tab open. A notification
-    // failure never changes the rejection that already happened.
-    if (applicationId) {
-      after(() => notifyStageChange(applicationId, "REJECTED").then(() => undefined));
-    }
-    return { ok: true, outcome: "not-selected", trackingCode };
+    // The row is stored REJECTED with the disqualifying answer named in
+    // `rejection_reason` — that is what a recruiter reads, and a staff stage move
+    // sends the standard letter whenever one is made deliberately.
+    //
+    // Nothing else happens here. No rejection on email or WhatsApp seconds after
+    // the submit button, and no separate outcome panel: an applicant who is told
+    // that an answer ended it has been shown which question decides the outcome,
+    // and can submit again until the acceptable option is found.
+    return { ok: true, outcome: "received", trackingCode };
   }
 
   // Auto-screening runs after the candidate's response is sent, so submitting

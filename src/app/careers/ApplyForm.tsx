@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
-  Inbox,
   Loader2,
   Paperclip,
   Upload,
@@ -27,9 +26,10 @@ import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
  *
  * On success the tracking code is shown and copied to the clipboard — losing it
  * means losing access to the application, so it is surfaced prominently rather
- * than sent only to an email the candidate may not check. An application that a
- * question rules out gets a separate, polite panel instead: it is stored as
- * rejected, and saying so plainly is kinder than a thank-you note that hides it.
+ * than sent only to an email the candidate may not check. It is the only success
+ * screen: an application a question rules out is stored as rejected and reads
+ * that way to staff, but it is not announced here, because telling someone which
+ * of their answers ended it is an instruction on how to apply again.
  */
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -195,11 +195,7 @@ export function ApplyForm({
   // A submission without a tracking code would leave the candidate with no way
   // to follow their own application, so it is not treated as a success.
   if (result?.ok && result.trackingCode) {
-    return result.outcome === "not-selected" ? (
-      <NotSelectedPanel jobTitle={jobTitle} trackingCode={result.trackingCode} />
-    ) : (
-      <ReceivedPanel jobTitle={jobTitle} trackingCode={result.trackingCode} />
-    );
+    return <ReceivedPanel jobTitle={jobTitle} trackingCode={result.trackingCode} />;
   }
 
   /* ------------------------------------------------------------------- form */
@@ -308,8 +304,8 @@ export function ApplyForm({
             Before you apply
           </h3>
           <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/55">
-            A few requirements for this role, asked of everyone who applies. Please answer each one
-            — they decide whether we are able to consider your application.
+            A few details about this role that everyone who applies is asked to fill in. Please
+            answer each one.
           </p>
 
           {questions.map((question, index) => (
@@ -473,62 +469,6 @@ function ReceivedPanel({
         <a
           href={`/portal?code=${encodeURIComponent(trackingCode)}`}
           className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-ink px-5 py-2.5 text-sm font-bold text-brand-cream transition hover:bg-brand-ink/90"
-        >
-          Track this application
-        </a>
-      </div>
-    </div>
-  );
-}
-
-/**
- * A viability answer ruled the application out, and it is said plainly.
- *
- * The polite alternative — the same "we will contact you if there is a fit" the
- * accepted candidates get, to someone who will never be reviewed — is the version
- * of this screen that is easy to write and unkind to receive. The row is stored
- * and stays trackable, so a candidate who mis-clicked can still ask about it.
- *
- * It deliberately does not name the question: which answer the role accepts is
- * kept server-side, and the requirement itself is in the advert.
- */
-function NotSelectedPanel({
-  jobTitle,
-  trackingCode,
-}: {
-  jobTitle: string;
-  trackingCode: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-brand-line bg-brand-cream p-6 sm:p-8">
-      <Inbox className="h-9 w-9 text-brand-gold-dark" aria-hidden />
-
-      <h2 className="mt-4 font-display text-2xl font-bold">Thank you for applying</h2>
-      <p className="mt-2 text-sm leading-relaxed text-brand-ink/70">
-        We are not able to move your application for <strong>{jobTitle}</strong> forward,
-        because your answers to our application questions do not meet a requirement this role
-        has.
-      </p>
-      <p className="mt-3 text-sm leading-relaxed text-brand-ink/70">
-        That is about the requirements of the role, not about you. If one of your answers was a
-        mistake, or your situation changes, you are welcome to apply again — this application
-        does not block a new one.
-      </p>
-
-      <div className="mt-6 rounded-xl border border-brand-line bg-white p-4">
-        <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/45">
-          Your reference
-        </p>
-        <p className="mt-2 select-all font-mono text-lg font-bold tracking-wider text-brand-ink">
-          {trackingCode}
-        </p>
-        <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
-          Your application and your answers are kept on record. Use this code on the tracking
-          page to see where it stands.
-        </p>
-        <a
-          href={`/portal?code=${encodeURIComponent(trackingCode)}`}
-          className="mt-3 inline-flex items-center gap-2 text-xs font-bold text-brand-ink underline"
         >
           Track this application
         </a>
