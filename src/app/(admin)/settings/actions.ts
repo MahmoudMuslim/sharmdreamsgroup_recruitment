@@ -109,10 +109,10 @@ export async function saveSettings(
 
   const { error } = await supabase
     .from("app_settings")
-    // Relies on the `unique nulls not distinct (scope, company_id, key)`
-    // constraint — plain UNIQUE would never match GLOBAL rows because their
-    // company_id is NULL. See supabase/migrations/002_settings_nulls_not_distinct.sql
-    .upsert(upserts, { onConflict: "scope,company_id,key" });
+    // Relies on the partial unique index on (key) WHERE scope = 'GLOBAL' —
+    // plain UNIQUE would never match GLOBAL rows because their company_id is
+    // NULL. See supabase/migrations/001_settings_rbac.sql lines 48-50.
+    .upsert(upserts, { onConflict: "key" });
 
   if (error) {
     return { ok: false, saved: [], error: error.message };
