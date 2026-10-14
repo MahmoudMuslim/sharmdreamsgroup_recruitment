@@ -355,6 +355,75 @@ for (const [key, privs] of grouped) {
 }
 
 /* -------------------------------------------------------------------------- */
+block("STORAGE SCHEMA PRIVILEGES");
+
+/*
+ * The `storage` schema and its tables belong to Supabase, not to this project,
+ * so this block does not try to reproduce them — it records the rights the
+ * project's own storage policies cannot run without. Supabase provisions them at
+ * project creation, which is why a hand-written bootstrap never mentioned them
+ * and the omission went unnoticed: the throwaway proof grants them out of band.
+ *
+ * Only the three roles an app actually connects as are dumped. The internal
+ * `supabase_*` and `dashboard_user` grants and the platform tables
+ * (buckets_analytics, vector_indexes, s3_multipart_*) are deliberately left to
+ * the host — a rebuilt project has no such roles yet, so copying them would make
+ * the file un-runnable rather than more faithful.
+ */
+const APP_ROLES = "'anon', 'authenticated', 'service_role'";
+
+for (const r of await q(
+  `select distinct a.privilege_type priv, g.rolname grantee
+     from pg_namespace n cross join lateral aclexplode(n.nspacl) a
+     join pg_roles g on g.oid = a.grantee
+    where n.nspname = 'storage' and g.rolname in (${APP_ROLES})
+    order by 2, 1`
+)) {
+  say(`grant ${r.priv.toLowerCase()} on schema storage to ${r.grantee};`);
+}
+
+for (const r of await q(
+  `select c.relname obj, a.privilege_type priv, g.rolname grantee
+     from pg_class c join pg_namespace n on n.oid = c.relnamespace
+     cross join lateral aclexplode(c.relacl) a
+     join pg_roles g on g.oid = a.grantee
+    where n.nspname = 'storage' and c.relname in ('buckets', 'objects')
+      and g.rolname in (${APP_ROLES})
+    order by 1, 3, 2`
+)) {
+  say(`grant ${r.priv.toLowerCase()} on table storage.${r.obj} to ${r.grantee};`);
+}
+
+/* The path helpers the storage policies above call — only the ones they actually
+ * reference. Their ACL is NULL, which in Postgres means "the default", so
+ * aclexplode() must be handed acldefault() or it returns no rows at all and the
+ * dependency silently disappears from this file. */
+const called = new Set();
+for (const p of await q(
+  `select pg_get_expr(p.polqual, p.polrelid) q, pg_get_expr(p.polwithcheck, p.polrelid) w
+     from pg_policy p join pg_class c on c.oid = p.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('public', 'storage')`
+)) {
+  for (const expr of [p.q, p.w]) {
+    for (const f of String(expr ?? "").matchAll(/storage\.([a-z_]+)\(/g)) called.add(f[1]);
+  }
+}
+for (const f of await q(
+  `select p.proname name, pg_get_function_identity_arguments(p.oid) args,
+          coalesce(g.rolname, 'public') grantee
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+     left join pg_roles g on g.oid = a.grantee
+    where n.nspname = 'storage' and lower(a.privilege_type) = 'execute'
+    order by 1, 3`
+)) {
+  if (!called.has(f.name)) continue;
+  if (["supabase_admin", "supabase_storage_admin"].includes(f.grantee)) continue;
+  say(`grant execute on function storage.${f.name}(${f.args}) to ${f.grantee};`);
+}
+
+/* -------------------------------------------------------------------------- */
 block("STORAGE BUCKETS");
 
 for (const b of await q(

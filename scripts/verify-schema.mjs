@@ -219,6 +219,64 @@ report("grant targets", grants, () =>
     .map((r) => `${r.kind} ${r.obj} -> ${r.grantee}`)
 );
 
+/* --- storage-schema privileges the project's own policies depend on ---
+ * Supabase provisions these at project creation, so a hand-written bootstrap
+ * never mentioned them and a rebuild lost them silently. The dump records the
+ * three roles an app connects as; the internal supabase_* grants stay with the
+ * host, so only these are compared.
+ */
+const APP_ROLES = "'anon', 'authenticated', 'service_role'";
+const storageGrants = await q(
+  `select 'schema' kind, 'storage' obj, lower(a.privilege_type) priv, g.rolname grantee
+     from pg_namespace n cross join lateral aclexplode(n.nspacl) a
+     join pg_roles g on g.oid = a.grantee
+    where n.nspname = 'storage' and g.rolname in (${APP_ROLES})
+    union all
+    select 'table', 'storage.'||c.relname, lower(a.privilege_type), g.rolname
+     from pg_class c join pg_namespace n on n.oid = c.relnamespace
+     cross join lateral aclexplode(c.relacl) a
+     join pg_roles g on g.oid = a.grantee
+    where n.nspname = 'storage' and c.relname in ('buckets', 'objects')
+      and g.rolname in (${APP_ROLES})
+    order by 1, 2, 4, 3`
+);
+report("storage privileges", storageGrants, () =>
+  storageGrants
+    .filter((r) => !lower.includes(`grant ${r.priv} on ${r.kind} ${r.obj} to ${r.grantee};`))
+    .map((r) => `${r.priv} on ${r.kind} ${r.obj} -> ${r.grantee}`)
+);
+
+const policyHelpers = new Set();
+for (const p of await q(
+  `select coalesce(pg_get_expr(p.polqual, p.polrelid), '')||coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') src
+     from pg_policy p join pg_class c on c.oid = p.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname in ('public', 'storage')`
+)) {
+  for (const f of p.src.matchAll(/storage\.([a-z_]+)\(/g)) policyHelpers.add(f[1]);
+}
+/* These helpers carry the default ACL, so proacl is NULL and aclexplode() of it
+ * returns nothing — hence acldefault(). Without that, this check would compare
+ * an empty list against the file and report a pass it had not earned. */
+const helperGrants = await q(
+  `select p.proname name, pg_get_function_identity_arguments(p.oid) args,
+          lower(a.privilege_type) priv, coalesce(g.rolname, 'public') grantee
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+     left join pg_roles g on g.oid = a.grantee
+    where n.nspname = 'storage' and lower(a.privilege_type) = 'execute'
+      and coalesce(g.rolname, 'public') not in ('supabase_admin', 'supabase_storage_admin')
+    order by 1, 4`
+);
+const neededHelpers = helperGrants.filter((r) => policyHelpers.has(r.name));
+report("storage policy helpers", neededHelpers, () =>
+  neededHelpers.length === 0
+    ? [...policyHelpers].map((h) => `no grantee row for called helper storage.${h}()`)
+    : neededHelpers
+        .filter((r) => !lower.includes(`grant ${r.priv} on function storage.${r.name}(${r.args}) to ${r.grantee};`))
+        .map((r) => `${r.priv} on storage.${r.name}(${r.args}) -> ${r.grantee}`)
+);
+
 /* --- comments carried over --- */
 const comments = await q(
   `select count(*)::int n from pg_description d join pg_class c on c.oid=d.objoid

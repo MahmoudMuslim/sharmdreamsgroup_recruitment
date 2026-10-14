@@ -1956,6 +1956,47 @@ grant execute on function public.user_tenant_id to public;
 grant execute on function public.user_tenant_id to service_role;
 
 -- ============================================================================
+-- STORAGE SCHEMA PRIVILEGES
+-- ============================================================================
+
+grant usage on schema storage to anon;
+grant usage on schema storage to authenticated;
+grant usage on schema storage to service_role;
+grant delete on table storage.buckets to anon;
+grant insert on table storage.buckets to anon;
+grant select on table storage.buckets to anon;
+grant update on table storage.buckets to anon;
+grant delete on table storage.buckets to authenticated;
+grant insert on table storage.buckets to authenticated;
+grant select on table storage.buckets to authenticated;
+grant update on table storage.buckets to authenticated;
+grant delete on table storage.buckets to service_role;
+grant insert on table storage.buckets to service_role;
+grant maintain on table storage.buckets to service_role;
+grant references on table storage.buckets to service_role;
+grant select on table storage.buckets to service_role;
+grant trigger on table storage.buckets to service_role;
+grant truncate on table storage.buckets to service_role;
+grant update on table storage.buckets to service_role;
+grant delete on table storage.objects to anon;
+grant insert on table storage.objects to anon;
+grant select on table storage.objects to anon;
+grant update on table storage.objects to anon;
+grant delete on table storage.objects to authenticated;
+grant insert on table storage.objects to authenticated;
+grant select on table storage.objects to authenticated;
+grant update on table storage.objects to authenticated;
+grant delete on table storage.objects to service_role;
+grant insert on table storage.objects to service_role;
+grant maintain on table storage.objects to service_role;
+grant references on table storage.objects to service_role;
+grant select on table storage.objects to service_role;
+grant trigger on table storage.objects to service_role;
+grant truncate on table storage.objects to service_role;
+grant update on table storage.objects to service_role;
+grant execute on function storage.foldername(name text) to public;
+
+-- ============================================================================
 -- STORAGE BUCKETS
 -- ============================================================================
 
