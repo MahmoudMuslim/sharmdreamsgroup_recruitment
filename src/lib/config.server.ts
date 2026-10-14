@@ -104,53 +104,6 @@ export const omnichannelConfig = {
     password: optional("SMTP_PASSWORD", process.env.SMTP_PASSWORD),
     from: optional("EMAIL_FROM", process.env.EMAIL_FROM),
   },
-  greenhouse: {
-    apiKey: optional("GREENHOUSE_API_KEY", process.env.GREENHOUSE_API_KEY),
-    baseUrl: "https://harvest.greenhouse.io/v1",
-  },
-  lever: {
-    apiKey: optional("LEVER_API_KEY", process.env.LEVER_API_KEY),
-    baseUrl: "https://api.lever.co/v1",
-  },
-  frappeHr: {
-    baseUrl: optional("FRAPPE_HR_BASE_URL", process.env.FRAPPE_HR_BASE_URL),
-    apiKey: optional("FRAPPE_HR_API_KEY", process.env.FRAPPE_HR_API_KEY),
-  },
-  calendar: {
-    google: {
-      clientId: optional("GOOGLE_CALENDAR_CLIENT_ID", process.env.GOOGLE_CALENDAR_CLIENT_ID),
-      clientSecret: optional(
-        "GOOGLE_CALENDAR_CLIENT_SECRET",
-        process.env.GOOGLE_CALENDAR_CLIENT_SECRET
-      ),
-      redirectUri: optional(
-        "GOOGLE_CALENDAR_REDIRECT_URI",
-        process.env.GOOGLE_CALENDAR_REDIRECT_URI,
-        "http://localhost:3000/api/calendar/google/callback"
-      ),
-      scopes: [
-        "https://www.googleapis.com/auth/calendar.events",
-        "https://www.googleapis.com/auth/userinfo.email",
-      ],
-      authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-      tokenUrl: "https://oauth2.googleapis.com/token",
-    },
-    microsoft: {
-      clientId: optional("MS_CALENDAR_CLIENT_ID", process.env.MS_CALENDAR_CLIENT_ID),
-      clientSecret: optional(
-        "MS_CALENDAR_CLIENT_SECRET",
-        process.env.MS_CALENDAR_CLIENT_SECRET
-      ),
-      redirectUri: optional(
-        "MS_CALENDAR_REDIRECT_URI",
-        process.env.MS_CALENDAR_REDIRECT_URI,
-        "http://localhost:3000/api/calendar/microsoft/callback"
-      ),
-      scopes: ["https://graph.microsoft.com/Calendars.ReadWrite", "offline_access"],
-      authUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    },
-  },
 } as const;
 
 export const cronConfig = {

@@ -143,11 +143,6 @@ function CredentialCard({
                 Disabled
               </span>
             )}
-            {credential.storedOnly && (
-              <span className="rounded-full border border-brand-line bg-brand-cream px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-ink/55">
-                Stored only — no flow reads this yet
-              </span>
-            )}
             {credential.priority !== 999 && (
               <span className="rounded-full bg-brand-gold/15 px-2.5 py-1 text-[11px] font-bold text-brand-gold-dark">
                 Priority {credential.priority}

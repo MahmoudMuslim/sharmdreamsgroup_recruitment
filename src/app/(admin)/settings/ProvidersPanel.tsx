@@ -14,7 +14,7 @@ import { getEncryptionStatus } from "@/modules/settings/application/credential-a
  * Which half is open is decided by the settings dock (URL), not a tab strip in
  * here — the page already has one navigation, and this used to add a second.
  */
-export function IntegrationsPanel({
+export function ProvidersPanel({
   editable,
   section,
 }: {

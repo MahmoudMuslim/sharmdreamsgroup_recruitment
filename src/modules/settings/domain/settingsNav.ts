@@ -10,9 +10,9 @@ import { SETTINGS_SCHEMA } from "./schema";
  *
  * Selection is carried in the URL (`?area=&section=`) rather than in client
  * state, so the panels stay server-rendered and a deep link to
- * `/settings?area=integrations&section=models` opens exactly what it says.
+ * `/settings?area=providers&section=models` opens exactly what it says.
  */
-export type SettingsAreaId = "platform" | "organisation" | "access" | "integrations";
+export type SettingsAreaId = "platform" | "organisation" | "access" | "providers";
 
 export interface SettingsNavSection {
   id: string;
@@ -90,7 +90,7 @@ const ACCESS_SECTIONS: SettingsNavSection[] = [
   },
 ];
 
-const INTEGRATIONS_SECTIONS: SettingsNavSection[] = [
+const PROVIDER_SECTIONS: SettingsNavSection[] = [
   {
     id: "credentials",
     label: "API keys",
@@ -110,7 +110,7 @@ export const SETTINGS_NAV: readonly SettingsNavArea[] = [
     id: "platform",
     label: "Platform",
     icon: "sliders",
-    blurb: "How the product behaves: AI, assessments, notifications, integrations and security.",
+    blurb: "How the product behaves: AI, assessments, notifications and security.",
     sections: SETTINGS_SCHEMA.map((section) => ({
       id: section.id,
       label: section.title,
@@ -133,11 +133,11 @@ export const SETTINGS_NAV: readonly SettingsNavArea[] = [
     sections: ACCESS_SECTIONS,
   },
   {
-    id: "integrations",
+    id: "providers",
     label: "Providers",
     icon: "key",
     blurb: "Credentials and per-task model routing for the AI providers and channels in use.",
-    sections: INTEGRATIONS_SECTIONS,
+    sections: PROVIDER_SECTIONS,
   },
 ];
 
@@ -146,7 +146,7 @@ export const DEFAULT_SECTION: Record<SettingsAreaId, string> = {
   platform: SETTINGS_SCHEMA[0]?.id ?? "organisation",
   organisation: "departments",
   access: "permissions",
-  integrations: "credentials",
+  providers: "credentials",
 };
 
 export function areaById(id: string | undefined | null): SettingsNavArea {

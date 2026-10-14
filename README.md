@@ -63,7 +63,6 @@ An enterprise-grade, **AI-Driven Omnichannel HRMS, ATS, & Skill Assessment Platf
 | **Credentials Console** | Multi-API key management per provider with priority failover, AES-256 encryption, audit log |
 | **Model Routing Console** | Per-capability model selection (primary + fallback), cost-tier grouping, search |
 | **Team** | User management, company assignment, role matrix |
-| **Integrations** | ATS connectors (Greenhouse, Lever, Frappe HR), calendar OAuth |
 | **Master Data** | Companies, departments, locations, currencies, skills |
 | **Onboarding** | AI-generated checklist plans |
 
@@ -84,7 +83,7 @@ src/
 │   ├── (auth)/                   # Login, Forgot Password, Unauthorized
 │   ├── (admin)/                  # Protected Admin Portal
 │   │   ├── dashboard/            # Analytics Dashboard
-│   │   ├── settings/             # Credentials, Model Routing, Team, Integrations
+│   │   ├── settings/             # Credentials, Model Routing, Team, Master Data
 │   │   ├── assessments/          # Assessment Builder
 │   │   ├── candidates/           # Candidate Browser + Profile
 │   │   ├── jobs/                 # Job Openings
@@ -97,7 +96,7 @@ src/
 │   ├── auth/                     # RBAC, Session, Permissions
 │   ├── assessment/               # Excel, Video, Quiz, Case Study
 │   ├── screening/                # AI Gateway, CV Parsing, Scoring
-│   ├── omnichannel/              # WhatsApp, Email, Calendar, ATS
+│   ├── omnichannel/              # WhatsApp, Email
 │   ├── analytics/                # Dashboard Metrics, Pipeline
 │   └── onboarding/               # Checklist Generation
 ├── lib/                          # Supabase Clients, Config, Crypto
@@ -141,8 +140,6 @@ cp .env.example .env.local
 | `OPENROUTER_API_KEY` | OpenRouter API key (fallback) | ⚠️ |
 | `GOOGLE_AI_STUDIO_API_KEY` | Google AI Studio key (fallback) | ⚠️ |
 | `WHATSAPP_TOKEN` | Meta WhatsApp access token | ⚠️ |
-| `GOOGLE_CALENDAR_CLIENT_ID` | Google OAuth client ID | ⚠️ |
-| `MS_CALENDAR_CLIENT_ID` | Microsoft OAuth client ID | ⚠️ |
 
 > **Note**: Most API keys are managed in **Settings → API Keys** panel with encrypted storage. Environment variables serve as fallbacks only.
 
@@ -187,9 +184,9 @@ pnpm start
 - `assessment_templates` / `assessment_questions` — Configurable test batteries
 - `candidate_attempts` — Timed assessment sessions with secure tokens
 - `candidate_responses` — Answers per question (spreadsheet, video, text, choices)
-- `ats_integrations` — Greenhouse, Lever, Frappe HR connections
+- `ats_integrations` — reserved table, no longer read by the app (the ATS/calendar connectors were removed)
 - `communication_logs` — WhatsApp, Email, In-app message history
-- `interview_schedules` — Calendar-synced interviews
+- `interview_schedules` — Interview slots with meeting links, sent over WhatsApp and email
 - `onboarding_plans` — AI-generated checklists & skill gaps
 
 ### RLS Policies

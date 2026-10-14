@@ -43,8 +43,6 @@ export interface CredentialKeyView {
   description: string;
   docsUrl: string | null;
   verify: boolean;
-  /** True when no flow in this codebase reads the stored credential yet. */
-  storedOnly: boolean;
   fields: { key: string; label: string; kind: "text" | "url" | "number"; placeholder?: string; required?: boolean; hint?: string; secret?: boolean }[];
   /** Where the credential currently comes from. */
   source: "stored" | "environment" | "unset";
@@ -145,7 +143,6 @@ export async function listCredentials(): Promise<CredentialKeyView[]> {
         envVar: definition.envVar,
         description: definition.description,
         docsUrl: definition.docsUrl ?? null,
-        storedOnly: definition.storedOnly ?? false,
         verify: definition.verify !== null,
         fields: definition.fields.map((field) => ({ ...field })),
         source: envValue ? "environment" : "unset",
@@ -169,7 +166,6 @@ export async function listCredentials(): Promise<CredentialKeyView[]> {
           envVar: definition.envVar,
           description: definition.description,
           docsUrl: definition.docsUrl ?? null,
-          storedOnly: definition.storedOnly ?? false,
           verify: definition.verify !== null,
           fields: definition.fields.map((field) => ({ ...field })),
           source: "stored",
@@ -451,17 +447,6 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
 
   let url = definition.verify.url;
   const config = await resolveConfig(provider);
-
-  if (definition.id === "frappe_hr") {
-    url = `${String(config.base_url ?? "").replace(/\/$/, "")}/api/method/ping`;
-  }
-  if (definition.id === "microsoft_calendar") {
-    return {
-      ok: false,
-      status: "unverifiable",
-      message: "Microsoft 365 uses OAuth — verify by completing the consent flow.",
-    };
-  }
 
   // Cloudflare's endpoints are all addressed to an account, so the token alone
   // has no URL to call. Say so instead of fetching a path with an empty segment.

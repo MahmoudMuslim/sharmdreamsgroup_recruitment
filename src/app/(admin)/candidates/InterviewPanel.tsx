@@ -295,7 +295,6 @@ export function InterviewPanel({
                     <p className="mt-1 text-xs text-brand-ink/60">
                       {row.duration_minutes} min
                       {row.interviewer_name ? ` · ${row.interviewer_name}` : ""}
-                      {row.calendar_provider !== "MANUAL" ? ` · ${row.calendar_provider}` : ""}
                     </p>
                     {row.meeting_link && (
                       <a

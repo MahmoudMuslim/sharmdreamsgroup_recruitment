@@ -12,14 +12,13 @@ export interface InterviewRecord {
   scheduled_at: string;
   duration_minutes: number;
   meeting_link: string | null;
-  calendar_provider: string;
   status: string;
   interviewer_name: string | null;
 }
 
 /** Columns every interview query selects, including the joined interviewer. */
 export const INTERVIEW_SELECT =
-  "id, application_id, scheduled_at, duration_minutes, meeting_link, calendar_provider, status, user_profiles ( full_name )";
+  "id, application_id, scheduled_at, duration_minutes, meeting_link, status, user_profiles ( full_name )";
 
 /**
  * Flattens PostgREST's joined row.
@@ -37,7 +36,6 @@ export function toInterviewRecord(row: Record<string, unknown>): InterviewRecord
     scheduled_at: String(row.scheduled_at),
     duration_minutes: Number(row.duration_minutes),
     meeting_link: (row.meeting_link as string | null) ?? null,
-    calendar_provider: String(row.calendar_provider ?? "MANUAL"),
     status: String(row.status ?? "SCHEDULED"),
     interviewer_name: profile?.full_name ?? null,
   };

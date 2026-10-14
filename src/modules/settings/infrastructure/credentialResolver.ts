@@ -126,19 +126,8 @@ export async function resolveConfig(provider: string): Promise<Record<string, st
       username: process.env.SMTP_USER ?? "",
       from: process.env.EMAIL_FROM ?? "",
     },
-    frappe_hr: { base_url: process.env.FRAPPE_HR_BASE_URL ?? "" },
     cloudflare_workers_ai: {
       account_id: process.env.CLOUDFLARE_AI_ACCOUNT_ID ?? "",
-    },
-    google_calendar: {
-      client_id: process.env.GOOGLE_CALENDAR_CLIENT_ID ?? "",
-      client_secret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET ?? "",
-      redirect_uri: process.env.GOOGLE_CALENDAR_REDIRECT_URI ?? "",
-    },
-    microsoft_calendar: {
-      client_id: process.env.MS_CALENDAR_CLIENT_ID ?? "",
-      client_secret: process.env.MS_CALENDAR_CLIENT_SECRET ?? "",
-      redirect_uri: process.env.MS_CALENDAR_REDIRECT_URI ?? "",
     },
   };
 
@@ -146,8 +135,8 @@ export async function resolveConfig(provider: string): Promise<Record<string, st
 }
 
 /**
- * A secondary secret for a provider (WhatsApp app secret, calendar client
- * secret, ...), decrypted from `extra_secrets_encrypted`.
+ * A secondary secret for a provider (e.g. the WhatsApp app secret), decrypted
+ * from `extra_secrets_encrypted`.
  */
 export async function resolveExtraSecret(
   provider: string,

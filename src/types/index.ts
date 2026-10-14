@@ -30,10 +30,6 @@ export type QuestionType = "EXCEL_MODEL" | "VIDEO_PITCH" | "CASE_STUDY" | "MULTI
 
 export type AttemptStatus = "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "GRADED" | "EXPIRED";
 
-export type AtsProvider = "GREENHOUSE" | "LEVER" | "FRAPPE_HR" | "LINKEDIN_APPLY";
-
-export type IntegrationStatus = "CONNECTED" | "PENDING" | "ERROR" | "DISCONNECTED";
-
 export type MessageChannel = "WHATSAPP" | "EMAIL" | "IN_APP";
 
 export type MessageDirection = "INBOUND" | "OUTBOUND";
@@ -207,17 +203,6 @@ export interface QuestionEvaluation {
   rationale: string;
   strengths: string[];
   improvements: string[];
-}
-
-export interface AtsIntegration {
-  id: string;
-  tenant_id: string;
-  provider: AtsProvider;
-  status: IntegrationStatus;
-  credentials: Record<string, string> | null;
-  webhook_secret: string | null;
-  last_synced_at: string | null;
-  created_at: string;
 }
 
 export interface CommunicationLog {
@@ -439,30 +424,10 @@ export interface InterviewQuestionsRequest {
   application_id: string;
 }
 
-export interface AtsSyncRequest {
-  application_id: string;
-  provider: AtsProvider;
-}
-
-export interface AtsSyncResponse {
-  ok: boolean;
-  provider: AtsProvider;
-  external_id?: string;
-  error?: string;
-}
-
 export interface WhatsAppOutboundMessage {
   to: string;
   template?: string;
   text?: string;
-}
-
-export interface CalendarEventPayload {
-  title: string;
-  description: string;
-  start_iso: string;
-  duration_minutes: number;
-  attendee_email?: string;
 }
 
 // ---------------------------------------------------------------------------

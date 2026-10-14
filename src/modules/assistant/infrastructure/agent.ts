@@ -74,7 +74,7 @@ export const ASSISTANT_RULES: readonly string[] = [
   "9. Point at screens with real links so the recruiter can click through:",
   "   [the opening](/jobs?job=<id>), [this candidate](/candidates?application=<id>),",
   "   [the prospect](/sourcing?prospect=<id>), [the outbox](/whatsapp),",
-  "   [the model routing](/settings?area=integrations&section=models).",
+  "   [the model routing](/settings?area=providers&section=models).",
   "   A filtered board is the same idea: [interview stage](/dashboard?stage=INTERVIEW) —",
   "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q= and ?stage=.",
   "10. Only put an id in a link that a tool actually returned this conversation.",

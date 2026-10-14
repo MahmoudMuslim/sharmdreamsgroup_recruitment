@@ -8,7 +8,7 @@
 // ============================================================================
 
 /** Provider group/category for organization in the UI. */
-export type ProviderGroup = "ai" | "communication" | "calendar" | "hr" | "other";
+export type ProviderGroup = "ai" | "communication" | "other";
 
 /** Provider group display configuration. */
 export interface ProviderGroupConfig {
@@ -50,8 +50,6 @@ export interface ProviderDefinition {
   docsUrl?: string;
   verify?: ProviderVerifyConfig | null;
   fields: ProviderField[];
-  /** True when no flow in this codebase reads the stored credentials yet. */
-  storedOnly?: boolean;
 }
 
 /** Model option from a provider catalogue. */
@@ -154,8 +152,6 @@ export type CostTier = "free" | "low" | "medium" | "high" | "premium" | "unprice
 export const PROVIDER_GROUPS: ProviderGroupConfig[] = [
   { id: "ai", label: "AI Providers", blurb: "Language model APIs for generation, embedding, and reasoning." },
   { id: "communication", label: "Communication", blurb: "Messaging channels that send candidate notifications." },
-  { id: "calendar", label: "Calendar", blurb: "Calendar integrations for scheduling and availability." },
-  { id: "hr", label: "HR Systems", blurb: "Human resource platform connectors." },
   { id: "other", label: "Other", blurb: "Miscellaneous integrations." },
 ];
 
@@ -338,55 +334,6 @@ export const PROVIDERS: ProviderDefinition[] = [
         required: true,
         hint: "What candidates see and reply to. Falls back to EMAIL_FROM.",
       },
-    ],
-  },
-  {
-    id: "frappe_hr",
-    displayName: "Frappe HR",
-    group: "hr",
-    envVar: "FRAPPE_HR_API_KEY",
-    description: "Frappe/ERPNext HR module integration.",
-    storedOnly: true,
-    docsUrl: "https://frappeframework.com/docs",
-    verify: {
-      url: "",
-      method: "GET",
-      header: "Authorization",
-    },
-    fields: [
-      { key: "api_key", label: "API Key", kind: "text", placeholder: "...", required: true, secret: true },
-      { key: "api_secret", label: "API Secret", kind: "text", placeholder: "...", required: true, secret: true },
-      { key: "base_url", label: "Base URL", kind: "url", placeholder: "https://your-site.frappe.cloud", required: true },
-    ],
-  },
-  {
-    id: "google_calendar",
-    displayName: "Google Calendar",
-    group: "calendar",
-    envVar: "GOOGLE_CALENDAR_CLIENT_ID",
-    description: "Google Calendar integration for interview scheduling.",
-    storedOnly: true,
-    docsUrl: "https://developers.google.com/calendar",
-    verify: null,
-    fields: [
-      { key: "client_id", label: "Client ID", kind: "text", placeholder: "...apps.googleusercontent.com", required: true },
-      { key: "client_secret", label: "Client Secret", kind: "text", placeholder: "GOCSPX-...", required: true, secret: true },
-      { key: "redirect_uri", label: "Redirect URI", kind: "url", placeholder: "https://your-app.com/auth/callback", required: true },
-    ],
-  },
-  {
-    id: "microsoft_calendar",
-    displayName: "Microsoft 365 Calendar",
-    group: "calendar",
-    envVar: "MS_CALENDAR_CLIENT_ID",
-    description: "Microsoft Graph Calendar integration for Outlook/Exchange.",
-    storedOnly: true,
-    docsUrl: "https://learn.microsoft.com/en-us/graph/api/resources/calendar",
-    verify: null,
-    fields: [
-      { key: "client_id", label: "Client ID", kind: "text", placeholder: "...", required: true },
-      { key: "client_secret", label: "Client Secret", kind: "text", placeholder: "...", required: true, secret: true },
-      { key: "redirect_uri", label: "Redirect URI", kind: "url", placeholder: "https://your-app.com/auth/callback", required: true },
     ],
   },
 ];

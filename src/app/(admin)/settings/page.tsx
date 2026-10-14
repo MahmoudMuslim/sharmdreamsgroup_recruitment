@@ -2,7 +2,7 @@ import { SettingsConsole } from "./SettingsConsole";
 import { SettingsShell, type SettingsNavCounts } from "./SettingsShell";
 import { MasterDataConsole } from "./MasterDataConsole";
 import { PermissionMatrixCard } from "./PermissionMatrixCard";
-import { IntegrationsPanel } from "./IntegrationsPanel";
+import { ProvidersPanel } from "./ProvidersPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
 import { loadSettings } from "./actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
@@ -98,7 +98,7 @@ export default async function SettingsPage({
       <PageHeader
         eyebrow="Administration"
         title="Settings"
-        description="Control every aspect of the platform — AI behaviour, assessment rules, integrations, security, organisation structure and team access."
+        description="Control every aspect of the platform — AI behaviour, assessment rules, notifications, security, organisation structure and team access."
       />
 
       <SettingsShell area={area.id} section={section.id} counts={counts}>
@@ -144,8 +144,8 @@ export default async function SettingsPage({
           </div>
         )}
 
-        {area.id === "integrations" && (
-          <IntegrationsPanel editable={editable} section={section.id} />
+        {area.id === "providers" && (
+          <ProvidersPanel editable={editable} section={section.id} />
         )}
       </SettingsShell>
     </AdminShell>

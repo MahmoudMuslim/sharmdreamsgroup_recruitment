@@ -86,7 +86,7 @@ export function linkForTool(
       return { href: "/whatsapp", label: "Open the outbox" };
     case "save_model_routing":
       return {
-        href: "/settings?area=integrations&section=models",
+        href: "/settings?area=providers&section=models",
         label: "Open model routing",
       };
     case "save_settings":

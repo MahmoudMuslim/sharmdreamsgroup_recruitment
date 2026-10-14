@@ -215,20 +215,6 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
   },
 
   {
-    id: "integrations",
-    title: "Integrations",
-    description: "Toggles for ATS and calendar connections. No flow acts on them yet.",
-    icon: "plug",
-    controls: [
-      { kind: "toggle", key: "integrations.greenhouse.enabled", label: "Greenhouse" },
-      { kind: "toggle", key: "integrations.lever.enabled", label: "Lever" },
-      { kind: "toggle", key: "integrations.frappe_hr.enabled", label: "Frappe HR" },
-      { kind: "toggle", key: "integrations.google_calendar.enabled", label: "Google Calendar" },
-      { kind: "toggle", key: "integrations.microsoft_calendar.enabled", label: "Microsoft 365 Calendar" },
-    ],
-  },
-
-  {
     id: "security",
     title: "Security",
     description: "Session, password and data-masking values.",
@@ -293,21 +279,6 @@ export const ASSIGNABLE_ROLE_KEYS: ReadonlySet<string> = new Set(
 export const ALLOWED_SETTING_KEYS: ReadonlySet<string> = new Set(
   SETTINGS_SCHEMA.flatMap((section) => section.controls.map((control) => control.key))
 );
-
-/**
- * Keys the platform saves but no flow reads yet.
- *
- * The settings screen badges these instead of hiding them, so an admin is never
- * told that a switch changes behaviour when it only changes a row. Drop a key
- * from here the moment something starts reading it.
- */
-export const UNENFORCED_SETTING_KEYS: ReadonlySet<string> = new Set([
-  "integrations.greenhouse.enabled",
-  "integrations.lever.enabled",
-  "integrations.frappe_hr.enabled",
-  "integrations.google_calendar.enabled",
-  "integrations.microsoft_calendar.enabled",
-]);
 
 /** Re-exported for consumers that only need the control union. */
 export type { SettingControl };

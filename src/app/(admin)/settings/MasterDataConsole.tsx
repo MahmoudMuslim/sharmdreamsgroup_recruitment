@@ -103,7 +103,7 @@ const FIELDS: Record<MasterEntity, FieldDef[]> = {
       name: "key",
       label: "Key",
       kind: "text",
-      hint: "Derived from the label when left blank. Used by integrations.",
+      hint: "Derived from the label when left blank. Assessment suites store this key as their role family.",
     },
     {
       name: "department_id",
