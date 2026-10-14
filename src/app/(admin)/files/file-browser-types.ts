@@ -37,17 +37,17 @@ export const BUCKETS: readonly BucketInfo[] = [
     deletable: true,
   },
   {
-    key: "candidate-audio",
-    label: "Audio answers",
+    key: "resumes",
+    label: "Staff resume uploads",
     writtenBy:
-      "Nothing in this portal yet — the bucket ships with size and MIME limits, but no code path writes to it.",
+      "The candidate record (POST /api/files/upload, from Files added by staff), stored as applications/<application id>/<random id>-<filename> and owned by an application_attachments row.",
     deletable: true,
   },
   {
-    key: "resumes",
-    label: "Resumes (legacy)",
+    key: "candidate-audio",
+    label: "Voice notes",
     writtenBy:
-      "Nothing in this portal yet — CVs go to Candidate CVs instead, so this bucket stays empty.",
+      "The same door on the candidate record (POST /api/files/upload). WebM, MP3 or M4A up to 20 MB, owned by an application_attachments row.",
     deletable: true,
   },
 ] as const;
@@ -56,7 +56,7 @@ export function bucketInfo(key: string | null | undefined): BucketInfo | null {
   return BUCKETS.find((bucket) => bucket.key === key) ?? null;
 }
 
-/** The application or attempt that references an exact storage key. */
+/** The application, attempt or attachment row that references an exact storage key. */
 export interface FileOwner {
   label: string;
   detail: string;
@@ -90,8 +90,6 @@ export interface FolderListing {
   truncated: boolean;
   /** False when owner records could not be read, so links may be missing. */
   ownersLoaded: boolean;
-  /** False for buckets no table references, where "unlinked" means nothing. */
-  ownersTrackable: boolean;
 }
 
 export interface BucketStat {

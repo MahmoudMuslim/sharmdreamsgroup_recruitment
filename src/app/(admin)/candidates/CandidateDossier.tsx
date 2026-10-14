@@ -21,6 +21,7 @@ import { formatDateTime, sourceLabel, truncate } from "@/lib/utils";
 import { humanizeStage } from "@/modules/settings/domain/templates";
 import { getCandidateDossier, type CandidateDossier as DossierData } from "./dossier-actions";
 import type { DossierAttempt } from "./dossier-actions";
+import { AttachmentPanel } from "./AttachmentPanel";
 import {
   deleteAttempt,
   extendAttemptLink,
@@ -479,6 +480,15 @@ export function CandidateDossier({
             )
           )}
         </div>
+      </Section>
+
+      <Section title="Files added by staff">
+        <AttachmentPanel
+          applicationId={app.id}
+          attachments={dossier.attachments}
+          canWrite={dossier.can_write}
+          onChanged={reload}
+        />
       </Section>
 
       {dossier.gate_answers.length > 0 && (

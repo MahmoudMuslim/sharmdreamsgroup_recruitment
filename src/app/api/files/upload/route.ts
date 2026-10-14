@@ -1,0 +1,143 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSessionUser, isStaff } from "@/lib/auth/session";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import {
+  ATTACHMENT_RULES,
+  attachmentPath,
+  attachmentRule,
+  isApplicationId,
+} from "@/modules/careers/attachment-rules";
+
+/**
+ * Stores a file a recruiter attaches to a candidate record.
+ *
+ * Multipart cannot travel through a Server Action's serialised arguments, which
+ * is why the career site's CV upload is a route too. Everything the bucket will
+ * enforce is checked first, so an oversize or wrong-typed file reads as the
+ * limit in words rather than as a storage error code.
+ *
+ * The row that owns the object is written in the same call: a stored file no
+ * record names is invisible in the candidate's dossier and untraceable in the
+ * File Manager, so a failed insert takes the object straight back out.
+ */
+export async function POST(request: NextRequest) {
+  const user = await getSessionUser();
+  if (!user || !isStaff(user.role)) {
+    return NextResponse.json({ error: "Sign in as staff to attach files." }, { status: 401 });
+  }
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return NextResponse.json(
+      { error: "Attaching a file needs the Edit candidates permission." },
+      { status: 403 }
+    );
+  }
+
+  const form = await request.formData().catch(() => null);
+  if (!form) return NextResponse.json({ error: "Could not read the upload." }, { status: 400 });
+
+  const file = form.get("file");
+  const applicationId = form.get("applicationId");
+  const bucket = form.get("bucket");
+  const rule = attachmentRule(typeof bucket === "string" ? bucket : null);
+
+  if (!(file instanceof File) || file.size === 0) {
+    return NextResponse.json({ error: "No file was attached." }, { status: 400 });
+  }
+  if (!rule) {
+    return NextResponse.json(
+      { error: `Attach into one of: ${ATTACHMENT_RULES.map((each) => each.bucket).join(", ")}.` },
+      { status: 400 }
+    );
+  }
+  if (!isApplicationId(applicationId)) {
+    return NextResponse.json({ error: "Missing candidate reference." }, { status: 400 });
+  }
+
+  // Re-validated server-side: a client MIME type proves nothing, and the bucket
+  // only ever accepts the formats it was configured with.
+  if (!rule.allowedMimeTypes.includes(file.type)) {
+    return NextResponse.json(
+      { error: `That bucket accepts only ${rule.hint.replace(/\.$/, "")}.` },
+      { status: 415 }
+    );
+  }
+  if (file.size > rule.maxBytes) {
+    return NextResponse.json(
+      { error: `That file is larger than ${Math.round(rule.maxBytes / (1024 * 1024))} MB.` },
+      { status: 413 }
+    );
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  // The parent record is read through RLS first, so a recruiter cannot attach a
+  // file to a candidate sitting in another tenant's pipeline.
+  const { data: application } = await supabase
+    .from("applications")
+    .select("id")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (!application) {
+    return NextResponse.json(
+      { error: "This candidate record is no longer in your pipeline." },
+      { status: 404 }
+    );
+  }
+
+  const path = attachmentPath(applicationId, file.name);
+
+  const { error: uploadError } = await supabase.storage
+    .from(rule.bucket)
+    .upload(path, file, { contentType: file.type, upsert: false });
+
+  if (uploadError) {
+    console.error("[uploads] storage refused:", rule.bucket, uploadError.message);
+    return NextResponse.json(
+      { error: `Storage refused that file. ${rule.hint}` },
+      { status: 500 }
+    );
+  }
+
+  // The uploader is named from their own profile row, so the candidate record can
+  // say who added a file months after they left the company.
+  const { data: profile } = await supabase
+    .from("user_profiles")
+    .select("id")
+    .eq("auth_user_id", user.authUserId)
+    .maybeSingle();
+
+  const { data: attachment, error: insertError } = await supabase
+    .from("application_attachments")
+    .insert({
+      application_id: applicationId,
+      bucket: rule.bucket,
+      storage_path: path,
+      file_name: file.name.slice(0, 200),
+      mime_type: file.type,
+      bytes: file.size,
+      uploaded_by: profile?.id ?? null,
+    })
+    .select("id, bucket, storage_path, file_name, mime_type, bytes, created_at")
+    .maybeSingle();
+
+  if (insertError || !attachment) {
+    console.error("[uploads] attachment row refused:", insertError?.message);
+    const { error: cleanupError } = await supabase.storage.from(rule.bucket).remove([path]);
+    if (cleanupError) {
+      console.error("[uploads] orphan left behind:", rule.bucket, path, cleanupError.message);
+    }
+    return NextResponse.json(
+      {
+        error: cleanupError
+          ? "The file was stored but could not be recorded, and could not be removed again either."
+          : "The file was stored but could not be recorded, so it has been taken back out.",
+      },
+      { status: 500 }
+    );
+  }
+
+  return NextResponse.json({ ok: true, attachment });
+}

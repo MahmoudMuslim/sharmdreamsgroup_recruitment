@@ -221,7 +221,7 @@ export function FileBrowser({
           </label>
         </div>
 
-        {listing?.ownersTrackable && (
+        {listing && (
           <div className="flex flex-wrap items-center gap-2 border-b border-brand-line bg-brand-cream/50 px-5 py-3 sm:px-6">
             <button
               type="button"
@@ -331,22 +331,20 @@ export function FileBrowser({
                   </div>
 
                   <div className="flex shrink-0 flex-col items-end gap-2">
-                    {listing.ownersTrackable ? (
-                      file.owner ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/12 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
-                          <Link2 className="h-3 w-3" aria-hidden />
-                          {file.owner.label}
-                          <span className="font-semibold normal-case text-emerald-700/70">
-                            {file.owner.detail}
-                          </span>
+                    {file.owner ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/12 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                        <Link2 className="h-3 w-3" aria-hidden />
+                        {file.owner.label}
+                        <span className="font-semibold normal-case text-emerald-700/70">
+                          {file.owner.detail}
                         </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold text-brand-ink/55">
-                          <Link2Off className="h-3 w-3" aria-hidden />
-                          Not linked to a record
-                        </span>
-                      )
-                    ) : null}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold text-brand-ink/55">
+                        <Link2Off className="h-3 w-3" aria-hidden />
+                        Not linked to a record
+                      </span>
+                    )}
 
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <a

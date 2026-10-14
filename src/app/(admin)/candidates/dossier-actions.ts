@@ -11,6 +11,7 @@ import {
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
 import { formatInZone } from "@/lib/timezone";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
+import { attachmentRule } from "@/modules/careers/attachment-rules";
 import type { GateAnswer } from "@/modules/careers/gate-questions";
 
 /**
@@ -104,6 +105,26 @@ export interface DossierSibling {
   applied_at: string;
 }
 
+/**
+ * One file a recruiter attached to this record after the application landed.
+ *
+ * Opening and downloading go through /api/files/link like the File Manager does,
+ * so the storage key never becomes a URL the browser can hand to someone else.
+ */
+export interface DossierAttachment {
+  id: string;
+  bucket: string;
+  /** Which kind of file this is, in the words the upload control used. */
+  label: string;
+  name: string;
+  path: string;
+  mime_type: string | null;
+  bytes: number | null;
+  uploaded_at: string;
+  /** The staff member who uploaded it, or null once their profile is gone. */
+  uploaded_by: string | null;
+}
+
 export interface CandidateDossier {
   application: DossierApplication;
   /** Empty when the role asked no viability questions. */
@@ -112,10 +133,14 @@ export interface CandidateDossier {
   alerts: DossierAlert[];
   onboarding: DossierOnboarding | null;
   other_applications: DossierSibling[];
+  /** Files staff attached to this record, newest first. */
+  attachments: DossierAttachment[];
   /** True when `security.mask_scores_for_reviewers` hid the scores in here. */
   scores_masked: boolean;
   /** Whether this recruiter may revoke, extend or re-issue an attempt link. */
   can_manage_links: boolean;
+  /** Whether this recruiter may attach or remove a file on this record. */
+  can_write: boolean;
 }
 
 export type DossierResult =
@@ -184,12 +209,13 @@ export async function getCandidateDossier(
   applicationId: string
 ): Promise<DossierResult> {
   await requireStaff("/candidates");
-  const [supabase, masked, zone, validityHours, canManageLinks] = await Promise.all([
+  const [supabase, masked, zone, validityHours, canManageLinks, canWrite] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
     getOrganisationTimeZone(),
     getNumberSetting("assessment.link_validity_hours", DEFAULT_LINK_VALIDITY_HOURS),
     hasPermissionForUser("assessments.assign"),
+    hasPermissionForUser("candidates.write"),
   ]);
 
   const { data: row, error } = await supabase
@@ -217,7 +243,7 @@ export async function getCandidateDossier(
     ? await createCvLinks(supabase, path)
     : { cv_url: null, cv_download_url: null };
 
-  const [attempts, logs, queued, planResponse, siblings] = await Promise.all([
+  const [attempts, logs, queued, planResponse, siblings, attached] = await Promise.all([
     supabase
       .from("candidate_attempts")
       .select(
@@ -253,6 +279,12 @@ export async function getCandidateDossier(
       .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("application_attachments")
+      .select("id, bucket, storage_path, file_name, mime_type, bytes, created_at, user_profiles(full_name)")
+      .eq("application_id", applicationId)
+      .order("created_at", { ascending: false })
+      .limit(20),
   ]);
 
   const alerts: DossierAlert[] = [
@@ -350,8 +382,20 @@ export async function getCandidateDossier(
         stage: asString(sibling.stage, "NEW"),
         applied_at: asString(sibling.created_at),
       })),
+      attachments: (attached.data ?? []).map((file: Record<string, unknown>) => ({
+        id: String(file.id),
+        bucket: asString(file.bucket),
+        label: attachmentRule(asString(file.bucket))?.label ?? "Attached file",
+        name: asString(file.file_name),
+        path: asString(file.storage_path),
+        mime_type: asNullableString(file.mime_type),
+        bytes: asNumber(file.bytes),
+        uploaded_at: asString(file.created_at),
+        uploaded_by: asNullableString(one<{ full_name?: unknown }>(file.user_profiles)?.full_name),
+      })),
       scores_masked: masked,
       can_manage_links: canManageLinks,
+      can_write: canWrite,
     },
   };
 }

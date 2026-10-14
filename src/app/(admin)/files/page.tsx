@@ -9,7 +9,8 @@ import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/u
 
 export const metadata = {
   title: "Files · Sharm Dreams Talent Cloud",
-  description: "Browse the private buckets that hold candidate CVs and pitch recordings",
+  description:
+    "Browse the private buckets that hold candidate CVs, pitch recordings and the files staff attach to a candidate record",
 };
 
 /** Auth-gated route: every listing is a storage RLS read for this session. */
@@ -33,7 +34,7 @@ export default async function FilesPage() {
       <PageHeader
         eyebrow="Storage"
         title="File manager"
-        description="Walk the buckets folder by folder, see which application or attempt each file belongs to, and open it through a signed link that expires instead of a permanent URL."
+        description="Walk the buckets folder by folder, see which application, attempt or staff upload each file belongs to, and open it through a signed link that expires instead of a permanent URL."
       />
 
       {!canRead ? (

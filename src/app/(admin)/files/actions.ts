@@ -156,7 +156,6 @@ async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string)
   }
 
   const owners = await ownersFor(supabase, bucket, [...rows.keys()]);
-  const trackable = bucket === "candidate-cvs" || bucket === "candidate-videos";
 
   const files: StoredFile[] = [...rows.values()]
     .map((file) => ({ ...file, owner: owners.map.get(file.path) ?? null }))
@@ -174,7 +173,6 @@ async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string)
       files,
       truncated: listed.entries.length >= LIST_LIMIT,
       ownersLoaded: owners.loaded,
-      ownersTrackable: trackable,
     },
   };
 }
@@ -243,9 +241,11 @@ async function walk(
 /**
  * Which record references each listed key.
  *
- * `applications.cv_file_path` and `candidate_responses.video_path` are the only
- * columns in this schema that hold storage keys, so a file in another bucket —
- * or one whose row was deleted — genuinely reports as unlinked.
+ * `applications.cv_file_path`, `candidate_responses.video_path` and
+ * `application_attachments.storage_path` are the only columns in this schema that
+ * hold storage keys, so a file with no row naming it — one uploaded before its
+ * table existed, or dropped in from outside the portal — genuinely reports as
+ * unlinked.
  */
 async function ownersFor(
   supabase: Supabase,
@@ -321,7 +321,38 @@ async function ownersFor(
     return { map, loaded: true };
   }
 
-  // No column in this schema points at the other two buckets.
+  // Staff resumes and voice notes: one row per object, on the candidate it was added to.
+  const { data, error } = await supabase
+    .from("application_attachments")
+    .select("storage_path, applications(full_name, stage)")
+    .eq("bucket", bucket)
+    .limit(1000);
+
+  if (error) {
+    console.error("[files] attachment lookup failed:", error.message);
+    return { map, loaded: false };
+  }
+
+  for (const entry of data ?? []) {
+    const row = asRecord(entry);
+    const path = stringOrNull(row.storage_path);
+    if (!path) continue;
+
+    const application = asRecord(
+      Array.isArray(row.applications) ? row.applications[0] : row.applications
+    );
+
+    map.set(path, {
+      label: stringOrNull(application.full_name) ?? "Unnamed applicant",
+      detail: [
+        bucketInfo(bucket)?.label ?? "Staff upload",
+        stringOrNull(application.stage) ? stageLabel(String(application.stage)) : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    });
+  }
+
   return { map, loaded: true };
 }
 
@@ -364,14 +395,36 @@ async function recordDeletion(
  * Clears the database pointer to a storage key that no longer resolves.
  *
  * Deleting the object is only half of deletion: a row still naming it offers a
- * download that 404s, so the record would promise a file that is gone. Only the
- * two buckets a table actually references can be unlinked here.
+ * download that 404s, so the record would promise a file that is gone. Every
+ * bucket in this portal is now referenced by a table, so every one of them can be
+ * unlinked here — a CV or a pitch has its column cleared, a staff upload loses the
+ * attachment row that existed only to name it.
  */
 async function unlinkReference(
   supabase: Supabase,
   bucket: BucketKey,
   path: string
 ): Promise<string | null> {
+  if (bucket === "resumes" || bucket === "candidate-audio") {
+    const { count } = await supabase
+      .from("application_attachments")
+      .select("id", { count: "exact", head: true })
+      .eq("storage_path", path);
+    if (!count) return null;
+
+    const { data, error } = await supabase
+      .from("application_attachments")
+      .delete()
+      .eq("storage_path", path)
+      .select("id");
+
+    if (error || (data?.length ?? 0) < count) {
+      console.error("[files] attachment unlink failed:", error?.message);
+      return `The file was deleted, but ${count} attachment record${count === 1 ? "" : "s"} still name${count === 1 ? "s" : ""} it — open the candidate to remove them.`;
+    }
+    return null;
+  }
+
   const target =
     bucket === "candidate-cvs"
       ? { table: "applications", column: "cv_file_path" }
