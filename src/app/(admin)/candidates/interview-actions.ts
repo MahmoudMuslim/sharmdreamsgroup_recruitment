@@ -7,6 +7,7 @@ import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { generateInterviewQuestions } from "@/modules/screening/infrastructure/openRouterEngine";
 import type { CvScreeningResult, GeneratedInterviewQuestions } from "@/types";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
@@ -343,7 +344,8 @@ function toStringList(value: unknown): string[] {
  * Gated on `ai.interview_questions`: with that switch off the recruiter gets
  * the setting named in the reply rather than a model call behind their back.
  * The questions are built from the gaps AI screening recorded, so screening has
- * to have run, and from whatever the candidate wrote in their assessment.
+ * to have run, and from whatever the candidate wrote in their assessment — with
+ * score masking on, only the writing is offered to the model.
  * Nothing is stored — there is no column for a guide — so the panel keeps the
  * result in the open drawer and says so.
  */
@@ -424,6 +426,10 @@ export async function generateInterviewGuide(input: {
         .limit(20)
     : { data: null };
 
+  // A masked reviewer's guide must not be able to quote marks the console
+  // just hid from them, so the model is never given a number to echo back.
+  const masked = await scoresAreMaskedForCurrentUser();
+
   const responses = ((rows ?? []) as {
     answer_text: string | null;
     score: number | null;
@@ -433,7 +439,7 @@ export async function generateInterviewGuide(input: {
     questionTitle: row.assessment_questions?.title ?? "Question",
     answerPreview: row.answer_text ?? "(no written answer)",
     score:
-      row.score !== null && row.max_score
+      !masked && row.score !== null && row.max_score
         ? Math.round((row.score / row.max_score) * 100)
         : null,
   }));
