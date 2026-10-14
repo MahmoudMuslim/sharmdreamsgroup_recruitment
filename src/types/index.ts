@@ -3,6 +3,8 @@
  * Every entity, payload, and state object is strictly typed — no `any`.
  */
 
+import type { GateAnswer } from "@/modules/careers/gate-questions";
+
 // ---------------------------------------------------------------------------
 // Enums (mirrored in supabase/schema.sql)
 // ---------------------------------------------------------------------------
@@ -101,6 +103,12 @@ export interface Application {
   ai_soft_skills: SoftSkillReport | null;
   ai_feedback: string | null;
   diversity_flags: Record<string, string> | null;
+  /**
+   * Viability gate answers as scored when the application arrived, or null when
+   * the role asked no questions. Stored, never recomputed — the recruiter reads
+   * what the candidate actually answered.
+   */
+  gate_answers: GateAnswer[] | null;
   rejection_reason: string | null;
   hired_at: string | null;
   created_at: string;

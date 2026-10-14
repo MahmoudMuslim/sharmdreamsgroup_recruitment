@@ -2,6 +2,7 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 
 /**
  * Applicants of one job opening, and what each of them actually submitted.
@@ -49,24 +50,6 @@ export interface ApplicantSubmission {
 export type ApplicantsResult = { ok: true; applicants: JobApplicant[] } | { ok: false; error: string };
 
 export type SubmissionResult = { ok: true; submission: ApplicantSubmission } | { ok: false; error: string };
-
-/** Signed links are read once, immediately after opening the panel. */
-const CV_URL_LIFETIME_SECONDS = 15 * 60;
-
-/**
- * The upload route stores `applications/<jobId>/<uuid>-<original name>`; the
- * random prefix is ours, so it is stripped to show the candidate their own
- * filename rather than a storage key.
- */
-function cvDisplayName(path: string | null): string | null {
-  if (!path) return null;
-  const leaf = path.split("/").pop() ?? "";
-  const stripped = leaf.replace(
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i,
-    ""
-  );
-  return stripped || leaf || null;
-}
 
 function attemptTemplate(attempt: Record<string, unknown> | null): string | null {
   const joined = attempt?.assessment_templates;
@@ -150,40 +133,24 @@ export async function getApplicantSubmission(
   if (!row) return { ok: false, error: "This application no longer exists." };
 
   const path = typeof row.cv_file_path === "string" ? row.cv_file_path : null;
-  const name = cvDisplayName(path) ?? "cv";
+  const links = path
+    ? await createCvLinks(supabase, path)
+    : { cv_url: null, cv_download_url: null };
 
-  let cvUrl: string | null = null;
-  let cvDownloadUrl: string | null = null;
-
-  if (path) {
-    const [view, download] = await Promise.all([
-      supabase.storage
-        .from("candidate-cvs")
-        .createSignedUrl(path, CV_URL_LIFETIME_SECONDS),
-      supabase.storage
-        .from("candidate-cvs")
-        .createSignedUrl(path, CV_URL_LIFETIME_SECONDS, { download: name }),
-    ]);
-
-    if (!view.data?.signedUrl) {
-      const reason = view.error?.message ?? download.error?.message ?? "unknown";
-      console.error("[jobs] CV link failed:", reason);
-      return {
-        ok: false,
-        error: "The attached CV could not be opened — the candidate may have uploaded it before CV storage was enabled.",
-      };
-    }
-
-    cvUrl = view.data.signedUrl;
-    cvDownloadUrl = download.data?.signedUrl ?? null;
+  if (path && !links.cv_url) {
+    return {
+      ok: false,
+      error:
+        "The attached CV could not be opened — the candidate may have uploaded it before CV storage was enabled.",
+    };
   }
 
   return {
     ok: true,
     submission: {
       cv_text: row.cv_text ? String(row.cv_text) : null,
-      cv_url: cvUrl,
-      cv_download_url: cvDownloadUrl,
+      cv_url: links.cv_url,
+      cv_download_url: links.cv_download_url,
       screening_summary: row.ai_screening_summary ? String(row.ai_screening_summary) : null,
     },
   };

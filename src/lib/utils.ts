@@ -72,6 +72,20 @@ export function stageLabel(stage: string): string {
     .join(" ");
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  CAREER_SITE: "Career site",
+  JOB_BOARD: "Job board",
+  REFERRAL: "Referral",
+  LINKEDIN: "LinkedIn sourcing",
+  WHATSAPP: "WhatsApp",
+  ATS_IMPORT: "Imported",
+};
+
+/** Where an application came from, phrased the way a recruiter reads it. */
+export function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source] ?? stageLabel(source);
+}
+
 export function truncate(text: string, max = 160): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }

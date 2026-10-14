@@ -22,6 +22,7 @@ import {
   type PipelineStage,
 } from "./candidate-actions";
 import type { CandidateRow } from "./actions";
+import { CandidateDossier } from "./CandidateDossier";
 import { IntegrityPanel } from "./IntegrityPanel";
 import { InterviewPanel } from "./InterviewPanel";
 import { cn } from "@/lib/utils";
@@ -108,13 +109,21 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
  * Search filters live, selection drives the broadcast, the profile drawer runs
  * AI screening and moves candidates between stages, and every row has a
  * one-click forward move for the common case.
+ *
+ * `focusId` is the application a deep link named, resolved to a row on the
+ * server, so the profile opens by itself instead of landing on an unfiltered
+ * table. `unresolvedRef` is that same link when nothing matched it.
  */
 export function CandidateBrowser({
   candidates,
   canWrite,
+  focusId,
+  unresolvedRef,
 }: {
   candidates: CandidateRow[];
   canWrite: boolean;
+  focusId: string | null;
+  unresolvedRef: string | null;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -127,23 +136,19 @@ export function CandidateBrowser({
   const [sourceFilter, setSourceFilter] = useState("");
   const [sortBy, setSortBy] = useState<"recent" | "fit" | "name">("recent");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // `?application=` is where the assistant's "Open the dossier" link lands, so
-  // the profile drawer is already showing the record the chat just touched.
-  const [profile, setProfile] = useState<CandidateRow | null>(() =>
-    candidates.find((c) => c.id === params.get("application")) ?? null
+  const [profile, setProfile] = useState<CandidateRow | null>(
+    () => candidates.find((c) => c.id === focusId) ?? null
   );
   const [broadcastOpen, setBroadcastOpen] = useState(false);
   const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
 
-  // Moving to the same page with a new `?application=` (the assistant's link
-  // while the recruiter is already on /candidates) re-renders this component
-  // rather than remounting it, so the incoming id is tracked and applied here
-  // instead of only in the initial state above.
-  const incomingApplication = params.get("application");
-  const [lastAppliedId, setLastAppliedId] = useState(incomingApplication);
-  if (incomingApplication && incomingApplication !== lastAppliedId) {
-    setLastAppliedId(incomingApplication);
-    setProfile(candidates.find((c) => c.id === incomingApplication) ?? profile);
+  // Arriving with a different focus (the assistant's link, or "Other
+  // applications" inside an open drawer) re-renders this component rather than
+  // remounting it, so the incoming id is applied here as well as above.
+  const [lastAppliedFocus, setLastAppliedFocus] = useState(focusId);
+  if (focusId && focusId !== lastAppliedFocus) {
+    setLastAppliedFocus(focusId);
+    setProfile(candidates.find((c) => c.id === focusId) ?? profile);
   }
 
   // The drawer keeps the row it was opened with; after router.refresh() the
@@ -231,6 +236,13 @@ export function CandidateBrowser({
 
   return (
     <>
+      {unresolvedRef && (
+        <div className="mb-4 rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-sm text-brand-ink/65">
+          No candidate matches <span className="font-semibold">{unresolvedRef}</span>. The record
+          may have been deleted, or the link may predate it.
+        </div>
+      )}
+
       {/* Toolbar — sticks below the mobile header so filters stay reachable */}
       <div className="sticky top-[57px] z-20 -mx-4 mb-4 space-y-2.5 border-b border-brand-line bg-brand-ivory/95 px-4 pb-3 pt-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:top-0 lg:-mx-10 lg:px-10">
         <div className="flex flex-wrap items-center gap-3">
@@ -780,6 +792,8 @@ function ProfileDrawer({
             </section>
           )}
 
+          <CandidateDossier key={`dossier-${candidate.id}`} applicationId={candidate.id} />
+
           <section>
             <h3 className="mb-2 font-display text-sm font-bold">AI screening</h3>
             {candidate.ai_match_score !== null ? (
@@ -895,13 +909,6 @@ function ProfileDrawer({
               <p className="text-sm leading-relaxed text-rose-700">{candidate.rejection_reason}</p>
             </section>
           )}
-
-          <section className="border-t border-brand-line pt-4 text-xs text-brand-ink/45">
-            <p>Applied {new Date(candidate.created_at).toLocaleDateString()}</p>
-            {candidate.cv_file_path && (
-              <p className="mt-1 break-all">CV: {candidate.cv_file_path}</p>
-            )}
-          </section>
         </div>
       )}
     </Drawer>

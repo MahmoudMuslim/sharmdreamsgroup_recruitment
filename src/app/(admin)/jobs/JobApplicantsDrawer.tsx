@@ -14,22 +14,13 @@ import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import { Badge, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
 import { FormMessage } from "@/modules/analytics/presentation/Form";
 import { humanizeStage } from "@/modules/settings/domain/templates";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, sourceLabel } from "@/lib/utils";
 import {
   getApplicantSubmission,
   getJobApplicants,
   type ApplicantSubmission,
   type JobApplicant,
 } from "./applicant-actions";
-
-const SOURCE_LABELS: Record<string, string> = {
-  CAREER_SITE: "Career site",
-  JOB_BOARD: "Job board",
-  REFERRAL: "Referral",
-  LINKEDIN: "LinkedIn sourcing",
-  WHATSAPP: "WhatsApp",
-  ATS_IMPORT: "Imported",
-};
 
 function stageTone(stage: string) {
   if (stage === "HIRED") return "success" as const;
@@ -98,7 +89,7 @@ function ApplicantDetail({
           <Detail label="Phone" value={applicant.phone ?? "Not given"} />
           <Detail
             label="Where they found it"
-            value={SOURCE_LABELS[applicant.source] ?? humanizeStage(applicant.source)}
+            value={sourceLabel(applicant.source)}
           />
           <Detail label="Tracking code" value={applicant.tracking_code} />
           <Detail label="Applied on" value={formatDateTime(applicant.applied_at)} />

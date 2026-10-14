@@ -1,5 +1,5 @@
 import { CalendarDays, Sparkles, Upload } from "lucide-react";
-import { getCandidateList } from "./actions";
+import { getCandidateByRef, getCandidateList } from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -15,14 +15,40 @@ export const metadata = {
 /** Auth-gated route: content is fully session/RLS dependent. */
 export const instant = false;
 
-export default async function CandidatesPage() {
+/**
+ * Deep links arrive from the job opening's applicant list (`?c=SDG-…`), the
+ * interview agenda (`?c=…`) and the assistant (`?application=<id>`).
+ */
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+export default async function CandidatesPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   // Admin content is per-session; stop the static shell before any rendering.
   await connection();
   const user = await requireStaff("/candidates");
-  const [candidates, canWrite] = await Promise.all([
+
+  const params = await searchParams;
+  const ref = {
+    id: typeof params.application === "string" ? params.application : undefined,
+    trackingCode: typeof params.c === "string" ? params.c : undefined,
+  };
+  const hasRef = Boolean(ref.id || ref.trackingCode);
+
+  const [candidates, canWrite, focused] = await Promise.all([
     getCandidateList(),
     hasPermissionForUser("candidates.write"),
+    hasRef ? getCandidateByRef(ref) : Promise.resolve(null),
   ]);
+
+  // The table only loads the newest 50 applications; a link to anyone older is
+  // fetched on its own so the profile can still open.
+  const rows =
+    focused && !candidates.some((c) => c.id === focused.id)
+      ? [focused, ...candidates]
+      : candidates;
 
   return (
     <AdminShell user={user}>
@@ -32,7 +58,12 @@ export default async function CandidatesPage() {
         description="Every application across the group, with bias-reduced AI screening scores and assessment status."
       />
 
-      <CandidateBrowser candidates={candidates} canWrite={canWrite} />
+      <CandidateBrowser
+        candidates={rows}
+        canWrite={canWrite}
+        focusId={focused?.id ?? null}
+        unresolvedRef={hasRef && !focused ? (ref.trackingCode ?? ref.id ?? null) : null}
+      />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="p-5">
