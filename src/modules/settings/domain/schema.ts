@@ -1,4 +1,8 @@
-import type { SettingControl, SettingsSection } from "@/modules/settings/domain/types";
+import type {
+  AssignableStaffRole,
+  SettingControl,
+  SettingsSection,
+} from "@/modules/settings/domain/types";
 
 /**
  * Declarative definition of every platform setting the admin can control.
@@ -264,6 +268,26 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
  * sides of that form must fall back to the same value when no row exists yet.
  */
 export const DEFAULT_PASSWORD_MIN_LENGTH = 12;
+
+/**
+ * The roles an account can actually hold.
+ *
+ * The `roles` table lists six, and `user_invites.role` uses the wider
+ * `app_role` enum — but the `user_role` enum behind `user_profiles.role` only
+ * accepts these three, and `is_staff()` (which gates the whole recruiter portal)
+ * only recognises them. Offering the others would write a row the database
+ * rejects with `invalid input value for enum user_role`, so they are absent
+ * from every picker until the enum and `is_staff()` are widened together.
+ */
+export const ASSIGNABLE_STAFF_ROLES: { value: AssignableStaffRole; label: string }[] = [
+  { value: "SUPER_ADMIN", label: "Super Admin" },
+  { value: "RECRUITER", label: "Recruiter" },
+  { value: "HIRING_MANAGER", label: "Hiring Manager" },
+];
+
+export const ASSIGNABLE_ROLE_KEYS: ReadonlySet<string> = new Set(
+  ASSIGNABLE_STAFF_ROLES.map((role) => role.value)
+);
 
 /** Flat list of every controllable setting key — used to validate writes. */
 export const ALLOWED_SETTING_KEYS: ReadonlySet<string> = new Set(

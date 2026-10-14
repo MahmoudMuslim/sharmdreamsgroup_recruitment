@@ -14,6 +14,9 @@ export type AppRole =
   | "INTERVIEWER"
   | "CANDIDATE";
 
+/** The subset of `AppRole` the `user_role` enum and `is_staff()` accept. */
+export type AssignableStaffRole = "SUPER_ADMIN" | "RECRUITER" | "HIRING_MANAGER";
+
 export type PermissionKey =
   | "candidates.read"
   | "candidates.write"
@@ -70,6 +73,18 @@ export interface StaffMember {
   email: string;
   role: AppRole;
   tenant_id: string | null;
+  created_at: string;
+}
+
+/** A pending team invite — no account exists yet, so the person cannot sign in. */
+export interface StaffInvite {
+  id: string;
+  email: string;
+  full_name: string;
+  role: AppRole;
+  company_id: string | null;
+  status: "PENDING" | "ACCEPTED" | "REVOKED" | "EXPIRED";
+  expires_at: string;
   created_at: string;
 }
 

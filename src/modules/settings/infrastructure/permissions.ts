@@ -65,3 +65,22 @@ export async function permissionsForCurrentUser(): Promise<Set<PermissionKey>> {
 
   return new Set((data ?? []).map((row) => row.permission_key as PermissionKey));
 }
+
+/**
+ * Whether the signed-in member may create, edit and disable staff accounts.
+ *
+ * Three seeded keys all carry that meaning: `users.manage` and
+ * `settings.manage_users` are both granted to Super Admin and Subsidiary HR
+ * Manager, and `settings.manage_platform` is the group-wide grant — so checking
+ * only one of them would lock out roles the database already authorised.
+ */
+export const STAFF_MANAGE_KEYS: readonly PermissionKey[] = [
+  "users.manage",
+  "settings.manage_users",
+  "settings.manage_platform",
+];
+
+export async function canManageStaffUsers(): Promise<boolean> {
+  const granted = await permissionsForCurrentUser();
+  return STAFF_MANAGE_KEYS.some((key) => granted.has(key));
+}

@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, UserPlus, X } from "lucide-react";
 import { createUser } from "@/modules/settings/application/user-actions";
 import { Button } from "@/modules/analytics/presentation/ui";
+import { CredentialReveal } from "./CredentialReveal";
+import { ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
 import { cn } from "@/lib/utils";
-import type { Company } from "@/modules/settings/domain/types";
+import type { AssignableStaffRole, Company } from "@/modules/settings/domain/types";
 
 interface UserCreatePanelProps {
   companies: Company[];
@@ -14,14 +16,6 @@ interface UserCreatePanelProps {
   onClose: () => void;
   open: boolean;
 }
-
-const ROLE_OPTIONS = [
-  { value: "RECRUITER", label: "Recruiter" },
-  { value: "HIRING_MANAGER", label: "Hiring Manager" },
-  { value: "INTERVIEWER", label: "Interviewer" },
-  { value: "SUBSIDIARY_HR_MANAGER", label: "Subsidiary HR Manager" },
-  { value: "SUPER_ADMIN", label: "Super Admin" },
-];
 
 export function UserCreatePanel({
   companies,
@@ -35,13 +29,14 @@ export function UserCreatePanel({
   const [draft, setDraft] = useState({
     email: "",
     full_name: "",
-    role: "RECRUITER" as const,
+    role: "RECRUITER" as AssignableStaffRole,
     company_id: "",
     password: "",
   });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, setPending] = useState(false);
+  const [credential, setCredential] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -58,11 +53,13 @@ export function UserCreatePanel({
     setDraft((d) => ({ ...d, [name]: value }));
     if (error) setError(null);
     if (saved) setSaved(false);
+    if (name === "password") setCredential(null);
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
+    setCredential(null);
 
     const payload = {
       email: draft.email.trim().toLowerCase(),
@@ -77,16 +74,18 @@ export function UserCreatePanel({
       setError("Email and full name are required.");
       return;
     }
-    if (mode === "direct" && !payload.password) {
-      setError("A password is required for direct creation.");
-      return;
-    }
 
     setPending(true);
     try {
       const result = await createUser(payload);
       if (result.ok) {
         setSaved(true);
+        if (result.temp_password) {
+          // The panel has to stay open: this is the only time the generated
+          // password exists anywhere the inviter can read it.
+          setCredential(result.temp_password);
+          return;
+        }
         setTimeout(() => {
           onClose();
           onSuccess();
@@ -130,8 +129,8 @@ export function UserCreatePanel({
             </h3>
             <p className="mt-1 text-xs text-brand-ink/50">
               {mode === "invite"
-                ? "Saves a pending invite — no email is sent yet, so nothing reaches them automatically."
-                : "You'll set their password now — share it securely."}
+                ? "Records the invite under Pending invites — the platform sends no email, so nothing reaches them until you create the account."
+                : "Sets their password now, or generates one you can copy — share it securely."}
             </p>
           </div>
           <button
@@ -165,7 +164,7 @@ export function UserCreatePanel({
                       : "text-brand-ink/60 hover:bg-white"
                   )}
                 >
-                  Send invite
+                  Record invite
                 </span>
               </label>
               <label className="flex-1 flex items-center justify-center">
@@ -236,12 +235,17 @@ export function UserCreatePanel({
                 onChange={(e) => editField("role", e.target.value as typeof draft.role)}
                 className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
               >
-                {ROLE_OPTIONS.map((r) => (
+                {ASSIGNABLE_STAFF_ROLES.map((r) => (
                   <option key={r.value} value={r.value}>
                     {r.label}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">
+                Only these three roles can be held by an account today — the database role type
+                and the staff check behind sign-in accept nothing else, so Subsidiary HR Manager
+                and Interviewer exist in the permission matrix but cannot be assigned yet.
+              </p>
             </div>
 
             <div>
@@ -270,20 +274,21 @@ export function UserCreatePanel({
             {mode === "direct" && (
               <div>
                 <label htmlFor="user-password" className="mb-1.5 block text-xs font-bold">
-                  Password <span className="ml-1 text-rose-600">*</span>
+                  Password
+                  <span className="ml-1.5 font-normal text-brand-ink/45">optional</span>
                 </label>
                 <input
                   id="user-password"
                   name="password"
                   type="password"
                   value={draft.password}
-                  required
                   autoComplete="new-password"
                   onChange={(e) => editField("password", e.target.value)}
                   className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                 />
                 <p className="mt-1 text-[11px] text-brand-ink/45">
-                  Minimum {passwordMinLength} characters. You must share this securely.
+                  Minimum {passwordMinLength} characters if you type one. Leave it blank and a
+                  strong password is generated for you to copy.
                 </p>
               </div>
             )}
@@ -297,8 +302,17 @@ export function UserCreatePanel({
           {saved && (
             <p role="status" className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800">
               <UserPlus className="h-4 w-4" aria-hidden />
-              {mode === "invite" ? "Invite recorded as pending." : "User created."}
+              {mode === "invite"
+                ? "Invite recorded — find it under Pending invites."
+                : "Account created and ready to sign in."}
             </p>
+          )}
+          {credential && (
+            <CredentialReveal
+              label={`Password for ${draft.full_name || draft.email}`}
+              password={credential}
+              onDismiss={() => setCredential(null)}
+            />
           )}
         </div>
 
@@ -306,15 +320,17 @@ export function UserCreatePanel({
           <p className="text-[11px] leading-relaxed text-brand-ink/45">
             {mode === "invite"
               ? "No account is created yet, so this person cannot sign in."
-              : "Credentials are not stored — share them now."}
+              : credential
+                ? "Copy the password above before you close this panel — it is shown once."
+                : "Passwords are hashed by Supabase and never stored as text."}
           </p>
           <div className="flex shrink-0 gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
+              {credential ? "Close" : "Cancel"}
             </Button>
             <Button type="submit" disabled={pending}>
               {pending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
-              {mode === "invite" ? "Send invite" : "Create user"}
+              {mode === "invite" ? "Record invite" : "Create user"}
             </Button>
           </div>
         </footer>

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { requireStaff } from "@/lib/auth/session";
+import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import type {
@@ -36,7 +36,7 @@ export async function loadSettings(): Promise<SettingsBundle> {
       supabase.from("permissions").select("key, label, group_name, description").order("group_name"),
       supabase.from("role_permissions").select("role_key, permission_key, granted"),
       supabase.from("tenants_and_companies").select("id, name, slug, sector, country").order("name"),
-      supabase.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, created_at"),
+      supabase.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, created_at").in("role", STAFF_ROLES),
       supabase.from("notification_templates").select("id, key, channel, subject, body, is_active").order("key"),
     ]);
 
@@ -139,50 +139,6 @@ export async function saveSettings(
 
   revalidatePath("/settings");
   return { ok: true, saved: entries.map(([key]) => key), error: undefined };
-}
-
-/** Changes a staff member's role, writing an audit trail entry. */
-export async function updateStaffRole(
-  profileId: string,
-  role: AppRole
-): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
-
-  const { error } = await supabase
-    .from("user_profiles")
-    .update({ role })
-    .eq("id", profileId);
-
-  if (error) return { ok: false, error: error.message };
-
-  await supabase.from("settings_audit_log").insert({
-    key: `staff.role:${profileId}`,
-    previous_value: null,
-    next_value: { role },
-  });
-
-  revalidatePath("/settings");
-  return { ok: true };
-}
-
-/** Assigns (or clears) the company a staff member belongs to. */
-export async function updateStaffCompany(
-  profileId: string,
-  companyId: string | null
-): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
-
-  const { error } = await supabase
-    .from("user_profiles")
-    .update({ tenant_id: companyId })
-    .eq("id", profileId);
-
-  if (error) return { ok: false, error: error.message };
-
-  revalidatePath("/settings");
-  return { ok: true };
 }
 
 /** Grants or revokes a single permission for a role. */

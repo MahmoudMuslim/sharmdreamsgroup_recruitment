@@ -6,11 +6,13 @@ import { IntegrationsPanel } from "./IntegrationsPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
 import { loadSettings } from "./actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
+import { loadStaffConsole } from "@/modules/settings/application/user-actions";
 import { requireStaff } from "@/lib/auth/session";
 import { connection } from "next/server";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
-import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { canManageStaffUsers, hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import { TeamSection } from "./TeamSection";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
@@ -50,9 +52,15 @@ export default async function SettingsPage({
   await connection();
   const params = await searchParams;
   const user = await requireStaff("/settings");
-  const [bundle, master] = await Promise.all([loadSettings(), getMasterData()]);
-
-  const editable = await hasPermissionForUser("settings.manage_platform");
+  const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
+    await Promise.all([
+      loadSettings(),
+      getMasterData(),
+      loadStaffConsole(),
+      hasPermissionForUser("settings.manage_platform"),
+      canManageStaffUsers(),
+      getOrganisationTimeZone(),
+    ]);
 
   // The dock and the panel must agree, so both read the same resolved pair.
   // An unknown or missing `?area=&section=` falls back to the defaults rather
@@ -77,7 +85,7 @@ export default async function SettingsPage({
     sections: {
       ...masterCounts(master),
       "access:permissions": bundle.roles.length,
-      "access:team": bundle.staff.length,
+      "access:team": bundle.staff.length + staffConsole.invites.length,
       "access:templates": bundle.templates.length,
       ...Object.fromEntries(
         SETTINGS_SCHEMA.map((s) => [`platform:${s.id}`, s.controls.length])
@@ -120,9 +128,13 @@ export default async function SettingsPage({
             {section.id === "team" && (
               <TeamSection
                 staff={bundle.staff}
+                invites={staffConsole.invites}
+                access={staffConsole.access}
                 companies={bundle.companies}
                 passwordMinLength={passwordMinLength}
-                editable={editable}
+                canManage={canManageStaff}
+                viewerAuthUserId={user.authUserId}
+                timeZone={organisationTimezone}
               />
             )}
 
