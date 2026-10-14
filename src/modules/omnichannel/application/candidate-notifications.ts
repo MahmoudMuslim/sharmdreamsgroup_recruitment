@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { appConfig } from "@/lib/config";
 import { getBoolSetting, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import {
@@ -78,7 +79,7 @@ async function loadCandidate(applicationId: string): Promise<Candidate | null> {
 
 /** The sentence both channels put in front of a test link. */
 function startTestLink(accessToken: string): string {
-  return `Start it here: ${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/test/${accessToken}`;
+  return `Start it here: ${appConfig.url}/test/${accessToken}`;
 }
 
 /** Same link the WhatsApp path builds, so one template reads correctly on both. */

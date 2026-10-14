@@ -2,6 +2,7 @@
 
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { appConfig } from "@/lib/config";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
@@ -98,7 +99,7 @@ export async function sendBulkWhatsApp(input: {
       ? application.candidate_attempts[0]
       : application.candidate_attempts;
 
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
+    const siteUrl = appConfig.url;
     const text = body
       .replace(/\{\{\s*candidate_name\s*\}\}/g, application.full_name)
       .replace(/\{\{\s*job_title\s*\}\}/g, job?.title ?? "the role")
@@ -185,7 +186,7 @@ export async function sendBulkEmail(input: {
   if (error) return { ok: false, error: error.message };
 
   const companyName = await getStringSetting("organisation.name", "Sharm Dreams Group");
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
+  const siteUrl = appConfig.url;
   const messages: EmailOutboundMessage[] = [];
   const applicationFor = new Map<string, string>();
   let skipped = 0;

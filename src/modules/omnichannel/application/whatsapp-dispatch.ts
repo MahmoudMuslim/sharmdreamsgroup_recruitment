@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { appConfig } from "@/lib/config";
 import { formatInZone } from "@/lib/timezone";
 import {
   getOrganisationTimeZone,
@@ -155,7 +156,7 @@ export async function enqueueStageChangeWhatsApp(
     ? application.candidate_attempts[0]
     : application.candidate_attempts;
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
+  const siteUrl = appConfig.url;
   const { body, key } = await resolveTemplate([templateKey, STAGE_FALLBACK_TEMPLATE]);
   const vars = await buildVars(
     application,
@@ -207,7 +208,7 @@ export async function enqueueAssessmentInvite(input: {
     ? application.job_openings[0]
     : application.job_openings;
 
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "";
+  const siteUrl = appConfig.url;
   const { body, key } = await resolveTemplate([ASSESSMENT_INVITE_TEMPLATE]);
   const vars = await buildVars(application, job?.title ?? "the role", "assessment");
   vars.assessment_link = `Start it here: ${siteUrl}/test/${input.accessToken}`;
