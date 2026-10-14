@@ -100,22 +100,41 @@ export async function saveSettings(
     return { ok: false, saved: [], error: auditError.message };
   }
 
-  const upserts = entries.map(([key, value]) => {
-    const row = (existing ?? []).find((r) => r.key === key);
-    return row
-      ? { id: row.id, scope: "GLOBAL", key, value, updated_by: null }
-      : { scope: "GLOBAL", company_id: null, key, value };
-  });
+  // Split by whether the row exists, because PostgREST fills a key that is
+  // missing from only some rows of a bulk write with an explicit NULL. Mixed
+  // shapes therefore sent `id = NULL` for the new settings and skipped the
+  // column's `gen_random_uuid()` default — a not-null violation.
+  const known = new Map((existing ?? []).map((row) => [row.key, row]));
 
-  const { error } = await supabase
-    .from("app_settings")
-    // The GLOBAL scope uses the partial unique index app_settings_global_key_uniq
-    // on (key) WHERE scope = 'GLOBAL'. New rows get their UUID from
-    // gen_random_uuid() via the column default.
-    .upsert(upserts, { onConflict: "app_settings_global_key_uniq" });
+  const updates = entries
+    .filter(([key]) => known.has(key))
+    .map(([key, value]) => ({
+      id: known.get(key)!.id,
+      scope: "GLOBAL",
+      company_id: null,
+      key,
+      value,
+      updated_by: null,
+    }));
 
-  if (error) {
-    return { ok: false, saved: [], error: error.message };
+  const inserts = entries
+    .filter(([key]) => !known.has(key))
+    .map(([key, value]) => ({
+      scope: "GLOBAL",
+      company_id: null,
+      key,
+      value,
+      updated_by: null,
+    }));
+
+  if (updates.length > 0) {
+    const { error } = await supabase.from("app_settings").upsert(updates, { onConflict: "id" });
+    if (error) return { ok: false, saved: [], error: error.message };
+  }
+
+  if (inserts.length > 0) {
+    const { error } = await supabase.from("app_settings").insert(inserts);
+    if (error) return { ok: false, saved: [], error: error.message };
   }
 
   revalidatePath("/settings");
