@@ -36,7 +36,13 @@ export interface CompletionRequest {
 }
 
 /** Which provider answered. Every member here has a caller in this file. */
-export type GatewayProvider = "openrouter" | "google" | "opencode" | "qoder";
+export type GatewayProvider =
+  | "openrouter"
+  | "google"
+  | "opencode"
+  | "qoder"
+  | "cloudflare"
+  | "nvidia";
 
 export interface CompletionResult {
   content: string;
@@ -132,13 +138,18 @@ function isGoogleNativeModel(model: string): boolean {
  *
  * OpenCode lists flat ids (`claude-haiku-4-5`), which is exactly the shape
  * `isGoogleNativeModel` reads as "Google's own endpoint", and Qoder's ids are
- * agent aliases (`qfmodel`) that no HTTP completion call accepts. Both are
- * therefore stored in the routing table with their provider in front of them,
- * and the prefix is stripped before the id goes on the wire.
+ * agent aliases (`qfmodel`) that no HTTP completion call accepts. Cloudflare's
+ * (`@cf/meta/llama-3.3-70b-instruct`) and NVIDIA's (`deepseek-ai/…`) are both
+ * namespaced the way OpenRouter's are, so an unqualified one would quietly be
+ * billed to the wrong provider. All four are therefore stored in the routing
+ * table with their provider in front of them, and the prefix is stripped before
+ * the id goes on the wire.
  */
 const ROUTING_PREFIXES: Record<string, GatewayProvider> = {
   "opencode:": "opencode",
   "qoder:": "qoder",
+  "cloudflare:": "cloudflare",
+  "nvidia:": "nvidia",
 };
 
 function routeFor(model: string): { provider: GatewayProvider; model: string } {
@@ -216,6 +227,128 @@ function describeOpenCodeFailure(status: number, body: string): string {
     return `HTTP 402: ${message} The OpenCode account behind this key has no credit, so every paid model answers the same way.`;
   }
   return `HTTP ${status}: ${message}`;
+}
+
+/**
+ * NVIDIA's hosted inference API is OpenAI-compatible, so the body is the one
+ * OpenRouter gets — minus `response_format`, which NVIDIA does not document and
+ * a parameter it rejects would drop a hop `parseJsonResponse` could otherwise
+ * have recovered.
+ */
+async function callNvidiaNim(
+  model: string,
+  request: CompletionRequest,
+  signal: AbortSignal,
+  apiKey: string
+): Promise<{ content: string; truncated: boolean }> {
+  const response = await fetch(aiConfig.nvidiaNim.baseUrl, {
+    method: "POST",
+    signal,
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: request.messages,
+      temperature: request.temperature ?? 0.2,
+      max_tokens: request.maxTokens ?? 2048,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`NVIDIA ${model} ${describeNvidiaFailure(response.status, text)}`);
+  }
+
+  const payload = (await response.json()) as ChatCompletionResponse;
+  if (payload.error) {
+    throw new Error(`NVIDIA ${model}: ${payload.error.message}`);
+  }
+  const choice = payload.choices?.[0];
+  const content = choice?.message?.content;
+  if (!content || content.trim().length === 0) {
+    throw new Error(`NVIDIA ${model} returned an empty completion`);
+  }
+  return { content, truncated: choice?.finish_reason === "length" };
+}
+
+/**
+ * NVIDIA retires model ids out from under a routing table, and says so with
+ * 410 rather than 404 — observed live on `meta/llama-3.3-70b-instruct`. Without
+ * the explanation an operator reads it as a broken integration.
+ */
+function describeNvidiaFailure(status: number, body: string): string {
+  let message = body.slice(0, 200);
+  try {
+    const parsed = JSON.parse(body) as { detail?: string; error?: { message?: string } };
+    message = parsed.error?.message ?? parsed.detail ?? message;
+  } catch {
+    // Not JSON — report what came back.
+  }
+
+  // NVIDIA's unavailable-model message names the internal function id and the
+  // account hash behind the key. Neither helps an operator read the routing log,
+  // and the account identifier has no business being echoed back into the UI.
+  message = message.replace(/for account\s+'[^']*'/, "for this account");
+
+  if (status === 410) {
+    return `HTTP 410: ${message} This id has been retired by NVIDIA; pick a current one in Settings → AI models.`;
+  }
+  if (status === 404) {
+    return `HTTP 404: ${message} This model is not served to this account.`;
+  }
+  if (status === 429) {
+    return `HTTP 429: ${message} NVIDIA's free key allows roughly 40 requests a minute.`;
+  }
+  return `HTTP ${status}: ${message}`;
+}
+
+/**
+ * Cloudflare Workers AI answers the OpenAI wire format as well, but every call
+ * is addressed to an account, so the account id travels with the credential
+ * instead of being a constant.
+ */
+async function callCloudflareWorkersAi(
+  model: string,
+  request: CompletionRequest,
+  signal: AbortSignal,
+  apiKey: string,
+  accountId: string
+): Promise<{ content: string; truncated: boolean }> {
+  const response = await fetch(
+    `${aiConfig.cloudflareWorkersAi.baseUrl}/${encodeURIComponent(accountId)}/ai/v1/chat/completions`,
+    {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: request.messages,
+        temperature: request.temperature ?? 0.2,
+        max_tokens: request.maxTokens ?? 2048,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Cloudflare Workers AI ${model} HTTP ${response.status}: ${text.slice(0, 200)}`);
+  }
+
+  const payload = (await response.json()) as ChatCompletionResponse;
+  if (payload.error) {
+    throw new Error(`Cloudflare Workers AI ${model}: ${payload.error.message}`);
+  }
+  const choice = payload.choices?.[0];
+  const content = choice?.message?.content;
+  if (!content || content.trim().length === 0) {
+    throw new Error(`Cloudflare Workers AI ${model} returned an empty completion`);
+  }
+  return { content, truncated: choice?.finish_reason === "length" };
 }
 
 async function callGoogleAiStudio(
@@ -404,18 +537,28 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
   const attempts: { model: string; ok: boolean; error?: string; credential?: string }[] = [];
 
   // Settings win over the environment; every provider is optional. Resolved
-  // together so the wall clock costs one round trip, and all four are needed up
-  // front because the "nothing is configured" message has to be true for the
+  // together so the wall clock costs one round trip, and all of them are needed
+  // up front because the "nothing is configured" message has to be true for the
   // provider the chain is actually about to try.
-  const [credentials, googleKey, openCodeKeys, qoderKey, routing] = await Promise.all([
-    resolveCredentials("openrouter"),
-    resolveSecret("google_ai_studio"),
-    resolveCredentials("opencode"),
-    resolveSecret("qoder"),
-    resolveModelRouting(request.capability),
-  ]);
+  const [credentials, googleKey, openCodeKeys, qoderKey, nvidiaKeys, cloudflareKeys, routing] =
+    await Promise.all([
+      resolveCredentials("openrouter"),
+      resolveSecret("google_ai_studio"),
+      resolveCredentials("opencode"),
+      resolveSecret("qoder"),
+      resolveCredentials("nvidia_nim"),
+      resolveCredentials("cloudflare_workers_ai"),
+      resolveModelRouting(request.capability),
+    ]);
 
-  if (credentials.length === 0 && !googleKey && openCodeKeys.length === 0 && !qoderKey) {
+  if (
+    credentials.length === 0 &&
+    !googleKey &&
+    openCodeKeys.length === 0 &&
+    !qoderKey &&
+    nvidiaKeys.length === 0 &&
+    cloudflareKeys.length === 0
+  ) {
     throw new AiGatewayError(
       "No AI provider is configured. Add an OpenRouter key in Settings → API keys, " +
         "or set OPENROUTER_API_KEY in the environment.",
@@ -548,6 +691,101 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
           error: error instanceof Error ? error.message : "unknown error",
           credential: "google",
         });
+      }
+      continue;
+    }
+
+    if (hop === "nvidia") {
+      if (nvidiaKeys.length === 0) {
+        attempts.push({
+          model: routed,
+          ok: false,
+          error: "no NVIDIA API key configured",
+          credential: "nvidia",
+        });
+        continue;
+      }
+      for (const credential of nvidiaKeys) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), aiConfig.nvidiaNim.timeoutMs);
+        try {
+          const reply = await callNvidiaNim(model, effective, controller.signal, credential.secret);
+          clearTimeout(timeout);
+          attempts.push({ model: routed, ok: true, credential: credential.secretHint });
+          return {
+            content: reply.content,
+            model,
+            provider: "nvidia",
+            attempts,
+            truncated: reply.truncated,
+          };
+        } catch (error) {
+          clearTimeout(timeout);
+          attempts.push({
+            model: routed,
+            ok: false,
+            error: error instanceof Error ? error.message : "unknown error",
+            credential: credential.secretHint,
+          });
+        }
+      }
+      continue;
+    }
+
+    if (hop === "cloudflare") {
+      if (cloudflareKeys.length === 0) {
+        attempts.push({
+          model: routed,
+          ok: false,
+          error: "no Cloudflare Workers AI token configured",
+          credential: "cloudflare",
+        });
+        continue;
+      }
+      for (const credential of cloudflareKeys) {
+        // The token is not addressable on its own — every Workers AI call names
+        // an account, so a hop without one must say that rather than report a
+        // 404 from a URL built with an empty path segment.
+        const accountId =
+          credential.config.account_id?.trim() || aiConfig.cloudflareWorkersAi.accountId.trim();
+        if (!accountId) {
+          attempts.push({
+            model: routed,
+            ok: false,
+            error:
+              "no Cloudflare Account ID set — fill the Account ID field in Settings → API keys, or set CLOUDFLARE_AI_ACCOUNT_ID",
+            credential: credential.secretHint,
+          });
+          continue;
+        }
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), aiConfig.cloudflareWorkersAi.timeoutMs);
+        try {
+          const reply = await callCloudflareWorkersAi(
+            model,
+            effective,
+            controller.signal,
+            credential.secret,
+            accountId
+          );
+          clearTimeout(timeout);
+          attempts.push({ model: routed, ok: true, credential: credential.secretHint });
+          return {
+            content: reply.content,
+            model,
+            provider: "cloudflare",
+            attempts,
+            truncated: reply.truncated,
+          };
+        } catch (error) {
+          clearTimeout(timeout);
+          attempts.push({
+            model: routed,
+            ok: false,
+            error: error instanceof Error ? error.message : "unknown error",
+            credential: credential.secretHint,
+          });
+        }
       }
       continue;
     }

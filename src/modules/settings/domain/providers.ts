@@ -228,6 +228,56 @@ export const PROVIDERS: ProviderDefinition[] = [
     ],
   },
   {
+    id: "cloudflare_workers_ai",
+    displayName: "Cloudflare Workers AI",
+    group: "ai",
+    envVar: "CLOUDFLARE_AI_API_TOKEN",
+    description:
+      "OpenAI-compatible inference running on Cloudflare's own network. The free allowance is 10,000 neurons a day, and every call is addressed to an account, so the token alone is not enough — the Account ID is required too.",
+    docsUrl: "https://developers.cloudflare.com/workers-ai/get-started/rest-api/",
+    verify: {
+      url: "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/models/search?per_page=1",
+      method: "GET",
+      header: "Authorization",
+    },
+    fields: [
+      {
+        key: "api_key",
+        label: "API Token",
+        kind: "text",
+        placeholder: "cfut_...",
+        required: true,
+        secret: true,
+        hint: "An API token scoped to Workers AI, not the account's global API key.",
+      },
+      {
+        key: "account_id",
+        label: "Account ID",
+        kind: "text",
+        placeholder: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+        required: true,
+        hint: "On the Cloudflare dashboard home page. Falls back to CLOUDFLARE_AI_ACCOUNT_ID.",
+      },
+    ],
+  },
+  {
+    id: "nvidia_nim",
+    displayName: "NVIDIA NIM",
+    group: "ai",
+    envVar: "NVIDIA_API_KEY",
+    description:
+      "NVIDIA's hosted inference API: 80+ open models behind one OpenAI-compatible endpoint. A free key needs phone verification and no card, and is rate-limited to roughly 40 requests a minute — enough for screening, not for production traffic.",
+    docsUrl: "https://docs.api.nvidia.com/nim/reference",
+    // Deliberately not verifiable here: NVIDIA's model list is public, so it
+    // answers HTTP 200 for a key that is revoked or mistyped, and a Verify button
+    // built on it would report success for a credential that cannot infer
+    // anything. The live check is the completion probe in the diagnostics panel.
+    verify: null,
+    fields: [
+      { key: "api_key", label: "API Key", kind: "text", placeholder: "nvapi-...", required: true, secret: true },
+    ],
+  },
+  {
     id: "whatsapp",
     displayName: "WhatsApp Business",
     group: "communication",

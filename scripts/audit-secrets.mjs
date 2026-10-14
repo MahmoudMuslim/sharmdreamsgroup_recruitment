@@ -18,6 +18,8 @@ const SECRETS = [
   ["GOOGLE_AI_STUDIO_API_KEY", get("GOOGLE_AI_STUDIO_API_KEY")],
   ["OPENCODE_API_KEY", get("OPENCODE_API_KEY")],
   ["QODER_API_KEY", get("QODER_API_KEY")],
+  ["CLOUDFLARE_AI_API_TOKEN", get("CLOUDFLARE_AI_API_TOKEN")],
+  ["NVIDIA_API_KEY", get("NVIDIA_API_KEY")],
   ["WHATSAPP (any EAAQB token)", "EAAQB"],
   ["service-role JWT payload", servicePayload],
 ].filter(([, v]) => v && v.length > 8);

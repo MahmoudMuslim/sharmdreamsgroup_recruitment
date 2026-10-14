@@ -808,7 +808,11 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                   ? "As Qoder reports it: "
                   : selectedModel.provider === "opencode"
                     ? "As OpenCode reports it: "
-                    : ""}
+                    : selectedModel.provider === "nvidia_nim"
+                      ? "As NVIDIA reports it: "
+                      : selectedModel.provider === "cloudflare_workers_ai"
+                        ? "As Cloudflare reports it: "
+                        : ""}
                 {selectedModel.detail}
               </p>
             )}

@@ -50,6 +50,19 @@ export const aiConfig = {
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     timeoutMs: AI_REQUEST_TIMEOUT_MS,
   },
+  cloudflareWorkersAi: {
+    apiKey: optional("CLOUDFLARE_AI_API_TOKEN", process.env.CLOUDFLARE_AI_API_TOKEN),
+    // Workers AI addresses every model through an account, so a token without
+    // this cannot be used; the stored Account ID field overrides it.
+    accountId: optional("CLOUDFLARE_AI_ACCOUNT_ID", process.env.CLOUDFLARE_AI_ACCOUNT_ID),
+    baseUrl: "https://api.cloudflare.com/client/v4/accounts",
+    timeoutMs: AI_REQUEST_TIMEOUT_MS,
+  },
+  nvidiaNim: {
+    apiKey: optional("NVIDIA_API_KEY", process.env.NVIDIA_API_KEY),
+    baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
+    timeoutMs: AI_REQUEST_TIMEOUT_MS,
+  },
 } as const;
 
 /** True when at least one AI provider is usable. */
@@ -58,7 +71,9 @@ export function hasAiProvider(): boolean {
     aiConfig.openRouter.apiKey ||
       aiConfig.googleAiStudio.apiKey ||
       aiConfig.openCode.apiKey ||
-      aiConfig.qoder.apiKey
+      aiConfig.qoder.apiKey ||
+      aiConfig.nvidiaNim.apiKey ||
+      (aiConfig.cloudflareWorkersAi.apiKey && aiConfig.cloudflareWorkersAi.accountId)
   );
 }
 

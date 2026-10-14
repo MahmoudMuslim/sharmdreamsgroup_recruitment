@@ -2,7 +2,8 @@
 
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { resolveSecret, resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
+import { resolveSecret, resolveConfig, resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
+import { aiConfig } from "@/lib/config.server";
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
 import {
   complete,
@@ -59,6 +60,8 @@ const PROVIDER_NAMES: Record<string, string> = {
   google_ai_studio: "Google AI Studio",
   opencode: "OpenCode",
   qoder: "Qoder",
+  cloudflare_workers_ai: "Cloudflare Workers AI",
+  nvidia_nim: "NVIDIA NIM",
 };
 
 /** The gateway's own provider keys, spelled for the test result's provenance line. */
@@ -67,6 +70,8 @@ const GATEWAY_PROVIDER_NAMES: Record<GatewayProvider, string> = {
   google: "Google AI Studio",
   opencode: "OpenCode",
   qoder: "Qoder",
+  cloudflare: "Cloudflare Workers AI",
+  nvidia: "NVIDIA NIM",
 };
 
 /** Tests one provider's credential with a real API call. */
@@ -253,6 +258,181 @@ export async function testProvider(provider: string): Promise<ProviderTestResult
       };
     }
 
+    if (provider === "cloudflare_workers_ai") {
+      // Every Workers AI call is addressed to an account, so a token alone has
+      // nothing to call. The account-scoped model search is the cheapest request
+      // that proves the token, and it is the same call the catalogue makes.
+      const config = await resolveConfig("cloudflare_workers_ai");
+      const accountId =
+        String(config.account_id ?? "").trim() || aiConfig.cloudflareWorkersAi.accountId;
+      if (!accountId) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: "incomplete",
+          latencyMs: Date.now() - started,
+          detail:
+            "A token is stored but no Account ID is set. Cloudflare addresses every Workers AI call to an account, so fill the Account ID field as well.",
+        };
+      }
+
+      const res = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/models/search?per_page=1`,
+        { headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }
+      );
+      const body = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        errors?: { code?: number; message?: string }[];
+        result?: unknown;
+      };
+      const latencyMs = Date.now() - started;
+      const errorMessage = body.errors?.[0]?.message ?? `HTTP ${res.status}`;
+
+      // Cloudflare reports a bad token as HTTP 400 with an auth message rather
+      // than 401, so the text is what distinguishes a mistyped token from an
+      // account that has no Workers AI access.
+      if (!res.ok || body.success === false) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: `HTTP ${res.status}`,
+          latencyMs,
+          detail: /authentication|auth/i.test(errorMessage)
+            ? `Token rejected by Cloudflare (${errorMessage}). It must be scoped to Workers AI and to this account.`
+            : errorMessage,
+        };
+      }
+
+      return {
+        provider,
+        displayName,
+        ok: true,
+        status: "authenticated",
+        latencyMs,
+        detail: "Token valid for this account's Workers AI catalogue. The free allowance is 10,000 neurons a day.",
+      };
+    }
+
+    if (provider === "nvidia_nim") {
+      // NVIDIA's model list is public — an invalid key still returns HTTP 200 —
+      // so nothing short of a completion proves the key. This posts the probe
+      // prompt for a few tokens against ids taken from that list.
+      const candidates = await pickNvidiaProbeModels();
+      if (candidates.length === 0) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: "unreachable",
+          latencyMs: Date.now() - started,
+          detail: "NVIDIA's model list did not load, so the key could not be probed.",
+        };
+      }
+
+      // The candidates are probed at once, not one after another. NVIDIA's list
+      // mixes chat models that answer in a couple of seconds with reasoning
+      // models that can spend half a minute on their first token, and a serial
+      // loop spent the whole panel budget waiting on the slowest model it
+      // happened to start with — reporting a timeout instead of the key's state.
+      const probes = await Promise.all(
+        candidates.map(async (model) => {
+          try {
+            const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${key}`,
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify({ model, messages: PROBE_PROMPT, max_tokens: 64 }),
+              signal: AbortSignal.timeout(9_000),
+            });
+            const body = (await res.json().catch(() => ({}))) as {
+              choices?: { message?: { content?: string; reasoning_content?: string } }[];
+            };
+            return {
+              model,
+              status: res.status,
+              content: (body.choices?.[0]?.message?.content ?? "").trim(),
+              reasoned: Boolean(body.choices?.[0]?.message?.reasoning_content),
+            };
+          } catch {
+            // A model that never answered is that model's result, not the probe's
+            // failure — it must not abort the other two.
+            return { model, status: 0, content: "", reasoned: false };
+          }
+        })
+      );
+
+      if (probes.some((probe) => probe.status === 401 || probe.status === 403)) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: "key rejected",
+          latencyMs: Date.now() - started,
+          detail:
+            "Key rejected by NVIDIA — revoked, expired, or mistyped. A free key needs phone verification at build.nvidia.com.",
+        };
+      }
+
+      const answered = probes.find((probe) => probe.status >= 200 && probe.status < 300 && probe.content);
+      if (answered) {
+        return {
+          provider,
+          displayName,
+          ok: true,
+          status: "responded",
+          latencyMs: Date.now() - started,
+          detail: `Key valid. ${answered.model} replied “${excerpt(answered.content, 24)}”.`,
+        };
+      }
+
+      // HTTP 200 with no text still passed authentication, and it is the normal
+      // answer from a reasoning model whose whole probe budget went into its
+      // chain of thought — reported as the key check it is, not as a model that
+      // refused.
+      const authenticated = probes.find((probe) => probe.status >= 200 && probe.status < 300);
+      if (authenticated) {
+        return {
+          provider,
+          displayName,
+          ok: true,
+          status: "authenticated",
+          latencyMs: Date.now() - started,
+          detail: `Key valid. ${authenticated.model} returned no text within the probe budget${
+            authenticated.reasoned ? " (it spent it on reasoning)" : ""
+          }.`,
+        };
+      }
+
+      if (probes.some((probe) => probe.status === 429)) {
+        return {
+          provider,
+          displayName,
+          ok: false,
+          status: "throttled",
+          latencyMs: Date.now() - started,
+          detail:
+            "NVIDIA throttled the probe (a free key allows roughly 40 requests a minute), so it cannot confirm the key yet. Try again in a minute.",
+        };
+      }
+
+      return {
+        provider,
+        displayName,
+        ok: false,
+        status: "no probe model answered",
+        latencyMs: Date.now() - started,
+        // Only the model and its outcome: NVIDIA's own text for an unavailable id
+        // names the internal function id and the account hash behind the key,
+        // which has no business being shown in this panel.
+        detail: `${probes.map((probe) => `${probe.model} → ${describeNvidiaProbe(probe)}`).join(" | ")} — the key was never refused outright, so this says the probe models are unavailable, not that the key is bad. Test a capability in the routing console to check the key against a model you actually route to.`,
+      };
+    }
+
     return {
       provider,
       displayName,
@@ -270,6 +450,55 @@ export async function testProvider(provider: string): Promise<ProviderTestResult
       latencyMs: Date.now() - started,
       detail: error instanceof Error ? error.message : "Unknown error",
     };
+  }
+}
+
+/**
+ * Ids to probe a NVIDIA key against, taken from its public list so the check
+ * never depends on an id chosen by an admin.
+ *
+ * The list is alphabetical and names far more models than any one key is served:
+ * third-party ids answer HTTP 404 for a free account, retired ones answer 410,
+ * and reasoning models can spend longer than a health check may wait. NVIDIA's
+ * own Nemotron endpoints are what the free tier actually serves, and the lighter
+ * of them answer in a second or two, so they are tried first — with the rest of
+ * the list behind them so an account entitled to other models still gets probed.
+ */
+const NVIDIA_PROBE_PREFERENCE: RegExp[] = [
+  /^nvidia\/nemotron-3\.5-lightning/i,
+  /^nvidia\/nemotron-3-super/i,
+  /^nvidia\/nemotron-3-ultra/i,
+  /^nvidia\/nemotron/i,
+  /^openai\/gpt-oss/i,
+];
+
+function describeNvidiaProbe(probe: { status: number }): string {
+  if (probe.status === 0) return "no answer within the probe budget";
+  if (probe.status === 404) return "not served to this account (HTTP 404)";
+  if (probe.status === 410) return "retired by NVIDIA (HTTP 410)";
+  if (probe.status === 429) return "throttled (HTTP 429)";
+  if (probe.status === 503) return "temporarily unavailable (HTTP 503)";
+  return `HTTP ${probe.status}`;
+}
+
+async function pickNvidiaProbeModels(): Promise<string[]> {
+  try {
+    const res = await fetch("https://integrate.api.nvidia.com/v1/models", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json().catch(() => ({}))) as { data?: { id: string }[] };
+    const ids = (body.data ?? [])
+      .map((model) => model.id)
+      .filter((id) => !/embed|rerank|retriever|diffusion|deplot|cosmos|guard|safety|reward|parse|translate|clip|vila|neva|kosmos|fuyu/i.test(id));
+    const rank = (id: string) => {
+      const index = NVIDIA_PROBE_PREFERENCE.findIndex((pattern) => pattern.test(id));
+      return index === -1 ? NVIDIA_PROBE_PREFERENCE.length : index;
+    };
+    return [...ids].sort((a, b) => rank(a) - rank(b)).slice(0, 4);
+  } catch {
+    return [];
   }
 }
 
@@ -385,5 +614,7 @@ export async function testAllProviders(): Promise<ProviderTestResult[]> {
     testProvider("google_ai_studio"),
     testProvider("opencode"),
     testProvider("qoder"),
+    testProvider("cloudflare_workers_ai"),
+    testProvider("nvidia_nim"),
   ]);
 }

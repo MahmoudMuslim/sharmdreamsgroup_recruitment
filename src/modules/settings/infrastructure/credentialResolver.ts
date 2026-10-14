@@ -127,6 +127,9 @@ export async function resolveConfig(provider: string): Promise<Record<string, st
       from: process.env.EMAIL_FROM ?? "",
     },
     frappe_hr: { base_url: process.env.FRAPPE_HR_BASE_URL ?? "" },
+    cloudflare_workers_ai: {
+      account_id: process.env.CLOUDFLARE_AI_ACCOUNT_ID ?? "",
+    },
     google_calendar: {
       client_id: process.env.GOOGLE_CALENDAR_CLIENT_ID ?? "",
       client_secret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET ?? "",

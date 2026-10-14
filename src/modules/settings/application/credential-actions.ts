@@ -15,6 +15,7 @@ import {
   resolveConfig,
 } from "@/modules/settings/infrastructure/credentialResolver";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { aiConfig } from "@/lib/config.server";
 import {
   FALLBACK_MODELS,
   PROVIDERS,
@@ -462,6 +463,22 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
     };
   }
 
+  // Cloudflare's endpoints are all addressed to an account, so the token alone
+  // has no URL to call. Say so instead of fetching a path with an empty segment.
+  if (url.includes("{account_id}")) {
+    const accountId =
+      String(config.account_id ?? "").trim() || aiConfig.cloudflareWorkersAi.accountId;
+    if (!accountId) {
+      return {
+        ok: false,
+        status: "failed",
+        message:
+          "Cloudflare Workers AI needs an Account ID as well as a token — every call is addressed to an account. Fill the Account ID field above, or set CLOUDFLARE_AI_ACCOUNT_ID.",
+      };
+    }
+    url = url.replace("{account_id}", encodeURIComponent(accountId));
+  }
+
   if (!url) {
     return { ok: false, status: "unverifiable", message: "Set a base URL before verifying." };
   }
@@ -615,6 +632,8 @@ export async function getModelCatalogue(): Promise<ModelCatalogue> {
     fetchGoogleModels(),
     fetchOpenCodeModels(),
     fetchQoderModels(),
+    fetchCloudflareModels(),
+    fetchNvidiaModels(),
   ]);
 
   const models = results.flatMap((r) => r.models);
@@ -646,7 +665,9 @@ function isRoutableProvider(id: string): boolean {
     id === "openrouter" ||
     id === "google_ai_studio" ||
     id === "opencode" ||
-    id === "qoder"
+    id === "qoder" ||
+    id === "cloudflare_workers_ai" ||
+    id === "nvidia_nim"
   );
 }
 
@@ -933,6 +954,183 @@ function describeQoderModel(model: {
     parts.push(`context ${model.available_context_windows.map((t) => `${Math.round(t / 1000)}k`).join("/")}`);
   }
   return parts.length ? parts.join(" · ") : undefined;
+}
+
+/**
+ * NVIDIA's model list is public — it answers without a key — so the picker is
+ * never blank simply because nobody has signed up yet. What a missing key does
+ * decide is whether a chosen id can actually be called, and the note says so
+ * instead of an empty group implying a broken integration.
+ */
+async function fetchNvidiaModels(): Promise<SourceResult> {
+  const key = await resolveSecret("nvidia_nim");
+
+  try {
+    const response = await fetch("https://integrate.api.nvidia.com/v1/models", {
+      headers: {
+        Accept: "application/json",
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const payload = (await response.json()) as {
+      data?: { id: string; owned_by?: string }[];
+    };
+
+    // The list is flat and carries no capability field, so embedding, retrieval
+    // and image endpoints are removed by name. Anything else an account cannot
+    // serve reports itself from the gateway: NVIDIA answers a retired id with
+    // HTTP 410, which `describeNvidiaFailure` spells out in the routing log.
+    const models: ModelOption[] = (payload.data ?? [])
+      .filter((model) => !/embed|rerank|retriever|diffusion|deplot|cosmos/i.test(model.id))
+      .map((model) => ({
+        id: `nvidia:${model.id}`,
+        name: model.id,
+        promptPrice: null,
+        completionPrice: null,
+        contextLength: null,
+        free: false,
+        provider: "nvidia_nim",
+        routable: true,
+        detail: model.owned_by ? `by ${model.owned_by}` : undefined,
+      }));
+
+    return okSource(
+      "nvidia_nim",
+      models,
+      key
+        ? "NVIDIA publishes ids only — no prices, context sizes or display names — and the list still carries retired models, which answer HTTP 410 when routed. A free key allows roughly 40 requests a minute."
+        : "NVIDIA's list is public, so these are shown without a key, but none of them can be routed until a key is stored under API keys. A free one needs phone verification and no card."
+    );
+  } catch (error) {
+    console.error("getModelCatalogue (nvidia) failed:", error);
+    return failedSource("nvidia_nim", "unreachable", "NVIDIA did not answer.");
+  }
+}
+
+/**
+ * Cloudflare's catalogue is account-scoped and behind its API, so unlike
+ * NVIDIA's public list this one needs the token *and* the Account ID before it
+ * will answer.
+ */
+async function fetchCloudflareModels(): Promise<SourceResult> {
+  const [key, config] = await Promise.all([
+    resolveSecret("cloudflare_workers_ai"),
+    resolveConfig("cloudflare_workers_ai"),
+  ]);
+  const accountId =
+    String(config.account_id ?? "").trim() || aiConfig.cloudflareWorkersAi.accountId;
+
+  if (!key || !accountId) {
+    return failedSource(
+      "cloudflare_workers_ai",
+      "no_key",
+      !key
+        ? "No Workers AI token stored — add one under API keys to list Cloudflare's models."
+        : "Cloudflare lists its models per account, so the Account ID field is required as well as the token."
+    );
+  }
+
+  type Row = {
+    /** An opaque UUID. Not the addressable model name — see `name`. */
+    id?: string;
+    name?: string;
+    description?: string;
+    task?: { id?: string; name?: string };
+  };
+
+  try {
+    const rows: Row[] = [];
+    const perPage = 100;
+
+    for (let page = 1; page <= 8; page += 1) {
+      const response = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/models/search?per_page=${perPage}&page=${page}`,
+        {
+          headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      if (response.status === 401 || response.status === 403) {
+        return failedSource(
+          "cloudflare_workers_ai",
+          "unauthorized",
+          `Cloudflare rejected the stored token (HTTP ${response.status}). It needs Workers AI read access on this account.`
+        );
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+      const payload = (await response.json()) as {
+        success?: boolean;
+        errors?: { message?: string }[];
+        result?: unknown;
+      };
+      if (payload.success === false) {
+        throw new Error(payload.errors?.[0]?.message ?? "Cloudflare refused the request");
+      }
+
+      // Confirmed live: `result` is the page as a bare array, and `success`
+      // carries the auth verdict even when HTTP itself says 200.
+      const items = Array.isArray(payload.result) ? (payload.result as Row[]) : [];
+      rows.push(...items);
+      if (items.length < perPage) break;
+    }
+
+    if (rows.length === 0) {
+      return failedSource(
+        "cloudflare_workers_ai",
+        "unreachable",
+        "Cloudflare answered but returned no models for this account — check the token's Workers AI permission."
+      );
+    }
+
+    const models: ModelOption[] = rows
+      .filter((row) => isCloudflareChatModel(row) && String(row.name).startsWith("@cf/"))
+      .map((row) => {
+        const modelId = String(row.name).trim();
+        return {
+          // Qualified for the routing table, which has no provider column:
+          // `@cf/…` is namespaced the way an OpenRouter id is, so an unqualified
+          // one would quietly be billed to OpenRouter.
+          id: `cloudflare:${modelId}`,
+          name: modelId,
+          promptPrice: null,
+          completionPrice: null,
+          contextLength: null,
+          // Not tagged free: the account gets a daily neuron allowance, not a set
+          // of no-cost models, and this list carries no pricing to tell them apart.
+          free: false,
+          provider: "cloudflare_workers_ai",
+          routable: true,
+          detail: row.description?.slice(0, 160),
+        } satisfies ModelOption;
+      });
+
+    return okSource(
+      "cloudflare_workers_ai",
+      models,
+      "Cloudflare lists models per account, and its account list carries names and descriptions only — no prices or context sizes. The free allowance is 10,000 neurons a day, which measures work per token rather than requests, so the day a routing table exhausts it depends on how long the prompts are."
+    );
+  } catch (error) {
+    console.error("getModelCatalogue (cloudflare) failed:", error);
+    return failedSource(
+      "cloudflare_workers_ai",
+      "unreachable",
+      "Cloudflare did not answer — the account may not have Workers AI enabled."
+    );
+  }
+}
+
+/**
+ * Only models that answer a chat request belong in a routing table, and
+ * Cloudflare's list is a task catalogue: alongside text generation it carries
+ * embeddings, classification, image and speech models, each labelled with a
+ * UUID that means nothing here, so the human-readable task name is the signal.
+ */
+function isCloudflareChatModel(row: { task?: { name?: string } }): boolean {
+  return /text[ _/-]?generation|llm|\bchat\b/i.test(row.task?.name ?? "");
 }
 
 export interface AuditEntryView {
