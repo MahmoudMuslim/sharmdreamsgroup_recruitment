@@ -71,7 +71,7 @@ export function FileBrowser({
     if (!listing) return;
     const label = file.name;
     const confirmed = window.confirm(
-      `Permanently delete “${label}” from ${listing.bucketLabel}? The candidate's record keeps its reference to the file, but the file itself cannot be recovered.`
+      `Permanently delete “${label}” from ${listing.bucketLabel}? The file cannot be recovered, and any candidate record that names it loses the link.`
     );
     if (!confirmed) return;
 

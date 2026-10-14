@@ -103,10 +103,19 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
     return { ok: false, error: `Storage refused the delete: ${error.message}` };
   }
 
-  const note = await recordDeletion(supabase, user.authUserId, bucket.key, path, before);
+  const note = [
+    await recordDeletion(supabase, user.authUserId, bucket.key, path, before),
+    await unlinkReference(supabase, bucket.key, path),
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   revalidatePath("/files");
-  return { ok: true, name: displayName(path), ...(note ? { note } : {}) };
+  return {
+    ok: true,
+    name: displayName(path),
+    ...(note ? { note } : {}),
+  };
 }
 
 async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string): Promise<ViewResult> {
@@ -346,6 +355,46 @@ async function recordDeletion(
   if (error) {
     console.error("[files] audit insert failed:", error.message);
     return "The file was deleted, but the audit log refused the entry.";
+  }
+
+  return null;
+}
+
+/**
+ * Clears the database pointer to a storage key that no longer resolves.
+ *
+ * Deleting the object is only half of deletion: a row still naming it offers a
+ * download that 404s, so the record would promise a file that is gone. Only the
+ * two buckets a table actually references can be unlinked here.
+ */
+async function unlinkReference(
+  supabase: Supabase,
+  bucket: BucketKey,
+  path: string
+): Promise<string | null> {
+  const target =
+    bucket === "candidate-cvs"
+      ? { table: "applications", column: "cv_file_path" }
+      : bucket === "candidate-videos"
+        ? { table: "candidate_responses", column: "video_path" }
+        : null;
+  if (!target) return null;
+
+  const { count } = await supabase
+    .from(target.table)
+    .select("id", { count: "exact", head: true })
+    .eq(target.column, path);
+  if (!count) return null;
+
+  const { data, error } = await supabase
+    .from(target.table)
+    .update({ [target.column]: null })
+    .eq(target.column, path)
+    .select("id");
+
+  if (error || (data?.length ?? 0) < count) {
+    console.error("[files] reference unlink failed:", target.table, error?.message);
+    return `The file was deleted, but ${count} record${count === 1 ? "" : "s"} still name${count === 1 ? "s" : ""} it — open the candidate to clear the link.`;
   }
 
   return null;

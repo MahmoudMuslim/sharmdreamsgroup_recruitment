@@ -565,6 +565,17 @@ create policy "staff read candidate media" on storage.objects
     and is_staff()
   );
 
+-- …and delete it. A candidate's recording is the more sensitive artefact of
+-- the two, so read-without-delete left the portal able to explain a PII file
+-- but not remove it. Scoped to these buckets; see migration 022.
+drop policy if exists "staff delete candidate media" on storage.objects;
+create policy "staff delete candidate media" on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id in ('candidate-videos', 'candidate-audio', 'resumes')
+    and is_staff()
+  );
+
 -- ============================================================================
 -- SEED DATA — Sharm Dreams Group companies
 -- ============================================================================

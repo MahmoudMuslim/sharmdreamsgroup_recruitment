@@ -3,9 +3,11 @@
  * storage policies actually permit.
  *
  * This is one module because the truth is scattered across SQL policies: staff
- * may list and read every bucket, but only `candidate-cvs` has a delete policy,
- * so the File Manager must not offer a delete control elsewhere — a button the
- * database would refuse is a false promise.
+ * may list and read every bucket, and `staff delete candidate cvs` plus
+ * `staff delete candidate media` together authorise a delete in all four — so
+ * the File Manager offers the control everywhere it can actually be honoured.
+ * A button the database would refuse is a false promise, and a policy added
+ * here without the SQL behind it is the same lie in the other direction.
  */
 
 export type BucketKey = "candidate-cvs" | "candidate-videos" | "candidate-audio" | "resumes";
@@ -32,21 +34,21 @@ export const BUCKETS: readonly BucketInfo[] = [
     label: "Video pitches",
     writtenBy:
       "The assessment runner (POST /api/attempt/[token]/video), stored as <attempt token>/<question id>-<timestamp>.<ext>.",
-    deletable: false,
+    deletable: true,
   },
   {
     key: "candidate-audio",
     label: "Audio answers",
     writtenBy:
       "Nothing in this portal yet — the bucket ships with size and MIME limits, but no code path writes to it.",
-    deletable: false,
+    deletable: true,
   },
   {
     key: "resumes",
     label: "Resumes (legacy)",
     writtenBy:
       "Nothing in this portal yet — CVs go to Candidate CVs instead, so this bucket stays empty.",
-    deletable: false,
+    deletable: true,
   },
 ] as const;
 
