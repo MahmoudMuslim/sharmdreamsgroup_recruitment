@@ -277,6 +277,83 @@ report("storage policy helpers", neededHelpers, () =>
         .map((r) => `${r.priv} on storage.${r.name}(${r.args}) -> ${r.grantee}`)
 );
 
+/* --- reference rows the console reads before it can render ---
+ * DDL alone builds a database with an empty permission catalogue, no roles, no
+ * notification templates and no AI routing, so every has_permission() check
+ * fails closed and every screen shows nothing. The dump ends with one INSERT per
+ * live row; this compares the primary key of each of those rows against the
+ * file, and the per-table counts, so a forgotten re-dump is a gap rather than a
+ * silently smaller rebuild.
+ */
+const REFERENCE_PKS = {
+  permissions: ["key"],
+  roles: ["id"],
+  role_permissions: ["role_key", "permission_key"],
+  currencies: ["id"],
+  skills: ["id"],
+  notification_templates: ["id"],
+  ai_model_config: ["capability"],
+  departments: ["id"],
+  locations: ["id"],
+  role_families: ["id"],
+  role_family_skills: ["role_family_id", "skill_id"],
+  app_settings: ["id"],
+};
+
+/* Read the leading values out of one emitted INSERT — the primary key always
+ * comes first, and quoted text may contain commas, so this walks the tuple
+ * rather than splitting it. */
+function leadingValues(line, count) {
+  const start = line.indexOf("values (");
+  if (start < 0) return null;
+  const out = [];
+  let i = start + "values (".length;
+  let item = "";
+  let quoted = false;
+  while (i < line.length && out.length < count) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === "'") {
+        if (line[i + 1] === "'") {
+          item += "'";
+          i++;
+        } else quoted = false;
+      } else item += ch;
+    } else if (ch === "'" && item.trim() === "") {
+      item = "";
+      quoted = true;
+    } else if (ch === ",") {
+      out.push(item.trim());
+      item = "";
+    } else if (ch === ")") {
+      out.push(item.trim());
+      break;
+    } else item += ch;
+    i++;
+  }
+  return out.length >= count ? out.slice(0, count) : null;
+}
+
+const refRows = [];
+const refGaps = [];
+for (const [t, pk] of Object.entries(REFERENCE_PKS)) {
+  const where = t === "app_settings" ? " where not is_secret" : "";
+  const live = await q(
+    `select ${pk.map((p) => `coalesce(${p}::text, 'null')`).join(" || ' | ' || ")} as sig
+       from public.${t}${where} order by 1`
+  );
+  const lines = text.split(/\r?\n/).filter((l) => l.startsWith(`insert into public.${t} (`));
+  const inFile = new Set(lines.map((l) => leadingValues(l, pk.length)?.join(" | ") ?? "??"));
+  for (const r of live) {
+    refRows.push({ t, sig: r.sig });
+    if (!inFile.has(r.sig)) refGaps.push(`${t}: no row for ${r.sig}`);
+  }
+  if (lines.length !== live.length) {
+    refGaps.push(`${t}: ${lines.length} INSERT line(s) in file, ${live.length} row(s) live`);
+  }
+}
+report("reference rows", refRows, () => refGaps);
+
 /* --- comments carried over --- */
 const comments = await q(
   `select count(*)::int n from pg_description d join pg_class c on c.oid=d.objoid

@@ -170,7 +170,11 @@ const counts = await c.query(
      (select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid
        join pg_namespace n on n.oid=c.relnamespace
        where n.nspname='public' and not t.tgisinternal) triggers,
-     (select count(*) from storage.buckets) buckets`
+     (select count(*) from storage.buckets) buckets,
+     (select count(*) from permissions) permissions,
+     (select count(*) from role_permissions) role_permissions,
+     (select count(*) from notification_templates) templates,
+     (select count(*) from app_settings) app_settings`
 );
 console.log("fresh database now holds:", counts.rows[0]);
 
@@ -180,7 +184,11 @@ const after = await c.query(
             where n.nspname='public' and c.relkind in ('r','p')) tables,
           (select count(*) from pg_constraint c join pg_class cl on cl.oid=c.conrelid
             join pg_namespace n on n.oid=cl.relnamespace
-            where n.nspname='public' and cl.relkind in ('r','p')) constraints`
+            where n.nspname='public' and cl.relkind in ('r','p')) constraints,
+          (select count(*) from permissions) permissions,
+          (select count(*) from role_permissions) role_permissions,
+          (select count(*) from notification_templates) templates,
+          (select count(*) from app_settings) app_settings`
 );
 console.log("PASS — applied a second time over itself, still:", after.rows[0]);
 await c.end();

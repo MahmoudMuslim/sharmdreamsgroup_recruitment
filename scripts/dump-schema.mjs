@@ -54,8 +54,8 @@ say(`/*
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
  * reasoning behind any single object lives in supabase/migrations/001-*.sql.
  *
- * The SEED DATA block at the end is the one section this file authors rather
- * than dumps. Regenerate with:
+ * The two seed blocks at the end are the only sections this file authors rather
+ * than dumps — and both are dumps of live rows in authored shape. Regenerate with:
  *
  *   node scripts/dump-schema.mjs > supabase/schema.sql
  *   node scripts/verify-schema.mjs supabase/schema.sql   # must report no gaps
@@ -63,11 +63,10 @@ say(`/*
  * Order is dependency-driven, because this file has to apply on an empty
  * database: extensions and enums, then every table, then uniqueness, then the
  * foreign keys that point at it, then functions, then the indexes and policies
- * that call those functions. It applies on a Supabase project — some policies
- * reference auth.uid() and storage.objects — but not on vanilla Postgres, and
- * the reference rows the console needs (permissions, roles, notification
- * templates, currencies, ai_model_config) come from supabase/migrations/, not
- * from here.
+ * that call those functions, then the rows the console reads before it can
+ * render anything. It applies on a Supabase project — some policies reference
+ * auth.uid() and storage.objects — but not on vanilla Postgres, where the auth
+ * and storage schemas have to be stood in for first.
  */`);
 
 /* -------------------------------------------------------------------------- */
@@ -468,6 +467,120 @@ say(
   ('11111111-1111-1111-1111-111111111104', 'SDG Corporate Shared Services', 'sdg-corporate', 'CORPORATE', 'Egypt')
 on conflict (slug) do nothing;`
 );
+
+/* -------------------------------------------------------------------------- */
+block("REFERENCE ROWS — the lookup data the console reads before it can render");
+
+/*
+ * These twelve tables used to be filled only by hand-written migrations, so a
+ * project built from this file had the schema of the portal and none of its
+ * vocabulary: no permission catalogue (so every has_permission() check failed
+ * closed), no roles (so Settings → Team had nothing to assign), no notification
+ * templates (so dispatch-by-key found no copy), no currencies, no AI routing
+ * rows. Dumping them makes this file describe a working console.
+ *
+ * Rows carry their primary keys, so re-running the block duplicates nothing.
+ * created_at / updated_at are left out on purpose — they take their defaults,
+ * and including them would churn the file every time any row was touched.
+ *
+ * Two kinds of column are deliberately nulled rather than dumped:
+ *   - updated_by and head_profile_id, which point at user_profiles rows that
+ *     belong to this project's staff, not to the schema;
+ *   - any app_settings row flagged is_secret, which is none of them today but is
+ *     the rule the dump follows so a future credential can never leak into a
+ *     committed file. (Every column named "key" on these tables is a lookup key.)
+ */
+const REFERENCE = [
+  { t: "permissions", pk: ["key"], cols: ["key", "label", "group_name", "description"] },
+  { t: "roles", pk: ["id"], cols: ["id", "key", "label", "description", "is_system"] },
+  {
+    t: "role_permissions",
+    pk: ["role_key", "permission_key"],
+    cols: ["role_key", "permission_key", "granted"],
+  },
+  { t: "currencies", pk: ["id"], cols: ["id", "code", "symbol", "label", "is_active", "sort_order"] },
+  {
+    t: "skills",
+    pk: ["id"],
+    cols: ["id", "name", "category", "description", "is_active", "sort_order"],
+  },
+  {
+    t: "notification_templates",
+    pk: ["id"],
+    cols: ["id", "key", "channel", "subject", "body", "is_active"],
+  },
+  {
+    t: "ai_model_config",
+    pk: ["capability"],
+    cols: ["capability", "primary_model", "fallback_model", "temperature", "max_tokens", "is_enabled", "updated_by"],
+    nulls: ["updated_by"],
+  },
+  {
+    t: "departments",
+    pk: ["id"],
+    cols: ["id", "tenant_id", "name", "slug", "description", "head_profile_id", "is_active", "sort_order"],
+    nulls: ["head_profile_id"],
+  },
+  {
+    t: "locations",
+    pk: ["id"],
+    cols: ["id", "tenant_id", "name", "city", "governorate", "country", "timezone", "address", "is_active", "sort_order"],
+  },
+  {
+    t: "role_families",
+    pk: ["id"],
+    cols: ["id", "key", "label", "description", "department_id", "is_active", "sort_order"],
+  },
+  {
+    t: "role_family_skills",
+    pk: ["role_family_id", "skill_id"],
+    cols: ["role_family_id", "skill_id", "required_level", "weight"],
+  },
+  {
+    t: "app_settings",
+    pk: ["id"],
+    cols: ["id", "scope", "company_id", "key", "value", "description", "is_secret", "updated_by"],
+    jsonb: ["value"],
+    nulls: ["updated_by"],
+    where: "is_secret = false",
+  },
+];
+
+/* A jsonb column has to be dumped as its own text: node hands back a JS boolean
+ * for `true`, which would print as the SQL keyword `true` — and Postgres refuses
+ * `boolean` into `jsonb`. Quoted text does coerce. */
+function lit(v) {
+  if (v === null || v === undefined) return "null";
+  if (typeof v === "boolean") return String(v);
+  if (v instanceof Date) return quote(v.toISOString());
+  if (typeof v === "object") return quote(JSON.stringify(v));
+  return quote(String(v));
+}
+
+let refTotal = 0;
+for (const spec of REFERENCE) {
+  const where = spec.where ? ` where ${spec.where}` : "";
+  const exprs = spec.cols.map((col) =>
+    (spec.jsonb ?? []).includes(col) ? `"${col}"::text as "${col}"` : `"${col}"`
+  );
+  const rows = await q(
+    `select ${exprs.join(", ")} from public.${spec.t}${where} order by ${spec.pk.join(", ")}`
+  );
+  const skip = new Set(spec.nulls ?? []);
+  for (const r of rows) {
+    say(
+      `insert into public.${spec.t} (${spec.cols.join(", ")}) values (` +
+        spec.cols.map((col) => lit(skip.has(col) ? null : r[col])).join(", ") +
+        `) on conflict (${spec.pk.join(", ")}) do nothing;`
+    );
+  }
+  refTotal += rows.length;
+  if (spec.t === "app_settings") {
+    const secret = (await q(`select count(*)::int n from public.app_settings where is_secret`))[0].n;
+    if (secret) say(`-- ${secret} app_settings row(s) flagged is_secret were not dumped.`);
+  }
+}
+say(`-- ${refTotal} reference rows above. Their order is load-bearing: parents before children.`);
 
 process.stdout.write(out.join("\n") + "\n");
 await c.end();
