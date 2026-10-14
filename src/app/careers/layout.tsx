@@ -24,12 +24,6 @@ export default function CareersLayout({ children }: LayoutProps<"/careers">) {
             >
               Track application
             </Link>
-            <Link
-              href="/login"
-              className="rounded-xl bg-brand-ink px-4 py-2 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90"
-            >
-              Staff sign-in
-            </Link>
           </nav>
         </div>
       </header>

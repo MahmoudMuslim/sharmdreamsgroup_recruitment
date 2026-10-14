@@ -396,12 +396,6 @@ export function PortalTracker({ supportEmail }: { supportEmail: string }) {
       <header className="border-b border-brand-line bg-brand-cream/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <SdgLockup />
-          <Link
-            href="/login"
-            className="rounded-lg border border-brand-line bg-white px-3.5 py-2 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand sm:text-sm"
-          >
-            Staff sign-in
-          </Link>
         </div>
       </header>
 
