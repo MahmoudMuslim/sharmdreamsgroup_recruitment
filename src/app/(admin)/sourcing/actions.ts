@@ -18,6 +18,13 @@ import {
   parseProspectImport,
   type ProspectImportProblem,
 } from "@/modules/sourcing/domain/prospect-import";
+import {
+  matchCatalogueSkills,
+  normalizeProspectProfile,
+  profileIsEmpty,
+  renderProfileText,
+  type ProspectProfile,
+} from "@/modules/sourcing/domain/prospect-profile";
 
 /**
  * Server actions behind the Sourcing board.
@@ -662,12 +669,19 @@ export async function convertProspect(input: {
 
   const { data: found } = await supabase
     .from("sourced_prospects")
-    .select("id, full_name, email, phone, application_id")
+    .select("id, full_name, email, phone, application_id, profile")
     .eq("id", input.id)
     .maybeSingle();
 
   const prospect = found as
-    | { id: string; full_name: string; email: string | null; phone: string | null; application_id: string | null }
+    | {
+        id: string;
+        full_name: string;
+        email: string | null;
+        phone: string | null;
+        application_id: string | null;
+        profile: unknown;
+      }
     | null;
 
   if (!prospect) return { ok: false, error: "That prospect is no longer in the pool." };
@@ -679,6 +693,12 @@ export async function convertProspect(input: {
     };
   }
 
+  // A converted prospect never uploaded a CV, so the captured profile becomes
+  // the document the screening step reads. Without a profile the application is
+  // still created, exactly as it was before profile reading existed.
+  const profile = prospect.profile ? normalizeProspectProfile(prospect.profile) : null;
+  const cvText = profile && !profileIsEmpty(profile) ? renderProfileText(profile) : null;
+
   const { data: created, error } = await supabase
     .from("applications")
     .insert({
@@ -686,6 +706,7 @@ export async function convertProspect(input: {
       full_name: prospect.full_name,
       email: prospect.email,
       phone: prospect.phone,
+      cv_text: cvText,
       source: "LINKEDIN",
       stage: "NEW",
     })
@@ -709,9 +730,42 @@ export async function convertProspect(input: {
     .eq("id", prospect.id);
 
   if (linkError) return { ok: false, error: linkError.message };
+
+  if (profile && profile.skills.length > 0) await recordSkills(supabase, applicationId, profile);
+
   // The new row lives on the Candidates board, which this mutation did not
   // trigger a refresh for, so tell the router that page is no longer current.
   revalidatePath("/candidates");
   revalidatePath("/sourcing");
   return { ok: true, application_id: applicationId };
+}
+
+/**
+ * Copies the profile's skills onto the new application.
+ *
+ * `candidate_skills.skill_id` points at the seeded `skills` table, so only the
+ * names the catalogue already knows are written — a profile skill with no
+ * catalogue row is dropped rather than inventing master data on a convert click.
+ * The rest still travels to the screening step through the rendered CV text.
+ *
+ * A failure here is not a failed conversion: the application exists, so the
+ * board reports it and the skills are simply missing.
+ */
+async function recordSkills(
+  supabase: StaffClient,
+  applicationId: string,
+  profile: ProspectProfile
+): Promise<void> {
+  const { data: catalogue } = await supabase.from("skills").select("id, name").eq("is_active", true);
+
+  const rows = matchCatalogueSkills(profile, (catalogue ?? []) as { id: string; name: string }[]);
+  if (rows.length === 0) return;
+
+  await supabase.from("candidate_skills").insert(
+    rows.map((row) => ({
+      application_id: applicationId,
+      skill_id: row.id,
+      source: "SOURCED_PROFILE",
+    }))
+  );
 }
