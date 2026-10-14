@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Maximize2, Minimize2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AssistantChat } from "./AssistantChat";
+import { AssistantCompanion } from "./AssistantCompanion";
 
 /**
  * The admin assistant as a panel: a dock you can pull up over any screen, so a
@@ -18,6 +19,9 @@ import { AssistantChat } from "./AssistantChat";
  * Turns are stored as they are written, so closing the panel or refreshing the
  * page is not the end of a conversation: this reopens the last one, and all of
  * them are listed on the Assistant page.
+ *
+ * `open` is also the companion orb's switch: it trails the pointer while this is
+ * closed and holds perfectly still while the panel is up.
  */
 
 /** Dock sizing. The panel is anchored bottom-right, so a drag grows it up-left. */
@@ -146,13 +150,17 @@ export function AssistantDock() {
 
   return (
     <>
+      {/* The desktop launcher trails the pointer; below `md` there is no pointer
+          to trail, so the corner keeps its plain static button. */}
+      <AssistantCompanion open={open} onOpen={() => setOpen(true)} />
+
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-label={open ? "Close the assistant" : "Open the assistant"}
         className={cn(
-          "fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full px-4 py-3 font-display text-sm font-bold text-brand-cream shadow-lift transition",
+          "fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full px-4 py-3 font-display text-sm font-bold text-brand-cream shadow-lift transition md:hidden",
           "bg-gradient-to-r from-brand-ink to-brand-ink/85 hover:from-brand-ink/90 hover:to-brand-ink/75",
           open && "opacity-0 pointer-events-none"
         )}
