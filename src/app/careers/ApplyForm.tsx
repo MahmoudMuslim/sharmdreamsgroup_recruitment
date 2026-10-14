@@ -27,9 +27,10 @@ import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
  * On success the tracking code is shown and copied to the clipboard — losing it
  * means losing access to the application, so it is surfaced prominently rather
  * than sent only to an email the candidate may not check. It is the only success
- * screen: an application a question rules out is stored as rejected and reads
- * that way to staff, but it is not announced here, because telling someone which
- * of their answers ended it is an instruction on how to apply again.
+ * screen: an application a question rules out is stored as rejected and the
+ * standard rejection letter follows, but nothing here, and nothing in that
+ * letter, says an answer decided it. Naming one would hand the applicant the
+ * rule they just broke, and the questions would stop being requirements.
  */
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB

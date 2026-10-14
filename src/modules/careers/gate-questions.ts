@@ -174,8 +174,9 @@ export function evaluateGate(
  * Names the question and the answer given, because "failed screening" is not
  * something a recruiter can act on — reopen the right application, or answer a
  * candidate who calls saying they mis-clicked. It is never sent to the
- * candidate: the applicant-facing surfaces stay silent about which answer ended
- * it, and say nothing about the gate at all.
+ * candidate: the rejection letter they do receive is rendered from the stage
+ * templates, which take no reason token, so this string cannot reach them even
+ * when the letter goes out.
  */
 export function gateRejectionReason(failed: readonly GateAnswer[]): string {
   return failed

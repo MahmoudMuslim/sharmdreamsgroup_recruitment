@@ -68,7 +68,7 @@ function renderLinkedText(text: string) {
 
 function nextStep(app: TrackedApplication): string {
   if (app.stage === "REJECTED") {
-    return "This application has closed. Thank you for taking the time to apply.";
+    return "Thank you for applying. After careful review we were not able to move forward with your application for this role. We appreciate the time you took, and we wish you every success in your search.";
   }
   if (app.stage === "HIRED") {
     return "Congratulations — our people team will be in touch about your offer.";
@@ -106,7 +106,7 @@ function ApplicationCard({ app }: { app: TrackedApplication }) {
           <span className="font-mono text-brand-ink/40">{app.tracking_code}</span>
           {rejected ? (
             <span className="rounded-full bg-rose-100 px-2.5 py-0.5 font-bold uppercase tracking-wide text-rose-700">
-              Closed
+              Not selected
             </span>
           ) : actionable ? (
             <span className="rounded-full bg-brand-gold/20 px-2.5 py-0.5 font-bold uppercase tracking-wide text-brand-gold-dark">

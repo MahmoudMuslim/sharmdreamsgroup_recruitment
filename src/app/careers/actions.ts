@@ -10,6 +10,7 @@ import {
   getAiAutomationSettings,
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
+import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import {
   evaluateGate,
   gateRejectionReason,
@@ -164,11 +165,10 @@ export type ApplyResult =
    * Stored and waiting for review — the only outcome a candidate is ever shown.
    *
    * An application a viability question rules out returns through this same
-   * branch: the row is stored REJECTED with the reason on it, but the reply,
-   * the panel and the notifications are indistinguishable from a normal
-   * submission. Telling someone seconds after they clicked "Submit" that an
-   * answer disqualified them names the question that did it, and invites them
-   * to answer again until the acceptable option is found.
+   * branch, so the submit screen cannot be read as a verdict. The rejection
+   * letter does follow, on the same channels and in the same words a recruiter's
+   * own rejection uses — the templates carry no token for a reason, so being
+   * told they were not accepted never tells them which answer decided it.
    */
   | { ok: true; outcome: "received"; trackingCode: string }
   | { ok: false; error: string };
@@ -386,13 +386,17 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
 
   if (filteredOut) {
     // The row is stored REJECTED with the disqualifying answer named in
-    // `rejection_reason` — that is what a recruiter reads, and a staff stage move
-    // sends the standard letter whenever one is made deliberately.
+    // `rejection_reason`, and that wording is recruiter-only: the letter below
+    // is rendered from the stage templates, which have no token for a reason,
+    // so nothing in it can point back at a question or an answer.
     //
-    // Nothing else happens here. No rejection on email or WhatsApp seconds after
-    // the submit button, and no separate outcome panel: an applicant who is told
-    // that an answer ended it has been shown which question decides the outcome,
-    // and can submit again until the acceptable option is found.
+    // The candidate is still told, politely, on every channel a rejection
+    // normally travels. What they receive is word-for-word what a recruiter's
+    // own rejection sends, which is the part that matters: the message says they
+    // were not accepted, never that an answer decided it.
+    if (applicationId) {
+      after(() => notifyStageChange(applicationId, "REJECTED").then(() => undefined));
+    }
     return { ok: true, outcome: "received", trackingCode };
   }
 

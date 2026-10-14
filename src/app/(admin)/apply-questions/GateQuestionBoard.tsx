@@ -250,11 +250,10 @@ export function GateQuestionBoard({
                 reason, and the AI screening step is skipped.
               </li>
               <li>
-                Nothing is said to the candidate about it. They get the same “application
-                received” screen as everyone else and no rejection notice, because telling an
-                applicant that a particular answer ended it shows them which one, and they can
-                apply again having changed it. The tracking page shows the application as closed,
-                the same as any other rejection, without a reason.
+                The candidate is never told an answer decided it. They get the same “application
+                received” screen as everyone else, then the standard rejection letter — the same
+                words a rejection you close by hand sends, and it names no question. What they
+                cannot see, they cannot answer their way around.
               </li>
               <li>
                 Candidates see the question and its possible answers. Which answer the role accepts
