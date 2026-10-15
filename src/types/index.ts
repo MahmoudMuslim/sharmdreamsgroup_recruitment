@@ -384,6 +384,32 @@ export interface DashboardCandidate {
   assessment_score: number | null;
 }
 
+/** One job opening with the pipeline that is sitting on it. */
+export interface DashboardRoleRow {
+  job_id: string;
+  title: string;
+  department: string;
+  status: string;
+  applications: number;
+  hires: number;
+  /** Null when nothing on this role is scored, or when scores are masked. */
+  avg_fit: number | null;
+  /** Days the oldest live application has been waiting; null when none is. */
+  oldest_waiting_days: number | null;
+  closing_at: string | null;
+}
+
+/** A live application that has been in a non-terminal stage the longest. */
+export interface DashboardWaitingRow {
+  application_id: string;
+  full_name: string;
+  job_title: string;
+  stage: ApplicationStage;
+  applied_at: string;
+  waiting_days: number;
+  match_score: number | null;
+}
+
 export interface DashboardAnalytics {
   total_applications: number;
   active_jobs: number;
@@ -400,6 +426,12 @@ export interface DashboardAnalytics {
   diversity: DiversityMetric[];
   time_to_hire_trend: TimeToHirePoint[];
   candidates: DashboardCandidate[];
+  /** Every opening the board knows about, busiest first. */
+  roles: DashboardRoleRow[];
+  /** Applications still sitting in a non-terminal stage, oldest first. */
+  oldest_waiting: DashboardWaitingRow[];
+  /** How many applications are still waiting, including the ones not listed. */
+  waiting_total: number;
 }
 
 // ---------------------------------------------------------------------------
