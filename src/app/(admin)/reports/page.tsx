@@ -68,7 +68,7 @@ export default async function ReportsPage() {
             sheet: result.sheet,
             totalRows: result.totalRows ?? result.sheet.rows.length,
             limitations: result.limitations ?? [],
-            windowLabel: result.windowLabel ?? "",
+            scope: result.scope ?? "",
             timeZone: result.timeZone ?? "",
           }}
         />

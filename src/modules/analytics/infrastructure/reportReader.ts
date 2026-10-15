@@ -19,8 +19,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import {
+  CANDIDATE_LIST,
   analyticsDocument,
   assessmentSheet,
+  candidateListSheet,
   messageSheet,
   panelSheet,
   pipelineSheet,
@@ -28,6 +30,7 @@ import {
   rowReportDocument,
   sourcingSheet,
   type AssessmentRow,
+  type CandidateListRow,
   type DocumentContext,
   type MessageRow,
   type PanelRow,
@@ -37,6 +40,12 @@ import {
   type SourcedRow,
 } from "@/modules/analytics/domain/documents";
 import type { ExportDocument, ExportSheet } from "@/modules/analytics/domain/exportDocument";
+import {
+  candidateSortLabel,
+  filterCandidates,
+  sortCandidates,
+  type CandidateListFilters,
+} from "@/modules/candidates/domain/listFilters";
 import {
   buildAnalyticsReport,
   windowCutoff,
@@ -94,22 +103,21 @@ async function read<T>(
   return { rows, error: null, truncated: rows.length >= limit };
 }
 
-function floor(limit: number, what: string): string {
-  return `Only the newest ${limit.toLocaleString()} ${what} in this window were read, so this report is a floor, not a total.`;
+function floor(limit: number, what: string, scope = "in this window"): string {
+  return `Only the newest ${limit.toLocaleString()} ${what} ${scope} were read, so this report is a floor, not a total.`;
 }
 
-/** The window, the clock and the masking decision every report is stamped with. */
+/** The scope, the clock and the masking decision every report is stamped with. */
 async function contextFor(
   window: AnalyticsWindow
-): Promise<{ context: Omit<DocumentContext, "exportedBy" | "baseName">; cutoff: string | null }> {
+): Promise<{ context: ReadContext; cutoff: string | null }> {
   const [timeZone, scoresHidden] = await Promise.all([
     getOrganisationTimeZone(),
     scoresAreMaskedForCurrentUser(),
   ]);
   return {
     context: {
-      window,
-      windowLabel: windowLabel(window),
+      scope: windowLabel(window),
       timeZone,
       generatedAt: new Date().toISOString(),
       scoresHidden,
@@ -215,7 +223,8 @@ export type RowReportRead =
       sheet: ExportSheet;
       limitations: string[];
       timeZone: string;
-      windowLabel: string;
+      /** "90 days" — what the page says this list is cut by. */
+      scope: string;
       generatedAt: string;
       scoresHidden: boolean;
       error: null;
@@ -426,8 +435,7 @@ export async function buildReportDocument(
     if (error || !report) return { error: error ?? "The report could not be read." };
     return {
       document: analyticsDocument(report, {
-        window,
-        windowLabel: report.windowLabel,
+        scope: report.windowLabel,
         timeZone: report.timeZone,
         generatedAt: report.generatedAt,
         scoresHidden: report.scoresHidden,
@@ -442,8 +450,7 @@ export async function buildReportDocument(
 
   return {
     document: rowReportDocument(result.definition, result.sheet, {
-      window,
-      windowLabel: result.windowLabel,
+      scope: result.scope,
       timeZone: result.timeZone,
       generatedAt: result.generatedAt,
       scoresHidden: result.scoresHidden,
@@ -453,10 +460,150 @@ export async function buildReportDocument(
   };
 }
 
+/* ------------------------------------------------------ candidate export -- */
+
+/** The console's filters, plus which of its two views is open. */
+export interface CandidateExportFilters extends CandidateListFilters {
+  archived: boolean;
+}
+
+/** Every application the console is filtered to, not the 50 rows it loaded. */
+const CANDIDATE_EXPORT_SELECT =
+  "full_name, email, phone, tracking_code, stage, source, ai_match_score, created_at, updated_at, hired_at, rejection_reason, archived_at, " +
+  "job_openings ( title ), candidate_attempts ( status, total_score, max_score, created_at ), interview_schedules ( scheduled_at, status )";
+
+const lower = (value: string): string => value.replace(/_/g, " ").toLowerCase();
+
+/** The sentence that tells a reader which applications their file holds. */
+function candidateScope(filters: CandidateExportFilters): string {
+  const parts = [filters.archived ? "Filed-away applications" : "Live pipeline applications"];
+  if (filters.stage) parts.push(`stage ${lower(filters.stage)}`);
+  if (filters.source) parts.push(`source ${lower(filters.source)}`);
+  const q = (filters.query ?? "").trim();
+  if (q) parts.push(`matching "${q}"`);
+  parts.push(candidateSortLabel(filters.sort));
+  return parts.join(", ");
+}
+
+/** The most recent attempt, because PostgREST does not order embedded rows. */
+function newestAttempt(row: Raw): Raw | null {
+  const attempts = (Array.isArray(row.candidate_attempts)
+    ? row.candidate_attempts
+    : [row.candidate_attempts]
+  ).filter(Boolean) as Raw[];
+  if (attempts.length === 0) return null;
+  return attempts.sort(
+    (a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
+  )[0];
+}
+
+/** The soonest slot still on the calendar, ignoring a panel already cancelled. */
+function nextPanel(row: Raw, now: number): string | null {
+  const booked = (Array.isArray(row.interview_schedules)
+    ? row.interview_schedules
+    : [row.interview_schedules]
+  )
+    .filter(Boolean)
+    .map((value) => value as Raw)
+    .filter((panel) => text(panel.status) !== "CANCELLED")
+    .map((panel) => text(panel.scheduled_at))
+    .filter((at): at is string => at !== null && Date.parse(at) >= now)
+    .sort((a, b) => a.localeCompare(b));
+  return booked[0] ?? null;
+}
+
+function toCandidateRow(row: Raw, scoresHidden: boolean): CandidateListRow {
+  const attempt = newestAttempt(row);
+  return {
+    full_name: str(row.full_name),
+    tracking_code: str(row.tracking_code),
+    email: str(row.email),
+    phone: text(row.phone),
+    job_title: text(embedded(row, "job_openings").title),
+    stage: text(row.stage) ?? "NEW",
+    source: text(row.source) ?? "CAREER_SITE",
+    /* Masked before the search and the sort, so "highest AI fit" cannot order
+     * rows by a number this account is not allowed to read. */
+    ai_match_score: scoresHidden ? null : num(row.ai_match_score),
+    attempt_status: text(attempt?.status),
+    attempt_score: scoresHidden ? null : num(attempt?.total_score),
+    attempt_max: scoresHidden ? null : num(attempt?.max_score),
+    next_panel_at: nextPanel(row, Date.now()),
+    created_at: text(row.created_at),
+    updated_at: text(row.updated_at),
+    hired_at: text(row.hired_at),
+    rejection_reason: text(row.rejection_reason),
+    archived_at: text(row.archived_at),
+  };
+}
+
+/**
+ * The candidates console as a file.
+ *
+ * Stage, source and the archive view go into SQL because they are exact enum
+ * matches. The free text does not: `ILIKE` reads the `_` and `%` in a real name
+ * as wildcards, so the search runs through the same predicate the table uses —
+ * which is how a download answers the question on the screen instead of a near
+ * copy of it.
+ */
+export async function buildCandidateExport(
+  filters: CandidateExportFilters,
+  exportedBy: string
+): Promise<{ document: ExportDocument } | { error: string }> {
+  const [timeZone, scoresHidden] = await Promise.all([
+    getOrganisationTimeZone(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
+  const supabase = await createSupabaseServerClient();
+
+  let query = supabase.from("applications").select(CANDIDATE_EXPORT_SELECT);
+  if (filters.stage) query = query.eq("stage", filters.stage);
+  if (filters.source) query = query.eq("source", filters.source);
+  query = filters.archived
+    ? query.not("archived_at", "is", null)
+    : query.is("archived_at", null);
+
+  const result = await read<Raw>(
+    query.order("created_at", { ascending: false }).limit(LIMITS.applications),
+    LIMITS.applications,
+    "applications"
+  );
+  if (result.error) return { error: result.error };
+
+  const rows = result.rows.map((row) => toCandidateRow(row, scoresHidden));
+  const kept = sortCandidates(filterCandidates(rows, filters), filters.sort);
+
+  const limitations = [...CANDIDATE_LIST.caveats];
+  if (scoresHidden) {
+    limitations.push(
+      "Score columns are left out of this file: the score-masking setting withholds test and AI scores from your account."
+    );
+  }
+  if (result.truncated) {
+    limitations.push(floor(LIMITS.applications, "applications", "matching these filters"));
+  }
+
+  const generatedAt = new Date().toISOString();
+  return {
+    document: rowReportDocument(
+      CANDIDATE_LIST,
+      candidateListSheet(kept, { timeZone, scoresHidden }),
+      {
+        scope: candidateScope(filters),
+        timeZone,
+        generatedAt,
+        scoresHidden,
+        exportedBy,
+        baseName: `sharm-dreams-candidates-${filters.archived ? "archive" : "pipeline"}-${generatedAt.slice(0, 10)}`,
+      },
+      limitations
+    ),
+  };
+}
+
 /* ------------------------------------------------------------- internals -- */
 
 type ReadContext = Omit<DocumentContext, "exportedBy" | "baseName">;
-
 function refusal(error: string): RowReportRead {
   return { error };
 }
@@ -488,7 +635,7 @@ function deliver(
     sheet,
     limitations,
     timeZone: context.timeZone,
-    windowLabel: context.windowLabel,
+    scope: context.scope,
     generatedAt: context.generatedAt,
     scoresHidden: context.scoresHidden,
     error: null,

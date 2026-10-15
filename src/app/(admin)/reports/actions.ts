@@ -27,7 +27,8 @@ export interface RowReportPreview {
   /** Rows the read actually returned, so the page can say what the preview left out. */
   totalRows?: number;
   limitations?: string[];
-  windowLabel?: string;
+  /** What the list is cut by, e.g. "90 days". */
+  scope?: string;
   timeZone?: string;
   generatedAt?: string;
 }
@@ -50,7 +51,7 @@ function safeWindow(value: unknown): AnalyticsWindow | null {
  * so both paths ask the database for `analytics.view` rather than trusting the
  * caller — a server action is a public endpoint.
  */
-export async function getRowReport(id: unknown, window: unknown): Promise<RowReportPreview> {
+export async function getRowReport(id: unknown, windowKey: unknown): Promise<RowReportPreview> {
   await requireStaff("/reports");
 
   if (!(await hasPermissionForUser("analytics.view"))) {
@@ -58,10 +59,10 @@ export async function getRowReport(id: unknown, window: unknown): Promise<RowRep
   }
 
   const report = safeReport(id);
-  const scope = safeWindow(window);
-  if (!report || !scope) return { ok: false, error: "That report or window does not exist." };
+  const win = safeWindow(windowKey);
+  if (!report || !win) return { ok: false, error: "That report or window does not exist." };
 
-  const result = await readRowReport(report, scope);
+  const result = await readRowReport(report, win);
   if (result.error || !result.sheet) {
     return { ok: false, error: result.error };
   }
@@ -69,14 +70,14 @@ export async function getRowReport(id: unknown, window: unknown): Promise<RowRep
   return {
     ok: true,
     report,
-    window: scope,
+    window: win,
     sheet: {
       ...result.sheet,
       rows: result.sheet.rows.slice(0, PREVIEW_ROWS),
     },
     totalRows: result.sheet.rows.length,
     limitations: result.limitations,
-    windowLabel: result.windowLabel,
+    scope: result.scope,
     timeZone: result.timeZone,
     generatedAt: result.generatedAt,
   };

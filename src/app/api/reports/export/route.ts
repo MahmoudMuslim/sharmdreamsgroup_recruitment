@@ -2,17 +2,32 @@
  * The one door a report leaves the building through.
  *
  * A page can hide a button; only a route can refuse a file. So every download
- * — from the Analytics page or the Reports page, in any of the three formats —
- * comes here, re-reads the data from the database and re-checks
- * `analytics.export` before a single byte is rendered. Handing the browser a
- * copy of the report and letting it build the file would make the grant
- * decorative.
+ * — from the Analytics page, the Reports page or the candidates toolbar, in any
+ * of the three formats — comes here, re-reads the data from the database and
+ * re-checks `analytics.export` before a single byte is rendered. Handing the
+ * browser a copy of the report and letting it build the file would make the
+ * grant decorative.
  */
 
-import { buildExport, EXPORT_FORMATS, type ExportFormat } from "@/modules/analytics/domain/exportDocument";
+import {
+  buildExport,
+  EXPORT_FORMATS,
+  type ExportDocument,
+  type ExportFormat,
+} from "@/modules/analytics/domain/exportDocument";
 import { ANALYTICS_WINDOWS, type AnalyticsWindow } from "@/modules/analytics/domain/report";
-import { buildReportDocument } from "@/modules/analytics/infrastructure/reportReader";
+import {
+  buildCandidateExport,
+  buildReportDocument,
+  type CandidateExportFilters,
+} from "@/modules/analytics/infrastructure/reportReader";
 import { REPORTS, type ReportId } from "@/modules/analytics/domain/documents";
+import {
+  isApplicationSource,
+  isCandidateSort,
+  isPipelineStage,
+  type CandidateSort,
+} from "@/modules/candidates/domain/listFilters";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 
@@ -25,8 +40,8 @@ function json(message: string, status: number): Response {
 }
 
 /** Query strings are attacker-controlled, so every parameter is coerced or refused. */
-function safeReport(value: string | null): "analytics" | ReportId | null {
-  if (value === "analytics") return "analytics";
+function safeReport(value: string | null): "analytics" | ReportId | "candidates" | null {
+  if (value === "analytics" || value === "candidates") return value;
   return REPORTS.some((report) => report.id === value) ? (value as ReportId) : null;
 }
 
@@ -38,6 +53,27 @@ function safeWindow(value: string | null): AnalyticsWindow | null {
 
 function safeFormat(value: string | null): ExportFormat | null {
   return EXPORT_FORMATS.some((format) => format.key === value) ? (value as ExportFormat) : null;
+}
+
+/**
+ * The candidates console's filters, as the toolbar holds them.
+ *
+ * Stage and source are whitelisted enums and an unknown value is dropped rather
+ * than passed on; the free text is only ever compared in JavaScript, so its
+ * length is capped and no SQL operator can be spelled with it.
+ */
+function candidateFilters(
+  params: URLSearchParams,
+  archived: boolean
+): CandidateExportFilters {
+  const sort: CandidateSort = isCandidateSort(params.get("sort"));
+  return {
+    stage: isPipelineStage(params.get("stage")),
+    source: isApplicationSource(params.get("source")),
+    query: params.get("q")?.trim().slice(0, 120) || null,
+    sort,
+    archived,
+  };
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -52,14 +88,24 @@ export async function GET(request: Request): Promise<Response> {
 
   const params = new URL(request.url).searchParams;
   const report = safeReport(params.get("report"));
-  const window = safeWindow(params.get("window"));
   const format = safeFormat(params.get("format"));
+  if (!report || !format) return json("A report and a format are both required.", 400);
 
-  if (!report || !window || !format) {
-    return json("A report, a window and a format are all required.", 400);
+  let built: { document: ExportDocument } | { error: string };
+  if (report === "candidates") {
+    /* The candidates list is cut by its filters, not by a window: there is no
+     * window on that screen to carry into a file. */
+    built = await buildCandidateExport(
+      candidateFilters(params, params.get("archived") === "1"),
+      user.fullName
+    );
+  } else {
+    const window = safeWindow(params.get("window"));
+    if (!window) {
+      return json("A report, a window and a format are all required.", 400);
+    }
+    built = await buildReportDocument(report, window, user.fullName);
   }
-
-  const built = await buildReportDocument(report, window, user.fullName);
   if ("error" in built) return json(built.error, 500);
 
   const file = await buildExport(built.document, format);

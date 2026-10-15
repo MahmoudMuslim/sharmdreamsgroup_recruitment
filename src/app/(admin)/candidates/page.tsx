@@ -6,6 +6,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
+import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { connection } from "next/server";
 
 export const metadata = {
@@ -44,9 +45,10 @@ export default async function CandidatesPage({
   const focused = hasRef ? await getCandidateByRef(ref) : null;
   const showArchived = params.archived === "1" || Boolean(focused?.archived_at);
 
-  const [candidates, canWrite, timeZone, canGenerateQuestions] = await Promise.all([
+  const [candidates, canWrite, canExport, timeZone, canGenerateQuestions] = await Promise.all([
     getCandidateList(showArchived),
     hasPermissionForUser("candidates.write"),
+    hasPermissionForUser("analytics.export"),
     getOrganisationTimeZone(),
     getBoolSetting("ai.interview_questions", true),
   ]);
@@ -63,13 +65,15 @@ export default async function CandidatesPage({
       <PageHeader
         eyebrow="Talent database"
         title="Candidates"
-        description="Every application across the group, with bias-reduced AI screening scores and assessment status."
+        description="Every application across the group, with bias-reduced AI screening scores and assessment status — and the filtered list as a CSV, Excel or PDF download."
       />
 
       <CandidateBrowser
         candidates={rows}
         archivedView={showArchived}
         canWrite={canWrite}
+        canExport={canExport}
+        exportFormats={EXPORT_FORMATS}
         focusId={focused?.id ?? null}
         unresolvedRef={hasRef && !focused ? (ref.trackingCode ?? ref.id ?? null) : null}
         timeZone={timeZone}

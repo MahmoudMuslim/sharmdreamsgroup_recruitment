@@ -35,7 +35,8 @@ interface Loaded {
   sheet: ExportSheet;
   totalRows: number;
   limitations: string[];
-  windowLabel: string;
+  /** What the list is cut by, e.g. "90 days". */
+  scope: string;
   timeZone: string;
 }
 
@@ -77,7 +78,7 @@ export function ReportsView({
         sheet: result.sheet,
         totalRows: result.totalRows ?? result.sheet.rows.length,
         limitations: result.limitations ?? [],
-        windowLabel: result.windowLabel ?? "",
+        scope: result.scope ?? "",
         timeZone: result.timeZone ?? "",
       });
     });
@@ -181,7 +182,7 @@ export function ReportsView({
       <Card className="mt-1 p-5">
         <CardHeader
           title={definition.label}
-          meta={`${data.totalRows.toLocaleString()} rows · ${data.windowLabel} · ${data.timeZone}`}
+          meta={`${data.totalRows.toLocaleString()} rows · ${data.scope} · ${data.timeZone}`}
         />
         <p className="mt-2 text-xs leading-relaxed text-brand-ink/60">{definition.blurb}</p>
 

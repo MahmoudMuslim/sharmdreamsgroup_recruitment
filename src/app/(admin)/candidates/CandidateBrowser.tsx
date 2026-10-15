@@ -6,6 +6,7 @@ import {
   Archive,
   ArchiveRestore,
   ChevronRight,
+  Download,
   FileText,
   Loader2,
   Lock,
@@ -24,6 +25,12 @@ import {
   TextInput,
 } from "@/modules/analytics/presentation/Form";
 import { Badge, Button, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
+import {
+  PIPELINE_STAGES as STAGES,
+  filterCandidates,
+  sortCandidates,
+  type CandidateSort,
+} from "@/modules/candidates/domain/listFilters";
 import {
   draftCandidateFeedback,
   screenApplication,
@@ -47,8 +54,6 @@ function stageTone(stage: string) {
   if (stage === "OFFER" || stage === "INTERVIEW") return "gold" as const;
   return "info" as const;
 }
-
-const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
 
 function attemptTone(status: string) {
   if (status === "GRADED") return "success" as const;
@@ -182,6 +187,8 @@ export function CandidateBrowser({
   candidates,
   archivedView,
   canWrite,
+  canExport,
+  exportFormats,
   focusId,
   unresolvedRef,
   timeZone,
@@ -191,6 +198,10 @@ export function CandidateBrowser({
   /** True when this is the archive, not the live pipeline. */
   archivedView: boolean;
   canWrite: boolean;
+  /** `analytics.export` — the same grant the download route re-checks. */
+  canExport: boolean;
+  /** Passed as plain data: the export module itself is server-only. */
+  exportFormats: { key: string; label: string; hint: string }[];
   focusId: string | null;
   unresolvedRef: string | null;
   /** `organisation.timezone` — the wall clock interviews are booked against. */
@@ -207,7 +218,7 @@ export function CandidateBrowser({
   const [query, setQuery] = useState(params.get("q") ?? trackedCode ?? "");
   const [stageFilter, setStageFilter] = useState(params.get("stage") ?? "");
   const [sourceFilter, setSourceFilter] = useState("");
-  const [sortBy, setSortBy] = useState<"recent" | "fit" | "name">("recent");
+  const [sortBy, setSortBy] = useState<CandidateSort>("recent");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [profile, setProfile] = useState<CandidateRow | null>(
     () => candidates.find((c) => c.id === focusId) ?? null
@@ -292,27 +303,32 @@ export function CandidateBrowser({
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [candidates]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const rows = candidates.filter((c) => {
-      if (stageFilter && c.stage !== stageFilter) return false;
-      if (sourceFilter && c.source !== sourceFilter) return false;
-      if (!q) return true;
-      return (
-        c.full_name.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
-        (c.job_title ?? "").toLowerCase().includes(q) ||
-        c.tracking_code.toLowerCase().includes(q)
-      );
-    });
-    // The server returns newest first, so "recent" needs no re-sort.
-    if (sortBy === "fit") {
-      rows.sort((a, b) => (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1));
-    } else if (sortBy === "name") {
-      rows.sort((a, b) => a.full_name.localeCompare(b.full_name));
-    }
-    return rows;
-  }, [candidates, query, stageFilter, sourceFilter, sortBy]);
+  /* One predicate with the export: the file a recruiter downloads from this
+   * toolbar answers the filters they are looking at, not a near-copy of them. */
+  const filtered = useMemo(
+    () =>
+      sortCandidates(
+        filterCandidates(candidates, {
+          stage: stageFilter || null,
+          source: sourceFilter || null,
+          query,
+          sort: sortBy,
+        }),
+        sortBy
+      ),
+    [candidates, query, stageFilter, sourceFilter, sortBy]
+  );
+
+  /* The href carries the filters exactly as this toolbar holds them, and the
+   * route re-reads the rows from the database on click — a download is never a
+   * copy of whatever this page happened to load. */
+  const exportQuery = new URLSearchParams({ report: "candidates", sort: sortBy });
+  if (stageFilter) exportQuery.set("stage", stageFilter);
+  if (sourceFilter) exportQuery.set("source", sourceFilter);
+  if (query.trim()) exportQuery.set("q", query.trim());
+  if (archivedView) exportQuery.set("archived", "1");
+  const exportHref = (format: string) =>
+    `/api/reports/export?${exportQuery.toString()}&format=${format}`;
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -413,6 +429,22 @@ export function CandidateBrowser({
             </button>
           )}
 
+          {canExport && (
+            <div className="flex items-center gap-1.5" role="group" aria-label="Download this list">
+              {exportFormats.map((format) => (
+                <a
+                  key={format.key}
+                  href={exportHref(format.key)}
+                  title={`${format.label}: ${format.hint}. Built from every application matching these filters.`}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-white px-2.5 py-2 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden />
+                  {format.label}
+                </a>
+              ))}
+            </div>
+          )}
+
           {!archivedView && (
             <button
               type="button"
@@ -477,6 +509,13 @@ export function CandidateBrowser({
               />
             ))}
           </div>
+        )}
+
+        {canExport && (
+          <p className="text-[11px] leading-relaxed text-brand-ink/45">
+            A file is built when you click, from every application matching these filters — this
+            table only lists the most recent ones, so a download can hold more rows than you can see.
+          </p>
         )}
       </div>
 

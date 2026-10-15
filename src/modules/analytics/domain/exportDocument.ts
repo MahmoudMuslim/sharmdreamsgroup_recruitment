@@ -303,7 +303,7 @@ function drawTable(
   let { page, cursor } = startPage(true);
 
   if (sheet.rows.length === 0) {
-    page.drawText("No rows fall in this window.", {
+    page.drawText("No rows match this report.", {
       x: MARGIN,
       y: cursor,
       size: BODY_SIZE,

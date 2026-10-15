@@ -15,7 +15,7 @@ import "server-only";
 
 import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import type { ExportCell, ExportDocument, ExportSheet } from "./exportDocument";
-import type { AnalyticsReport, AnalyticsWindow } from "./report";
+import type { AnalyticsReport } from "./report";
 
 export type ReportId = "pipeline" | "assessments" | "sourcing" | "messages" | "interviews";
 
@@ -90,6 +90,31 @@ export const REPORTS: {
 export function reportDefinition(id: unknown): ReportDefinition | null {
   return REPORTS.find((report) => report.id === id) ?? null;
 }
+
+/**
+ * A list the portal already shows on screen, described the way a report is.
+ *
+ * `REPORTS` are cut by a time window; a console like Candidates is cut by its
+ * own filters. Both need the same three things in a file — a name, a blurb and
+ * the reasons the rows are not the whole picture — so one shape carries both.
+ */
+export interface ListDefinition {
+  label: string;
+  blurb: string;
+  caveats: string[];
+}
+
+export const CANDIDATE_LIST: ListDefinition = {
+  label: "Candidate pipeline",
+  blurb:
+    "One row per application matching the filters on the candidates screen: contact details, where the candidate stands, what the AI and the test said, and whether a panel is booked.",
+  caveats: [
+    "The candidates screen lists only the newest 50 applications. This file is built from every application matching the same filters, so it can hold more rows than were on screen.",
+    "Stage dates are not kept. A move overwrites the row, so Applied and Last update are the only history a stage column sits between.",
+    "Assessment columns show the newest attempt issued to a candidate. When several were issued, the older ones are not here.",
+    "Next panel is the soonest slot still on the calendar. A call arranged outside the portal is not recorded anywhere, so it does not appear.",
+  ],
+};
 
 /** Shared context every sheet needs: whose clock the stamps use, and what must be hidden. */
 export interface SheetContext {
@@ -199,6 +224,28 @@ export interface PanelRow {
   application_created_at: string | null;
   meeting_link: string | null;
   calendar_provider: string | null;
+}
+
+/** One application as the candidates console shows it, plus what a file needs. */
+export interface CandidateListRow {
+  full_name: string;
+  tracking_code: string;
+  email: string;
+  phone: string | null;
+  job_title: string | null;
+  stage: string;
+  source: string;
+  /** Null until screened, and while this reader's scores are masked. */
+  ai_match_score: number | null;
+  attempt_status: string | null;
+  attempt_score: number | null;
+  attempt_max: number | null;
+  next_panel_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  hired_at: string | null;
+  rejection_reason: string | null;
+  archived_at: string | null;
 }
 
 /* ---------------------------------------------------------------- sheets -- */
@@ -349,11 +396,55 @@ export function panelSheet(rows: PanelRow[], context: SheetContext): ExportSheet
   );
 }
 
-/* -------------------------------------------------------------- documents -- */
+/**
+ * The candidates console's own columns, widened to what a recruiter works from
+ * offline: the tracking code they would quote back, both numbers the test has,
+ * and the next slot on the calendar.
+ */
+export function candidateListSheet(
+  rows: CandidateListRow[],
+  context: SheetContext
+): ExportSheet {
+  return sheet(
+    "Candidates",
+    context,
+    [
+      { header: "Candidate", value: (row) => row.full_name },
+      { header: "Tracking code", value: (row) => row.tracking_code },
+      { header: "Email", value: (row) => row.email },
+      { header: "Phone", value: (row) => row.phone },
+      { header: "Role", value: (row) => row.job_title },
+      {
+        header: "Stage",
+        value: (row) => (row.archived_at ? `${row.stage} (filed)` : row.stage),
+      },
+      { header: "Source", value: (row) => row.source },
+      { header: "AI fit %", masked: true, value: (row) => row.ai_match_score },
+      {
+        header: "Assessment",
+        value: (row) => (row.attempt_status ? row.attempt_status.replace("_", " ") : "Not assigned"),
+      },
+      { header: "Test score", masked: true, value: (row) => row.attempt_score },
+      { header: "Out of", masked: true, value: (row) => row.attempt_max },
+      { header: "Applied", value: (row) => stamp(row.created_at, context.timeZone) },
+      { header: "Last update", value: (row) => stamp(row.updated_at, context.timeZone) },
+      { header: "Next panel", value: (row) => stamp(row.next_panel_at, context.timeZone) },
+      { header: "Hired on", value: (row) => stamp(row.hired_at, context.timeZone) },
+      { header: "Rejection reason", value: (row) => row.rejection_reason },
+    ],
+    rows
+  );
+}
 
+/* -------------------------------------------------------------- documents -- */
 export interface DocumentContext extends SheetContext {
-  window: AnalyticsWindow;
-  windowLabel: string;
+  /**
+   * How this file was cut: a window for a report, a filter set for a list.
+   *
+   * Written into every format, because a spreadsheet that says "Applications"
+   * without saying which ones is how a filtered export gets read as a total.
+   */
+  scope: string;
   generatedAt: string;
   /** Named in every file, so a forwarded export still says who pulled it. */
   exportedBy: string;
@@ -363,7 +454,7 @@ export interface DocumentContext extends SheetContext {
 
 function metaFor(context: DocumentContext): { label: string; value: string }[] {
   return [
-    { label: "Window", value: context.windowLabel },
+    { label: "Covers", value: context.scope },
     { label: "Time zone", value: context.timeZone },
     { label: "Generated", value: stamp(context.generatedAt, context.timeZone) || context.generatedAt },
     { label: "Exported by", value: context.exportedBy },
@@ -427,7 +518,7 @@ export function analyticsDocument(
   for (const panel of i.byInterviewer) add("interviews", `panels:${panel.name}`, panel.panels);
 
   return {
-    title: `Hiring analytics, ${context.windowLabel.toLowerCase()}`,
+    title: `Hiring analytics, ${context.scope}`,
     description:
       "Aggregates over the window: whether issued tests get opened and finished, how an outbound pool converts, whether messages land and how loaded the interview panel is.",
     meta: metaFor(context),
@@ -437,16 +528,16 @@ export function analyticsDocument(
   };
 }
 
-/** One row-level report, with its own caveats riding along in the file. */
+/** One row-level list, with its own caveats riding along in the file. */
 export function rowReportDocument(
-  definition: ReportDefinition,
+  definition: ListDefinition,
   rows: ExportSheet,
   context: DocumentContext,
   /** The reader's caveats plus whatever the read could not deliver in full. */
   limitations: string[]
 ): ExportDocument {
   return {
-    title: `${definition.label}, ${context.windowLabel.toLowerCase()}`,
+    title: `${definition.label}, ${context.scope}`,
     description: definition.blurb,
     meta: [...metaFor(context), { label: "Rows in this file", value: String(rows.rows.length) }],
     limitations,
