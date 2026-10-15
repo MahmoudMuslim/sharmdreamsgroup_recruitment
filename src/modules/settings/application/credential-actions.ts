@@ -73,12 +73,6 @@ export interface AiModelRow {
   updatedAt: string;
 }
 
-/** True when secrets can be stored at all. Surfaced in the UI as a blocker. */
-export async function getEncryptionStatus(): Promise<{ configured: boolean }> {
-  await requireStaff("/settings");
-  return { configured: isEncryptionConfigured() };
-}
-
 /**
  * Loads every provider with its configuration state.
  *
@@ -331,6 +325,7 @@ export async function saveCredential(input: {
       : "Config fields updated",
   });
 
+  dropCatalogueCache();
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -364,6 +359,7 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
     detail: "Reverted to environment variable",
   });
 
+  dropCatalogueCache();
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -609,8 +605,31 @@ export async function saveModelRouting(input: {
  * blank out the picker, which falls back to a curated static list when
  * OpenRouter — the default inference path — is the one that failed.
  */
-export async function getModelCatalogue(): Promise<ModelCatalogue> {
+/**
+ * The live answer, kept for a few minutes.
+ *
+ * Building the catalogue means one request to each of six vendor endpoints — and
+ * Google pages twice while Cloudflare pages up to eight — so an uncached read
+ * held the AI models console behind a spinner for twenty seconds every time it
+ * mounted. Model lists change on a scale of days, so the console shows how old
+ * the answer is and `Refresh catalogue` forces a new read.
+ */
+const CATALOGUE_TTL_MS = 5 * 60_000;
+let catalogueCache: { value: ModelCatalogue; at: number } | null = null;
+
+/** A stored key decides which provider can be listed, so a write voids the read. */
+function dropCatalogueCache() {
+  catalogueCache = null;
+}
+
+export async function getModelCatalogue(options?: {
+  force?: boolean;
+}): Promise<ModelCatalogue> {
   await requireStaff("/settings");
+
+  if (!options?.force && catalogueCache && Date.now() - catalogueCache.at < CATALOGUE_TTL_MS) {
+    return catalogueCache.value;
+  }
 
   const results = await Promise.all([
     fetchOpenRouterModels(),
@@ -625,12 +644,14 @@ export async function getModelCatalogue(): Promise<ModelCatalogue> {
   const sources = results.map((r) => r.source);
   const openRouter = sources[0];
 
-  return {
+  const value: ModelCatalogue = {
     models,
     sources,
     fetchedAt: new Date().toISOString(),
     degraded: openRouter.status !== "ok",
   };
+  catalogueCache = { value, at: Date.now() };
+  return value;
 }
 
 interface SourceResult {

@@ -284,7 +284,11 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderTestResult[]>([]);
   const [providerTesting, setProviderTesting] = useState(false);
+  /** The probes run the first time their tab is opened, not on mount. */
+  const [probesStarted, setProbesStarted] = useState(false);
   const [catalogueLoading, setCatalogueLoading] = useState(false);
+  /** Separate from `error`: a failed model list must not read as a failed page. */
+  const [catalogueError, setCatalogueError] = useState<string | null>(null);
 
   const [tab, setTab] = useState("routing");
 
@@ -459,6 +463,25 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   );
   const hiddenTiles = activeCatalogue.models.length - drawnTiles;
 
+  /**
+   * How old the server-side read is, said out loud.
+   *
+   * The catalogue is held on the server for a few minutes so mounting this
+   * console does not re-hit six provider endpoints, which means "live" needs an
+   * age beside it — and `Refresh catalogue` needs something to prove it did.
+   */
+  const catalogueAgeSeconds = catalogue
+    ? Math.max(0, Math.round((Date.now() - new Date(catalogue.fetchedAt).getTime()) / 1000))
+    : null;
+  const catalogueAgeLabel =
+    catalogueAgeSeconds === null
+      ? ""
+      : catalogueAgeSeconds < 60
+        ? "just now"
+        : catalogueAgeSeconds < 3600
+          ? `${Math.round(catalogueAgeSeconds / 60)} min ago`
+          : `${Math.round(catalogueAgeSeconds / 3600)} h ago`;
+
   const catalogueIds = useMemo(
     () => new Set(groupedModels.flatMap((g) => g.models.map((m) => m.modelId))),
     [groupedModels]
@@ -492,14 +515,22 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     [routableGroups]
   );
 
-  // Load data on mount. Routing rows are keyed off AI_CAPABILITIES so a
-  // capability that has never been saved still gets an editable card.
+  /**
+   * Load data on mount.
+   *
+   * Only the routing rows are waited for: the catalogue is a live read of six
+   * vendor endpoints and the probes post a real completion to each provider, so
+   * gating the whole console on them held an empty spinner for twenty seconds.
+   * The cards paint from the table, then the model list fills in behind them.
+   * Routing rows are keyed off AI_CAPABILITIES so a capability that has never
+   * been saved still gets an editable card.
+   */
   useEffect(() => {
     let active = true;
     (async () => {
       setLoading(true);
       try {
-        const [routing, models] = await Promise.all([listModelRouting(), getModelCatalogue()]);
+        const routing = await listModelRouting();
         if (!active) return;
         const hydrated: ModelRow[] = AI_CAPABILITIES.map((capability) => {
           const stored = routing.find((r) => r.capability === capability.id);
@@ -518,7 +549,6 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         });
         setRows(hydrated);
         setSaved(Object.fromEntries(hydrated.map((r) => [r.capability, snapshot(r)])));
-        setCatalogue(models);
         setError(null);
       } catch {
         if (active) setError("Could not load model routing.");
@@ -526,18 +556,36 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         if (active) setLoading(false);
       }
     })();
-    void probeProviders();
+    void loadCatalogue();
     return () => {
       active = false;
     };
   }, []);
 
-  async function loadCatalogue() {
+  /**
+   * Opening the health tab runs the probes; nothing else does.
+   *
+   * A probe posts a real completion to each provider, so it is the slowest call
+   * in this console by a wide margin. Running it on mount made every visit to
+   * the routing page wait on keys the visitor may not even be checking, and it
+   * competed with the model list for the same server.
+   */
+  function selectTab(next: string) {
+    setTab(next);
+    if (next === "providers" && !probesStarted) {
+      setProbesStarted(true);
+      void probeProviders();
+    }
+  }
+
+  /** `force` is the Refresh button; otherwise a warm server-side read answers. */
+  async function loadCatalogue(force = false) {
     setCatalogueLoading(true);
     try {
-      setCatalogue(await getModelCatalogue());
+      setCatalogue(await getModelCatalogue({ force }));
+      setCatalogueError(null);
     } catch {
-      // Error is handled by the existing error state
+      setCatalogueError("The model list could not be read. Providers are listed as they answer.");
     } finally {
       setCatalogueLoading(false);
     }
@@ -651,10 +699,23 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   const catalogueCount = groupedModels.reduce((n, g) => n + g.models.length, 0);
   const unsavedCount = rows.filter((r) => saved[r.capability] !== snapshot(r)).length;
 
-  const tabs: { key: string; label: string; icon: LucideIcon; count: number }[] = [
-    { key: "routing", label: "Task routing", icon: Route, count: rows.length },
-    { key: "catalogue", label: "Model catalogue", icon: Sparkles, count: catalogueCount },
-    { key: "providers", label: "Provider health", icon: Activity, count: totalProviders },
+  /**
+   * Counted only once the data behind the count exists. A `(0)` on a list that
+   * is still being read, or on probes that have not run yet, would advertise an
+   * empty section rather than a pending one.
+   */
+  const tabs: { key: string; label: string; icon: LucideIcon }[] = [
+    { key: "routing", label: `Task routing (${rows.length})`, icon: Route },
+    {
+      key: "catalogue",
+      label: `Model catalogue${catalogue ? ` (${catalogueCount})` : ""}`,
+      icon: Sparkles,
+    },
+    {
+      key: "providers",
+      label: `Provider health${totalProviders ? ` (${totalProviders})` : ""}`,
+      icon: Activity,
+    },
   ];
 
   if (loading) {
@@ -706,7 +767,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               variant="outline"
               onClick={() => {
                 setTab("catalogue");
-                void loadCatalogue();
+                void loadCatalogue(true);
               }}
               disabled={catalogueLoading}
             >
@@ -722,6 +783,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               variant="outline"
               onClick={() => {
                 setTab("providers");
+                setProbesStarted(true);
                 void probeProviders();
               }}
               disabled={providerTesting}
@@ -747,7 +809,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             id={`models-tab-${option.key}`}
             aria-selected={tab === option.key}
             aria-controls={`models-panel-${option.key}`}
-            onClick={() => setTab(option.key)}
+            onClick={() => selectTab(option.key)}
             className={cn(
               "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
               tab === option.key
@@ -756,7 +818,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             )}
           >
             <option.icon className="h-4 w-4" aria-hidden />
-            {`${option.label} (${option.count})`}
+            {option.label}
           </button>
         ))}
       </div>
@@ -779,7 +841,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             </h3>
             <p className="mt-1 text-sm text-brand-ink/55">
               Live credential health — each configured key is probed with a real API call when this
-              page opens.
+              tab opens, and never in the background.
             </p>
           </div>
           {providers.length > 0 && (
@@ -856,12 +918,24 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             <Sparkles className="h-4 w-4 text-brand-gold-dark" aria-hidden />
             Model catalogue
           </h3>
-          <p className="mt-1 text-sm text-brand-ink/55">
-            {`${activeCatalogue.models.length.toLocaleString()} of ${catalogueCount.toLocaleString()} models match — open one to read its costs and route it to a task.`}
-          </p>
+          {catalogueError ? (
+            <p role="alert" className="mt-1 text-sm text-rose-700">
+              {catalogueError}
+            </p>
+          ) : catalogue ? (
+            <p className="mt-1 text-sm text-brand-ink/55">
+              {`${activeCatalogue.models.length.toLocaleString()} of ${catalogueCount.toLocaleString()} models match — open one to read its costs and route it to a task.`}
+            </p>
+          ) : (
+            <p className="mt-1 flex items-center gap-2 text-sm text-brand-ink/55">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              Reading each provider&apos;s live model list…
+            </p>
+          )}
 
           {catalogue && (
-            <ul className="mt-3 flex flex-wrap gap-2">
+            <>
+              <ul className="mt-3 flex flex-wrap gap-2">
               {catalogue.sources.map((source) => (
                 <li
                   key={source.id}
@@ -886,11 +960,22 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                   {source.status === "degraded" && <span className="font-bold uppercase tracking-wide">built-in list</span>}
                 </li>
               ))}
-            </ul>
+              </ul>
+              <p
+                className="mt-2 text-[11px] text-brand-ink/45"
+                title={`Fetched at ${catalogue.fetchedAt}`}
+              >
+                {`Model list read ${catalogueAgeLabel}. "Refresh catalogue" forces a new read.`}
+              </p>
+            </>
           )}
         </header>
 
-        {/* Search + price tier. The provider is picked by the tab strip below. */}
+        {/* Filters and provider tabs only mean something once there is a list
+            to filter — while it is still arriving they would read as an empty
+            catalogue with a dead search box. */}
+        {catalogue && (
+        <>
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
@@ -951,6 +1036,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             </button>
           ))}
         </div>
+        </>
+        )}
 
         <div
           role="tabpanel"
@@ -958,7 +1045,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           aria-labelledby={`catalogue-tab-${activeCatalogue.key}`}
           className="space-y-5"
         >
-          {catalogueSections.length === 0 ? (
+          {!catalogue ? null : catalogueSections.length === 0 ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-brand-line border-dashed bg-brand-cream/30 px-4 py-12 text-center">
               <Sparkles className="h-8 w-8 text-brand-ink/30" aria-hidden />
               <p className="mt-3 text-sm font-medium text-brand-ink">
@@ -1145,6 +1232,14 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           )}
         </div>
 
+        {!catalogue && (
+          <p className="flex items-center gap-2 text-xs text-brand-ink/50">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            The model list is still loading. Each picker shows the model its task already uses and
+            fills in the rest when the list lands.
+          </p>
+        )}
+
         {!editable && (
           <p className="rounded-2xl border border-brand-line bg-white px-4 py-3 text-xs text-brand-ink/60">
             You can read every routing row; saving needs the
@@ -1229,7 +1324,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     >
                       <option value="">Select a model…</option>
                       {row.primaryModel && !catalogueIds.has(row.primaryModel) && (
-                        <option value={row.primaryModel}>{row.primaryModel} (not in catalogue)</option>
+                        <option value={row.primaryModel}>
+                          {catalogue ? `${row.primaryModel} (not in catalogue)` : row.primaryModel}
+                        </option>
                       )}
                       {routableOptions}
                     </Select>
@@ -1252,7 +1349,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     >
                       <option value="">No fallback</option>
                       {row.fallbackModel && !catalogueIds.has(row.fallbackModel) && (
-                        <option value={row.fallbackModel}>{row.fallbackModel} (not in catalogue)</option>
+                        <option value={row.fallbackModel}>
+                          {catalogue ? `${row.fallbackModel} (not in catalogue)` : row.fallbackModel}
+                        </option>
                       )}
                       {routableOptions}
                     </Select>

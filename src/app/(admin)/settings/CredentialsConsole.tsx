@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -22,6 +22,7 @@ import {
   listCredentialAudit,
   saveCredential,
   verifyCredential,
+  type AuditEntryView,
   type CredentialKeyView,
   type CredentialView,
 } from "@/modules/settings/application/credential-actions";
@@ -323,33 +324,37 @@ function CredentialCard({
   );
 }
 
+/**
+ * The provider credential cards.
+ *
+ * The first paint already holds the data: the settings page reads the store and
+ * the audit trail in its own render, so no card waits on a round trip after
+ * hydration. `Refresh` re-reads through the same actions this console used to
+ * fire on mount.
+ */
 export function CredentialsConsole({
   encryptionConfigured,
   editable,
+  initialCredentials,
+  initialAudit,
 }: {
   encryptionConfigured: boolean;
   editable: boolean;
+  initialCredentials: CredentialView[];
+  initialAudit: AuditEntryView[];
 }) {
-  const [credentials, setCredentials] = useState<CredentialView[]>([]);
+  const [credentials, setCredentials] = useState<CredentialView[]>(initialCredentials);
   const [tab, setTab] = useState<ProviderGroup | null>(null);
-  const [audit, setAudit] = useState<{
-    id: string;
-    provider: string | null;
-    action: string;
-    detail: string | null;
-    actor: string | null;
-    createdAt: string;
-  }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [audit, setAudit] = useState<AuditEntryView[]>(initialAudit);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
    * Re-reads the store (used by the Refresh button and after any card action).
    *
-   * Deliberately does NOT flip `loading`: that renders the full-screen spinner
-   * branch, unmounting every card and wiping their local state — which is what
-   * used to make a card's Test result disappear the instant it arrived.
+   * Deliberately leaves the current list on screen: replacing it with a spinner
+   * unmounts every card and wipes its local state — which is what used to make a
+   * card's Test result disappear the instant it arrived.
    */
   async function reload() {
     setRefreshing(true);
@@ -363,39 +368,6 @@ export function CredentialsConsole({
     } finally {
       setRefreshing(false);
     }
-  }
-
-  useEffect(() => {
-    // Runs once on mount. `loading` already starts true so the first paint is
-    // the spinner rather than an empty list.
-    let active = true;
-
-    void (async () => {
-      try {
-        const [creds, entries] = await Promise.all([listCredentials(), listCredentialAudit(12)]);
-        if (!active) return;
-        setCredentials(creds);
-        setAudit(entries);
-        setError(null);
-      } catch {
-        if (active) setError("Could not load the credential store.");
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-12 text-sm text-brand-ink/50">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-        Loading credentials…
-      </div>
-    );
   }
 
   const configured = credentials.filter((c) => c.source !== "unset").length;

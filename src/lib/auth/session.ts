@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/types";
@@ -18,32 +19,39 @@ export interface SessionUser {
  * are stored in `user_profiles`; the RLS helper functions read from there.
  *
  * Returns `null` when there is no session or the profile row is missing.
+ *
+ * Cached per request: `auth.getUser()` is a network call to the auth service,
+ * and one admin page asks half a dozen times (the guard, each read action, each
+ * permission check). Without this the same JWT was verified on every one of
+ * them, which dominated the settings page's time to first byte.
  */
-export async function getSessionUser(): Promise<SessionUser | null> {
-  const supabase = await createSupabaseServerClient();
+export const getSessionUser = cache(
+  async (): Promise<SessionUser | null> => {
+    const supabase = await createSupabaseServerClient();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  if (!user) return null;
+    if (!user) return null;
 
-  const { data: profile } = await supabase
-    .from("user_profiles")
-    .select("id, auth_user_id, full_name, email, role, tenant_id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
+    const { data: profile } = await supabase
+      .from("user_profiles")
+      .select("id, auth_user_id, full_name, email, role, tenant_id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
 
-  if (!profile) return null;
+    if (!profile) return null;
 
-  return {
-    authUserId: user.id,
-    email: profile.email ?? user.email ?? "",
-    fullName: profile.full_name ?? user.email ?? "Unknown user",
-    role: profile.role as UserRole,
-    tenantId: profile.tenant_id ?? null,
-  };
-}
+    return {
+      authUserId: user.id,
+      email: profile.email ?? user.email ?? "",
+      fullName: profile.full_name ?? user.email ?? "Unknown user",
+      role: profile.role as UserRole,
+      tenantId: profile.tenant_id ?? null,
+    };
+  }
+);
 
 /** Roles allowed inside the recruiter/admin portal. */
 export const STAFF_ROLES: readonly UserRole[] = [
