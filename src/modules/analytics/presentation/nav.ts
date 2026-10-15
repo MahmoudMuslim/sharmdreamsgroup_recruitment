@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   BriefcaseBusiness,
   CalendarDays,
   ClipboardCheck,
@@ -30,6 +31,7 @@ export interface NavItem {
  */
 export const NAV: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics" },
+  { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "Assessment, sourcing & panel reports" },
   { href: "/candidates", label: "Candidates", icon: Users, hint: "Pipeline & AI scores" },
   { href: "/sourcing", label: "Sourcing", icon: UserRoundSearch, hint: "Outbound talent pool" },
   { href: "/assessments", label: "Assessments", icon: ClipboardCheck, hint: "Test suite builder" },
