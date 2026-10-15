@@ -1,8 +1,12 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Inbox, Loader2, Mail, MessageCircle } from "lucide-react";
-import { saveNotificationTemplate } from "@/app/(admin)/settings/actions";
+import { Check, Inbox, Loader2, Mail, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
+import {
+  deleteNotificationTemplate,
+  resetNotificationTemplate,
+  saveNotificationTemplate,
+} from "@/app/(admin)/settings/actions";
 import { Badge, Button, Card } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 import {
@@ -10,6 +14,7 @@ import {
   TEMPLATE_PURPOSE,
   TEMPLATE_TOKENS,
   renderTemplate,
+  shippedTemplate,
   templateIsWired,
 } from "@/modules/settings/domain/templates";
 import type { NotificationTemplate } from "@/modules/settings/domain/types";
@@ -17,22 +22,29 @@ import type { NotificationTemplate } from "@/modules/settings/domain/types";
 function Editor({
   template,
   editable,
+  onDeleted,
 }: {
   template: NotificationTemplate;
   editable: boolean;
+  onDeleted: (id: string) => void;
 }) {
   const [subject, setSubject] = useState(template.subject ?? "");
   const [body, setBody] = useState(template.body);
   const [active, setActive] = useState(template.is_active);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<"reset" | "delete" | null>(null);
   const [pending, startTransition] = useTransition();
 
   const wired = templateIsWired(template);
+  const shipped = shippedTemplate(template.key, template.channel);
   const dirty =
     subject !== (template.subject ?? "") || body !== template.body || active !== template.is_active;
 
   const preview = renderTemplate(body || "—", TEMPLATE_PREVIEW_VARS);
+
+  const stamp = () =>
+    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   function save() {
     setError(null);
@@ -44,14 +56,49 @@ function Editor({
         is_active: active,
       });
       if (result.ok) {
-        setSavedAt(
-          new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-        );
+        setSavedAt(stamp());
       } else {
         setError(result.error ?? "Could not save this template.");
       }
     });
   }
+
+  function reset() {
+    setError(null);
+    startTransition(async () => {
+      const result = await resetNotificationTemplate({ id: template.id });
+      if (!result.ok) {
+        setError(result.error ?? "Could not restore this template.");
+      } else if (shipped) {
+        // The boxes are the recruiter's source of truth between saves, so a
+        // reset has to land in them as well as in the row.
+        setSubject(shipped.subject);
+        setBody(shipped.body);
+        setActive(true);
+        setConfirming(null);
+        setSavedAt(stamp());
+      }
+    });
+  }
+
+  function remove() {
+    setError(null);
+    startTransition(async () => {
+      const result = await deleteNotificationTemplate({ id: template.id });
+      if (result.ok) {
+        onDeleted(template.id);
+      } else {
+        setError(result.error ?? "Could not delete this template.");
+      }
+      setConfirming(null);
+    });
+  }
+
+  const deleteNote = !wired
+    ? "Nothing sends this key, so deleting it changes no message a candidate receives."
+    : shipped
+      ? "The next message on this channel is sent using the copy shipped in code — the wording below goes back to how the platform writes it."
+      : "No copy is shipped for this key, so the next message falls back to the generic status-update line.";
 
   return (
     <li className="rounded-xl border border-brand-line bg-brand-cream p-4">
@@ -149,6 +196,77 @@ function Editor({
           </Button>
         </div>
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-brand-line pt-3">
+        {confirming === "delete" ? (
+          <div className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
+            <p className="text-xs leading-relaxed text-rose-800">{deleteNote}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={remove} className="bg-rose-700 text-white hover:bg-rose-800">
+                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                Delete template
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
+                Keep it
+              </Button>
+            </div>
+          </div>
+        ) : confirming === "reset" ? (
+          <div className="w-full rounded-xl border border-brand-line bg-white px-3 py-2.5">
+            <p className="text-xs leading-relaxed text-brand-ink/65">
+              Replaces the copy in this row with the wording the platform ships
+              {dirty ? ", including any edit you have not saved yet" : ""}, and switches the row back
+              on.
+            </p>
+            <p className="mt-1.5 whitespace-pre-line rounded-lg bg-brand-cream px-2.5 py-2 text-[11px] leading-relaxed text-brand-ink/70">
+              {shipped?.body}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={reset}>
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                Restore shipped copy
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setConfirming(null)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {shipped && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setConfirming("reset");
+                }}
+                disabled={!editable || pending}
+                className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-ink/55 hover:text-brand-ink disabled:opacity-60"
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                Reset to shipped copy
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setConfirming("delete");
+              }}
+              disabled={!editable || pending}
+              className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-rose-700/80 hover:text-rose-700 disabled:opacity-60"
+            >
+              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+              Delete template
+            </button>
+            {!shipped && (
+              <span className="text-[11px] text-brand-ink/40">
+                No copy is shipped for this key, so there is nothing here to reset it to.
+              </span>
+            )}
+          </>
+        )}
+      </div>
     </li>
   );
 }
@@ -166,10 +284,16 @@ export function TemplatesConsole({
   editable: boolean;
 }) {
   const [tab, setTab] = useState("whatsapp");
+  const [deleted, setDeleted] = useState<string[]>([]);
 
-  const whatsapp = templates.filter((template) => template.channel === "WHATSAPP");
-  const email = templates.filter((template) => template.channel === "EMAIL");
-  const portal = templates.filter((template) => template.channel === "IN_APP");
+  // The row is dropped locally as well as server-side, because a revalidated
+  // payload can arrive a navigation later under partial prefetching — and a
+  // template that is still on screen after "Deleted" reads like a lie.
+  const rows = templates.filter((template) => !deleted.includes(template.id));
+
+  const whatsapp = rows.filter((template) => template.channel === "WHATSAPP");
+  const email = rows.filter((template) => template.channel === "EMAIL");
+  const portal = rows.filter((template) => template.channel === "IN_APP");
 
   const tabs = [
     { key: "whatsapp", label: "WhatsApp", icon: MessageCircle, rows: whatsapp },
@@ -257,7 +381,12 @@ export function TemplatesConsole({
           ) : (
             <ul className="space-y-3">
               {option.rows.map((template) => (
-                <Editor key={template.id} template={template} editable={editable} />
+                <Editor
+                  key={template.id}
+                  template={template}
+                  editable={editable}
+                  onDeleted={(id) => setDeleted((current) => [...current, id])}
+                />
               ))}
             </ul>
           )}

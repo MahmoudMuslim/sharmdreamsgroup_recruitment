@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
+import { shippedTemplate } from "@/modules/settings/domain/templates";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import type {
   AppRole,
@@ -213,6 +214,103 @@ export async function saveNotificationTemplate(input: {
     key: `notification_template:${previous.key}`,
     previous_value: { subject: previous.subject, body: previous.body, is_active: previous.is_active },
     next_value: { subject, body, is_active: input.is_active },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/**
+ * Puts one template back to the copy shipped in code.
+ *
+ * The row survives — only its text and its switch are rewritten — because the
+ * alternative reading of "reset" would be to delete the row, and a deleted row
+ * is not a row a recruiter can look at again. Re-activating is part of the
+ * same promise: after a reset the message definitely goes out.
+ */
+export async function resetNotificationTemplate(input: {
+  id: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/settings");
+
+  if (!(await hasPermissionForUser("settings.manage_platform"))) {
+    return { ok: false, error: "Editing templates requires settings.manage_platform." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: row } = await supabase
+    .from("notification_templates")
+    .select("key, channel, subject, body, is_active")
+    .eq("id", input.id)
+    .maybeSingle();
+
+  if (!row) return { ok: false, error: "That template no longer exists." };
+
+  const shipped = shippedTemplate(row.key, row.channel);
+  if (!shipped) {
+    return { ok: false, error: `No copy is shipped for ${row.key}, so there is nothing to restore.` };
+  }
+
+  // Only an EMAIL row has a subject to carry; the others read as blank lines.
+  const next = {
+    subject: row.channel === "EMAIL" ? shipped.subject || null : null,
+    body: shipped.body,
+    is_active: true,
+  };
+
+  const { error } = await supabase
+    .from("notification_templates")
+    .update(next)
+    .eq("id", input.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("settings_audit_log").insert({
+    key: `notification_template:${row.key}`,
+    previous_value: { subject: row.subject, body: row.body, is_active: row.is_active },
+    next_value: { ...next, reset: true },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/**
+ * Removes one template row.
+ *
+ * Safe to offer because no dispatch path requires a stored row: each one falls
+ * through to the copy shipped in code, so deleting changes the wording a
+ * candidate receives and never silences the message. The row is written to the
+ * audit log first, which is the only place the deleted text still exists.
+ */
+export async function deleteNotificationTemplate(input: {
+  id: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  await requireStaff("/settings");
+
+  if (!(await hasPermissionForUser("settings.manage_platform"))) {
+    return { ok: false, error: "Deleting templates requires settings.manage_platform." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: row } = await supabase
+    .from("notification_templates")
+    .select("key, channel, subject, body, is_active")
+    .eq("id", input.id)
+    .maybeSingle();
+
+  if (!row) return { ok: false, error: "That template no longer exists." };
+
+  const { error } = await supabase.from("notification_templates").delete().eq("id", input.id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase.from("settings_audit_log").insert({
+    key: `notification_template:${row.key}`,
+    previous_value: { channel: row.channel, subject: row.subject, body: row.body, is_active: row.is_active },
+    next_value: { deleted: true },
   });
 
   revalidatePath("/settings");

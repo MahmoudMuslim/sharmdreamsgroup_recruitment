@@ -260,3 +260,37 @@ export function templateIsWired(template: { key: string; channel: string }): boo
   return template.channel === "WHATSAPP" || template.channel === "EMAIL" || template.channel === "IN_APP";
 }
 
+/**
+ * The copy shipped in code for one key on one channel.
+ *
+ * Written as a lookup rather than inlined into the console because the answer
+ * has to match what the dispatch paths really do: `resolveTemplate` reads
+ * `TEMPLATE_DEFAULTS`, `resolveEmailCopy` reads `EMAIL_TEMPLATE_DEFAULTS` and
+ * then `TEMPLATE_DEFAULTS`, and the Sourcing board reads
+ * `PROSPECT_OUTREACH_DEFAULTS`. It returns null where those chains have no
+ * entry for this exact key, which is the console's signal that deleting the
+ * row sends the generic status-update line instead — not nothing, but not this
+ * letter either.
+ */
+export function shippedTemplate(
+  key: string,
+  channel: string
+): { subject: string; body: string } | null {
+  if (key === PROSPECT_OUTREACH_TEMPLATES.EMAIL) {
+    return PROSPECT_OUTREACH_DEFAULTS.EMAIL;
+  }
+  if (key === PROSPECT_OUTREACH_TEMPLATES.WHATSAPP) {
+    return { subject: "", body: PROSPECT_OUTREACH_DEFAULTS.WHATSAPP.body };
+  }
+
+  if (channel === "WHATSAPP") {
+    const body = TEMPLATE_DEFAULTS[key];
+    return body ? { subject: "", body } : null;
+  }
+
+  // Email and the portal notice share a body; only email has a subject line.
+  const body = EMAIL_TEMPLATE_DEFAULTS[key] ?? TEMPLATE_DEFAULTS[key];
+  if (!body) return null;
+  return { subject: EMAIL_SUBJECT_DEFAULTS[key] ?? "", body };
+}
+
