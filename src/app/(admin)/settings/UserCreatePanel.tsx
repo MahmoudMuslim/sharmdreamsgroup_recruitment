@@ -160,7 +160,7 @@ export function UserCreatePanel({
                   className={cn(
                     "w-full py-2 text-center text-sm font-semibold rounded-lg transition",
                     mode === "invite"
-                      ? "bg-brand-gold text-white"
+                      ? "bg-brand-gold text-brand-on-accent"
                       : "text-brand-ink/60 hover:bg-white"
                   )}
                 >
@@ -180,7 +180,7 @@ export function UserCreatePanel({
                   className={cn(
                     "w-full py-2 text-center text-sm font-semibold rounded-lg transition",
                     mode === "direct"
-                      ? "bg-brand-gold text-white"
+                      ? "bg-brand-gold text-brand-on-accent"
                       : "text-brand-ink/60 hover:bg-white"
                   )}
                 >

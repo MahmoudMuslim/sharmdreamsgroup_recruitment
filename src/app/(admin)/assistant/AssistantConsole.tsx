@@ -233,7 +233,7 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
                             <button
                               type="button"
                               onClick={() => void commitDelete(session.id)}
-                              className="rounded-md bg-rose-600 px-2 py-1 text-[10px] font-bold uppercase text-white transition hover:bg-rose-700"
+                              className="rounded-md bg-rose-600 px-2 py-1 text-[10px] font-bold uppercase text-brand-on-accent transition hover:bg-rose-700"
                             >
                               Delete
                             </button>

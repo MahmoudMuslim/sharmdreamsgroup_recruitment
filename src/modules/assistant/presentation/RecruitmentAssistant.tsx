@@ -364,7 +364,7 @@ export function RecruitmentAssistant() {
             className={cn(
               "relative inline-flex h-14 w-14 items-center justify-center rounded-full",
               "bg-[radial-gradient(120%_120%_at_30%_20%,#22d3ee_0%,#4f46e5_55%,#1e1b4b_100%)]",
-              "ring-1 ring-white/50 shadow-lift transition hover:scale-[1.04] active:scale-95",
+              "ring-1 ring-brand-on-accent/50 shadow-lift transition hover:scale-[1.04] active:scale-95",
               isOpen && "opacity-0 pointer-events-none"
             )}
           >
@@ -381,7 +381,7 @@ export function RecruitmentAssistant() {
               />
             </span>
             <span
-              className="absolute bottom-3 left-1/2 h-[3px] w-4 -translate-x-1/2 rounded-full bg-white/90"
+              className="absolute bottom-3 left-1/2 h-[3px] w-4 -translate-x-1/2 rounded-full bg-brand-on-accent/90"
               aria-hidden
             />
           </button>

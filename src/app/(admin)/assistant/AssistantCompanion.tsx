@@ -198,7 +198,7 @@ export function AssistantCompanion({ open, onOpen }: { open: boolean; onOpen: ()
         aria-expanded={open}
         transition={{ type: "spring", damping: 26, stiffness: 220 }}
         className={cn(
-          "relative grid place-items-center rounded-full ring-1 ring-white/50 transition-opacity",
+          "relative grid place-items-center rounded-full ring-1 ring-brand-on-accent/50 transition-opacity",
           "bg-[radial-gradient(120%_120%_at_30%_25%,rgba(34,211,238,0.95),rgba(56,189,248,0.6)_45%,rgba(124,58,237,0.9))]",
           "shadow-[0_10px_30px_-10px_rgba(56,189,248,0.75),inset_0_1px_0_rgba(255,255,255,0.7)]",
           parked && !open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-80"
@@ -208,16 +208,16 @@ export function AssistantCompanion({ open, onOpen }: { open: boolean; onOpen: ()
         {/* The glass body: a highlight over a soft inner glow, eyes, and a smile. */}
         <span
           aria-hidden
-          className="absolute inset-1.5 rounded-full bg-white/15 shadow-[inset_0_-6px_12px_-6px_rgba(255,255,255,0.6)]"
+          className="absolute inset-1.5 rounded-full bg-brand-on-accent/15 shadow-[inset_0_-6px_12px_-6px_rgba(255,255,255,0.6)]"
         />
-        <span aria-hidden className="absolute left-3.5 top-2.5 h-2 w-3.5 rotate-[-18deg] rounded-full bg-white/70 blur-[1px]" />
+        <span aria-hidden className="absolute left-3.5 top-2.5 h-2 w-3.5 rotate-[-18deg] rounded-full bg-brand-on-accent/70 blur-[1px]" />
         <span aria-hidden className="relative flex gap-1.5">
           <span className="h-3.5 w-1.5 rounded-full bg-cyan-50 shadow-[0_0_10px_rgba(186,230,253,0.95)]" />
           <span className="h-3.5 w-1.5 rounded-full bg-cyan-50 shadow-[0_0_10px_rgba(186,230,253,0.95)]" />
         </span>
         <span
           aria-hidden
-          className="absolute bottom-[15px] h-[2px] w-4 rounded-full bg-white/90 shadow-[0_0_8px_rgba(255,255,255,0.85)]"
+          className="absolute bottom-[15px] h-[2px] w-4 rounded-full bg-brand-on-accent/90 shadow-[0_0_8px_rgba(255,255,255,0.85)]"
         />
       </motion.button>
     </motion.div>

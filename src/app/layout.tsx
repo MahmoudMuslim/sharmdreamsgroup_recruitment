@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Montserrat, Amiri } from "next/font/google";
+import { themeBootstrap } from "@/lib/theme";
 import "./globals.css";
 
 const inter = Inter({
@@ -41,10 +42,20 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
+    // `data-theme` is the palette the CSS ships with; the inline script in <head>
+    // may already have replaced it before React hydrates, which is why this
+    // element opts out of the attribute check. Reading the preference on the
+    // server instead would make the whole tree request-bound and cost the
+    // public pages their prerender.
     <html
       lang="en"
+      data-theme="light"
+      suppressHydrationWarning
       className={`${inter.variable} ${montserrat.variable} ${amiri.variable} h-full antialiased`}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
       <body className="min-h-full bg-brand-ivory text-brand-ink">{children}</body>
     </html>
   );

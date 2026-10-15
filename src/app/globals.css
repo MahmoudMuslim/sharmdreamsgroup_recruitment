@@ -19,6 +19,9 @@
   --color-brand-cream: #faf9f6;
   --color-brand-sand: #f2f1ed;
   --color-brand-line: #e6e0dd;
+  /* Stays white when a palette inverts: copy that sits on a gold or rose fill
+     must not flip to a dark surface along with `--color-white`. */
+  --color-brand-on-accent: #ffffff;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
@@ -27,6 +30,62 @@
 
 :root {
   color-scheme: light;
+}
+
+/* ---------------- Dark palette ----------------
+ * Tailwind v4 compiles every colour utility to `var(--color-…)`, so the whole
+ * portal inverts from this block instead of from `dark:` variants at two hundred
+ * call sites. Ink and the cream surfaces swap, the two gold accents swap so
+ * `text-brand-gold-light` never lands on an equally light background, and the
+ * pale alert tints go dark.
+ *
+ * The saturated fills (`bg-rose-600`, `bg-emerald-500`, status dots) are left
+ * alone: they read on either background. Their *text* shades cannot be swapped
+ * at the token level for the same reason, so they are retargeted by class below.
+ */
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-brand-ink: #f1eee8;
+  --color-brand-ivory: #131313;
+  --color-brand-cream: #1c1b1a;
+  --color-brand-sand: #242321;
+  --color-brand-line: #35312c;
+  --color-brand-gold: #c19a76;
+  --color-brand-gold-light: #a87c52;
+  --color-brand-gold-dark: #dcbb96;
+  --color-white: #201f1d;
+
+  --color-rose-50: #2a1518;
+  --color-rose-100: #351a1e;
+  --color-rose-200: #4d272c;
+  --color-rose-300: #6a373d;
+  --color-emerald-50: #12241d;
+  --color-emerald-100: #163025;
+  --color-emerald-200: #234838;
+  --color-emerald-300: #2f5c48;
+  --color-amber-50: #2a2114;
+  --color-amber-100: #332818;
+  --color-amber-200: #4d3b22;
+  --color-amber-300: #63492a;
+  --color-sky-50: #122229;
+  --color-slate-200: #33302c;
+}
+
+html[data-theme="dark"] :is(.text-rose-600, .text-rose-700, .text-rose-800, .text-rose-900, .hover\:text-rose-700:hover) {
+  color: #f7a8b4;
+}
+
+html[data-theme="dark"] :is(.text-emerald-700, .text-emerald-800, .text-emerald-900) {
+  color: #82d8b0;
+}
+
+html[data-theme="dark"] :is(.text-amber-700, .text-amber-800, .text-amber-900) {
+  color: #e8bd7c;
+}
+
+html[data-theme="dark"] :is(.text-sky-700, .text-slate-700) {
+  color: #9fb8c9;
 }
 
 html {

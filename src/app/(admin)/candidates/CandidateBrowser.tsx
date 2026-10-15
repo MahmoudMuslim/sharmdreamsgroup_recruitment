@@ -368,8 +368,8 @@ export function CandidateBrowser({
         </div>
       )}
 
-      {/* Toolbar — sticks below the mobile header so filters stay reachable */}
-      <div className="sticky top-[57px] z-20 -mx-4 mb-4 space-y-2.5 border-b border-brand-line bg-brand-ivory/95 px-4 pb-3 pt-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:top-0 lg:-mx-10 lg:px-10">
+      {/* Toolbar — sticks below the app bar so filters stay reachable */}
+      <div className="sticky top-[57px] z-20 -mx-4 mb-4 space-y-2.5 border-b border-brand-line bg-brand-ivory/95 px-4 pb-3 pt-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative min-w-[220px] flex-1">
             <Search
@@ -973,7 +973,7 @@ function ProfileDrawer({
                       size="sm"
                       onClick={() => void confirmReject()}
                       disabled={pendingStage !== null}
-                      className="bg-rose-600 text-white hover:bg-rose-700"
+                      className="bg-rose-600 text-brand-on-accent hover:bg-rose-700"
                     >
                       {pendingStage === "REJECTED" && (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />

@@ -119,7 +119,7 @@ export function PermissionMatrixCard({
                               className={cn(
                                 "inline-flex h-6 w-6 items-center justify-center rounded-md border transition",
                                 granted
-                                  ? "border-brand-gold bg-brand-gold text-white"
+                                  ? "border-brand-gold bg-brand-gold text-brand-on-accent"
                                   : "border-brand-line bg-white hover:bg-brand-sand",
                                 locked && "cursor-not-allowed opacity-70"
                               )}

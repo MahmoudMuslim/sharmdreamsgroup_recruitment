@@ -251,7 +251,7 @@ export function FilterRail({
           active
             ? tone === "muted"
               ? "bg-brand-gold/25 text-brand-gold-dark"
-              : "bg-white/20 text-brand-cream"
+              : "bg-brand-on-accent/20 text-brand-cream"
             : "bg-brand-sand text-brand-ink/55"
         )}
       >

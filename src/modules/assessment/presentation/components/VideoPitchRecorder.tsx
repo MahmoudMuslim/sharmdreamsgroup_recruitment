@@ -186,7 +186,7 @@ export function VideoPitchRecorder({ question }: VideoPitchRecorderProps) {
         )}
 
         {isRecording && (
-          <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-rose-600/90 px-3 py-1 text-xs font-bold text-white">
+          <div className="absolute left-3 top-3 flex items-center gap-2 rounded-full bg-rose-600/90 px-3 py-1 text-xs font-bold text-brand-on-accent">
             <Radio className="h-3.5 w-3.5 animate-pulse" aria-hidden />
             REC {formatDuration(recordingSeconds)}
           </div>
@@ -209,7 +209,7 @@ export function VideoPitchRecorder({ question }: VideoPitchRecorderProps) {
           <button
             type="button"
             onClick={() => void startRecording()}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-rose-500 sm:w-auto"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-600 px-5 py-3 text-sm font-bold text-brand-on-accent transition hover:bg-rose-500 sm:w-auto"
           >
             <Mic className="h-4 w-4" aria-hidden />
             Start recording

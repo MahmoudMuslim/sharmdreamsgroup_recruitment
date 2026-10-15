@@ -3,101 +3,20 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  BarChart3,
-  BriefcaseBusiness,
-  CalendarDays,
-  ClipboardCheck,
-  ChevronsLeft,
-  ChevronsRight,
-  FolderOpen,
-  LayoutDashboard,
-  ListChecks,
-  MessageCircle,
-  Menu,
-  Settings,
-  Sparkles,
-  UserRoundPlus,
-  UserRoundSearch,
-  Users,
-  X,
-} from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Sparkles, X } from "lucide-react";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
+import { NAV, ROLE_LABEL } from "@/modules/analytics/presentation/nav";
+import { AppBar } from "@/modules/shell/presentation/AppBar";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
+import {
+  expandedOnServer,
+  readCollapsed,
+  setRailFolded,
+  subscribeCollapsed,
+} from "@/lib/rail";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
-
-interface NavItem {
-  href: string;
-  label: string;
-  icon: typeof LayoutDashboard;
-  hint: string;
-}
-
-const NAV: readonly NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics" },
-  { href: "/candidates", label: "Candidates", icon: Users, hint: "Pipeline & AI scores" },
-  { href: "/sourcing", label: "Sourcing", icon: UserRoundSearch, hint: "Outbound talent pool" },
-  { href: "/assessments", label: "Assessments", icon: ClipboardCheck, hint: "Test suite builder" },
-  { href: "/interviews", label: "Interviews", icon: CalendarDays, hint: "Scheduled panels" },
-  { href: "/onboarding", label: "Onboarding", icon: UserRoundPlus, hint: "New-hire checklists" },
-  { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness, hint: "Open positions" },
-  { href: "/apply-questions", label: "Apply Questions", icon: ListChecks, hint: "Viability gate on the form" },
-  { href: "/files", label: "Files", icon: FolderOpen, hint: "Stored CVs & recordings" },
-  { href: "/whatsapp", label: "Outbox", icon: MessageCircle, hint: "Candidate alerts" },
-  { href: "/assistant", label: "Assistant", icon: Sparkles, hint: "Ask, change, and revisit" },
-  { href: "/settings", label: "Settings", icon: Settings, hint: "Configuration & access" },
-] as const;
-
-const ROLE_LABEL: Record<SessionUser["role"], string> = {
-  SUPER_ADMIN: "Super Admin",
-  RECRUITER: "Recruiter",
-  HIRING_MANAGER: "Hiring Manager",
-  CANDIDATE: "Candidate",
-};
-
-/**
- * Which way the desktop rail is folded, remembered per browser.
- *
- * localStorage is invisible to the server, so this is modelled as an external
- * store: `useSyncExternalStore` renders the expanded rail for hydration and then
- * applies the saved preference. Reading it in a `useState` initialiser instead
- * would make the first client render disagree with the markup the server sent.
- */
-const COLLAPSE_KEY = "sdg-nav-collapsed";
-
-function readCollapsed(): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-const collapseListeners = new Set<() => void>();
-
-function writeCollapsed(collapsed: boolean): void {
-  try {
-    if (collapsed) window.localStorage.setItem(COLLAPSE_KEY, "1");
-    else window.localStorage.removeItem(COLLAPSE_KEY);
-  } catch {
-    // Storage blocked (private mode) — the rail still folds for this page.
-  }
-  collapseListeners.forEach((notify) => notify());
-}
-
-function subscribeCollapsed(notify: () => void): () => void {
-  collapseListeners.add(notify);
-  // Folding the rail in another tab changes the same preference.
-  window.addEventListener("storage", notify);
-  return () => {
-    collapseListeners.delete(notify);
-    window.removeEventListener("storage", notify);
-  };
-}
-
-const expandedOnServer = () => false;
 
 function BrandMark({ compact = false }: { compact?: boolean }) {
   return <SdgLockup compact={compact} />;
@@ -272,8 +191,8 @@ function useActiveIntoView(ref: React.RefObject<HTMLDivElement | null>) {
 
 /**
  * Recruiter portal chrome: a persistent side panel on desktop that can be folded
- * to an icon rail and collapses into an off-canvas drawer on small screens,
- * plus a compact top bar.
+ * to an icon rail and collapses into an off-canvas drawer on small screens, plus
+ * the portal-wide app bar over the content column.
  */
 export function AdminShell({
   user,
@@ -322,29 +241,11 @@ export function AdminShell({
 
   /** Writing the store is also what re-renders this rail, and any other tab's. */
   function toggleRail() {
-    // Opt the chrome into its slide now, rather than always: a saved preference
-    // is applied after hydration, and animating that would look unintentional.
-    document.documentElement.dataset.navAnimated = "1";
-    writeCollapsed(!collapsed);
+    setRailFolded(!collapsed);
   }
 
   return (
     <div className="min-h-screen bg-brand-ivory text-brand-ink">
-      {/* ---------- Mobile top bar ---------- */}
-      <header className="sticky top-0 z-40 flex items-center justify-between gap-3 border-b border-brand-line bg-brand-cream/90 px-4 py-3 backdrop-blur-md lg:hidden">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Open navigation"
-          aria-expanded={open}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-brand-line bg-white text-brand-ink transition hover:bg-brand-sand"
-        >
-          <Menu className="h-5 w-5" aria-hidden />
-        </button>
-        <BrandMark />
-        <div className="w-10" aria-hidden />
-      </header>
-
       {/* ---------- Desktop side panel ---------- */}
       <aside
         className={cn(
@@ -435,6 +336,7 @@ export function AdminShell({
 
       {/* ---------- Content ---------- */}
       <div className={cn("rail-shift lg:pl-[264px]", collapsed && "lg:pl-[76px]")}>
+        <AppBar user={user} onOpenNavigation={() => setOpen(true)} />
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
           {current && (
             <p className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-brand-gold-dark lg:hidden">
@@ -449,5 +351,3 @@ export function AdminShell({
     </div>
   );
 }
-
-export { BarChart3 };
