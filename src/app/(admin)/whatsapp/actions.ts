@@ -5,8 +5,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { getBoolSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector, missingSmtpFields } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase } from "@/modules/activity/domain/trail";
+import { formatInZone } from "@/lib/timezone";
 import {
   QUEUE_SELECT,
   firstOf,
@@ -29,6 +32,25 @@ const MAX_TEXT_LENGTH = 4096;
 interface JobPayload {
   text?: string;
   template?: string;
+}
+
+/** The queue row a trail entry describes, with the candidate's name attached. */
+interface JobSnapshot {
+  status: string;
+  application_id?: string | null;
+  scheduled_for?: string | null;
+  payload?: JobPayload;
+  applications?: { full_name?: string } | { full_name?: string }[] | null;
+}
+
+function jobName(row: JobSnapshot): string {
+  return firstOf(row.applications ?? null)?.full_name ?? "a candidate";
+}
+
+/** Which pipeline event a queued message carries, when it is not hand-written copy. */
+function jobKind(row: JobSnapshot): string {
+  const template = row.payload?.template;
+  return !template || template === "manual" ? "WhatsApp message" : `${template} notice`;
 }
 
 /**
@@ -148,6 +170,18 @@ function normalizeSchedule(raw: string): { iso?: string; error?: string } {
   return { iso: date.toISOString() };
 }
 
+/** A send time in the organisation's own zone — a UTC instant means nothing to a recruiter. */
+async function whenLabel(iso: string): Promise<string> {
+  return formatInZone(iso, await getOrganisationTimeZone(), {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
+}
+
 /** Queue a message by hand, addressed to one candidate. */
 export async function queueWhatsAppMessage(input: {
   applicationId: string;
@@ -168,27 +202,53 @@ export async function queueWhatsAppMessage(input: {
   const supabase = getSupabaseServiceClient();
   const { data } = await supabase
     .from("applications")
-    .select("id, phone")
+    .select("id, phone, full_name")
     .eq("id", input.applicationId)
     .maybeSingle();
 
-  const phone = (data as { phone?: string } | null)?.phone?.trim();
+  const candidate = data as { phone?: string; full_name?: string } | null;
+  const phone = candidate?.phone?.trim();
   if (!phone) {
     return { ok: false, error: "This candidate has no phone number on file." };
   }
 
-  const { error: insertError } = await supabase.from("scheduled_whatsapp_jobs").insert({
-    application_id: input.applicationId,
-    recipient_phone: phone,
-    payload: { text, template: "manual" },
-    status: "PENDING",
-    scheduled_for: when.iso ?? new Date().toISOString(),
-  });
+  const scheduledFor = when.iso ?? new Date().toISOString();
+
+  const { data: queued, error: insertError } = await supabase
+    .from("scheduled_whatsapp_jobs")
+    .insert({
+      application_id: input.applicationId,
+      recipient_phone: phone,
+      payload: { text, template: "manual" },
+      status: "PENDING",
+      scheduled_for: scheduledFor,
+    })
+    .select("id")
+    .maybeSingle();
 
   if (insertError) {
     console.error("[outbox] manual enqueue failed:", insertError.message);
     return { ok: false, error: "The message could not be queued." };
   }
+
+  // The copy itself is not quoted: it lives on the queue row, and the trail is
+  // read by more roles than the outbox is.
+  const later = new Date(scheduledFor).getTime() > Date.now() + 60_000;
+  await recordActivity({
+    area: "messaging",
+    action: "message_queue",
+    entity: "scheduled message",
+    entityId: (queued as { id?: string } | null)?.id ?? null,
+    summary: `Queued a WhatsApp message for ${candidate?.full_name ?? "a candidate"}${
+      later ? ` to send at ${await whenLabel(scheduledFor)}` : " for the next dispatch"
+    }`,
+    detail: {
+      application_id: input.applicationId,
+      channel: "WHATSAPP",
+      scheduled_for: scheduledFor,
+      characters: text.length,
+    },
+  });
 
   revalidatePath("/whatsapp");
   return { ok: true };
@@ -203,11 +263,11 @@ export async function retryWhatsAppJob(id: string): Promise<OutboxResult> {
   const supabase = getSupabaseServiceClient();
   const { data } = await supabase
     .from("scheduled_whatsapp_jobs")
-    .select("id, status")
+    .select("id, status, application_id, payload, scheduled_for, applications(full_name)")
     .eq("id", id)
     .maybeSingle();
 
-  const row = data as { status: string } | null;
+  const row = data as JobSnapshot | null;
   if (!row) return { ok: false, error: "This message is no longer in the queue." };
   if (row.status === "SENT") {
     return {
@@ -233,6 +293,15 @@ export async function retryWhatsAppJob(id: string): Promise<OutboxResult> {
     return { ok: false, error: "The message could not be re-queued." };
   }
 
+  await recordActivity({
+    area: "messaging",
+    action: "message_retry",
+    entity: "scheduled message",
+    entityId: id,
+    summary: `Re-queued the ${jobKind(row)} for ${jobName(row)}, which the channel had marked ${row.status.toLowerCase()}`,
+    detail: { application_id: row.application_id ?? null, from: row.status, to: "PENDING" },
+  });
+
   revalidatePath("/whatsapp");
   return { ok: true };
 }
@@ -255,22 +324,25 @@ export async function updateWhatsAppJob(
   const supabase = getSupabaseServiceClient();
   const { data } = await supabase
     .from("scheduled_whatsapp_jobs")
-    .select("id, status, payload, scheduled_for")
+    .select("id, status, application_id, payload, scheduled_for, applications(full_name)")
     .eq("id", id)
     .maybeSingle();
 
-  const row = data as { status: string; payload?: JobPayload; scheduled_for?: string } | null;
+  const row = data as JobSnapshot | null;
   if (!row) return { ok: false, error: "This message is no longer in the queue." };
   if (row.status === "SENT") {
     return { ok: false, error: "Delivered messages are history and cannot be edited." };
   }
+
+  const nextWhen = when.iso ?? row.scheduled_for ?? new Date().toISOString();
+  const previousText = row.payload?.text ?? "";
 
   const { error: updateError } = await supabase
     .from("scheduled_whatsapp_jobs")
     .update({
       payload: { ...row.payload, text },
       // Editing the copy keeps its place in time unless the admin set a new one.
-      scheduled_for: when.iso ?? row.scheduled_for ?? new Date().toISOString(),
+      scheduled_for: nextWhen,
       status: "PENDING",
       attempts: 0,
       error_log: null,
@@ -280,6 +352,34 @@ export async function updateWhatsAppJob(
   if (updateError) {
     console.error("[outbox] edit failed:", updateError.message);
     return { ok: false, error: "The message could not be updated." };
+  }
+
+  // Lengths, never the words: the queue row keeps the copy, the trail records
+  // that it was rewritten.
+  const edits: Record<string, string> = {};
+  if (previousText !== text) {
+    edits.copy = `${previousText.length} characters → ${text.length} characters`;
+  }
+  if ((row.scheduled_for ?? "") !== nextWhen) {
+    edits.scheduled_for = `${row.scheduled_for ? await whenLabel(row.scheduled_for) : "unset"} → ${await whenLabel(nextWhen)}`;
+  }
+  const rearmed = row.status !== "PENDING";
+
+  if (Object.keys(edits).length > 0 || rearmed) {
+    await recordActivity({
+      area: "messaging",
+      action: "message_edit",
+      entity: "scheduled message",
+      entityId: id,
+      summary: `Edited the queued ${jobKind(row)} for ${jobName(row)} — ${
+        Object.keys(edits).length > 0 ? changePhrase(edits) : "re-armed it for sending"
+      }`,
+      detail: {
+        application_id: row.application_id ?? null,
+        ...edits,
+        ...(rearmed ? { status: `${row.status} → PENDING` } : {}),
+      },
+    });
   }
 
   revalidatePath("/whatsapp");
@@ -295,11 +395,11 @@ export async function cancelWhatsAppJob(id: string): Promise<OutboxResult> {
   const supabase = getSupabaseServiceClient();
   const { data } = await supabase
     .from("scheduled_whatsapp_jobs")
-    .select("id, status")
+    .select("id, status, application_id, scheduled_for, payload, applications(full_name)")
     .eq("id", id)
     .maybeSingle();
 
-  const row = data as { status: string } | null;
+  const row = data as JobSnapshot | null;
   if (!row) return { ok: false, error: "This message is no longer in the queue." };
   if (row.status === "SENT") {
     return {
@@ -313,6 +413,25 @@ export async function cancelWhatsAppJob(id: string): Promise<OutboxResult> {
     console.error("[outbox] cancel failed:", error.message);
     return { ok: false, error: "The message could not be removed from the queue." };
   }
+
+  // The row is gone, so this is the only place its recipient and send time
+  // survive; the copy is deliberately left out.
+  await recordActivity({
+    area: "messaging",
+    action: "message_cancel",
+    entity: "scheduled message",
+    entityId: id,
+    summary: `Cancelled the queued ${jobKind(row)} for ${jobName(row)}${
+      row.scheduled_for ? ` that was to go at ${await whenLabel(row.scheduled_for)}` : ""
+    }`,
+    detail: {
+      application_id: row.application_id ?? null,
+      channel: "WHATSAPP",
+      status: row.status,
+      template: row.payload?.template ?? "manual",
+      was_scheduled_for: row.scheduled_for ?? null,
+    },
+  });
 
   revalidatePath("/whatsapp");
   return { ok: true };
@@ -423,12 +542,22 @@ export async function resendEmailMessage(id: string): Promise<OutboxResult> {
   const supabase = getSupabaseServiceClient();
   const { data } = await supabase
     .from("communication_logs")
-    .select("id, channel, recipient, subject, body, delivered")
+    .select(
+      "id, channel, recipient, subject, body, delivered, application_id, applications(full_name)"
+    )
     .eq("id", id)
     .maybeSingle();
 
   const row = data as
-    | { channel: string; recipient: string; subject: string | null; body: string; delivered: boolean }
+    | {
+        channel: string;
+        recipient: string;
+        subject: string | null;
+        body: string;
+        delivered: boolean;
+        application_id?: string | null;
+        applications?: { full_name?: string } | { full_name?: string }[] | null;
+      }
     | null;
 
   if (!row) return { ok: false, error: "This message is no longer in the log." };
@@ -465,6 +594,27 @@ export async function resendEmailMessage(id: string): Promise<OutboxResult> {
         : outcome.error ?? "The message could not be sent.",
     };
   }
+
+  // A refused retry is still a change: the log row now carries a different
+  // delivery state and a new error, so it belongs in the trail either way.
+  await recordActivity({
+    area: "messaging",
+    action: "email_resend",
+    entity: "message",
+    entityId: id,
+    summary: `${
+      outcome.success ? "Re-sent" : "Tried again to send"
+    } the email to ${firstOf(row.applications ?? null)?.full_name ?? row.recipient} — ${
+      outcome.success ? "the relay took it" : `the relay refused it (${(outcome.error ?? "no reason given").slice(0, 120)})`
+    }`,
+    detail: {
+      application_id: row.application_id ?? null,
+      channel: "EMAIL",
+      recipient: row.recipient,
+      delivered: outcome.success,
+      was: "not delivered",
+    },
+  });
 
   if (!outcome.success) {
     return { ok: false, error: outcome.error ?? "The relay refused this message." };

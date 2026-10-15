@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { stageLabel } from "@/lib/utils";
+import { stageLabel, formatBytes } from "@/lib/utils";
+import { recordActivity } from "@/modules/activity/application/record";
 import { LIST_LIMIT, WALK_LIST_LIMIT, listObjects, objectMetadata } from "./storage-list";
 import {
   BUCKETS,
@@ -96,6 +97,7 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
   // Read the object's size and type before removing it: the audit entry is
   // worthless if the only copy of that detail was the file itself.
   const before = await objectMetadata(bucket.key, path);
+  const owner = await fileOwner(supabase, bucket.key, path);
 
   const { error } = await supabase.storage.from(bucket.key).remove([path]);
   if (error) {
@@ -109,6 +111,24 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
   ]
     .filter(Boolean)
     .join(" ");
+
+  await recordActivity({
+    area: "files",
+    action: "file_delete",
+    entity: "attachment",
+    entityId: path,
+    summary: `Deleted ${bucket.label.toLowerCase()} “${displayName(path)}”${
+      before.bytes ? ` (${formatBytes(before.bytes)})` : ""
+    }${owner ? ` from ${owner.name}'s record` : " with no candidate record pointing at it"}`,
+    detail: {
+      bucket: bucket.key,
+      path,
+      bytes: before.bytes,
+      mime_type: before.mimeType,
+      application_id: owner?.applicationId ?? null,
+      note: note || (owner ? "Its database pointer was cleared with it." : "Nothing pointed at it."),
+    },
+  });
 
   revalidatePath("/files");
   return {
@@ -354,6 +374,70 @@ async function ownersFor(
   }
 
   return { map, loaded: true };
+}
+
+/**
+ * The candidate a stored object belongs to, read before it is removed.
+ *
+ * A trail row that only names a storage key cannot answer "whose file went";
+ * after the delete and the unlink there is nothing left to ask, so this runs
+ * first and against the one path rather than the whole bucket.
+ */
+async function fileOwner(
+  supabase: Supabase,
+  bucket: BucketKey,
+  path: string
+): Promise<{ name: string; applicationId: string } | null> {
+  if (bucket === "candidate-cvs") {
+    const { data } = await supabase
+      .from("applications")
+      .select("id, full_name")
+      .eq("cv_file_path", path)
+      .maybeSingle();
+
+    const row = asRecord(data);
+    return row.id
+      ? { name: stringOrNull(row.full_name) ?? "Unnamed applicant", applicationId: String(row.id) }
+      : null;
+  }
+
+  if (bucket === "candidate-videos") {
+    const { data } = await supabase
+      .from("candidate_responses")
+      .select("candidate_attempts(applications(id, full_name))")
+      .eq("video_path", path)
+      .maybeSingle();
+
+    const embedded = asRecord(data);
+    const attempt = asRecord(
+      Array.isArray(embedded.candidate_attempts) ? embedded.candidate_attempts[0] : embedded.candidate_attempts
+    );
+    const application = asRecord(
+      Array.isArray(attempt.applications) ? attempt.applications[0] : attempt.applications
+    );
+
+    return application.id
+      ? {
+          name: stringOrNull(application.full_name) ?? "Unnamed applicant",
+          applicationId: String(application.id),
+        }
+      : null;
+  }
+
+  const { data } = await supabase
+    .from("application_attachments")
+    .select("application_id, applications(full_name)")
+    .eq("storage_path", path)
+    .maybeSingle();
+
+  const row = asRecord(data);
+  if (!row.application_id) return null;
+
+  const application = asRecord(Array.isArray(row.applications) ? row.applications[0] : row.applications);
+  return {
+    name: stringOrNull(application.full_name) ?? "Unnamed applicant",
+    applicationId: String(row.application_id),
+  };
 }
 
 /**

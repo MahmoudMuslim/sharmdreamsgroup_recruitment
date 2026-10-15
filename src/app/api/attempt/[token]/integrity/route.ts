@@ -1,4 +1,6 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { recordActivity } from "@/modules/activity/application/record";
+import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import { NextResponse } from "next/server";
 
 /** Events we accept from the browser, mapped to a stored severity. */
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
-    .select("id, status")
+    .select(`id, status, ${APPLICATION_EMBED}`)
     .eq("access_token", body.attemptToken)
     .maybeSingle();
 
@@ -84,6 +86,27 @@ export async function POST(request: Request) {
   }
 
   await supabase.rpc("refresh_attempt_integrity", { target_attempt: attempt.id });
+
+  // Only the flags a recruiter would act on leave a trail row. A batch per
+  // focus-loss would fill the change log with the noise of an honest candidate
+  // switching tabs, and bury the ones that matter.
+  const critical = rows.filter((row) => row.severity === "CRITICAL");
+  if (critical.length > 0) {
+    const { candidateName } = attemptContext(attempt);
+    await recordActivity({
+      ...runnerActor(candidateName),
+      area: "assessments",
+      action: "integrity_flag",
+      entity: "attempt",
+      entityId: attempt.id,
+      summary: `${critical.length} critical integrity event${critical.length === 1 ? "" : "s"} during ${candidateName}'s test: ${[...new Set(critical.map((row) => row.event_type))].join(", ")}`,
+      detail: {
+        events: critical.map((row) => row.event_type),
+        batch_size: rows.length,
+        devices: [...new Set(critical.map((row) => row.device_label).filter(Boolean))],
+      },
+    });
+  }
 
   return NextResponse.json({ ok: true, recorded: rows.length });
 }

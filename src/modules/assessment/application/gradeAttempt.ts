@@ -3,6 +3,12 @@ import "server-only";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasAiProvider } from "@/lib/config.server";
 import { supabaseConfig } from "@/lib/config";
+import {
+  engineActivityActor,
+  recordActivity,
+  withActivityContext,
+} from "@/modules/activity/application/record";
+import type { ActivityEntry } from "@/modules/activity/domain/trail";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import {
   evaluateCaseStudy,
@@ -78,6 +84,54 @@ const PASS_DELAY_MS = 20_000;
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * What one grading run's trail rows say.
+ *
+ * Read once per attempt: the grading engine writes several rows — a score per
+ * response, a transcription, a parked-for-review note — and each of them has to
+ * name the same candidate and the same engine without re-reading the join.
+ */
+interface GradingTrail {
+  attemptId: string;
+  candidateName: string;
+  jobTitle: string;
+  /** The attempt's status when this run started, so finishing is told from re-running. */
+  wasGraded: boolean;
+  actor: Pick<ActivityEntry, "actorKind" | "actorLabel" | "actorId" | "companyId" | "via">;
+}
+
+async function gradingTrail(
+  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  attemptId: string
+): Promise<GradingTrail> {
+  const { data } = await supabase
+    .from("candidate_attempts")
+    .select("status, applications ( full_name, job_openings ( title ) )")
+    .eq("id", attemptId)
+    .maybeSingle();
+
+  const row = data as unknown as {
+    status?: string;
+    applications?:
+      | { full_name?: string | null; job_openings?: { title?: string } | { title?: string }[] | null }
+      | { full_name?: string | null; job_openings?: { title?: string } | { title?: string }[] }[]
+      | null;
+  } | null;
+
+  const application = Array.isArray(row?.applications) ? row?.applications[0] : row?.applications;
+  const job = Array.isArray(application?.job_openings)
+    ? application.job_openings[0]
+    : application?.job_openings;
+
+  return {
+    attemptId,
+    candidateName: application?.full_name ?? "The candidate",
+    jobTitle: job?.title ?? "the role",
+    wasGraded: row?.status === "GRADED",
+    actor: await engineActivityActor("AI grading engine", "assessment runner"),
+  };
+}
+
 export async function gradeAttemptResponses(
   attemptId: string
 ): Promise<{ graded: number; failed: number }> {
@@ -85,6 +139,7 @@ export async function gradeAttemptResponses(
   if (!aiEnabled || !hasAiProvider()) return { graded: 0, failed: 0 };
 
   const supabase = getSupabaseServiceClient();
+  const trail = await gradingTrail(supabase, attemptId);
 
   let graded = 0;
   let failed = 0;
@@ -93,13 +148,26 @@ export async function gradeAttemptResponses(
   // permanently half-graded — resubmission is blocked once SUBMITTED.
   for (let pass = 0; pass < GRADING_PASSES; pass += 1) {
     if (pass > 0) await delay(PASS_DELAY_MS);
-    const result = await gradePendingResponses(supabase, attemptId);
+    const result = await gradePendingResponses(supabase, attemptId, trail);
     graded += result.graded;
     failed = result.failed;
     if (failed === 0) break;
   }
 
-  await finalizeAttemptTotals(supabase, attemptId);
+  await finalizeAttemptTotals(supabase, attemptId, trail);
+
+  if (failed > 0) {
+    await recordActivity({
+      ...trail.actor,
+      area: "assessments",
+      action: "grading_incomplete",
+      entity: "attempt",
+      entityId: attemptId,
+      summary: `${GRADING_PASSES} grading passes left ${failed} response${failed === 1 ? "" : "s"} of ${trail.candidateName}'s ${trail.jobTitle} test unscored, so the attempt stays submitted and ungraded`,
+      detail: { responses_unscored: failed, passes: GRADING_PASSES },
+    });
+  }
+
   return { graded, failed };
 }
 
@@ -128,20 +196,39 @@ export async function regradeStuckAttempts(
 
   const attemptIds = [...new Set(((data ?? []) as { id: string }[]).map((row) => row.id))];
 
-  let graded = 0;
-  let failed = 0;
-  for (const attemptId of attemptIds) {
-    const result = await gradeAttemptResponses(attemptId);
-    graded += result.graded;
-    failed += result.failed;
-  }
-  return { swept: attemptIds.length, graded, failed };
+  // The sweep is the scheduler's own work: everything it grades is recorded as
+  // arriving through cron, with no recruiter behind it.
+  return withActivityContext({ via: "cron" }, async () => {
+    let graded = 0;
+    let failed = 0;
+    for (const attemptId of attemptIds) {
+      const result = await gradeAttemptResponses(attemptId);
+      graded += result.graded;
+      failed += result.failed;
+    }
+
+    if (attemptIds.length > 0) {
+      await recordActivity({
+        actorKind: "SYSTEM",
+        actorLabel: "Re-grade sweep",
+        via: "cron",
+        area: "assessments",
+        action: "grading_sweep",
+        entity: "attempt",
+        summary: `Re-grade sweep revisited ${attemptIds.length} submitted attempt${attemptIds.length === 1 ? "" : "s"} — ${graded} response${graded === 1 ? "" : "s"} scored${failed ? `, ${failed} still unscored` : ""}`,
+        detail: { attempts: attemptIds.length, graded, failed },
+      });
+    }
+
+    return { swept: attemptIds.length, graded, failed };
+  });
 }
 
 /** Grades every not-yet-scored written/model response of the attempt. */
 async function gradePendingResponses(
   supabase: ReturnType<typeof getSupabaseServiceClient>,
-  attemptId: string
+  attemptId: string,
+  trail: GradingTrail
 ): Promise<{ graded: number; failed: number }> {
   const { data: responses } = await supabase
     .from("candidate_responses")
@@ -170,11 +257,11 @@ async function gradePendingResponses(
     if (!question) continue;
 
     try {
-      const outcome = await gradeResponse(supabase, question, response);
+      const outcome = await gradeResponse(supabase, question, response, trail);
       if (outcome.status === "UNSUPPORTED") continue;
 
       if (outcome.status === "MANUAL") {
-        await writeManualNote(supabase, response.id, outcome.reason);
+        await writeManualNote(supabase, response.id, outcome.reason, trail, question.title);
         continue;
       }
 
@@ -192,17 +279,37 @@ async function gradePendingResponses(
         .eq("id", response.id);
       if (error) throw new Error(error.message);
       graded += 1;
+
+      await recordActivity({
+        ...trail.actor,
+        area: "assessments",
+        action: "response_graded",
+        entity: "attempt",
+        entityId: attemptId,
+        summary: `Graded ${trail.candidateName}'s “${question.title}” for ${trail.jobTitle}: ${evaluation.score}% of ${question.points} points, so ${awarded} awarded`,
+        detail: {
+          response_id: response.id,
+          question_type: question.question_type,
+          percent: evaluation.score,
+          points_awarded: awarded,
+          points_possible: question.points,
+          strengths: evaluation.strengths.length,
+          improvements: evaluation.improvements.length,
+          verdict_characters: evaluation.rationale.length,
+          note: "The answer and the model's verdict stay on the response row, not in the trail.",
+        },
+      });
     } catch (error) {
       if (error instanceof ManualReviewRequiredError) {
         // A blocker no retry can clear — hand the row to the reviewer.
-        await writeManualNote(supabase, response.id, error.message);
+        await writeManualNote(supabase, response.id, error.message, trail, question.title);
         continue;
       }
       if (error instanceof TruncatedJsonResponseError) {
         // Explain the blank in the report rather than leaving it unremarked, but
         // still count it as failed: a later pass may reach a model with enough
         // output room to finish the verdict.
-        await writeManualNote(supabase, response.id, error.message);
+        await writeManualNote(supabase, response.id, error.message, trail, question.title);
         failed += 1;
         console.error(
           `AI grading truncated for response ${response.id} (${question.title}): ${error.message}`
@@ -227,7 +334,9 @@ class ManualReviewRequiredError extends Error {}
 async function writeManualNote(
   supabase: ReturnType<typeof getSupabaseServiceClient>,
   responseId: string,
-  reason: string
+  reason: string,
+  trail: GradingTrail,
+  questionTitle: string
 ): Promise<void> {
   await supabase
     .from("candidate_responses")
@@ -235,13 +344,24 @@ async function writeManualNote(
       ai_evaluation: { score: null, rationale: reason, strengths: [], improvements: [] },
     })
     .eq("id", responseId);
+
+  await recordActivity({
+    ...trail.actor,
+    area: "assessments",
+    action: "manual_review",
+    entity: "attempt",
+    entityId: trail.attemptId,
+    summary: `Left ${trail.candidateName}'s “${questionTitle}” for a recruiter to grade: ${reason}`,
+    detail: { response_id: responseId, reason },
+  });
 }
 
 /** Dispatches by question type; UNSUPPORTED means no AI path exists for it. */
 async function gradeResponse(
   supabase: ReturnType<typeof getSupabaseServiceClient>,
   question: QuestionRow,
-  response: ResponseRow
+  response: ResponseRow,
+  trail: GradingTrail
 ): Promise<GradeOutcome> {
   if (question.question_type === "CASE_STUDY" && response.answer_text) {
     const result = await evaluateCaseStudy(
@@ -289,7 +409,7 @@ async function gradeResponse(
   }
 
   if (question.question_type === "VIDEO_PITCH" && response.video_path) {
-    const transcript = await ensureTranscript(supabase, response);
+    const transcript = await ensureTranscript(supabase, response, trail);
     if (!transcript) {
       return {
         status: "MANUAL",
@@ -331,7 +451,8 @@ async function gradeResponse(
  */
 async function ensureTranscript(
   supabase: ReturnType<typeof getSupabaseServiceClient>,
-  response: ResponseRow
+  response: ResponseRow,
+  trail: GradingTrail
 ): Promise<string> {
   if (response.transcript?.trim()) return response.transcript.trim();
   if (!response.video_path) return "";
@@ -366,6 +487,21 @@ async function ensureTranscript(
       .update({ transcript })
       .eq("id", response.id);
     if (error) throw new Error(error.message);
+
+    await recordActivity({
+      ...trail.actor,
+      area: "assessments",
+      action: "pitch_transcribed",
+      entity: "attempt",
+      entityId: trail.attemptId,
+      summary: `Transcribed ${trail.candidateName}'s video pitch for ${trail.jobTitle} — ${transcript.length} characters of speech written to the response`,
+      detail: {
+        response_id: response.id,
+        characters: transcript.length,
+        recording: response.video_path ?? "",
+        note: "The words the candidate spoke are kept on the response, not in the trail.",
+      },
+    });
   }
   return transcript;
 }
@@ -374,7 +510,8 @@ async function ensureTranscript(
 /** Recomputes attempt totals from the response rows and marks the attempt GRADED. */
 async function finalizeAttemptTotals(
   supabase: ReturnType<typeof getSupabaseServiceClient>,
-  attemptId: string
+  attemptId: string,
+  trail: GradingTrail
 ): Promise<void> {
   const { data: rows } = await supabase
     .from("candidate_responses")
@@ -388,7 +525,7 @@ async function finalizeAttemptTotals(
   // recording parked for manual review keeps the attempt honestly SUBMITTED.
   const complete = responses.length > 0 && responses.every((row) => row.score !== null);
 
-  await supabase
+  const { error: updateError } = await supabase
     .from("candidate_attempts")
     .update({
       status: complete ? "GRADED" : "SUBMITTED",
@@ -396,4 +533,23 @@ async function finalizeAttemptTotals(
       max_score: max,
     })
     .eq("id", attemptId);
+
+  // Only the crossing into GRADED is recorded: a sweep that re-adds the same
+  // totals to an already-graded attempt would otherwise repeat the same row.
+  if (complete && !updateError && !trail.wasGraded) {
+    await recordActivity({
+      ...trail.actor,
+      area: "assessments",
+      action: "attempt_graded",
+      entity: "attempt",
+      entityId: attemptId,
+      summary: `Graded ${trail.candidateName}'s ${trail.jobTitle} test — ${total} of ${max} points across ${responses.length} response${responses.length === 1 ? "" : "s"}`,
+      detail: {
+        total_score: total,
+        max_score: max,
+        responses: responses.length,
+        status: "SUBMITTED → GRADED",
+      },
+    });
+  }
 }

@@ -14,6 +14,7 @@ import {
 } from "@/modules/sourcing/infrastructure/profile-reader";
 import { describeExtractionFailure, extractProfile } from "@/modules/sourcing/infrastructure/profile-extract";
 import { normalizeLinkedInUrl } from "@/modules/sourcing/domain/prospect-import";
+import { recordActivity } from "@/modules/activity/application/record";
 
 /**
  * Reading a prospect's full profile.
@@ -121,6 +122,28 @@ async function canWriteProspects(): Promise<boolean> {
 
 type ProspectAnchor = { full_name: string; headline: string | null; company: string | null };
 
+const PROFILE_DOOR: Record<ProfileSource, string> = {
+  URL: "a fetched link",
+  PASTE: "pasted text",
+  FILE: "an uploaded export",
+};
+
+/** `4 roles, 2 degrees, 18 skills` — how much a captured profile actually holds. */
+function profileTally(profile: ProspectProfile): string {
+  const parts: [number, string][] = [
+    [profile.experience.length, "role"],
+    [profile.education.length, "degree"],
+    [profile.certifications.length, "certification"],
+    [profile.projects.length, "project"],
+    [profile.skills.length, "skill"],
+    [profile.languages.length, "language"],
+  ];
+  const kept = parts
+    .filter(([count]) => count > 0)
+    .map(([count, word]) => `${count} ${word}${count === 1 ? "" : "s"}`);
+  return kept.length ? kept.slice(0, 4).join(", ") : "no sections filled";
+}
+
 /**
  * Stores a fresh read and clears any earlier refusal.
  *
@@ -145,8 +168,39 @@ async function storeProfile(
   };
   if (input.profile_url !== undefined) payload.profile_url = input.profile_url;
 
-  const { error } = await supabase.from("sourced_prospects").update(payload).eq("id", id);
+  // Reading the name back doubles as the existence check: an update that matched
+  // no row is reported as a success by PostgREST, so a prospect deleted mid-read
+  // would otherwise be recorded as saved.
+  const { data, error } = await supabase
+    .from("sourced_prospects")
+    .update(payload)
+    .eq("id", id)
+    .select("full_name")
+    .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: "That prospect is no longer in the pool." };
+
+  const name = String((data as { full_name: string }).full_name);
+  const profile = input.profile;
+  await recordActivity({
+    area: "sourcing",
+    action: "prospect_profile",
+    entity: "prospect",
+    entityId: id,
+    summary: `Captured ${name}'s profile from ${PROFILE_DOOR[input.source]} — ${profileTally(profile)}`,
+    detail: {
+      door: input.source,
+      profile_url: input.profile_url ?? null,
+      model: profile.model,
+      experience: profile.experience.length,
+      education: profile.education.length,
+      certifications: profile.certifications.length,
+      projects: profile.projects.length,
+      skills: profile.skills.length,
+      languages: profile.languages.length,
+      links: profile.links.length,
+    },
+  });
 
   revalidatePath("/sourcing");
   return { ok: true };
@@ -161,10 +215,24 @@ async function storeProfile(
  * one replaces it.
  */
 async function storeRefusal(supabase: StaffClient, id: string, reason: string): Promise<void> {
-  await supabase
+  const { data } = await supabase
     .from("sourced_prospects")
     .update({ profile_error: reason.slice(0, 600) })
-    .eq("id", id);
+    .eq("id", id)
+    .select("full_name")
+    .maybeSingle();
+
+  if (data) {
+    await recordActivity({
+      area: "sourcing",
+      action: "prospect_profile_blocked",
+      entity: "prospect",
+      entityId: id,
+      summary: `A profile read for ${String((data as { full_name: string }).full_name)} came back empty — ${reason.slice(0, 160)}`,
+      detail: { reason: reason.slice(0, 240) },
+    });
+  }
+
   revalidatePath("/sourcing");
 }
 

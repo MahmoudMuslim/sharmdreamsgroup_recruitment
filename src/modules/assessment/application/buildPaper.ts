@@ -1,6 +1,8 @@
 "use server";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { currentActivityContext, recordActivity } from "@/modules/activity/application/record";
+import { APPLICATION_EMBED, attemptContext } from "@/modules/assessment/application/runner-trail";
 
 /** Deterministic shuffle so a resumed attempt keeps the same paper. */
 function seededShuffle<T>(items: T[], seed: string): T[] {
@@ -36,7 +38,7 @@ export async function buildPaper(accessToken: string): Promise<{
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
-    .select("id, access_token, question_order, option_order, template_id")
+    .select(`id, access_token, question_order, option_order, template_id, ${APPLICATION_EMBED}`)
     .eq("access_token", accessToken)
     .maybeSingle();
 
@@ -88,6 +90,29 @@ export async function buildPaper(accessToken: string): Promise<{
     .from("candidate_attempts")
     .update({ question_order: ordered, option_order: optionOrder })
     .eq("id", attempt.id);
+
+  // Only a shuffled paper is worth a row: the order exists to be provable, so
+  // someone can be shown that this candidate saw a set nobody else saw.
+  if (template?.randomize_questions || template?.randomize_options) {
+    const { candidateName, jobTitle } = attemptContext(attempt);
+    await recordActivity({
+      actorKind: "SYSTEM",
+      actorLabel: "Paper shuffler",
+      via: currentActivityContext().via ?? "assessment runner",
+      area: "assessments",
+      action: "paper_dealt",
+      entity: "attempt",
+      entityId: attempt.id,
+      summary: `Dealt ${candidateName} a shuffled paper for ${jobTitle} — ${ordered.length} questions${Object.keys(optionOrder).length ? `, ${Object.keys(optionOrder).length} with randomised options` : ""}`,
+      detail: {
+        questions: ordered.length,
+        options_shuffled: Object.keys(optionOrder).length,
+        randomize_questions: template?.randomize_questions === true,
+        randomize_options: template?.randomize_options === true,
+        note: "The order is stored on the attempt, so a refresh or another device shows the same paper.",
+      },
+    });
+  }
 
   return { questionOrder: ordered, optionOrder };
 }

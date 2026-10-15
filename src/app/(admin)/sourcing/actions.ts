@@ -7,6 +7,8 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import { WhatsAppConnector } from "@/modules/omnichannel/infrastructure/connectors";
+import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase, changedFields } from "@/modules/activity/domain/trail";
 import {
   PROSPECT_OUTREACH_DEFAULTS,
   PROSPECT_OUTREACH_TEMPLATES,
@@ -101,6 +103,25 @@ const PROSPECT_SELECT = `
 `;
 
 const STAGES = new Set<string>(PROSPECT_STAGES);
+
+/**
+ * The board's own words for a stage, kept in step with the column labels.
+ *
+ * A trail row that says "PASSED" where the board says "Passed" (meaning passed
+ * over) reads backwards; quoting the same wording the recruiter sees is the fix.
+ */
+const STAGE_WORDS: Record<string, string> = {
+  NEW: "Not contacted",
+  CONTACTED: "Contacted",
+  REPLIED: "Replied",
+  INTERVIEW: "Interview",
+  CONVERTED: "Applied",
+  PASSED: "Passed",
+};
+
+function stageWord(stage: string): string {
+  return STAGE_WORDS[stage] ?? stage;
+}
 
 function toRow(row: Record<string, unknown>): ProspectRow {
   const job = row.job_openings as { title?: string } | { title?: string }[] | null;
@@ -347,6 +368,23 @@ export async function importProspects(input: {
     return { ok: false, error: error.message };
   }
 
+  const already = parsed.drafts.length - fresh.length;
+  await recordActivity({
+    area: "sourcing",
+    action: "prospect_import",
+    entity: "prospect",
+    summary: `Imported ${fresh.length} ${
+      input.origin === "CSV" ? "rows from a CSV" : "LinkedIn profiles"
+    } into the sourcing pool${already > 0 ? `, ${already} already there` : ""}`,
+    detail: {
+      origin: input.origin,
+      job_id: input.job_id,
+      imported: fresh.length,
+      already_in_pool: already,
+      repeated_in_paste: parsed.duplicates,
+    },
+  });
+
   return {
     ok: true,
     imported: fresh.length,
@@ -411,11 +449,34 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
   const supabase = await createSupabaseServerClient();
 
   if (input.id) {
-    const { error } = await supabase
+    const { data: found, error: readError } = await supabase
       .from("sourced_prospects")
-      .update(prospectPayload(cleaned.fields))
-      .eq("id", input.id);
-    return error ? { ok: false, error: error.message } : { ok: true, id: input.id };
+      .select("id, full_name, headline, company, location, email, phone, linkedin_url, notes, job_id, stage")
+      .eq("id", input.id)
+      .maybeSingle();
+    if (readError) return { ok: false, error: readError.message };
+    if (!found) return { ok: false, error: "That prospect is no longer in the pool." };
+
+    const before = found as unknown as Record<string, unknown>;
+    const patch = prospectPayload(cleaned.fields);
+
+    const { error } = await supabase.from("sourced_prospects").update(patch).eq("id", input.id);
+    if (error) return { ok: false, error: error.message };
+
+    // The drawer always sends the whole row back, so the diff is what makes this
+    // a record of an edit rather than a record of a save click.
+    const edits = changedFields(before, patch);
+    if (Object.keys(edits).length > 0) {
+      await recordActivity({
+        area: "sourcing",
+        action: "prospect_edit",
+        entity: "prospect",
+        entityId: input.id,
+        summary: `Updated ${String(before.full_name)} on the sourcing board — ${changePhrase(edits)}`,
+        detail: { ...edits, stage: stageWord(String(before.stage ?? "NEW")) },
+      });
+    }
+    return { ok: true, id: input.id };
   }
 
   const createdBy = await staffProfileId(supabase, user.authUserId);
@@ -441,7 +502,24 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
     return { ok: false, error: error.message };
   }
 
-  return { ok: true, id: String(data?.id ?? "") };
+  const id = String(data?.id ?? "");
+  await recordActivity({
+    area: "sourcing",
+    action: "prospect_create",
+    entity: "prospect",
+    entityId: id,
+    summary: `Added ${cleaned.fields.full_name} to the sourcing pool`,
+    detail: {
+      origin: input.origin ?? "MANUAL",
+      stage: stageWord("NEW"),
+      company: cleaned.fields.company,
+      location: cleaned.fields.location,
+      job_id: cleaned.fields.job_id,
+      has_linkedin_url: Boolean(cleaned.fields.linkedin_url),
+    },
+  });
+
+  return { ok: true, id };
 }
 
 export async function setProspectStage(id: string, stage: string): Promise<ProspectWriteResult> {
@@ -453,8 +531,31 @@ export async function setProspectStage(id: string, stage: string): Promise<Prosp
   }
 
   const supabase = await createSupabaseServerClient();
+
+  const { data: found, error: readError } = await supabase
+    .from("sourced_prospects")
+    .select("id, full_name, stage")
+    .eq("id", id)
+    .maybeSingle();
+  if (readError) return { ok: false, error: readError.message };
+  if (!found) return { ok: false, error: "That prospect is no longer in the pool." };
+
+  const current = found as unknown as { id: string; full_name: string; stage: string };
+  if (current.stage === stage) return { ok: true };
+
   const { error } = await supabase.from("sourced_prospects").update({ stage }).eq("id", id);
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "sourcing",
+    action: "prospect_stage",
+    entity: "prospect",
+    entityId: id,
+    summary: `Moved ${current.full_name} from ${stageWord(current.stage)} to ${stageWord(stage)} on the sourcing board`,
+    detail: { from: current.stage, to: stage },
+  });
+
+  return { ok: true };
 }
 
 export async function deleteProspect(id: string): Promise<ProspectWriteResult> {
@@ -465,8 +566,43 @@ export async function deleteProspect(id: string): Promise<ProspectWriteResult> {
   }
 
   const supabase = await createSupabaseServerClient();
+
+  // The name is read first: after the row is gone the trail would otherwise
+  // record only a uuid, and "who deleted a prospect" could not be answered.
+  const { data: found } = await supabase
+    .from("sourced_prospects")
+    .select("id, full_name, company, stage, application_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!found) return { ok: true };
+
+  const gone = found as unknown as {
+    full_name: string;
+    company: string | null;
+    stage: string;
+    application_id: string | null;
+  };
+
   const { error } = await supabase.from("sourced_prospects").delete().eq("id", id);
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "sourcing",
+    action: "prospect_delete",
+    entity: "prospect",
+    entityId: id,
+    summary: `Removed ${gone.full_name}${gone.company ? ` from ${gone.company}` : ""} out of the sourcing pool`,
+    detail: {
+      company: gone.company,
+      stage: gone.stage,
+      application_id: gone.application_id,
+      note: gone.application_id
+        ? "Their application on the Candidates board was left alone."
+        : "They had no application.",
+    },
+  });
+
+  return { ok: true };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -575,7 +711,8 @@ export async function sendProspectOutreach(input: {
   let failed = 0;
   let skipped = 0;
   let firstError: string | undefined;
-  const contacted: string[] = [];
+  /** The people a message actually reached — the rows the board moves on. */
+  const touched: ProspectRow[] = [];
 
   for (const row of rows) {
     const prospect = toRow(row);
@@ -596,7 +733,7 @@ export async function sendProspectOutreach(input: {
 
     if (outcome.success) {
       sent += 1;
-      contacted.push(prospect.id);
+      touched.push(prospect);
     } else {
       failed += 1;
       firstError ??= outcome.error;
@@ -613,19 +750,54 @@ export async function sendProspectOutreach(input: {
     });
   }
 
-  if (contacted.length > 0) {
+  const contactedIds = touched.map((prospect) => prospect.id);
+
+  if (contactedIds.length > 0) {
     const now = new Date().toISOString();
     // Every send stamps the date; only an untouched prospect moves to
     // CONTACTED, so a reply already on the board is never walked backwards.
     await supabase
       .from("sourced_prospects")
       .update({ last_contacted_at: now })
-      .in("id", contacted);
+      .in("id", contactedIds);
     await supabase
       .from("sourced_prospects")
       .update({ stage: "CONTACTED" })
-      .in("id", contacted)
+      .in("id", contactedIds)
       .eq("stage", "NEW");
+  }
+
+  // One row for the whole send, never one per prospect: a 200-name campaign that
+  // wrote 200 trail rows would bury every other change of the day. The message
+  // itself lives in `communication_logs` against each person, so the copy is not
+  // lost — this row records that the pool was worked.
+  if (sent + failed > 0) {
+    const channelWord = input.channel === "EMAIL" ? "email" : "WhatsApp";
+    const moved = touched.filter((prospect) => prospect.stage === "NEW").length;
+    let trail =
+      touched.length === 0
+        ? `Tried ${failed} first ${channelWord} ${failed === 1 ? "touch" : "touches"} from the sourcing board — the channel refused them all`
+        : touched.length === 1
+          ? `Sent ${touched[0].full_name} a first ${channelWord} message`
+          : `Sent first ${channelWord} messages to ${touched.length} prospects`;
+    if (moved > 0) trail += `, moved ${moved} to ${stageWord("CONTACTED")}`;
+    if (skipped > 0) {
+      trail += `, skipped ${skipped} with no ${input.channel === "EMAIL" ? "email address" : "phone number"}`;
+    }
+    await recordActivity({
+      area: "sourcing",
+      action: "prospect_outreach",
+      entity: "prospect",
+      entityId: touched.length === 1 ? touched[0].id : null,
+      summary: trail,
+      detail: {
+        channel: input.channel,
+        sent: touched.length,
+        refused: failed,
+        skipped,
+        moved_to_contacted: moved,
+      },
+    });
   }
 
   if (sent === 0) {
@@ -669,7 +841,7 @@ export async function convertProspect(input: {
 
   const { data: found } = await supabase
     .from("sourced_prospects")
-    .select("id, full_name, email, phone, application_id, profile")
+    .select("id, full_name, email, phone, stage, application_id, profile")
     .eq("id", input.id)
     .maybeSingle();
 
@@ -679,6 +851,7 @@ export async function convertProspect(input: {
         full_name: string;
         email: string | null;
         phone: string | null;
+        stage: string;
         application_id: string | null;
         profile: unknown;
       }
@@ -698,6 +871,12 @@ export async function convertProspect(input: {
   // still created, exactly as it was before profile reading existed.
   const profile = prospect.profile ? normalizeProspectProfile(prospect.profile) : null;
   const cvText = profile && !profileIsEmpty(profile) ? renderProfileText(profile) : null;
+
+  const { data: opening } = await supabase
+    .from("job_openings")
+    .select("title")
+    .eq("id", input.job_id)
+    .maybeSingle();
 
   const { data: created, error } = await supabase
     .from("applications")
@@ -731,7 +910,29 @@ export async function convertProspect(input: {
 
   if (linkError) return { ok: false, error: linkError.message };
 
-  if (profile && profile.skills.length > 0) await recordSkills(supabase, applicationId, profile);
+  let skills = 0;
+  if (profile && profile.skills.length > 0) skills = await recordSkills(supabase, applicationId, profile);
+
+  // Filed against the application, not the prospect: the converted person now
+  // lives on the Candidates board, and that is where their history is read from.
+  await recordActivity({
+    area: "sourcing",
+    action: "prospect_convert",
+    entity: "application",
+    entityId: applicationId,
+    summary: `Converted ${prospect.full_name} out of the sourcing pool into an application for ${
+      opening?.title ? `“${opening.title}”` : "an opening"
+    }${cvText ? ", with their saved profile in place of a CV" : ""}`,
+    detail: {
+      prospect_id: prospect.id,
+      job_id: input.job_id,
+      source: "LINKEDIN",
+      from_stage: prospect.stage,
+      to_stage: stageWord("CONVERTED"),
+      profile_carried: Boolean(cvText),
+      skills_recorded: skills,
+    },
+  });
 
   // The new row lives on the Candidates board, which this mutation did not
   // trigger a refresh for, so tell the router that page is no longer current.
@@ -755,11 +956,11 @@ async function recordSkills(
   supabase: StaffClient,
   applicationId: string,
   profile: ProspectProfile
-): Promise<void> {
+): Promise<number> {
   const { data: catalogue } = await supabase.from("skills").select("id, name").eq("is_active", true);
 
   const rows = matchCatalogueSkills(profile, (catalogue ?? []) as { id: string; name: string }[]);
-  if (rows.length === 0) return;
+  if (rows.length === 0) return 0;
 
   await supabase.from("candidate_skills").insert(
     rows.map((row) => ({
@@ -768,4 +969,6 @@ async function recordSkills(
       source: "SOURCED_PROFILE",
     }))
   );
+
+  return rows.length;
 }

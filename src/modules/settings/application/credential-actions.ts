@@ -5,6 +5,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase, scalarEdits } from "@/modules/activity/domain/trail";
 import {
   encryptSecret,
   isEncryptionConfigured,
@@ -17,6 +19,7 @@ import {
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import { aiConfig } from "@/lib/config.server";
 import {
+  AI_CAPABILITIES,
   FALLBACK_MODELS,
   PROVIDERS,
   providerById,
@@ -325,6 +328,32 @@ export async function saveCredential(input: {
       : "Config fields updated",
   });
 
+  await recordActivity({
+    area: "settings",
+    action: hasNewSecret
+      ? existing
+        ? "credential_rotate"
+        : "credential_create"
+      : "credential_update",
+    entity: "credential",
+    entityId: definition.id,
+    summary: hasNewSecret
+      ? existing
+        ? `Replaced the stored ${definition.displayName} key`
+        : `Saved a ${definition.displayName} key, so the portal uses it instead of ${definition.envVar}`
+      : `Updated ${definition.displayName}’s settings${
+          input.isActive === false ? " and paused the provider" : ""
+        }`,
+    detail: {
+      provider: definition.id,
+      priority,
+      fields: Object.keys(plainConfig).join(", ") || "none",
+      ...(rotatedExtras.length ? { extra_values_replaced: rotatedExtras.join(", ") } : {}),
+      is_active: input.isActive ?? true,
+      note: "The key itself is encrypted in its own table and never copied here.",
+    },
+  });
+
   dropCatalogueCache();
   revalidatePath("/settings");
   return { ok: true };
@@ -349,6 +378,14 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
     ? await session.from("user_profiles").select("id").eq("auth_user_id", sessionData.user.id).maybeSingle()
     : { data: null };
 
+  // Read the row first: a delete is the last moment its shape can be named, and
+  // removing nothing should not be reported as a change.
+  const { data: stored } = await admin
+    .from("provider_credentials")
+    .select("id, display_name, is_active, priority, updated_at")
+    .eq("provider", definition.id)
+    .maybeSingle();
+
   const { error } = await admin.from("provider_credentials").delete().eq("provider", definition.id);
   if (error) return { ok: false, error: error.message };
 
@@ -358,6 +395,22 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
     actor_id: profile?.id ?? null,
     detail: "Reverted to environment variable",
   });
+
+  if (stored) {
+    await recordActivity({
+      area: "settings",
+      action: "credential_delete",
+      entity: "credential",
+      entityId: definition.id,
+      summary: `Removed the stored ${definition.displayName} credential, so the portal reads ${definition.envVar} again`,
+      detail: {
+        provider: definition.id,
+        was_active: (stored as { is_active?: boolean } | null)?.is_active ?? null,
+        priority: (stored as { priority?: number } | null)?.priority ?? null,
+        note: "The key was deleted with the row; only the environment variable can serve it now.",
+      },
+    });
+  }
 
   dropCatalogueCache();
   revalidatePath("/settings");
@@ -404,6 +457,22 @@ async function recordVerificationOutcome(
     action: "VERIFIED",
     actor_id: profile?.id ?? null,
     detail: message,
+  });
+
+  await recordActivity({
+    area: "settings",
+    action: status === "working" ? "credential_verified" : "credential_verify_failed",
+    entity: "credential",
+    entityId: provider,
+    summary: `Tested the ${providerById(provider)?.displayName ?? provider} credential — ${
+      status === "working" ? "the provider answered" : "the provider refused it"
+    }`,
+    detail: {
+      provider,
+      status,
+      outcome: message,
+      ...(profile?.id ? {} : { note: "No profile row was found for the signed-in account." }),
+    },
   });
 
   revalidatePath("/settings");
@@ -569,19 +638,50 @@ export async function saveModelRouting(input: {
         .maybeSingle()
     : { data: null as { id: string } | null };
 
+  const routed = {
+    primary_model: input.primaryModel.trim(),
+    fallback_model: input.fallbackModel?.trim() || null,
+    temperature: input.temperature,
+    max_tokens: input.maxTokens,
+    is_enabled: input.isEnabled,
+  };
+
+  // Read first: a routing row that matches what is already stored leaves no trail
+  // row, and a re-point is worth naming against the model it replaced.
+  const { data: before } = await session
+    .from("ai_model_config")
+    .select("primary_model, fallback_model, temperature, max_tokens, is_enabled")
+    .eq("capability", input.capability)
+    .maybeSingle();
+
   const { error } = await session
     .from("ai_model_config")
-    .upsert({
-      capability: input.capability,
-      primary_model: input.primaryModel.trim(),
-      fallback_model: input.fallbackModel?.trim() || null,
-      temperature: input.temperature,
-      max_tokens: input.maxTokens,
-      is_enabled: input.isEnabled,
-      updated_by: profile?.id ?? null,
-    });
+    .upsert({ capability: input.capability, ...routed, updated_by: profile?.id ?? null });
 
   if (error) return { ok: false, error: error.message };
+
+  const edits = scalarEdits((before as Record<string, unknown> | null) ?? {}, routed);
+  if (Object.keys(edits).length > 0) {
+    // The trail withholds any key that looks like a credential, and `max_tokens`
+    // reads like one — while the budget is exactly what a reviewer needs to see.
+    if (edits.max_tokens) {
+      edits.max_output_length = edits.max_tokens;
+      delete edits.max_tokens;
+    }
+    const label =
+      AI_CAPABILITIES.find((each) => each.id === input.capability)?.label ??
+      input.capability.replace(/_/g, " ");
+    await recordActivity({
+      area: "settings",
+      action: before ? "routing_update" : "routing_create",
+      entity: "model routing",
+      entityId: input.capability,
+      summary: `${before ? "Re-pointed" : "Pointed"} ${label} at ${routed.primary_model} — ${changePhrase(
+        edits
+      )}`,
+      detail: edits,
+    });
+  }
 
   revalidatePath("/settings");
   return { ok: true };

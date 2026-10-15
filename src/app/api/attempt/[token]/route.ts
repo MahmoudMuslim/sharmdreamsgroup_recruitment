@@ -2,6 +2,8 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { buildPaper } from "@/modules/assessment/application/buildPaper";
 import { getAttemptSettings } from "@/modules/assessment/application/attemptSettings";
 import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
+import { recordActivity } from "@/modules/activity/application/record";
+import { attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import type { AttemptPayload } from "@/stores/useAssessmentStore";
 import { NextResponse } from "next/server";
 
@@ -23,12 +25,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   // of test time; a NOT_STARTED one runs out of *invitation* time, which is
   // Settings → Assessments → Link validity measured from when the link was
   // issued. Both park the attempt as EXPIRED so the runner shows one state.
+  let closedBy: "test_time" | "invitation" | null = null;
+
   if (attempt.status === "IN_PROGRESS" && attempt.expires_at && new Date(attempt.expires_at) < new Date()) {
     await supabase
       .from("candidate_attempts")
       .update({ status: "EXPIRED" })
       .eq("id", attempt.id);
     attempt.status = "EXPIRED";
+    closedBy = "test_time";
   }
 
   if (attempt.status === "NOT_STARTED") {
@@ -44,7 +49,25 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
         .update({ status: "EXPIRED" })
         .eq("id", attempt.id);
       attempt.status = "EXPIRED";
+      closedBy = "invitation";
     }
+  }
+
+  if (closedBy) {
+    const { candidateName, jobTitle } = attemptContext(attempt);
+    await recordActivity({
+      ...runnerActor(candidateName),
+      area: "assessments",
+      action: "attempt_expired",
+      entity: "attempt",
+      entityId: attempt.id,
+      summary: `${candidateName}'s ${jobTitle} test closed when they opened it — out of ${closedBy === "test_time" ? "the time the test allows" : "the invitation window"}`,
+      detail: {
+        from: closedBy === "test_time" ? "IN_PROGRESS" : "NOT_STARTED",
+        to: "EXPIRED",
+        deadline: attempt.expires_at ?? null,
+      },
+    });
   }
 
   // A closed link must not hand out the paper. Until this, an EXPIRED attempt

@@ -13,6 +13,42 @@ import {
 } from "@/modules/settings/domain/schema";
 import type { AssignableStaffRole, StaffInvite } from "@/modules/settings/domain/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { recordActivity } from "@/modules/activity/application/record";
+
+/** A role as the trail names it, so a demotion reads as a sentence. */
+const ROLE_WORDS: Record<string, string> = {
+  SUPER_ADMIN: "Super Admin",
+  RECRUITER: "Recruiter",
+  HIRING_MANAGER: "Hiring Manager",
+  SUBSIDIARY_HR_MANAGER: "Subsidiary HR Manager",
+  INTERVIEWER: "Interviewer",
+};
+
+function roleWord(role: string): string {
+  return ROLE_WORDS[role] ?? role;
+}
+
+/**
+ * The company an account belongs to, by name.
+ *
+ * A trail row that says `tenant_id: 9f2c…` cannot be read by the person checking
+ * who moved a colleague between companies, so the two ids an edit swaps are
+ * looked up in one pass and printed as the names the Team console shows.
+ */
+async function companyNames(
+  supabase: SupabaseClient,
+  ids: (string | null)[]
+): Promise<Map<string, string>> {
+  const wanted = [...new Set(ids.filter((each): each is string => Boolean(each)))];
+  if (wanted.length === 0) return new Map();
+
+  const { data } = await supabase
+    .from("tenants_and_companies")
+    .select("id, name")
+    .in("id", wanted);
+
+  return new Map((data ?? []).map((row) => [row.id as string, row.name as string]));
+}
 
 /**
  * GoTrue parses `ban_duration` as a Go duration string, so it accepts units of
@@ -267,6 +303,21 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
       return { ok: false, error: inviteError.message };
     }
 
+    await recordActivity({
+      area: "team",
+      action: "staff_invite",
+      entity: "user invite",
+      entityId: invite.id,
+      summary: `Recorded an invite for ${fullName} (${email}) to join as a ${roleWord(payload.role)}`,
+      detail: {
+        email,
+        role: payload.role,
+        company_id: companyId,
+        status: "PENDING",
+        note: "Nothing was emailed — the invite waits under Settings → Team.",
+      },
+    });
+
     revalidatePath("/settings");
     return { ok: true, invite_id: invite.id };
   }
@@ -294,6 +345,23 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
     password: tempPassword,
   });
   if (!created.ok) return { ok: false, error: created.error };
+
+  await recordActivity({
+    area: "team",
+    action: "staff_create",
+    entity: "staff user",
+    entityId: created.userId,
+    summary: `Created the ${roleWord(payload.role)} account ${fullName} (${email})${
+      supplied ? "" : ", with a generated password"
+    }`,
+    detail: {
+      email,
+      role: payload.role,
+      company_id: companyId,
+      issued_with: supplied ? "a password the inviter typed" : "a generated password shown once",
+      note: "The password itself is never written down.",
+    },
+  });
 
   revalidatePath("/settings");
   return {
@@ -423,6 +491,23 @@ export async function setStaffActive(
     changedBy: actor.profileId,
   });
 
+  await recordActivity({
+    area: "team",
+    action: active ? "staff_reactivate" : "staff_deactivate",
+    entity: "staff user",
+    entityId: profileId,
+    summary: active
+      ? `Re-enabled ${target.full_name}’s sign-in`
+      : `Disabled ${target.full_name}’s account so they cannot sign in`,
+    detail: {
+      email: target.email,
+      role: roleWord(target.role),
+      ...(active
+        ? {}
+        : { note: "A session already open keeps working until it expires, and nothing they wrote was touched." }),
+    },
+  });
+
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -460,6 +545,15 @@ export async function resetStaffPassword(profileId: string): Promise<StaffAction
     previous: null,
     next: { reset_by: actor.profileId, min_length: minLength },
     changedBy: actor.profileId,
+  });
+
+  await recordActivity({
+    area: "team",
+    action: "staff_password_reset",
+    entity: "staff user",
+    entityId: profileId,
+    summary: `Issued ${target.full_name} a new ${tempPassword.length}-character password, shown once on screen`,
+    detail: { email: target.email, role: roleWord(target.role), min_length: minLength },
   });
 
   return { ok: true, temp_password: tempPassword };
@@ -509,6 +603,15 @@ export async function updateStaffRole(
     changedBy: actor.profileId,
   });
 
+  await recordActivity({
+    area: "access",
+    action: "staff_role_change",
+    entity: "staff user",
+    entityId: profileId,
+    summary: `Changed ${target.full_name}’s role from ${roleWord(target.role)} to ${roleWord(role)}`,
+    detail: { email: target.email, role: `${roleWord(target.role)} → ${roleWord(role)}` },
+  });
+
   revalidatePath("/settings");
   return { ok: true };
 }
@@ -539,6 +642,25 @@ export async function updateStaffCompany(
     previous: { tenant_id: target.tenant_id },
     next: { tenant_id: companyId },
     changedBy: actor.profileId,
+  });
+
+  const names = await companyNames(supabase, [target.tenant_id, companyId]);
+  const word = (id: string | null) =>
+    id ? names.get(id) ?? "a company that is no longer listed" : "no company";
+
+  await recordActivity({
+    area: "team",
+    action: "staff_company_change",
+    entity: "staff user",
+    entityId: profileId,
+    summary: `Moved ${target.full_name} to ${word(companyId)}${
+      target.tenant_id ? ` from ${word(target.tenant_id)}` : ""
+    }`,
+    detail: {
+      email: target.email,
+      role: roleWord(target.role),
+      company: `${word(target.tenant_id)} → ${word(companyId)}`,
+    },
   });
 
   revalidatePath("/settings");
@@ -588,6 +710,19 @@ export async function deleteStaffAccount(profileId: string): Promise<StaffAction
     previous: { email: target.email, role: target.role, tenant_id: target.tenant_id },
     next: null,
     changedBy: actor.profileId,
+  });
+
+  await recordActivity({
+    area: "team",
+    action: "staff_delete",
+    entity: "staff user",
+    entityId: profileId,
+    summary: `Deleted ${target.full_name} (${target.email}) from the team — sign-in and their profile row are gone`,
+    detail: {
+      role: roleWord(target.role),
+      company_id: target.tenant_id,
+      note: "Interviews and audit rows that named them keep their ids with the name blanked.",
+    },
   });
 
   revalidatePath("/settings");
@@ -656,6 +791,22 @@ export async function provisionInvite(inviteId: string): Promise<StaffActionResu
     changedBy: actor.profileId,
   });
 
+  await recordActivity({
+    area: "team",
+    action: "invite_provision",
+    entity: "staff user",
+    entityId: created.userId,
+    summary: `Turned the invite for ${invite.full_name as string} (${email}) into a ${roleWord(
+      invite.role as string
+    )} account`,
+    detail: {
+      email,
+      role: roleWord(invite.role as string),
+      company_id: invite.company_id,
+      invite_status: inviteError ? "left PENDING" : "ACCEPTED",
+    },
+  });
+
   revalidatePath("/settings");
 
   if (inviteError) {
@@ -689,7 +840,7 @@ export async function cancelInvite(inviteId: string): Promise<StaffActionResult>
     .delete()
     .eq("id", inviteId)
     .eq("status", "PENDING")
-    .select("id");
+    .select("id, email, full_name, role, company_id");
 
   if (error) return { ok: false, error: error.message };
   if (!removed?.length) return { ok: false, error: "That invite is no longer pending." };
@@ -699,6 +850,23 @@ export async function cancelInvite(inviteId: string): Promise<StaffActionResult>
     previous: { status: "PENDING" },
     next: null,
     changedBy: actor.profileId,
+  });
+
+  // Read out of the deleted row, because this is the last moment it exists.
+  const gone = removed[0] as Record<string, unknown>;
+  await recordActivity({
+    area: "team",
+    action: "invite_cancel",
+    entity: "user invite",
+    entityId: inviteId,
+    summary: `Cancelled the invite for ${String(gone.email ?? "an address that is no longer recorded")}`,
+    detail: {
+      email: gone.email,
+      full_name: gone.full_name,
+      role: roleWord(String(gone.role ?? "")),
+      company_id: gone.company_id,
+      note: "The row was deleted, not marked revoked, so the same email can be invited again.",
+    },
   });
 
   revalidatePath("/settings");

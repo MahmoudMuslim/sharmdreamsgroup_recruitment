@@ -3,6 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
 
 export type AttachmentResult = { ok: true; note?: string } | { ok: false; error: string };
 
@@ -27,7 +28,7 @@ export async function deleteAttachment(attachmentId: string): Promise<Attachment
 
   const { data: row } = await supabase
     .from("application_attachments")
-    .select("bucket, storage_path")
+    .select("bucket, storage_path, file_name, application_id")
     .eq("id", attachmentId)
     .maybeSingle();
 
@@ -59,6 +60,22 @@ export async function deleteAttachment(attachmentId: string): Promise<Attachment
         : "The file was deleted, but its record could not be removed — open the File Manager to clear the link.",
     };
   }
+
+  await recordActivity({
+    area: "files",
+    action: "attachment_delete",
+    entity: "attachment",
+    entityId: attachmentId,
+    summary: `Removed the attachment “${row.file_name ?? row.storage_path}”${
+      alreadyGone ? " — the stored file was already missing, so only its record went" : ""
+    }`,
+    detail: {
+      file_name: row.file_name,
+      bucket: row.bucket,
+      application_id: row.application_id,
+      storage_was_already_gone: alreadyGone,
+    },
+  });
 
   return {
     ok: true,

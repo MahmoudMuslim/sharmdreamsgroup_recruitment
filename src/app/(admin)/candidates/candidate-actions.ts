@@ -23,6 +23,7 @@ import {
   generateFeedbackForApplication,
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
+import { recordActivity } from "@/modules/activity/application/record";
 import type { WhatsAppOutboundMessage } from "@/types";
 
 export interface BulkWhatsAppResult {
@@ -125,6 +126,21 @@ export async function sendBulkWhatsApp(input: {
   }
 
   const outcome = await WhatsAppConnector.sendBulk(messages);
+
+  await recordActivity({
+    area: "messaging",
+    action: "bulk_whatsapp",
+    entity: "message",
+    summary: `WhatsApp campaign to ${messages.length} candidate${messages.length === 1 ? "" : "s"} — ${outcome.success} accepted, ${outcome.failed} rejected${skipped ? `, ${skipped} without a number` : ""}`,
+    detail: {
+      template_key: input.templateKey,
+      recipients: messages.length,
+      accepted: outcome.success,
+      rejected: outcome.failed,
+      skipped_no_phone: skipped,
+      body: "[withheld]",
+    },
+  });
 
   if (outcome.success === 0 && outcome.failed > 0) {
     return {
@@ -260,6 +276,21 @@ export async function sendBulkEmail(input: {
     }))
   );
 
+  await recordActivity({
+    area: "messaging",
+    action: "bulk_email",
+    entity: "message",
+    summary: `Emailed ${messages.length} candidate${messages.length === 1 ? "" : "s"} — “${subject}” — ${outcome.success} delivered, ${outcome.failed} refused${skipped ? `, ${skipped} without an address` : ""}`,
+    detail: {
+      subject,
+      recipients: messages.length,
+      delivered: outcome.success,
+      refused: outcome.failed,
+      skipped_no_email: skipped,
+      body: "[withheld]",
+    },
+  });
+
   if (outcome.success === 0) {
     return {
       ok: false,
@@ -328,6 +359,15 @@ export async function updateApplicationStage(input: {
   }
 
   const supabase = await createSupabaseServerClient();
+
+  // Read before writing: the trail records the move as `Applied → Interview`,
+  // and the row only holds the destination afterwards.
+  const { data: before } = await supabase
+    .from("applications")
+    .select("stage, full_name")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("applications")
     .update({
@@ -339,6 +379,19 @@ export async function updateApplicationStage(input: {
     .eq("id", input.applicationId);
 
   if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "candidates",
+    action: "stage_move",
+    entity: "application",
+    entityId: input.applicationId,
+    summary: `${before?.full_name ?? "A candidate"} moved from ${humanizeStage(before?.stage ?? "—")} to ${humanizeStage(input.stage)}${reason && input.stage === "REJECTED" ? ` — ${reason}` : ""}`,
+    detail: {
+      from: before?.stage ?? null,
+      to: input.stage,
+      ...(input.stage === "REJECTED" ? { reason } : {}),
+    },
+  });
 
   // The candidate is told about the move after the response is sent, on every
   // channel Settings → Notifications allows: WhatsApp goes through its queue and
@@ -453,6 +506,13 @@ export async function updateCandidateContact(input: {
   if (phone.length > 40) return { ok: false, error: "The phone number is too long." };
 
   const supabase = await createSupabaseServerClient();
+
+  const { data: contactBefore } = await supabase
+    .from("applications")
+    .select("full_name, email, phone")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
   const { data, error } = await supabase
     .from("applications")
     .update({
@@ -481,6 +541,31 @@ export async function updateCandidateContact(input: {
   if (!stored) {
     return { ok: false, error: "This candidate record is no longer here." };
   }
+
+  const previous = {
+    name: contactBefore?.full_name ?? null,
+    email: contactBefore?.email ?? null,
+    phone: contactBefore?.phone ?? null,
+  };
+  const current = { name: stored.full_name, email: stored.email, phone: stored.phone ?? null };
+
+  const edits: Record<string, string> = {};
+  for (const field of ["name", "email", "phone"] as const) {
+    if ((previous[field] ?? "") !== (current[field] ?? "")) {
+      edits[field] = `${previous[field] ?? "—"} → ${current[field] ?? "—"}`;
+    }
+  }
+
+  await recordActivity({
+    area: "candidates",
+    action: "contact_edit",
+    entity: "application",
+    entityId: input.applicationId,
+    summary: `Contact details corrected on ${stored.full_name}${
+      Object.keys(edits).length ? ` (${Object.keys(edits).join(", ")})` : " — nothing actually changed"
+    }`,
+    detail: edits,
+  });
 
   revalidatePath("/candidates");
   return { ok: true, contact: stored };
@@ -527,7 +612,7 @@ export async function setCandidateArchive(input: {
 
   const { data: application } = await supabase
     .from("applications")
-    .select("id, archived_at")
+    .select("id, archived_at, full_name")
     .eq("id", input.applicationId)
     .maybeSingle();
 
@@ -573,6 +658,19 @@ export async function setCandidateArchive(input: {
 
   if (error) return { ok: false, error: error.message };
   if (!data) return { ok: false, error: "This candidate record is no longer here." };
+
+  await recordActivity({
+    area: "candidates",
+    action: input.archived ? "archive" : "restore",
+    entity: "application",
+    entityId: input.applicationId,
+    summary: `${application.full_name ?? "A candidate"} ${
+      input.archived
+        ? "filed out of the pipeline — hidden from the boards and the dashboard, still on record"
+        : "brought back into the pipeline"
+    }`,
+    detail: { archived_at: archivedAt, previous_archived_at: application.archived_at },
+  });
 
   // The filed row leaves the dashboard KPIs, the job boards and the candidate
   // table in the same breath, so all three re-render.

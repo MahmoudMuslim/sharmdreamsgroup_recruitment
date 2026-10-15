@@ -11,6 +11,7 @@ import {
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
+import { recordActivity } from "@/modules/activity/application/record";
 import {
   evaluateGate,
   gateRejectionReason,
@@ -249,7 +250,7 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   // rendering and the form being submitted.
   const { data: job } = await supabase
     .from("job_openings")
-    .select("id")
+    .select("id, title, tenant_id")
     .eq("id", input.jobId)
     .eq("status", "PUBLISHED")
     .maybeSingle();
@@ -383,6 +384,32 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
 
   const applicationId = created?.id ? String(created.id) : "";
   const trackingCode = created?.tracking_code ?? "";
+
+  if (applicationId) {
+    await recordActivity({
+      actorKind: "CANDIDATE",
+      actorLabel: fullName,
+      companyId: job?.tenant_id ?? null,
+      via: "career site",
+      area: "candidates",
+      action: "applied",
+      entity: "application",
+      entityId: applicationId,
+      summary: `${fullName} applied for ${job?.title ?? "a role"} through the career site${
+        filteredOut ? ", and the viability questions rejected the application on arrival" : ""
+      }`,
+      detail: {
+        email,
+        source,
+        tracking_code: trackingCode,
+        stage: filteredOut ? "REJECTED" : "NEW",
+        cv_attached: Boolean(input.cvFilePath),
+        cv_characters: finalCvText.length,
+        gate_questions: verdict.answers.length,
+        failed_gate: filteredOut ? verdict.failed.length : 0,
+      },
+    });
+  }
 
   if (filteredOut) {
     // The row is stored REJECTED with the disqualifying answer named in

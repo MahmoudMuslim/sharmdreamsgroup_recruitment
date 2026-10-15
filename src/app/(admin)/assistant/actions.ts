@@ -1,6 +1,7 @@
 "use server";
 
 import { requireStaff } from "@/lib/auth/session";
+import { withActivityContext } from "@/modules/activity/application/record";
 import {
   runAssistantTurn,
   type AssistantStep,
@@ -248,7 +249,9 @@ export async function sendAssistantMessage(input: {
         }
       } else {
         try {
-          turn = await runQoderAssistantTurn(history, allowDestructive);
+          turn = await withActivityContext({ via: "assistant" }, () =>
+            runQoderAssistantTurn(history, allowDestructive)
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
           if (engine === "qoder") {
@@ -261,7 +264,9 @@ export async function sendAssistantMessage(input: {
 
     if (!turn) {
       try {
-        turn = await runAssistantTurn(history, allowDestructive);
+        turn = await withActivityContext({ via: "assistant" }, () =>
+          runAssistantTurn(history, allowDestructive)
+        );
       } catch (error) {
         // The gateway's own message already names the models it tried and why each
         // failed, which is what an operator needs when no key is configured.

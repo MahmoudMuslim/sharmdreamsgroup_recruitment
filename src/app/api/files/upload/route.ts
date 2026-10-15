@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
 import {
   ATTACHMENT_RULES,
   attachmentPath,
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
   // file to a candidate sitting in another tenant's pipeline.
   const { data: application } = await supabase
     .from("applications")
-    .select("id")
+    .select("id, full_name")
     .eq("id", applicationId)
     .maybeSingle();
 
@@ -138,6 +139,21 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+
+  await recordActivity({
+    area: "files",
+    action: "file_upload",
+    entity: "attachment",
+    entityId: String(attachment.id),
+    summary: `Attached “${file.name.slice(0, 80)}” to ${application.full_name ?? "a candidate"}'s record`,
+    detail: {
+      application_id: applicationId,
+      bucket: rule.bucket,
+      storage_path: path,
+      mime_type: file.type,
+      bytes: file.size,
+    },
+  });
 
   return NextResponse.json({ ok: true, attachment });
 }

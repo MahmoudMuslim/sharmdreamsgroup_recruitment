@@ -10,6 +10,7 @@ import { getNumberSetting } from "@/modules/settings/infrastructure/settingsRead
 import { notifyAssessmentInvite } from "@/modules/omnichannel/application/candidate-notifications";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
+import { recordActivity } from "@/modules/activity/application/record";
 
 export interface AttemptResult {
   ok: boolean;
@@ -25,14 +26,49 @@ async function refusal(): Promise<string | null> {
   return "You need the Assign assessments permission to change an issued link.";
 }
 
+interface LoadedAttempt {
+  id: string;
+  status: string;
+  started_at: string | null;
+  submitted_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+  application_id: string;
+  /** Joined in from `applications` so a trail row reads as a person, not a UUID. */
+  full_name: string;
+}
+
 async function loadAttempt(attemptId: string) {
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase
     .from("candidate_attempts")
-    .select("id, status, started_at, submitted_at, expires_at, created_at, application_id")
+    .select(
+      "id, status, started_at, submitted_at, expires_at, created_at, application_id, applications(full_name)"
+    )
     .eq("id", attemptId)
     .maybeSingle();
-  return { supabase, attempt: data ?? null };
+
+  if (!data) return { supabase, attempt: null as LoadedAttempt | null };
+
+  const row = data as unknown as Omit<LoadedAttempt, "full_name"> & {
+    applications?: { full_name?: string } | { full_name?: string }[] | null;
+  };
+  const embedded = row.applications;
+  const name = Array.isArray(embedded) ? embedded[0]?.full_name : embedded?.full_name;
+
+  return {
+    supabase,
+    attempt: {
+      id: row.id,
+      status: row.status,
+      started_at: row.started_at,
+      submitted_at: row.submitted_at,
+      expires_at: row.expires_at,
+      created_at: row.created_at,
+      application_id: row.application_id,
+      full_name: name ?? "a candidate",
+    } satisfies LoadedAttempt,
+  };
 }
 
 /**
@@ -62,6 +98,19 @@ export async function revokeAttempt(attemptId: string): Promise<AttemptResult> {
     .eq("id", attemptId);
 
   if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "assessments",
+    action: "attempt_revoke",
+    entity: "attempt",
+    entityId: attemptId,
+    summary: `Revoked ${attempt.full_name}'s assessment link — closed from ${attempt.status.toLowerCase()} with its answers kept`,
+    detail: {
+      from_status: attempt.status,
+      to_status: "EXPIRED",
+      application_id: attempt.application_id,
+    },
+  });
 
   revalidatePath("/candidates");
   return { ok: true };
@@ -113,6 +162,20 @@ export async function extendAttemptLink(
 
   if (error) return { ok: false, error: error.message };
 
+  await recordActivity({
+    area: "assessments",
+    action: "attempt_extend",
+    entity: "attempt",
+    entityId: attemptId,
+    summary: `Gave ${attempt.full_name} ${amount} more hour${amount === 1 ? "" : "s"} on the assessment link`,
+    detail: {
+      hours_added: amount,
+      previous_deadline: attempt.expires_at,
+      new_deadline: new Date(base + amount * 3_600_000).toISOString(),
+      application_id: attempt.application_id,
+    },
+  });
+
   revalidatePath("/candidates");
   return { ok: true };
 }
@@ -157,6 +220,20 @@ export async function reissueAttemptLink(attemptId: string): Promise<AttemptResu
 
   if (error) return { ok: false, error: error.message };
 
+  await recordActivity({
+    area: "assessments",
+    action: "attempt_reissue",
+    entity: "attempt",
+    entityId: attemptId,
+    summary: `Re-issued ${attempt.full_name}'s assessment link — the old address stops working and a fresh invitation is sent`,
+    detail: {
+      previous_status: attempt.status,
+      to_status: "NOT_STARTED",
+      validity_hours: validityHours,
+      application_id: attempt.application_id,
+    },
+  });
+
   revalidatePath("/candidates");
 
   const applicationId = attempt.application_id;
@@ -181,7 +258,8 @@ export async function deleteAttempt(attemptId: string): Promise<AttemptResult> {
   const denied = await refusal();
   if (denied) return { ok: false, error: denied };
 
-  const supabase = await createSupabaseServerClient();
+  const { supabase, attempt } = await loadAttempt(attemptId);
+  if (!attempt) return { ok: false, error: "That attempt no longer exists." };
 
   const { data: responses } = await supabase
     .from("candidate_responses")
@@ -200,6 +278,19 @@ export async function deleteAttempt(attemptId: string): Promise<AttemptResult> {
   const { error } = await supabase.from("candidate_attempts").delete().eq("id", attemptId);
 
   if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "assessments",
+    action: "attempt_delete",
+    entity: "attempt",
+    entityId: attemptId,
+    summary: `Deleted ${attempt.full_name}'s assessment link — it was never opened, so no answers were lost`,
+    detail: {
+      status_at_delete: attempt.status,
+      issued_at: attempt.created_at,
+      application_id: attempt.application_id,
+    },
+  });
 
   revalidatePath("/candidates");
   return { ok: true };

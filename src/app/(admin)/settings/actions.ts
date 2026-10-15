@@ -6,6 +6,8 @@ import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
 import { shippedTemplate } from "@/modules/settings/domain/templates";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
+import { printableValue } from "@/modules/activity/domain/trail";
 import type {
   AppRole,
   AuditEntry,
@@ -58,16 +60,78 @@ export async function loadSettings(): Promise<SettingsBundle> {
 }
 
 /**
+ * `app_settings.updated_by` and `settings_audit_log.changed_by` both reference
+ * `user_profiles(id)`, not the auth id, so the session user has to be resolved
+ * to their profile row before either column can name them.
+ */
+async function staffProfileId(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  authUserId: string
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("user_profiles")
+    .select("id")
+    .eq("auth_user_id", authUserId)
+    .maybeSingle();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+/** The channel a template row belongs to, in the words a trail row uses. */
+function channelWord(channel: string): string {
+  if (channel === "WHATSAPP") return "WhatsApp";
+  if (channel === "IN_APP") return "in-app";
+  return "email";
+}
+
+/**
+ * What a template's copy is worth in the trail: that it moved, and how far.
+ *
+ * The wording itself is what a recruiter edits, and the trail is read by more
+ * people than Settings is, so a row records character counts rather than the
+ * message a candidate will receive.
+ */
+function copyEdits(
+  before: { subject: string | null; body: string; is_active: boolean },
+  next: { subject: string | null; body: string; is_active: boolean }
+): Record<string, string> {
+  const edits: Record<string, string> = {};
+  if ((before.subject ?? null) !== next.subject) {
+    edits.subject = `${printableValue(before.subject)} → ${printableValue(next.subject)}`;
+  }
+  if (before.body !== next.body) {
+    edits.copy_characters = `${before.body.length} → ${next.body.length}`;
+  }
+  if (before.is_active !== next.is_active) {
+    edits.is_active = `${before.is_active ? "sending" : "paused"} → ${next.is_active ? "sending" : "paused"}`;
+  }
+  return edits;
+}
+
+/**
  * Persists a batch of settings.
  *
  * Only keys declared in `SETTINGS_SCHEMA` are accepted, so the client cannot
  * write arbitrary rows. Each change is written to `settings_audit_log` before
  * the upsert so the previous value is never lost.
+ *
+ * The permission check is not optional polish: `app_settings_write` in RLS only
+ * lets `settings.manage_platform` through, and an UPDATE refused by RLS returns
+ * no error at all. Without the check below a recruiter's save would have read as
+ * a success while changing nothing.
  */
 export async function saveSettings(
   payload: Record<string, unknown>
 ): Promise<SaveSettingsResult> {
-  await requireStaff("/settings");
+  const user = await requireStaff("/settings");
+
+  if (!(await hasPermissionForUser("settings.manage_platform"))) {
+    return {
+      ok: false,
+      saved: [],
+      error: "Editing settings requires the Manage platform settings permission.",
+    };
+  }
+
   const supabase = await createSupabaseServerClient();
 
   const entries = Object.entries(payload).filter(([key]) => ALLOWED_SETTING_KEYS.has(key));
@@ -75,6 +139,8 @@ export async function saveSettings(
   if (entries.length === 0) {
     return { ok: false, saved: [], error: "No recognised settings were supplied." };
   }
+
+  const changedBy = await staffProfileId(supabase, user.authUserId);
 
   // Record the change with the current value before overwriting.
   const { data: existing } = await supabase
@@ -93,7 +159,7 @@ export async function saveSettings(
       key,
       previous_value: previous.get(key) ?? null,
       next_value: value,
-      changed_by: null,
+      changed_by: changedBy,
     }))
   );
 
@@ -115,7 +181,7 @@ export async function saveSettings(
       company_id: null,
       key,
       value,
-      updated_by: null,
+      updated_by: changedBy,
     }));
 
   const inserts = entries
@@ -125,7 +191,7 @@ export async function saveSettings(
       company_id: null,
       key,
       value,
-      updated_by: null,
+      updated_by: changedBy,
     }));
 
   if (updates.length > 0) {
@@ -138,6 +204,29 @@ export async function saveSettings(
     if (error) return { ok: false, saved: [], error: error.message };
   }
 
+  // One row for the batch the console sent, listing only what moved: a save that
+  // resubmitted six untouched numbers should not read as six changes.
+  const edits: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    const before = previous.get(key) ?? null;
+    if (JSON.stringify(before) === JSON.stringify(value)) continue;
+    edits[key] = `${printableValue(before)} → ${printableValue(value)}`;
+  }
+
+  if (Object.keys(edits).length > 0) {
+    await recordActivity({
+      area: "settings",
+      action: "settings_save",
+      entity: "setting",
+      entityId: entries[0][0],
+      summary: `Saved ${Object.keys(edits).length} setting${
+        Object.keys(edits).length === 1 ? "" : "s"
+      } (${Object.keys(edits).slice(0, 4).join(", ")}${Object.keys(edits).length > 4 ? ", …" : ""})`,
+      detail: edits,
+      actorId: changedBy,
+    });
+  }
+
   revalidatePath("/settings");
   return { ok: true, saved: entries.map(([key]) => key), error: undefined };
 }
@@ -148,8 +237,21 @@ export async function updateRolePermission(
   permissionKey: string,
   granted: boolean
 ): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff("/settings");
+  const user = await requireStaff("/settings");
+
+  if (!(await hasPermissionForUser("settings.manage_platform"))) {
+    return { ok: false, error: "Editing roles and permissions requires the Manage platform settings permission." };
+  }
+
   const supabase = await createSupabaseServerClient();
+  const changedBy = await staffProfileId(supabase, user.authUserId);
+
+  const { data: before } = await supabase
+    .from("role_permissions")
+    .select("granted")
+    .eq("role_key", roleKey)
+    .eq("permission_key", permissionKey)
+    .maybeSingle();
 
   const { error } = await supabase
     .from("role_permissions")
@@ -159,8 +261,20 @@ export async function updateRolePermission(
 
   await supabase.from("settings_audit_log").insert({
     key: `role_permission:${roleKey}`,
-    previous_value: null,
+    previous_value: before ? { permissionKey, granted: before.granted } : null,
     next_value: { permissionKey, granted },
+    changed_by: changedBy,
+  });
+
+  const from = before ? (before.granted ? "granted" : "revoked") : "unset";
+  await recordActivity({
+    area: "access",
+    action: granted ? "permission_grant" : "permission_revoke",
+    entity: "role",
+    entityId: roleKey,
+    summary: `${granted ? "Granted" : "Revoked"} ${permissionKey} for ${roleKey.replace(/_/g, " ").toLowerCase()}`,
+    detail: { role: roleKey, permission: permissionKey, from, to: granted ? "granted" : "revoked" },
+    actorId: changedBy,
   });
 
   revalidatePath("/settings");
@@ -181,7 +295,7 @@ export async function saveNotificationTemplate(input: {
   body: string;
   is_active: boolean;
 }): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff("/settings");
+  const user = await requireStaff("/settings");
 
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
     return { ok: false, error: "Editing templates requires settings.manage_platform." };
@@ -195,25 +309,48 @@ export async function saveNotificationTemplate(input: {
 
   const { data: previous } = await supabase
     .from("notification_templates")
-    .select("key, subject, body, is_active")
+    .select("key, channel, subject, body, is_active")
     .eq("id", input.id)
     .maybeSingle();
 
   if (!previous) return { ok: false, error: "That template no longer exists." };
 
   const subject = input.subject?.trim() || null;
+  const next = { subject, body, is_active: input.is_active };
+  const edits = copyEdits(previous, next);
+
+  // The form posts the whole row, so a save that moved nothing is recorded as
+  // nothing: an audit row and a trail row for an unchanged template would make
+  // the log unreadable without describing a change.
+  if (Object.keys(edits).length === 0) return { ok: true };
 
   const { error } = await supabase
     .from("notification_templates")
-    .update({ subject, body, is_active: input.is_active })
+    .update(next)
     .eq("id", input.id);
 
   if (error) return { ok: false, error: error.message };
+
+  const changedBy = await staffProfileId(supabase, user.authUserId);
 
   await supabase.from("settings_audit_log").insert({
     key: `notification_template:${previous.key}`,
     previous_value: { subject: previous.subject, body: previous.body, is_active: previous.is_active },
     next_value: { subject, body, is_active: input.is_active },
+    changed_by: changedBy,
+  });
+
+  const switched = edits.is_active ? ` and ${input.is_active ? "set it to send" : "paused it"}` : "";
+  await recordActivity({
+    area: "messaging",
+    action: "template_save",
+    entity: "template",
+    entityId: previous.key,
+    summary: `Edited the ${channelWord(previous.channel)} template “${previous.key}”${
+      edits.copy_characters ? ` (${body.length} characters)` : ""
+    }${switched}`,
+    detail: { ...edits, channel: previous.channel },
+    actorId: changedBy,
   });
 
   revalidatePath("/settings");
@@ -231,7 +368,7 @@ export async function saveNotificationTemplate(input: {
 export async function resetNotificationTemplate(input: {
   id: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff("/settings");
+  const user = await requireStaff("/settings");
 
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
     return { ok: false, error: "Editing templates requires settings.manage_platform." };
@@ -259,6 +396,9 @@ export async function resetNotificationTemplate(input: {
     is_active: true,
   };
 
+  const edits = copyEdits(row, next);
+  if (Object.keys(edits).length === 0) return { ok: true };
+
   const { error } = await supabase
     .from("notification_templates")
     .update(next)
@@ -266,10 +406,25 @@ export async function resetNotificationTemplate(input: {
 
   if (error) return { ok: false, error: error.message };
 
+  const changedBy = await staffProfileId(supabase, user.authUserId);
+
   await supabase.from("settings_audit_log").insert({
     key: `notification_template:${row.key}`,
     previous_value: { subject: row.subject, body: row.body, is_active: row.is_active },
     next_value: { ...next, reset: true },
+    changed_by: changedBy,
+  });
+
+  await recordActivity({
+    area: "messaging",
+    action: "template_reset",
+    entity: "template",
+    entityId: row.key,
+    summary: `Restored the ${channelWord(row.channel)} template “${row.key}” to the copy shipped in code${
+      row.is_active ? "" : ", and switched it back on"
+    }`,
+    detail: { ...edits, channel: row.channel, restored_from: "shipped copy" },
+    actorId: changedBy,
   });
 
   revalidatePath("/settings");
@@ -287,7 +442,7 @@ export async function resetNotificationTemplate(input: {
 export async function deleteNotificationTemplate(input: {
   id: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  await requireStaff("/settings");
+  const user = await requireStaff("/settings");
 
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
     return { ok: false, error: "Deleting templates requires settings.manage_platform." };
@@ -307,10 +462,31 @@ export async function deleteNotificationTemplate(input: {
 
   if (error) return { ok: false, error: error.message };
 
+  const changedBy = await staffProfileId(supabase, user.authUserId);
+
   await supabase.from("settings_audit_log").insert({
     key: `notification_template:${row.key}`,
     previous_value: { channel: row.channel, subject: row.subject, body: row.body, is_active: row.is_active },
     next_value: { deleted: true },
+    changed_by: changedBy,
+  });
+
+  await recordActivity({
+    area: "messaging",
+    action: "template_delete",
+    entity: "template",
+    entityId: row.key,
+    summary: `Deleted the ${channelWord(row.channel)} template “${row.key}”, so ${
+      shippedTemplate(row.key, row.channel) ? "candidates get the copy shipped in code" : "that message has no copy left to read"
+    }`,
+    detail: {
+      channel: row.channel,
+      subject: printableValue(row.subject),
+      copy_characters: row.body?.length ?? 0,
+      was_sending: Boolean(row.is_active),
+      note: "Its text is kept in the settings audit log.",
+    },
+    actorId: changedBy,
   });
 
   revalidatePath("/settings");

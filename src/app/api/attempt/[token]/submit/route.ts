@@ -1,6 +1,8 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { after } from "next/server";
 import { gradeAttemptResponses } from "@/modules/assessment/application/gradeAttempt";
+import { recordActivity } from "@/modules/activity/application/record";
+import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import { NextResponse } from "next/server";
 import type { SpreadsheetCellData } from "@/types";
 
@@ -19,7 +21,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const supabase = getSupabaseServiceClient();
   const { data: attempt, error } = await supabase
     .from("candidate_attempts")
-    .select("id, status, template_id, application_id")
+    .select(`id, status, template_id, application_id, ${APPLICATION_EMBED}`)
     .eq("access_token", token)
     .single();
 
@@ -154,6 +156,38 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     .from("applications")
     .update({ stage: "ASSESSMENT" })
     .eq("id", attempt.application_id);
+
+  const { candidateName, jobTitle, applicationStage } = attemptContext(attempt);
+  const actor = runnerActor(candidateName);
+
+  await recordActivity({
+    ...actor,
+    area: "assessments",
+    action: "attempt_submitted",
+    entity: "attempt",
+    entityId: attempt.id,
+    summary: `${candidateName} submitted the ${jobTitle} test — ${responseRows.length} answer${responseRows.length === 1 ? "" : "s"} stored, ${totalScore} of ${maxScore} points on what grades itself`,
+    detail: {
+      responses: responseRows.length,
+      auto_scored_points: totalScore,
+      submitted_points: maxScore,
+      videos: Object.keys(body.video_paths_map ?? {}).length,
+      seconds_left_on_clock: body.time_remaining_seconds ?? null,
+      note: "Essays, models and pitches wait for the grading engine behind this request.",
+    },
+  });
+
+  if (attempt.application_id && applicationStage && applicationStage !== "ASSESSMENT") {
+    await recordActivity({
+      ...actor,
+      area: "candidates",
+      action: "stage_move",
+      entity: "application",
+      entityId: attempt.application_id,
+      summary: `${candidateName}'s application for ${jobTitle} moved to Assessment on their own submission`,
+      detail: { from: applicationStage, to: "ASSESSMENT" },
+    });
+  }
 
   // Grade essays and models in the background; the candidate's confirmation
   // must not wait on AI latency, and grading errors never lose their answers.

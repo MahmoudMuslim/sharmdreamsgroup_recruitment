@@ -5,6 +5,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase, changedFields } from "@/modules/activity/domain/trail";
 import type { QuestionConfig, QuestionType } from "@/types";
 
 /**
@@ -198,10 +200,11 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
   // Confirm the template exists so a typo cannot create an orphan question.
   const { data: template } = await supabase
     .from("assessment_templates")
-    .select("id")
+    .select("id, name")
     .eq("id", draft.template_id)
     .maybeSingle();
   if (!template) return { ok: false, error: "That assessment suite no longer exists." };
+  const suite = template.name;
 
   const limit = Number(draft.time_limit_minutes);
   const row = {
@@ -229,9 +232,33 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     const renumberError = await renumberSuite(supabase, draft.template_id);
     if (renumberError) return { ok: false, error: renumberError };
 
+    await recordActivity({
+      area: "assessments",
+      action: "question_create",
+      entity: "assessment question",
+      entityId: data?.id ?? null,
+      summary: `Added the ${draft.question_type.toLowerCase().replace(/_/g, " ")} question “${title}” (${points} points) to “${suite}”`,
+      detail: {
+        suite,
+        points,
+        position: row.position,
+        options: row.config?.options,
+        time_limit_minutes: row.time_limit_minutes,
+      },
+    });
+
     revalidatePath("/assessments");
     return { ok: true, id: data?.id };
   }
+
+  const { data: previous } = await supabase
+    .from("assessment_questions")
+    .select(
+      "id, template_id, question_type, title, prompt, instructions, config, points, position, time_limit_minutes, shuffle_options"
+    )
+    .eq("id", draft.id)
+    .maybeSingle();
+  if (!previous) return { ok: false, error: "That question no longer exists." };
 
   // Editing must not move a question to a different suite.
   const { error } = await supabase
@@ -244,6 +271,18 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
 
   const renumberError = await renumberSuite(supabase, draft.template_id);
   if (renumberError) return { ok: false, error: renumberError };
+
+  const edits = changedFields(previous as Record<string, unknown>, row);
+  await recordActivity({
+    area: "assessments",
+    action: "question_edit",
+    entity: "assessment question",
+    entityId: draft.id,
+    summary: `Rewrote the question “${title}” in “${suite}” — ${changePhrase(edits)}${
+      edits.points ? ", which changes what a sitting scores" : ""
+    }`,
+    detail: edits,
+  });
 
   revalidatePath("/assessments");
   return { ok: true, id: draft.id };
@@ -276,6 +315,14 @@ export async function deleteQuestion(
     };
   }
 
+  const { data: removed } = await supabase
+    .from("assessment_questions")
+    .select("id, title, points, question_type")
+    .eq("id", questionId)
+    .eq("template_id", templateId)
+    .maybeSingle();
+  if (!removed) return { ok: false, error: "That question is no longer in this suite." };
+
   const { error } = await supabase
     .from("assessment_questions")
     .delete()
@@ -283,6 +330,20 @@ export async function deleteQuestion(
     .eq("template_id", templateId);
 
   if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "assessments",
+    action: "question_delete",
+    entity: "assessment question",
+    entityId: questionId,
+    summary: `Deleted the question “${removed.title}” (${removed.points} points) — no candidate had answered it`,
+    detail: {
+      title: removed.title,
+      points: removed.points,
+      question_type: removed.question_type,
+      template_id: templateId,
+    },
+  });
 
   revalidatePath("/assessments");
   return { ok: true, id: questionId };
@@ -307,7 +368,7 @@ export async function moveQuestion(
 
   const { data: questions, error } = await supabase
     .from("assessment_questions")
-    .select("id, position")
+    .select("id, position, title")
     .eq("template_id", templateId)
     .order("position");
 
@@ -350,6 +411,19 @@ export async function moveQuestion(
 
   const renumberError = await renumberSuite(supabase, templateId);
   if (renumberError) return { ok: false, error: renumberError };
+
+  await recordActivity({
+    area: "assessments",
+    action: "question_move",
+    entity: "assessment question",
+    entityId: questionId,
+    summary: `Moved “${target.title}” ${direction} past “${neighbour.title}” in the suite — candidates see the paper in the new order`,
+    detail: {
+      from_position: index,
+      to_position: swapWith,
+      template_id: templateId,
+    },
+  });
 
   revalidatePath("/assessments");
   return { ok: true, id: questionId };

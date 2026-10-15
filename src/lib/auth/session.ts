@@ -5,6 +5,12 @@ import type { UserRole } from "@/types";
 
 export interface SessionUser {
   authUserId: string;
+  /**
+   * `user_profiles.id` — the row every FK to a person points at, including the
+   * audit trail's actor. Carried here so an action that stamps who made a
+   * change does not have to spend another query finding out.
+   */
+  profileId: string;
   email: string;
   fullName: string;
   role: UserRole;
@@ -45,6 +51,7 @@ export const getSessionUser = cache(
 
     return {
       authUserId: user.id,
+      profileId: profile.id as string,
       email: profile.email ?? user.email ?? "",
       fullName: profile.full_name ?? user.email ?? "Unknown user",
       role: profile.role as UserRole,

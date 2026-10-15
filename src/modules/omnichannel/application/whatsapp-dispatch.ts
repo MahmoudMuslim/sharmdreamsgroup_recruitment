@@ -3,6 +3,9 @@ import "server-only";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { appConfig } from "@/lib/config";
 import { formatInZone } from "@/lib/timezone";
+import { getSessionUser } from "@/lib/auth/session";
+import { currentActivityContext, recordActivity } from "@/modules/activity/application/record";
+import type { ActivityEntry } from "@/modules/activity/domain/trail";
 import {
   getOrganisationTimeZone,
   getStringSetting,
@@ -330,6 +333,25 @@ interface QueuedJob {
 }
 
 /**
+ * Who the trail says drained the queue.
+ *
+ * A dispatcher is never a person's judgement, but it runs on someone's request:
+ * the cron sweep has no session, a recruiter's action does. The surface is
+ * whichever of the two actually called, so a message sent because a recruiter
+ * moved a candidate is not filed under the scheduler.
+ */
+async function dispatchActor(): Promise<
+  Pick<ActivityEntry, "actorKind" | "actorLabel" | "via">
+> {
+  const session = await getSessionUser();
+  return {
+    actorKind: "SYSTEM",
+    actorLabel: "WhatsApp dispatcher",
+    via: currentActivityContext().via ?? (session ? "console" : "cron"),
+  };
+}
+
+/**
  * Sends due PENDING jobs, up to `limit`, oldest first. One failure never
  * blocks the rest of the batch. Failures stay PENDING for the next cron pass
  * until MAX_ATTEMPTS, then park as FAILED.
@@ -347,6 +369,7 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
 
   const jobs = (data ?? []) as QueuedJob[];
   const summary: WhatsAppDispatchSummary = { processed: 0, sent: 0, failed: 0 };
+  const deadLetters: { jobId: string; recipient: string; error: string }[] = [];
 
   for (const job of jobs) {
     const text = job.payload?.text?.trim();
@@ -357,6 +380,7 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
         .eq("id", job.id);
       summary.processed += 1;
       summary.failed += 1;
+      deadLetters.push({ jobId: job.id, recipient: job.recipient_phone, error: "Job payload has no text body" });
       continue;
     }
 
@@ -399,6 +423,45 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
         error_message: result.success ? null : (result.error ?? "Unknown WhatsApp error"),
       });
     }
+    if (parked) {
+      deadLetters.push({
+        jobId: job.id,
+        recipient: job.recipient_phone,
+        error: result.error ?? "Unknown WhatsApp error",
+      });
+    }
+  }
+
+  if (jobs.length > 0) {
+    const actor = await dispatchActor();
+
+    // A parked message is the one nobody would otherwise notice: the queue is
+    // empty, the outbox says refused, and the candidate was never told.
+    for (const dead of deadLetters) {
+      await recordActivity({
+        ...actor,
+        area: "messaging",
+        action: "message_parked",
+        entity: "scheduled message",
+        entityId: dead.jobId,
+        summary: `Gave up sending the queued WhatsApp message to ${dead.recipient} after ${MAX_ATTEMPTS} attempts — ${dead.error}`,
+        detail: { attempts: MAX_ATTEMPTS, error: dead.error.slice(0, 200), body: "[withheld]" },
+      });
+    }
+
+    await recordActivity({
+      ...actor,
+      area: "messaging",
+      action: "whatsapp_dispatch",
+      entity: "scheduled message",
+      summary: `WhatsApp dispatcher drained ${summary.processed} queued message${summary.processed === 1 ? "" : "s"} — ${summary.sent} delivered${summary.failed ? `, ${summary.failed} refused${deadLetters.length ? ` (${deadLetters.length} parked)` : ""}` : ""}`,
+      detail: {
+        processed: summary.processed,
+        sent: summary.sent,
+        refused: summary.failed,
+        parked: deadLetters.length,
+      },
+    });
   }
 
   return summary;

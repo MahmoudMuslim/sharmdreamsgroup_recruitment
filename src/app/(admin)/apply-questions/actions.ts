@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
 import { parseGateRows, type GateOption, type GateQuestion } from "@/modules/careers/gate-questions";
 
 /**
@@ -42,6 +43,41 @@ export interface GateResult {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_OPTIONS = 12;
+
+/** The question as the trail must name it, plus the row it belongs to. */
+interface GateRow {
+  question: string;
+  job_id: string | null;
+  is_active: boolean;
+  position: number;
+}
+
+async function readGateRow(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  questionId: string
+): Promise<GateRow | null> {
+  const { data } = await supabase
+    .from("application_gate_questions")
+    .select("id, question, job_id, is_active, position")
+    .eq("id", questionId)
+    .maybeSingle();
+  return (data as unknown as GateRow | null) ?? null;
+}
+
+/** Where the question is asked — one role, or every role. */
+function gateScope(jobId: string | null): string {
+  return jobId ? "on one role" : "on every role";
+}
+
+function optionCount(options: unknown): number {
+  return Array.isArray(options) ? options.length : 0;
+}
+
+function acceptedCount(options: unknown): number {
+  return Array.isArray(options)
+    ? options.filter((option) => (option as GateOption).passes === true).length
+    : 0;
+}
 
 /** Staff session + `jobs.manage`, or the message explaining which is missing. */
 async function requireGateEditor(): Promise<
@@ -151,6 +187,9 @@ export async function saveGateQuestion(draft: GateDraft): Promise<GateResult> {
   if (draft.id) {
     if (!UUID_PATTERN.test(draft.id)) return { ok: false, error: "That question no longer exists." };
 
+    const before = await readGateRow(supabase, draft.id);
+    if (!before) return { ok: false, error: "That question no longer exists." };
+
     const { data, error } = await supabase
       .from("application_gate_questions")
       .update(columns)
@@ -160,6 +199,22 @@ export async function saveGateQuestion(draft: GateDraft): Promise<GateResult> {
 
     if (error) return { ok: false, error: describeWriteError(error) };
     if (!data) return { ok: false, error: "That question was deleted while you were editing it." };
+
+    await recordActivity({
+      area: "gate questions",
+      action: "gate_edit",
+      entity: "gate question",
+      entityId: data.id,
+      summary: `Rewrote the gate question “${columns.question}” — ${acceptedCount(columns.options)} of ${optionCount(columns.options)} answers let an applicant through${
+        before.is_active !== columns.is_active ? `, ${columns.is_active ? "now asked" : "now switched off"}` : ""
+      }`,
+      detail: {
+        previous_question: before.question,
+        asked: gateScope(String(columns.job_id ?? "") || null),
+        is_active: columns.is_active,
+        position: columns.position,
+      },
+    });
 
     revalidatePath("/apply-questions");
     return { ok: true, id: data.id };
@@ -183,6 +238,19 @@ export async function saveGateQuestion(draft: GateDraft): Promise<GateResult> {
 
   if (error) return { ok: false, error: describeWriteError(error) };
 
+  await recordActivity({
+    area: "gate questions",
+    action: "gate_create",
+    entity: "gate question",
+    entityId: data?.id ?? null,
+    summary: `Added the gate question “${columns.question}” ${gateScope(String(columns.job_id ?? "") || null)}, accepted by ${acceptedCount(columns.options)} of ${optionCount(columns.options)} answers`,
+    detail: {
+      options: columns.options,
+      is_active: columns.is_active,
+      position: columns.position,
+    },
+  });
+
   revalidatePath("/apply-questions");
   return { ok: true, id: data?.id };
 }
@@ -205,7 +273,7 @@ export async function moveGateQuestion(
 
   const { data: currentRow } = await supabase
     .from("application_gate_questions")
-    .select("id, job_id, position")
+    .select("id, job_id, position, question")
     .eq("id", questionId)
     .maybeSingle();
 
@@ -215,10 +283,11 @@ export async function moveGateQuestion(
     id: string;
     job_id: string | null;
     position: number;
+    question: string;
   };
 
   // The same group only: a role's question is never swapped with a shared one.
-  const base = supabase.from("application_gate_questions").select("id, position");
+  const base = supabase.from("application_gate_questions").select("id, position, question");
   const scope = current.job_id ? base.eq("job_id", current.job_id) : base.is("job_id", null);
 
   const { data: neighbourRows } =
@@ -226,7 +295,11 @@ export async function moveGateQuestion(
       ? await scope.lt("position", current.position).order("position", { ascending: false }).limit(1)
       : await scope.gt("position", current.position).order("position", { ascending: true }).limit(1);
 
-  const neighbour = ((neighbourRows ?? []) as unknown as { id: string; position: number }[])[0];
+  const neighbour = ((neighbourRows ?? []) as unknown as {
+    id: string;
+    position: number;
+    question: string;
+  }[])[0];
   if (!neighbour) return { ok: false, error: "Nothing to move it past." };
 
   const swaps: [string, number][] = [
@@ -241,6 +314,19 @@ export async function moveGateQuestion(
       .eq("id", id);
     if (error) return { ok: false, error: describeWriteError(error) };
   }
+
+  await recordActivity({
+    area: "gate questions",
+    action: "gate_reorder",
+    entity: "gate question",
+    entityId: questionId,
+    summary: `Moved “${current.question}” ${direction} past “${neighbour.question}” on the apply form`,
+    detail: {
+      from_position: current.position,
+      to_position: neighbour.position,
+      job_id: current.job_id,
+    },
+  });
 
   revalidatePath("/apply-questions");
   return { ok: true };
@@ -262,12 +348,24 @@ export async function setGateQuestionActive(
 
   if (!UUID_PATTERN.test(questionId)) return { ok: false, error: "That question no longer exists." };
 
+  const row = await readGateRow(guard.supabase, questionId);
+  if (!row) return { ok: false, error: "That question no longer exists." };
+
   const { error } = await guard.supabase
     .from("application_gate_questions")
     .update({ is_active: active })
     .eq("id", questionId);
 
   if (error) return { ok: false, error: describeWriteError(error) };
+
+  await recordActivity({
+    area: "gate questions",
+    action: "gate_active",
+    entity: "gate question",
+    entityId: questionId,
+    summary: `${active ? "Started asking" : "Stopped asking"} the gate question “${row.question}” ${gateScope(row.job_id)}`,
+    detail: { is_active: active, previous_is_active: row.is_active, job_id: row.job_id },
+  });
 
   revalidatePath("/apply-questions");
   return { ok: true };
@@ -280,12 +378,24 @@ export async function deleteGateQuestion(questionId: string): Promise<GateResult
 
   if (!UUID_PATTERN.test(questionId)) return { ok: false, error: "That question no longer exists." };
 
+  const row = await readGateRow(guard.supabase, questionId);
+  if (!row) return { ok: false, error: "That question no longer exists." };
+
   const { error } = await guard.supabase
     .from("application_gate_questions")
     .delete()
     .eq("id", questionId);
 
   if (error) return { ok: false, error: describeWriteError(error) };
+
+  await recordActivity({
+    area: "gate questions",
+    action: "gate_delete",
+    entity: "gate question",
+    entityId: questionId,
+    summary: `Deleted the gate question “${row.question}” ${gateScope(row.job_id)} — applications already answered it keep their answer as text`,
+    detail: { question: row.question, job_id: row.job_id, was_active: row.is_active },
+  });
 
   revalidatePath("/apply-questions");
   return { ok: true };

@@ -2,8 +2,10 @@ import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasAiProvider } from "@/lib/config.server";
+import { engineActivityActor, recordActivity } from "@/modules/activity/application/record";
 import { getBoolSetting, getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
+import { humanizeStage } from "@/modules/settings/domain/templates";
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
 import {
   generateCandidateFeedback,
@@ -23,6 +25,17 @@ import type { CvScreeningResult, FeedbackReport, SentimentAnalysisResult } from 
  */
 
 const CV_BUCKET = "candidate-cvs";
+
+/**
+ * Who the trail says made an engine's change.
+ *
+ * Screening runs from a recruiter's button, the assistant's tool and the public
+ * apply form; in all three it is the *engine* that wrote the row, and with no
+ * session behind it the change arrived through the career site.
+ */
+const screeningActor = () => engineActivityActor("CV screening engine", "career site");
+
+type TrailActor = Awaited<ReturnType<typeof screeningActor>>;
 
 export interface AiAutomationSettings {
   aiEnabled: boolean;
@@ -60,6 +73,7 @@ export interface ScreeningOutcome {
 interface ApplicationForScreening {
   id: string;
   stage: string;
+  full_name: string | null;
   cv_text: string | null;
   cv_file_path: string | null;
   job_openings?: { title?: string; requirements?: unknown } | { title?: string; requirements?: unknown }[] | null;
@@ -73,6 +87,13 @@ function asStringList(value: unknown): string[] {
 
 /** Stages the thresholds are allowed to choose on their own. */
 export type AutoDisposition = "ASSESSMENT" | "REJECTED";
+
+/** How the engine's verdict reads in a trail row. */
+const DECISION_WORDS: Record<CvScreeningResult["decision"], string> = {
+  ADVANCE: "a fit worth shortlisting",
+  BORDERLINE: "borderline",
+  REJECT: "not a fit",
+};
 
 const DEFAULT_MATCH_THRESHOLD_ADVANCE = 75;
 const DEFAULT_MATCH_THRESHOLD_REJECT = 40;
@@ -106,9 +127,12 @@ function dispositionForScore(
  */
 async function applyScoreDisposition(input: {
   applicationId: string;
+  candidateName: string;
+  jobTitle: string;
   stage: string;
   score: number;
   summary: string;
+  actor: TrailActor;
 }): Promise<AutoDisposition | null> {
   if (input.stage !== "NEW" && input.stage !== "AI_SCREENING") return null;
 
@@ -119,6 +143,11 @@ async function applyScoreDisposition(input: {
 
   const target = dispositionForScore(input.score, advanceAt, rejectBelow);
   if (!target) return null;
+
+  const rule =
+    target === "ASSESSMENT"
+      ? { word: "shortlist", at: advanceAt }
+      : { word: "filter out", at: rejectBelow };
 
   const supabase = getSupabaseServiceClient();
   const { error } = await supabase
@@ -134,6 +163,23 @@ async function applyScoreDisposition(input: {
     .eq("id", input.applicationId);
 
   if (error) return null;
+
+  await recordActivity({
+    ...input.actor,
+    area: "candidates",
+    action: "auto_stage_move",
+    entity: "application",
+    entityId: input.applicationId,
+    summary: `${input.candidateName}'s CV scored ${input.score}% for ${input.jobTitle}, so the screening engine moved them to ${humanizeStage(target)} to ${rule.word} at ${rule.at}%`,
+    detail: {
+      from: input.stage,
+      to: target,
+      score: input.score,
+      advance_at: advanceAt,
+      reject_below: rejectBelow,
+      notice: "Stage-change message queued.",
+    },
+  });
 
   await notifyStageChange(input.applicationId, target);
   return target;
@@ -185,7 +231,7 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
   const supabase = getSupabaseServiceClient();
   const { data } = await supabase
     .from("applications")
-    .select("id, stage, cv_text, cv_file_path, job_openings(title, requirements)")
+    .select("id, stage, full_name, cv_text, cv_file_path, job_openings(title, requirements)")
     .eq("id", applicationId)
     .maybeSingle();
 
@@ -239,11 +285,38 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
 
   if (updateError) return { ok: false, error: updateError.message };
 
+  const actor = await screeningActor();
+  const candidateName = application.full_name ?? "The candidate";
+  const startedAtNew = application.stage === "NEW";
+
+  await recordActivity({
+    ...actor,
+    area: "candidates",
+    action: "cv_screened",
+    entity: "application",
+    entityId: applicationId,
+    summary: `Screened ${candidateName}'s CV for ${jobTitle}: ${score}% match, read as ${DECISION_WORDS[result.decision]}${startedAtNew ? ", so the application moved to AI screening" : ""}`,
+    detail: {
+      score,
+      decision: result.decision,
+      stage_before: application.stage,
+      stage_after: startedAtNew ? "AI_SCREENING" : application.stage,
+      model: result.model_used,
+      bias_reduction: anonymize ? "applied" : "skipped",
+      cv_characters: cvText.length,
+      strengths: result.strengths.length,
+      gaps: result.gaps.length,
+    },
+  });
+
   const autoStage = await applyScoreDisposition({
     applicationId,
+    candidateName,
+    jobTitle,
     stage: application.stage,
     score,
     summary: result.summary ?? "",
+    actor,
   });
 
   return { ok: true, score, decision: result.decision, auto_stage: autoStage };
@@ -272,7 +345,7 @@ export async function generateFeedbackForApplication(
   const { data } = await supabase
     .from("applications")
     .select(
-      "id, stage, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, diversity_flags, job_openings(title), candidate_attempts(total_score, max_score)"
+      "id, stage, full_name, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, diversity_flags, job_openings(title), candidate_attempts(total_score, max_score)"
     )
     .eq("id", applicationId)
     .maybeSingle();
@@ -281,6 +354,7 @@ export async function generateFeedbackForApplication(
 
   const application = data as unknown as {
     stage: string;
+    full_name: string | null;
     ai_match_score: number | null;
     ai_screening_summary: string | null;
     ai_strengths: unknown;
@@ -358,6 +432,23 @@ export async function generateFeedbackForApplication(
     .eq("id", applicationId);
 
   if (updateError) return { ok: false, error: updateError.message };
+
+  await recordActivity({
+    ...(await engineActivityActor("Candidate feedback writer")),
+    area: "candidates",
+    action: "feedback_drafted",
+    entity: "application",
+    entityId: applicationId,
+    summary: `Drafted feedback for ${application.full_name ?? "the candidate"} on ${job?.title ?? "the role"} — ${text.length} characters waiting on a recruiter to send it`,
+    detail: {
+      cv_score: Number(application.ai_match_score),
+      assessment_score: assessmentScore,
+      letter: application.stage === "HIRED" ? "offer" : "rejection",
+      strengths: report.strengths.length,
+      development_areas: report.development_areas.length,
+      note: "The letter's wording is not kept in the trail; the draft lives on the candidate profile.",
+    },
+  });
 
   return { ok: true };
 }

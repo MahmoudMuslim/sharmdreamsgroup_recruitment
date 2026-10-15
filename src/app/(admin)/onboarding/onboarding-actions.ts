@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { recordActivity } from "@/modules/activity/application/record";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import type { ChecklistTask } from "./checklist";
 
@@ -293,7 +294,7 @@ export async function generateOnboardingPlan(
   // its opening, so the embed is the only route to the plan's tenant.
   const { data: application, error: lookupError } = await supabase
     .from("applications")
-    .select("id, job_id, job_openings(tenant_id, tenants_and_companies(id))")
+    .select("id, full_name, job_id, job_openings(tenant_id, tenants_and_companies(id))")
     .eq("id", applicationId)
     .maybeSingle();
 
@@ -309,11 +310,13 @@ export async function generateOnboardingPlan(
   // depending on whether the relationship is to-many; normalise both.
   const row = application as unknown as {
     id: string;
+    full_name?: string | null;
     job_openings?:
       | JobEmbed
       | JobEmbed[]
       | null;
   };
+  const fullName = row.full_name ?? null;
   const job = Array.isArray(row.job_openings) ? row.job_openings[0] : row.job_openings;
   const company = job?.tenants_and_companies;
 
@@ -337,13 +340,17 @@ export async function generateOnboardingPlan(
   const checklist = buildChecklist(jobTitle);
   const skillGaps = await deriveSkillGaps(supabase, applicationId, jobTitle);
 
-  const { error } = await supabase.from("onboarding_plans").insert({
-    application_id: applicationId,
-    tenant_id: tenantId,
-    checklist,
-    skill_gaps: skillGaps,
-    progress: 0,
-  });
+  const { data: plan, error } = await supabase
+    .from("onboarding_plans")
+    .insert({
+      application_id: applicationId,
+      tenant_id: tenantId,
+      checklist,
+      skill_gaps: skillGaps,
+      progress: 0,
+    })
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     if (error.code === "23505") {
@@ -351,6 +358,22 @@ export async function generateOnboardingPlan(
     }
     return { ok: false, error: error.message };
   }
+
+  await recordActivity({
+    area: "onboarding",
+    action: "plan_create",
+    entity: "onboarding plan",
+    entityId: (plan?.id as string | undefined) ?? null,
+    summary: `Opened an onboarding plan for ${fullName ?? "this hire"}${
+      jobTitle ? ` as ${jobTitle}` : ""
+    } — ${checklist.length} tasks, ${skillGaps.length} skill gaps`,
+    detail: {
+      application_id: applicationId,
+      tasks: checklist.length,
+      skill_gaps: skillGaps.length,
+      categories: [...new Set(checklist.map((task) => task.category))],
+    },
+  });
 
   revalidatePath("/onboarding");
   return { ok: true, checklist: checklist.length, gaps: skillGaps.length };

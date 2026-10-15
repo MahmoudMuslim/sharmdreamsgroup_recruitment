@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   FileSpreadsheet,
   FolderOpen,
+  History,
   LayoutDashboard,
   ListChecks,
   MessageCircle,
@@ -44,6 +45,7 @@ export const NAV: readonly NavItem[] = [
   { href: "/files", label: "Files", icon: FolderOpen, hint: "Stored CVs & recordings" },
   { href: "/whatsapp", label: "Outbox", icon: MessageCircle, hint: "Candidate alerts" },
   { href: "/assistant", label: "Assistant", icon: Sparkles, hint: "Ask, change, and revisit" },
+  { href: "/activity", label: "Activity", icon: History, hint: "Who — or what — changed what, and when" },
   { href: "/settings", label: "Settings", icon: Settings, hint: "Configuration & access" },
 ] as const;
 

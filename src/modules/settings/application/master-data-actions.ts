@@ -15,9 +15,59 @@ import type {
   Skill,
 } from "@/modules/settings/domain/types";
 import { isSector, SECTORS } from "@/modules/settings/domain/vocabularies";
+import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase, scalarEdits, type ActivityEntity } from "@/modules/activity/domain/trail";
 
 /** Entities whose slug is derived from, and kept in step with, their name. */
 const SLUGGED_ENTITIES = new Set<MasterEntity>(["companies", "departments"]);
+
+/** The table behind each vocabulary, for the reads that name a changed row. */
+const MASTER_TABLE: Record<MasterEntity, string> = {
+  companies: "tenants_and_companies",
+  departments: "departments",
+  locations: "locations",
+  role_families: "role_families",
+  skills: "skills",
+  currencies: "currencies",
+};
+
+/** What the change trail calls each vocabulary. */
+const TRAIL_ENTITY: Record<MasterEntity, ActivityEntity> = {
+  companies: "company",
+  departments: "department",
+  locations: "location",
+  role_families: "role family",
+  skills: "skill",
+  currencies: "currency",
+};
+
+/** The list a recruiter recognises, in the words a trail row uses. */
+const LIST_WORDS: Record<MasterEntity, string> = {
+  companies: "companies",
+  departments: "departments",
+  locations: "locations",
+  role_families: "role families",
+  skills: "skills",
+  currencies: "currencies",
+};
+
+/** The columns read back to name a row, and to diff an edit against. */
+const READ_COLUMNS: Record<MasterEntity, string> = {
+  companies: "name, legal_name, slug, sector, country, city, contact_email, is_active",
+  departments: "name, slug, description, is_active",
+  locations: "name, city, governorate, country, timezone, is_active",
+  role_families: "key, label, description, is_active",
+  skills: "name, category, description, is_active",
+  currencies: "code, symbol, label, is_active",
+};
+
+/** The row as a person would name it in a sentence. */
+function masterName(entity: MasterEntity, row: Record<string, unknown>): string {
+  if (entity === "currencies") {
+    return `${String(row.code ?? "")} ${String(row.label ?? "")}`.trim() || "a currency";
+  }
+  return String(row.label ?? row.name ?? row.key ?? "a record");
+}
 
 /**
  * Columns the database declares NOT NULL.
@@ -275,7 +325,7 @@ export async function createMasterRecord(
       return { ok: false, error: "Unknown record type." };
   }
 
-  const { data, error } = await supabase.from(entity).insert(row).select("id").single();
+  const { data, error } = await supabase.from(MASTER_TABLE[entity]).insert(row).select("id").single();
 
   if (error) {
     // Unique-constraint collisions are the common case and deserve a clear message.
@@ -288,8 +338,37 @@ export async function createMasterRecord(
     return { ok: false, error: error.message };
   }
 
+  await recordActivity({
+    area: "master data",
+    action: "master_create",
+    entity: TRAIL_ENTITY[entity],
+    entityId: data?.id,
+    summary: `Added ${masterName(entity, row)} to the ${LIST_WORDS[entity]} list`,
+    detail: row,
+  });
+
   revalidatePath("/settings");
   return { ok: true, id: data?.id };
+}
+
+/**
+ * A master-data row exactly as it stands before a write.
+ *
+ * These vocabularies are addressed by a table name chosen at runtime, so the
+ * typed client cannot name their columns and every read would otherwise need its
+ * own cast. One helper, one cast, and the shape is whatever the table holds.
+ */
+async function readMasterRow(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  entity: MasterEntity,
+  id: string
+): Promise<Record<string, unknown> | null> {
+  const { data } = await supabase
+    .from(MASTER_TABLE[entity])
+    .select(READ_COLUMNS[entity])
+    .eq("id", id)
+    .maybeSingle();
+  return (data as unknown as Record<string, unknown> | null) ?? null;
 }
 
 export async function updateMasterRecord(
@@ -342,7 +421,13 @@ export async function updateMasterRecord(
     row.slug = next;
   }
 
-  const { error } = await supabase.from(entity).update(row).eq("id", id);
+  const before = await readMasterRow(supabase, entity, id);
+
+  if (!before) {
+    return { ok: false, error: "That record is no longer in the list." };
+  }
+
+  const { error } = await supabase.from(MASTER_TABLE[entity]).update(row).eq("id", id);
 
   if (error) {
     if (error.code === "23505") {
@@ -356,6 +441,20 @@ export async function updateMasterRecord(
       return { ok: false, error: "A required field was left empty." };
     }
     return { ok: false, error: error.message };
+  }
+
+  const edits = scalarEdits(before, row);
+  if (Object.keys(edits).length > 0) {
+    // The name a rename is *now* called, so the row reads forwards.
+    const label = masterName(entity, { ...before, ...row });
+    await recordActivity({
+      area: "master data",
+      action: "master_update",
+      entity: TRAIL_ENTITY[entity],
+      entityId: id,
+      summary: `Updated ${label} in the ${LIST_WORDS[entity]} list — ${changePhrase(edits)}`,
+      detail: edits,
+    });
   }
 
   revalidatePath("/settings");
@@ -373,24 +472,72 @@ export async function deleteMasterRecord(
 
   const supabase = await createSupabaseServerClient();
 
-  // Companies are referenced by every other tenant-scoped table, so retire
-  // rather than delete and break historical records.
-  if (entity === "companies") {
-    const { error } = await supabase
-      .from("tenants_and_companies")
-      .update({ is_active: false })
-      .eq("id", id);
-    if (error) return { ok: false, error: error.message };
-    revalidatePath("/settings");
-    return { ok: true, id };
-  }
+  const before = await readMasterRow(supabase, entity, id);
 
-  // Everything else retires too, so existing jobs/attempts keep resolving.
-  const { error } = await supabase.from(entity).update({ is_active: false }).eq("id", id);
+  if (!before) return { ok: false, error: "That record is no longer in the list." };
+
+  // Nothing is hard-deleted: companies are referenced by every other
+  // tenant-scoped table, and a retired department or location keeps existing
+  // jobs and attempts resolvable.
+  const { error } = await supabase
+    .from(MASTER_TABLE[entity])
+    .update({ is_active: false })
+    .eq("id", id);
   if (error) return { ok: false, error: error.message };
+
+  // Nothing still-active to retire means the switch was already off; a trail row
+  // for that would count a change nobody made.
+  if (before.is_active !== false) {
+    const usedBy = await masterUsage(supabase, entity, id, before);
+    await recordActivity({
+      area: "master data",
+      action: "master_retire",
+      entity: TRAIL_ENTITY[entity],
+      entityId: id,
+      summary: `Retired ${masterName(entity, before)} from the ${
+        LIST_WORDS[entity]
+      } list${usedBy ? ` — ${usedBy}` : ""}`,
+      detail: {
+        is_active: "active → retired",
+        note: "The row stays so existing jobs, candidates and reports still resolve.",
+      },
+    });
+  }
 
   revalidatePath("/settings");
   return { ok: true, id };
+}
+
+/**
+ * How many live job openings still point at this record, in words.
+ *
+ * A retirement reads differently when it takes a company out from under three
+ * posted jobs than when nothing uses it. Jobs name their company by id and their
+ * department and location by the text the form stored, so each is matched the way
+ * the job table actually holds it; skills and currencies are not named on a job.
+ */
+async function masterUsage(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  entity: MasterEntity,
+  id: string,
+  row: Record<string, unknown>
+): Promise<string | null> {
+  if (entity === "skills" || entity === "currencies" || entity === "role_families") return null;
+
+  let query = supabase.from("job_openings").select("id");
+  if (entity === "companies") {
+    query = query.eq("tenant_id", id);
+  } else {
+    const name = String(row.name ?? "").trim();
+    if (!name) return null;
+    query = query.eq(entity === "departments" ? "department" : "location", name);
+  }
+
+  const { data } = await query.in("status", ["DRAFT", "PUBLISHED", "PAUSED"]);
+
+  const count = (data ?? []).length;
+  if (count === 0) return null;
+  return `${count} job opening${count === 1 ? "" : "s"} still ${count === 1 ? "uses" : "use"} it`;
 }
 
 /* -------------------------------------------------------------------------- */

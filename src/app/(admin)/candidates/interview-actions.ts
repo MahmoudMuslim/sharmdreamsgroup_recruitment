@@ -6,10 +6,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { getBoolSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { generateInterviewQuestions } from "@/modules/screening/infrastructure/openRouterEngine";
 import type { CvScreeningResult, GeneratedInterviewQuestions } from "@/types";
+import { formatInZone } from "@/lib/timezone";
+import { recordActivity } from "@/modules/activity/application/record";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import {
   notifyInterviewUpdate,
@@ -96,6 +98,37 @@ function readSlot(input: {
 }
 
 /**
+ * An instant rendered the way the recruiter reads it.
+ *
+ * A trail summary that quotes the raw ISO string drops the trailing `Z` and so
+ * prints a UTC instant as though it were local time — which is a lie about when
+ * the panel was booked.
+ */
+async function slotLabel(iso: string): Promise<string> {
+  return formatInZone(iso, await getOrganisationTimeZone(), {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZoneName: "short",
+  });
+}
+
+/** The candidate on the other side of an interview — a trail row reads as a person. */
+function candidateOf(row: unknown): { applicationId: string; fullName: string } {
+  const raw = row as {
+    application_id?: string | null;
+    applications?: { full_name?: string } | { full_name?: string }[] | null;
+  };
+  const embedded = raw.applications;
+  return {
+    applicationId: raw.application_id ?? "",
+    fullName: (Array.isArray(embedded) ? embedded[0]?.full_name : embedded?.full_name) ?? "a candidate",
+  };
+}
+
+/**
  * Books an interview and tells the candidate.
  *
  * The insert is the recruiter's action; the notice rides the same queue the
@@ -118,7 +151,7 @@ export async function scheduleInterview(input: {
 
   const { data: application } = await supabase
     .from("applications")
-    .select("id, stage")
+    .select("id, stage, full_name")
     .eq("id", input.applicationId)
     .maybeSingle();
 
@@ -138,17 +171,35 @@ export async function scheduleInterview(input: {
     if (!interviewer) return { ok: false, error: "That interviewer is not a staff member." };
   }
 
-  const { error: insertError } = await supabase.from("interview_schedules").insert({
-    application_id: input.applicationId,
-    interviewer_profile_id: interviewerId,
-    scheduled_at: slot.iso,
-    duration_minutes: slot.duration,
-    meeting_link: slot.link,
-    calendar_provider: "MANUAL",
-    status: "SCHEDULED",
-  });
+  const { data: booked, error: insertError } = await supabase
+    .from("interview_schedules")
+    .insert({
+      application_id: input.applicationId,
+      interviewer_profile_id: interviewerId,
+      scheduled_at: slot.iso,
+      duration_minutes: slot.duration,
+      meeting_link: slot.link,
+      calendar_provider: "MANUAL",
+      status: "SCHEDULED",
+    })
+    .select("id")
+    .maybeSingle();
 
   if (insertError) return { ok: false, error: insertError.message };
+
+  await recordActivity({
+    area: "interviews",
+    action: "interview_book",
+    entity: "interview",
+    entityId: (booked?.id as string | undefined) ?? null,
+    summary: `Booked a panel with ${application.full_name ?? "a candidate"} for ${await slotLabel(slot.iso)} (${slot.duration} min)`,
+    detail: {
+      application_id: input.applicationId,
+      scheduled_at: slot.iso,
+      duration_minutes: slot.duration,
+      interviewer_profile_id: interviewerId,
+    },
+  });
 
   const channels = await notifyInterviewUpdate({
     applicationId: input.applicationId,
@@ -186,7 +237,9 @@ export async function rescheduleInterview(input: {
 
   const { data: existing } = await supabase
     .from("interview_schedules")
-    .select("id, application_id, status")
+    .select(
+      "id, application_id, status, scheduled_at, duration_minutes, meeting_link, interviewer_profile_id, applications(full_name)"
+    )
     .eq("id", input.interviewId)
     .maybeSingle();
 
@@ -194,6 +247,7 @@ export async function rescheduleInterview(input: {
   if (existing.status !== "SCHEDULED") {
     return { ok: false, error: `This interview is already ${existing.status.toLowerCase()}.` };
   }
+  const owner = candidateOf(existing);
 
   const interviewerId = input.interviewerProfileId?.trim() || null;
   if (interviewerId) {
@@ -218,8 +272,26 @@ export async function rescheduleInterview(input: {
 
   if (error) return { ok: false, error: error.message };
 
+  await recordActivity({
+    area: "interviews",
+    action: "interview_reschedule",
+    entity: "interview",
+    entityId: input.interviewId,
+    summary: `Moved ${owner.fullName}'s panel from ${await slotLabel(existing.scheduled_at)} to ${await slotLabel(slot.iso)} (${slot.duration} min)`,
+    detail: {
+      application_id: owner.applicationId,
+      previous_scheduled_at: existing.scheduled_at,
+      scheduled_at: slot.iso,
+      previous_duration_minutes: existing.duration_minutes,
+      duration_minutes: slot.duration,
+      previous_interviewer_profile_id: existing.interviewer_profile_id ?? null,
+      interviewer_profile_id: interviewerId,
+      meeting_link_changed: (existing.meeting_link ?? "") !== (slot.link ?? ""),
+    },
+  });
+
   const channels = await notifyInterviewUpdate({
-    applicationId: existing.application_id,
+    applicationId: owner.applicationId,
     kind: "CHANGED",
     scheduledAt: slot.iso,
     durationMinutes: slot.duration,
@@ -231,7 +303,7 @@ export async function rescheduleInterview(input: {
   revalidatePath("/candidates");
   return {
     ok: true,
-    interviews: await interviewsFor(supabase, existing.application_id),
+    interviews: await interviewsFor(supabase, owner.applicationId),
     notified: channels.whatsapp === "queued",
     channels,
   };
@@ -253,7 +325,9 @@ export async function setInterviewStatus(input: {
 
   const { data: existing } = await supabase
     .from("interview_schedules")
-    .select("id, application_id, scheduled_at, duration_minutes, meeting_link, status")
+    .select(
+      "id, application_id, scheduled_at, duration_minutes, meeting_link, status, applications(full_name)"
+    )
     .eq("id", input.interviewId)
     .maybeSingle();
 
@@ -274,6 +348,26 @@ export async function setInterviewStatus(input: {
     .eq("id", input.interviewId);
 
   if (error) return { ok: false, error: error.message };
+
+  const owner = candidateOf(existing);
+  const outcome =
+    input.status === "CANCELLED"
+      ? `Cancelled ${owner.fullName}'s panel on ${await slotLabel(existing.scheduled_at)}`
+      : `Recorded ${input.status === "NO_SHOW" ? "a no-show" : "a completed interview"} for ${owner.fullName}'s panel on ${await slotLabel(existing.scheduled_at)}`;
+
+  await recordActivity({
+    area: "interviews",
+    action: "interview_status",
+    entity: "interview",
+    entityId: input.interviewId,
+    summary: outcome,
+    detail: {
+      application_id: existing.application_id,
+      scheduled_at: existing.scheduled_at,
+      from: existing.status,
+      to: input.status,
+    },
+  });
 
   let notified = false;
   let channels: MessagingReport | undefined;

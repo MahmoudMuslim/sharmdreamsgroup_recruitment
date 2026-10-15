@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
 import { SECTORS, isSector } from "@/modules/settings/domain/vocabularies";
 
 export interface JobDraft {
@@ -165,6 +167,26 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   // published opening would stay invisible on the public site until the cache
   // window expired, which reads as "the job I just posted never appeared".
   revalidatePath("/careers");
+
+  await recordActivity({
+    area: "jobs",
+    action: "job_create",
+    entity: "job opening",
+    entityId: data?.id ?? null,
+    summary: `Opened ${columns.status === "PUBLISHED" ? "and published" : "as a draft"} the role “${columns.title}” in ${columns.department} (${columns.location})`,
+    detail: {
+      title: columns.title,
+      department: columns.department,
+      location: columns.location,
+      employment_type: columns.employment_type,
+      status: columns.status,
+      salary:
+        columns.min_salary_usd || columns.max_salary_usd
+          ? `${printableValue(columns.min_salary_usd)}–${printableValue(columns.max_salary_usd)} ${columns.salary_currency}`
+          : "not published",
+    },
+  });
+
   return { ok: true, id: data?.id };
 }
 
@@ -199,6 +221,22 @@ export interface JobStatusResult {
   status?: string;
 }
 
+/** The columns an edit can move, so the trail names what actually changed. */
+const EDITABLE_COLUMNS = [
+  "title",
+  "department",
+  "sector",
+  "location",
+  "employment_type",
+  "description",
+  "requirements",
+  "min_salary_usd",
+  "max_salary_usd",
+  "salary_currency",
+  "status",
+  "tenant_id",
+] as const;
+
 /**
  * Edits an existing opening.
  *
@@ -213,7 +251,9 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
 
   const { data: existing } = await supabase
     .from("job_openings")
-    .select("id, posted_at")
+    .select(
+      "id, posted_at, title, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, status, tenant_id"
+    )
     .eq("id", jobId)
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
@@ -228,6 +268,25 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
 
   const { error } = await supabase.from("job_openings").update(columns).eq("id", jobId);
   if (error) return { ok: false, error: describeWriteError(error) };
+
+  const before = existing as unknown as Record<string, unknown>;
+  const edits = changedFields(before, columns, EDITABLE_COLUMNS);
+  const republished = built.columns.status === "PUBLISHED" && !existing.posted_at;
+
+  if (Object.keys(edits).length > 0 || republished) {
+    await recordActivity({
+      area: "jobs",
+      action: "job_edit",
+      entity: "job opening",
+      entityId: jobId,
+      summary: `Edited the role “${built.columns.title}” — ${
+        Object.keys(edits).length === 0
+          ? "listed it on the careers board for the first time"
+          : changePhrase(edits)
+      }`,
+      detail: { ...edits, ...(republished ? { posted_at: "first publication" } : {}) },
+    });
+  }
 
   revalidatePath("/jobs");
   revalidatePath("/careers");
@@ -252,7 +311,7 @@ export async function setJobStatus(
 
   const { data: existing } = await supabase
     .from("job_openings")
-    .select("id, status, posted_at")
+    .select("id, title, status, posted_at")
     .eq("id", jobId)
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
@@ -265,6 +324,17 @@ export async function setJobStatus(
 
   const { error } = await supabase.from("job_openings").update(patch).eq("id", jobId);
   if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "jobs",
+    action: "job_status",
+    entity: "job opening",
+    entityId: jobId,
+    summary: `Moved “${existing.title}” from ${existing.status} to ${status}${
+      !existing.posted_at && status === "PUBLISHED" ? ", listing it on the careers board" : ""
+    }`,
+    detail: { from: existing.status, to: status },
+  });
 
   revalidatePath("/jobs");
   revalidatePath("/careers");
@@ -286,7 +356,7 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
 
   const { data: existing } = await supabase
     .from("job_openings")
-    .select("id, title")
+    .select("id, title, department, location, status")
     .eq("id", jobId)
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
@@ -308,6 +378,20 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
 
   const { error } = await supabase.from("job_openings").delete().eq("id", jobId);
   if (error) return { ok: false, error: error.message };
+
+  await recordActivity({
+    area: "jobs",
+    action: "job_delete",
+    entity: "job opening",
+    entityId: jobId,
+    summary: `Deleted the opening “${existing.title}” — it had taken no applications, so no candidate record went with it`,
+    detail: {
+      title: existing.title,
+      department: existing.department,
+      location: existing.location,
+      status_at_delete: existing.status,
+    },
+  });
 
   revalidatePath("/jobs");
   revalidatePath("/careers");
