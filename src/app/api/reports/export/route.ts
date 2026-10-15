@@ -1,0 +1,75 @@
+/**
+ * The one door a report leaves the building through.
+ *
+ * A page can hide a button; only a route can refuse a file. So every download
+ * — from the Analytics page or the Reports page, in any of the three formats —
+ * comes here, re-reads the data from the database and re-checks
+ * `analytics.export` before a single byte is rendered. Handing the browser a
+ * copy of the report and letting it build the file would make the grant
+ * decorative.
+ */
+
+import { buildExport, EXPORT_FORMATS, type ExportFormat } from "@/modules/analytics/domain/exportDocument";
+import { ANALYTICS_WINDOWS, type AnalyticsWindow } from "@/modules/analytics/domain/report";
+import { buildReportDocument } from "@/modules/analytics/infrastructure/reportReader";
+import { REPORTS, type ReportId } from "@/modules/analytics/domain/documents";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { getSessionUser, isStaff } from "@/lib/auth/session";
+
+/** A download is a file, not a page — `requireStaff()` would redirect instead of refusing. */
+function json(message: string, status: number): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+}
+
+/** Query strings are attacker-controlled, so every parameter is coerced or refused. */
+function safeReport(value: string | null): "analytics" | ReportId | null {
+  if (value === "analytics") return "analytics";
+  return REPORTS.some((report) => report.id === value) ? (value as ReportId) : null;
+}
+
+function safeWindow(value: string | null): AnalyticsWindow | null {
+  return ANALYTICS_WINDOWS.some((option) => option.key === value)
+    ? (value as AnalyticsWindow)
+    : null;
+}
+
+function safeFormat(value: string | null): ExportFormat | null {
+  return EXPORT_FORMATS.some((format) => format.key === value) ? (value as ExportFormat) : null;
+}
+
+export async function GET(request: Request): Promise<Response> {
+  const user = await getSessionUser();
+  if (!user || !isStaff(user.role)) {
+    return json("Sign in as a staff member to download a report.", 401);
+  }
+
+  if (!(await hasPermissionForUser("analytics.export"))) {
+    return json("Downloading a report needs the Export analytics permission.", 403);
+  }
+
+  const params = new URL(request.url).searchParams;
+  const report = safeReport(params.get("report"));
+  const window = safeWindow(params.get("window"));
+  const format = safeFormat(params.get("format"));
+
+  if (!report || !window || !format) {
+    return json("A report, a window and a format are all required.", 400);
+  }
+
+  const built = await buildReportDocument(report, window, user.fullName);
+  if ("error" in built) return json(built.error, 500);
+
+  const file = await buildExport(built.document, format);
+  return new Response(file.bytes as BodyInit, {
+    headers: {
+      "Content-Type": file.contentType,
+      "Content-Disposition": `attachment; filename="${file.fileName}"`,
+      "Cache-Control": "no-store",
+      /** A report is candidate PII: keep it out of any shared cache on the way out. */
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}

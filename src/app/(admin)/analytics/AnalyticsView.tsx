@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import {
   AlertTriangle,
   CalendarDays,
@@ -12,7 +13,7 @@ import {
   Send,
   UserRoundSearch,
 } from "lucide-react";
-import { exportAnalyticsReport, getAnalyticsReport } from "./actions";
+import { getAnalyticsReport } from "./actions";
 import {
   ANALYTICS_WINDOWS,
   type AnalyticsReport,
@@ -79,14 +80,16 @@ function Figure({ label, value, hint }: { label: string; value: string; hint?: s
 
 export function AnalyticsView({
   report: initial,
+  formats,
   canExport,
 }: {
   report: AnalyticsReport;
+  /** Rendered from `EXPORT_FORMATS` on the server, so this client never imports it. */
+  formats: { key: string; label: string; hint: string }[];
   canExport: boolean;
 }) {
   const [report, setReport] = useState(initial);
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function load(window: AnalyticsWindow) {
@@ -102,27 +105,7 @@ export function AnalyticsView({
     });
   }
 
-  async function download() {
-    setError(null);
-    setExporting(true);
-    try {
-      const result = await exportAnalyticsReport(report.window);
-      if (!result.ok || !result.csv) {
-        setError(result.error ?? "The export could not be built.");
-        return;
-      }
-      const url = URL.createObjectURL(new Blob([result.csv], { type: "text/csv;charset=utf-8" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = result.fileName ?? "analytics.csv";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } finally {
-      setExporting(false);
-    }
-  }
+  const query = `report=analytics&window=${encodeURIComponent(report.window)}`;
 
   const { assessments, sourcing, messages, interviews } = report;
 
@@ -156,19 +139,19 @@ export function AnalyticsView({
         </div>
 
         {canExport ? (
-          <button
-            type="button"
-            onClick={download}
-            disabled={exporting}
-            className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-3.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:opacity-60"
-          >
-            {exporting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <Download className="h-3.5 w-3.5" aria-hidden />
-            )}
-            Download this window as CSV
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {formats.map((format) => (
+              <a
+                key={format.key}
+                href={`/api/reports/export?${query}&format=${encodeURIComponent(format.key)}`}
+                title={`${format.hint} — the figures are re-read from the database when you click`}
+                className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-3.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden />
+                {`${format.label} .${format.key}`}
+              </a>
+            ))}
+          </div>
         ) : (
           <p className="text-[11px] text-brand-ink/45">
             Downloading needs the
@@ -177,6 +160,17 @@ export function AnalyticsView({
           </p>
         )}
       </div>
+
+      {canExport && (
+        <p className="text-[11px] leading-relaxed text-brand-ink/45">
+          A download re-reads the window from the database rather than printing what is on this screen,
+          and carries these notes into the file. Row-level lists are on the{" "}
+          <Link className="font-semibold text-brand-gold-dark underline" href="/reports">
+            Reports
+          </Link>{" "}
+          page.
+        </p>
+      )}
 
       {error && (
         <p

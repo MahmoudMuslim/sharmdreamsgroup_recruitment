@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { getAnalyticsReport } from "./actions";
 import { AnalyticsView } from "./AnalyticsView";
 import { requireStaff } from "@/lib/auth/session";
+import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -49,7 +50,7 @@ export default async function AnalyticsPage() {
           />
         </Card>
       ) : (
-        <AnalyticsView report={result.report} canExport={canExport} />
+        <AnalyticsView report={result.report} formats={EXPORT_FORMATS} canExport={canExport} />
       )}
     </AdminShell>
   );

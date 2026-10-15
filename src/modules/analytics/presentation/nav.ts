@@ -3,6 +3,7 @@ import {
   BriefcaseBusiness,
   CalendarDays,
   ClipboardCheck,
+  FileSpreadsheet,
   FolderOpen,
   LayoutDashboard,
   ListChecks,
@@ -32,6 +33,7 @@ export interface NavItem {
 export const NAV: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics" },
   { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "Assessment, sourcing & panel reports" },
+  { href: "/reports", label: "Reports", icon: FileSpreadsheet, hint: "Row-level lists, CSV / Excel / PDF" },
   { href: "/candidates", label: "Candidates", icon: Users, hint: "Pipeline & AI scores" },
   { href: "/sourcing", label: "Sourcing", icon: UserRoundSearch, hint: "Outbound talent pool" },
   { href: "/assessments", label: "Assessments", icon: ClipboardCheck, hint: "Test suite builder" },
