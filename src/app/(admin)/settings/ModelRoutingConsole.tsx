@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Loader2,
   Maximize,
   RefreshCw,
+  Route,
   Sparkles,
   Tag,
   TriangleAlert,
@@ -130,6 +131,70 @@ function DetailStat({ icon: Icon, label, value }: { icon: LucideIcon; label: str
 }
 
 /**
+ * One catalogue tile — enough to choose from at a glance, and it opens the
+ * detail modal, which is where the routing decision is actually made.
+ *
+ * Memoised because one state owner renders both tabs: without it, typing a
+ * temperature re-created every visible tile.
+ */
+const CatalogueCard = memo(function CatalogueCard({
+  model,
+  onOpen,
+}: {
+  model: ProviderModel;
+  onOpen: (model: ProviderModel) => void;
+}) {
+  return (
+    <button
+      onClick={() => onOpen(model)}
+      className="flex items-start gap-3 rounded-xl border border-brand-line bg-white p-3.5 text-left transition hover:border-brand-gold/50 hover:shadow-soft"
+    >
+      <div className="mt-0.5 shrink-0">
+        {model.isFree ? (
+          <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden />
+        ) : (
+          <DollarSign className="h-4 w-4 text-amber-600" aria-hidden />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-bold text-brand-ink">{model.name}</p>
+          {model.isFree && (
+            <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700">
+              Free
+            </span>
+          )}
+          {!model.routable && (
+            <span className="shrink-0 rounded bg-brand-sand px-1.5 py-0.5 text-[9px] font-bold uppercase text-brand-ink/55">
+              Not routable
+            </span>
+          )}
+          {model.enabled === false && (
+            <span className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-700">
+              Off for this account
+            </span>
+          )}
+        </div>
+        <p className="truncate text-xs font-mono text-brand-ink/50">{model.modelId}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {costTierBadge(getCostTier(model.promptPrice, model.isFree))}
+          {model.promptPrice !== null && (
+            <span className="text-[10px] font-semibold text-brand-ink/55">
+              {priceLabel(model.promptPrice)} in
+            </span>
+          )}
+        </div>
+        {model.detail && (
+          <p className="mt-1.5 truncate text-[11px] text-brand-ink/50" title={model.detail}>
+            {model.detail}
+          </p>
+        )}
+      </div>
+    </button>
+  );
+});
+
+/**
  * Routes the catalogue model open in the detail modal to a capability.
  * Assignments save immediately — this is the quick path, not a draft.
  */
@@ -205,6 +270,10 @@ function QuickAssign({
  * Model ids are not secret, so they round-trip normally. Changes take effect on
  * the next AI call — the runtime resolver reads this table before falling back
  * to the compiled-in env defaults.
+ *
+ * Three tabs, because the three things this console does (decide which model
+ * serves a task, browse what is available, check that a provider answers) have
+ * nothing in common on screen and used to be one endless scroll.
  */
 export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   const [rows, setRows] = useState<ModelRow[]>([]);
@@ -217,12 +286,19 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   const [providerTesting, setProviderTesting] = useState(false);
   const [catalogueLoading, setCatalogueLoading] = useState(false);
 
+  const [tab, setTab] = useState("routing");
+
   // Global model search across the entire catalog
   const [globalSearch, setGlobalSearch] = useState("");
 
-  // Selected provider + cost tier filters for the catalog
-  const [selectedProvider, setSelectedProvider] = useState<string>("all");
+  /**
+   * Price tier stays a dropdown because it filters; the provider is a tab strip
+   * because browsing one vendor's models at a time is what the list is for.
+   */
   const [selectedCostTier, setSelectedCostTier] = useState<string>("all");
+  const [catalogueProvider, setCatalogueProvider] = useState("all");
+  /** Tiles the catalogue panel is allowed to put in the DOM. See `renderedSections`. */
+  const [catalogueBudget, setCatalogueBudget] = useState(60);
 
   // Expanded model detail
   const [selectedModel, setSelectedModel] = useState<ProviderModel | null>(null);
@@ -281,12 +357,15 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     [groupedModels]
   );
 
-  // Global filtered catalog for the modal
-  const filteredCatalog = useMemo(() => {
+  /**
+   * What the search box and the price tier leave standing.
+   *
+   * Every provider keeps its tab, counted against this list, so a live search
+   * never rearranges or drops the tab under the cursor — a provider that falls
+   * to zero shows as zero and its panel says so.
+   */
+  const searchedCatalog = useMemo(() => {
     let models = groupedModels.flatMap((g) => g.models);
-    if (selectedProvider !== "all") {
-      models = models.filter((m) => m.provider === selectedProvider);
-    }
     if (selectedCostTier !== "all") {
       models = models.filter((m) => getCostTier(m.promptPrice, m.isFree) === selectedCostTier);
     }
@@ -300,7 +379,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       );
     }
     return models;
-  }, [groupedModels, selectedProvider, selectedCostTier, globalSearch]);
+  }, [groupedModels, selectedCostTier, globalSearch]);
 
   const providersList = useMemo(() => {
     const byId = new Map<string, string>();
@@ -309,9 +388,108 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [groupedModels, catalogue]);
 
+  const providerNames = useMemo(() => new Map(providersList), [providersList]);
+
+  const catalogueTabs = useMemo(
+    () => [
+      { key: "all", label: "All providers", models: searchedCatalog },
+      ...providersList.map(([id, name]) => ({
+        key: id,
+        label: name,
+        models: searchedCatalog.filter((m) => m.provider === id),
+      })),
+    ],
+    [providersList, searchedCatalog]
+  );
+
+  /** The tab the strip is on. A provider can leave the catalogue on a refresh. */
+  const activeCatalogue =
+    catalogueTabs.find((option) => option.key === catalogueProvider) ?? catalogueTabs[0];
+
+  /** The models on the open catalogue tab, grouped by provider and then price. */
+  const catalogueSections = useMemo(() => {
+    const byProvider = new Map<string, ProviderModel[]>();
+    for (const model of activeCatalogue.models) {
+      const list = byProvider.get(model.provider);
+      if (list) list.push(model);
+      else byProvider.set(model.provider, [model]);
+    }
+    return [...byProvider.entries()]
+      .sort((a, b) =>
+        (providerNames.get(a[0]) ?? a[0]).localeCompare(providerNames.get(b[0]) ?? b[0])
+      )
+      .map(([provider, models]) => ({
+        provider,
+        providerName: providerNames.get(provider) ?? provider,
+        models,
+        tiers: COST_TIERS.map((tier) => ({
+          tier,
+          models: models.filter((m) => getCostTier(m.promptPrice, m.isFree) === tier),
+        })).filter((group) => group.models.length > 0),
+      }));
+  }, [activeCatalogue, providerNames]);
+
+  /**
+   * The part of the catalogue that goes into the DOM.
+   *
+   * The full list is 700-odd tiles, and rendering all of them at once holds the
+   * main thread for tens of seconds — long enough that the tab looks crashed.
+   * So a page is drawn at a time and `Show more` adds another, which keeps the
+   * counts above honest: they are the matches, not the tiles on screen.
+   */
+  const renderedSections = useMemo(() => {
+    let left = catalogueBudget;
+    return catalogueSections
+      .map((section) => ({
+        ...section,
+        tiers: section.tiers
+          .map((group) => {
+            const take = group.models.slice(0, Math.max(0, left));
+            left -= take.length;
+            return { ...group, models: take, total: group.models.length };
+          })
+          .filter((group) => group.models.length > 0),
+      }))
+      .filter((section) => section.tiers.length > 0);
+  }, [catalogueSections, catalogueBudget]);
+
+  const drawnTiles = renderedSections.reduce(
+    (n, section) => n + section.tiers.reduce((m, group) => m + group.models.length, 0),
+    0
+  );
+  const hiddenTiles = activeCatalogue.models.length - drawnTiles;
+
   const catalogueIds = useMemo(
     () => new Set(groupedModels.flatMap((g) => g.models.map((m) => m.modelId))),
     [groupedModels]
+  );
+
+  /**
+   * One option list, shared by the primary and fallback picker of every card.
+   *
+   * Seven tasks × two pickers × ~700 routable models is 10,000 option nodes, and
+   * they were re-created on every keystroke in any card — the page stopped
+   * responding while rendering them. Holding the elements in a memo means React
+   * sees the same references and skips the pickers altogether.
+   */
+  const routableOptions = useMemo(
+    () =>
+      routableGroups.map((group) => (
+        <optgroup
+          key={`${group.provider}-${group.costTier}`}
+          label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
+        >
+          {group.models.map((model) => (
+            <option key={model.modelId} value={model.modelId}>
+              {model.name}
+              {" · "}
+              {model.modelId}
+              {model.isFree && " — free"}
+            </option>
+          ))}
+        </optgroup>
+      )),
+    [routableGroups]
   );
 
   // Load data on mount. Routing rows are keyed off AI_CAPABILITIES so a
@@ -470,6 +648,14 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
 
   const totalProviders = providers.length;
   const workingProviders = providers.filter((p) => p.ok).length;
+  const catalogueCount = groupedModels.reduce((n, g) => n + g.models.length, 0);
+  const unsavedCount = rows.filter((r) => saved[r.capability] !== snapshot(r)).length;
+
+  const tabs: { key: string; label: string; icon: LucideIcon; count: number }[] = [
+    { key: "routing", label: "Task routing", icon: Route, count: rows.length },
+    { key: "catalogue", label: "Model catalogue", icon: Sparkles, count: catalogueCount },
+    { key: "providers", label: "Provider health", icon: Activity, count: totalProviders },
+  ];
 
   if (loading) {
     return (
@@ -500,8 +686,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               AI model routing
             </h2>
             <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
-              Configure which model handles each task and how providers fail over. Choose from our
-              live catalogue, filter by provider and cost, and search by name.
+              Route each AI task to a model, browse the live catalogue by provider and price, and
+              check that the configured providers answer.
             </p>
           </div>
 
@@ -512,7 +698,18 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                 Offline list
               </span>
             )}
-            <Button size="sm" variant="outline" onClick={() => void loadCatalogue()} disabled={catalogueLoading}>
+            {/* Both actions open the tab that shows their result — a refresh whose
+                new models are invisible, or a probe whose answer is off-screen,
+                reads like a button that does nothing. */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setTab("catalogue");
+                void loadCatalogue();
+              }}
+              disabled={catalogueLoading}
+            >
               {catalogueLoading ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
@@ -520,7 +717,15 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               )}
               Refresh catalogue
             </Button>
-            <Button size="sm" variant="outline" onClick={() => void probeProviders()} disabled={providerTesting}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setTab("providers");
+                void probeProviders();
+              }}
+              disabled={providerTesting}
+            >
               {providerTesting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
@@ -532,8 +737,40 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         </div>
       </div>
 
-      {/* ---------------- Provider health ---------------- */}
-      <section className="rounded-2xl border border-brand-line bg-white p-5">
+      {/* ---------------- Tabs ---------------- */}
+      <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="AI model console">
+        {tabs.map((option) => (
+          <button
+            key={option.key}
+            type="button"
+            role="tab"
+            id={`models-tab-${option.key}`}
+            aria-selected={tab === option.key}
+            aria-controls={`models-panel-${option.key}`}
+            onClick={() => setTab(option.key)}
+            className={cn(
+              "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
+              tab === option.key
+                ? "bg-brand-ink text-brand-cream shadow-soft"
+                : "border border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
+            )}
+          >
+            <option.icon className="h-4 w-4" aria-hidden />
+            {`${option.label} (${option.count})`}
+          </button>
+        ))}
+      </div>
+
+      {/* ---------------- Tab: provider health ---------------- */}
+      <section
+        role="tabpanel"
+        id="models-panel-providers"
+        aria-labelledby="models-tab-providers"
+        className={cn(
+          "rounded-2xl border border-brand-line bg-white p-5",
+          tab !== "providers" && "hidden"
+        )}
+      >
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h3 className="flex items-center gap-2 font-display text-base font-bold">
@@ -563,8 +800,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               <Cpu className="h-8 w-8 text-brand-gold/60" aria-hidden />
               <p className="mt-3 text-sm font-medium text-brand-ink">No provider probes yet</p>
               <p className="mt-1 max-w-md text-sm text-brand-ink/55">
-                Add keys in the <strong>API keys</strong> tab, then run the live checks to confirm
-                each provider responds.
+                Add keys under <strong>API keys</strong> in the settings dock, then run the live
+                checks to confirm each provider responds.
               </p>
               <Button
                 size="sm"
@@ -604,15 +841,23 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         )}
       </section>
 
-      {/* ---------------- Model selector ---------------- */}
-      <section className="rounded-2xl border border-brand-line bg-white p-5">
+      {/* ---------------- Tab: model catalogue ---------------- */}
+      <section
+        role="tabpanel"
+        id="models-panel-catalogue"
+        aria-labelledby="models-tab-catalogue"
+        className={cn(
+          "rounded-2xl border border-brand-line bg-white p-5",
+          tab !== "catalogue" && "hidden"
+        )}
+      >
         <header className="mb-4">
           <h3 className="flex items-center gap-2 font-display text-base font-bold">
             <Sparkles className="h-4 w-4 text-brand-gold-dark" aria-hidden />
             Model catalogue
           </h3>
           <p className="mt-1 text-sm text-brand-ink/55">
-            {filteredCatalog.length.toLocaleString()} models available · browse, filter, and select for each capability below.
+            {`${activeCatalogue.models.length.toLocaleString()} of ${catalogueCount.toLocaleString()} models match — open one to read its costs and route it to a task.`}
           </p>
 
           {catalogue && (
@@ -645,7 +890,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           )}
         </header>
 
-        {/* Search + filters */}
+        {/* Search + price tier. The provider is picked by the tab strip below. */}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
@@ -659,19 +904,6 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           </div>
 
           <select
-            value={selectedProvider}
-            onChange={(e) => setSelectedProvider(e.target.value)}
-            className="rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:outline-none"
-          >
-            <option value="all">All providers</option>
-            {providersList.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-
-          <select
             value={selectedCostTier}
             onChange={(e) => setSelectedCostTier(e.target.value)}
             className="rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:outline-none"
@@ -683,70 +915,112 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               </option>
             ))}
           </select>
+
+          {(globalSearch.trim() !== "" || selectedCostTier !== "all") && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setGlobalSearch("");
+                setSelectedCostTier("all");
+              }}
+            >
+              Clear filters
+            </Button>
+          )}
         </div>
 
-        {/* Catalog grid */}
-        {filteredCatalog.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-brand-line border-dashed bg-brand-cream/30 px-4 py-12 text-center">
-            <Sparkles className="h-8 w-8 text-brand-ink/30" aria-hidden />
-            <p className="mt-3 text-sm font-medium text-brand-ink">No models match your filters</p>
-            <p className="mt-1 text-sm text-brand-ink/55">Try clearing the search or adjusting the filters.</p>
-          </div>
-        ) : (
-          <div className="grid max-h-96 grid-cols-1 gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredCatalog.map((model) => (
-              <button
-                // Providers overlap: OpenCode proxies Google's ids, so the id alone
-                // is not unique across the flat, filtered list.
-                key={`${model.provider}:${model.modelId}`}
-                onClick={() => setSelectedModel(model)}
-                className="flex items-start gap-3 rounded-xl border border-brand-line bg-white p-3.5 text-left transition hover:border-brand-gold/50 hover:shadow-soft"
-              >
-                <div className="mt-0.5 shrink-0">
-                  {model.isFree ? (
-                    <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden />
-                  ) : (
-                    <DollarSign className="h-4 w-4 text-amber-600" aria-hidden />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-bold text-brand-ink">{model.name}</p>
-                    {model.isFree && (
-                      <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700">
-                        Free
+        <div className="-mx-1 mb-4 flex flex-wrap gap-2 px-1" role="tablist" aria-label="Catalogue providers">
+          {catalogueTabs.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              role="tab"
+              id={`catalogue-tab-${option.key}`}
+              aria-selected={activeCatalogue.key === option.key}
+              aria-controls={`catalogue-panel-${option.key}`}
+              onClick={() => setCatalogueProvider(option.key)}
+              className={cn(
+                "rounded-xl px-3.5 py-1.5 text-xs font-semibold transition",
+                activeCatalogue.key === option.key
+                  ? "bg-brand-ink text-brand-cream shadow-soft"
+                  : "border border-brand-line bg-white text-brand-ink/65 hover:bg-brand-sand"
+              )}
+            >
+              {`${option.label} (${option.models.length.toLocaleString()})`}
+            </button>
+          ))}
+        </div>
+
+        <div
+          role="tabpanel"
+          id={`catalogue-panel-${activeCatalogue.key}`}
+          aria-labelledby={`catalogue-tab-${activeCatalogue.key}`}
+          className="space-y-5"
+        >
+          {catalogueSections.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-xl border border-brand-line border-dashed bg-brand-cream/30 px-4 py-12 text-center">
+              <Sparkles className="h-8 w-8 text-brand-ink/30" aria-hidden />
+              <p className="mt-3 text-sm font-medium text-brand-ink">
+                {`${activeCatalogue.label} has no models matching these filters`}
+              </p>
+              <p className="mt-1 text-sm text-brand-ink/55">
+                Clear the search or set the price tier back to “All price tiers”.
+              </p>
+            </div>
+          ) : (
+            renderedSections.map((section) => (
+              <div key={section.provider} className="space-y-4">
+                {catalogueProvider === "all" && (
+                  <h4 className="flex flex-wrap items-center gap-2 font-display text-sm font-bold">
+                    <Cpu className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
+                    {section.providerName}
+                    <span className="text-[11px] font-semibold text-brand-ink/45">
+                      {`${section.models.length.toLocaleString()} models`}
+                    </span>
+                  </h4>
+                )}
+
+                {section.tiers.map((tierGroup) => (
+                  <div key={`${section.provider}-${tierGroup.tier}`} className="space-y-2.5">
+                    <p className="flex items-center gap-2">
+                      {costTierBadge(tierGroup.tier)}
+                      <span className="text-[11px] font-semibold text-brand-ink/45">
+                        {`${tierGroup.total.toLocaleString()} models`}
                       </span>
-                    )}
-                    {!model.routable && (
-                      <span className="shrink-0 rounded bg-brand-sand px-1.5 py-0.5 text-[9px] font-bold uppercase text-brand-ink/55">
-                        Not routable
-                      </span>
-                    )}
-                    {model.enabled === false && (
-                      <span className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-700">
-                        Off for this account
-                      </span>
-                    )}
-                  </div>
-                  <p className="truncate text-xs font-mono text-brand-ink/50">{model.modelId}</p>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {costTierBadge(getCostTier(model.promptPrice, model.isFree))}
-                    {model.promptPrice !== null && (
-                      <span className="text-[10px] font-semibold text-brand-ink/55">
-                        {priceLabel(model.promptPrice)} in
-                      </span>
-                    )}
-                  </div>
-                  {model.detail && (
-                    <p className="mt-1.5 truncate text-[11px] text-brand-ink/50" title={model.detail}>
-                      {model.detail}
                     </p>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {tierGroup.models.map((model) => (
+                        <CatalogueCard
+                          /* Providers overlap: OpenCode proxies Google's ids, so the
+                             id alone is not unique across the flat catalogue. */
+                          key={`${model.provider}:${model.modelId}`}
+                          model={model}
+                          onOpen={setSelectedModel}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+
+          {hiddenTiles > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-line bg-brand-cream/40 px-4 py-3">
+              <p className="text-xs text-brand-ink/55">
+                {`${drawnTiles.toLocaleString()} of ${activeCatalogue.models.length.toLocaleString()} matches are on the page. The rest stay out until you ask — several hundred tiles at once holds up the tab.`}
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setCatalogueBudget((current) => current + 60)}
+              >
+                {`Show ${Math.min(60, hiddenTiles).toLocaleString()} more`}
+              </Button>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* ---------------- Model detail modal ---------------- */}
@@ -847,8 +1121,38 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
         </div>
       )}
 
-      {/* ---------------- Per-capability routing ---------------- */}
-      <div className="space-y-4">
+      {/* ---------------- Tab: task routing ---------------- */}
+      <div
+        role="tabpanel"
+        id="models-panel-routing"
+        aria-labelledby="models-tab-routing"
+        className={cn("space-y-4", tab !== "routing" && "hidden")}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-line bg-white px-4 py-3">
+          <p className="text-sm text-brand-ink/60">
+            One card per AI task: the <strong>primary</strong> model answers every request and the{" "}
+            <strong>fallback</strong> takes it over when the primary fails. Temperature and the token
+            cap are stored with the row, and the gateway reads them on the next call.
+          </p>
+          {unsavedCount > 0 ? (
+            <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-800">
+              {`${unsavedCount} unsaved`}
+            </span>
+          ) : (
+            <span className="shrink-0 rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-ink/55">
+              Everything saved
+            </span>
+          )}
+        </div>
+
+        {!editable && (
+          <p className="rounded-2xl border border-brand-line bg-white px-4 py-3 text-xs text-brand-ink/60">
+            You can read every routing row; saving needs the
+            <code className="mx-1 rounded bg-brand-sand px-1 py-0.5 font-mono">settings.manage_platform</code>
+            permission.
+          </p>
+        )}
+
         {rows.map((row) => {
           const definition = AI_CAPABILITIES.find((c) => c.id === row.capability);
           const dirty = saved[row.capability] !== snapshot(row);
@@ -927,21 +1231,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       {row.primaryModel && !catalogueIds.has(row.primaryModel) && (
                         <option value={row.primaryModel}>{row.primaryModel} (not in catalogue)</option>
                       )}
-                      {routableGroups.map((group) => (
-                        <optgroup
-                          key={`${group.provider}-${group.costTier}`}
-                          label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
-                        >
-                          {group.models.map((model) => (
-                            <option key={model.modelId} value={model.modelId}>
-                              {model.name}
-                              {" · "}
-                              {model.modelId}
-                              {model.isFree && " — free"}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
+                      {routableOptions}
                     </Select>
                   </div>
                 </Field>
@@ -964,21 +1254,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                       {row.fallbackModel && !catalogueIds.has(row.fallbackModel) && (
                         <option value={row.fallbackModel}>{row.fallbackModel} (not in catalogue)</option>
                       )}
-                      {routableGroups.map((group) => (
-                        <optgroup
-                          key={`${group.provider}-${group.costTier}`}
-                          label={`${group.providerName} · ${costTierLabel(group.costTier)} (${group.models.length})`}
-                        >
-                          {group.models.map((model) => (
-                            <option key={model.modelId} value={model.modelId}>
-                              {model.name}
-                              {" · "}
-                              {model.modelId}
-                              {model.isFree && " — free"}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
+                      {routableOptions}
                     </Select>
                   </div>
                 </Field>
@@ -1028,6 +1304,15 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                   success={row.status === "saved" ? "Saved — applies to the next request." : null}
                 />
                 <div className="flex shrink-0 gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setTab("catalogue")}
+                    title="Open the model catalogue to choose one"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                    Browse models
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
