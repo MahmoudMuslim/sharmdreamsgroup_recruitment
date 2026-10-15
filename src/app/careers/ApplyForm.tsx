@@ -6,10 +6,18 @@ import {
   CheckCircle2,
   Loader2,
   Paperclip,
+  Sparkles,
   Upload,
   X,
 } from "lucide-react";
 import { submitApplication, type ApplyResult } from "./actions";
+import {
+  CV_MAX_BYTES,
+  CV_TYPE_ERROR,
+  cvSizeError,
+  isAcceptedCvType,
+} from "@/modules/careers/cv-rules";
+import type { CvDetails } from "@/modules/careers/cv-details";
 import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
 
 /**
@@ -18,6 +26,12 @@ import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
  * Two submission paths, because not every candidate has a PDF handy:
  *   • attach a file, uploaded to a private bucket readable only by staff;
  *   • or paste the CV text, which is also what AI screening reads.
+ *
+ * An attached file also offers to fill the name, email and phone fields, because
+ * the CV prints all three and typing them back out is the slowest part of
+ * applying. That read only writes empty fields, and the fields stay editable, so
+ * the candidate is still the one confirming their own address — see
+ * /api/careers/prefill.
  *
  * Above that sit the viability questions a recruiter authors for this role — no
  * points, just requirements the applicant answers about themselves. They are
@@ -33,13 +47,13 @@ import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
  * rule they just broke, and the questions would stop being requirements.
  */
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
-const ALLOWED_TYPES = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-];
+const MAX_FILE_BYTES = CV_MAX_BYTES;
+
+/** "name, email and phone" — the list a fill report is written from. */
+function join(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
 
 export function ApplyForm({
   jobId,
@@ -64,6 +78,11 @@ export function ApplyForm({
   const [questionsError, setQuestionsError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [questionsAttempt, setQuestionsAttempt] = useState(0);
+
+  const [filling, setFilling] = useState(false);
+  const [fillNote, setFillNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  /** Which contact fields the candidate has typed in themselves. */
+  const touched = useRef(new Set<"name" | "email" | "phone">());
 
   /* ------------------------------------------------------ viability questions */
 
@@ -113,17 +132,102 @@ export function ApplyForm({
 
   function pickFile(selected: File | null) {
     setError(null);
+    setFillNote(null);
     if (!selected) return;
 
-    if (!ALLOWED_TYPES.includes(selected.type)) {
-      setError("Attach a PDF, Word document or plain-text CV.");
+    if (!isAcceptedCvType(selected.type)) {
+      setError(CV_TYPE_ERROR);
       return;
     }
     if (selected.size > MAX_FILE_BYTES) {
-      setError("That file is larger than 5 MB. Please attach a smaller CV.");
+      setError(`${cvSizeError()} Please attach a smaller CV.`);
       return;
     }
     setFile(selected);
+  }
+
+  /**
+   * Ask the same reader the screening step uses for the three fields the CV
+   * already prints. Fields the candidate has typed are never written over: what
+   * they chose to write beats anything inferred from their file, and the rest
+   * stays editable for them to check.
+   */
+  async function fillFromCv() {
+    if (!file) return;
+    setFilling(true);
+    setFillNote(null);
+
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      body.append("jobId", jobId);
+
+      const response = await fetch("/api/careers/prefill", { method: "POST", body });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: unknown; details?: Partial<CvDetails> }
+        | null;
+
+      if (!response.ok) {
+        setFillNote({
+          tone: "bad",
+          text:
+            typeof payload?.error === "string"
+              ? payload.error
+              : "We could not read your CV just now. Fill the fields yourself.",
+        });
+        return;
+      }
+
+      const details = payload?.details ?? {};
+      const fields: {
+        key: "name" | "email" | "phone";
+        label: string;
+        value: string | null | undefined;
+        write: (next: string) => void;
+      }[] = [
+        { key: "name", label: "name", value: details.fullName, write: setFullName },
+        { key: "email", label: "email", value: details.email, write: setEmail },
+        { key: "phone", label: "phone number", value: details.phone, write: setPhone },
+      ];
+
+      const written: string[] = [];
+      const kept: string[] = [];
+      const absent: string[] = [];
+
+      for (const field of fields) {
+        // Read at the moment the answer lands, not when the request started: a
+        // candidate who typed while the model was thinking keeps what they typed.
+        if (touched.current.has(field.key)) {
+          kept.push(field.label);
+          continue;
+        }
+        if (!field.value) {
+          absent.push(field.label);
+          continue;
+        }
+        field.write(field.value);
+        written.push(field.label);
+      }
+
+      const parts: string[] = [];
+      if (written.length) parts.push(`Filled in your ${join(written)}.`);
+      if (kept.length) parts.push(`You had already typed your ${join(kept)}, so that stayed as you wrote it.`);
+      if (absent.length) parts.push(`Your CV did not state your ${join(absent)}.`);
+
+      setFillNote({
+        tone: written.length ? "ok" : "bad",
+        text: parts.length
+          ? parts.join(" ")
+          : "Nothing in that file looked like your contact details. Fill the fields yourself.",
+      });
+    } catch {
+      setFillNote({
+        tone: "bad",
+        text: "We could not reach the detail reader. Fill the fields yourself — your CV is still reviewed.",
+      });
+    } finally {
+      setFilling(false);
+    }
   }
 
   async function onSubmit(event: React.FormEvent) {
@@ -221,7 +325,10 @@ export function ApplyForm({
             required
             autoComplete="name"
             value={fullName}
-            onChange={(e) => setFullName(e.target.value)}
+            onChange={(e) => {
+              touched.current.add("name");
+              setFullName(e.target.value);
+            }}
             className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
             placeholder="Youssef El-Sayed"
           />
@@ -237,7 +344,10 @@ export function ApplyForm({
             required
             autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              touched.current.add("email");
+              setEmail(e.target.value);
+            }}
             className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
             placeholder="you@example.com"
           />
@@ -252,7 +362,10 @@ export function ApplyForm({
             type="tel"
             autoComplete="tel"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) => {
+              touched.current.add("phone");
+              setPhone(e.target.value);
+            }}
             className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
             placeholder="+20 100 000 0000"
           />
@@ -363,6 +476,7 @@ export function ApplyForm({
               type="button"
               onClick={() => {
                 setFile(null);
+                setFillNote(null);
                 if (fileInput.current) fileInput.current.value = "";
               }}
               aria-label="Remove attached CV"
@@ -386,6 +500,42 @@ export function ApplyForm({
               onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
             />
           </label>
+        )}
+
+        {file && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={fillFromCv}
+              disabled={filling}
+              className="inline-flex items-center gap-2 rounded-xl border border-brand-gold/60 bg-brand-sand/60 px-3.5 py-2 text-xs font-bold text-brand-ink transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {filling ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
+              )}
+              {filling
+                ? "Reading your CV…"
+                : "Fill my name, email and phone from this CV"}
+            </button>
+
+            {fillNote && (
+              <p
+                role={fillNote.tone === "bad" ? "alert" : "status"}
+                className={`mt-2 text-[11px] leading-relaxed ${
+                  fillNote.tone === "ok" ? "text-emerald-800" : "text-amber-800"
+                }`}
+              >
+                {fillNote.text}
+              </p>
+            )}
+
+            <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">
+              Your CV text is read to fill the three fields above. Nothing is submitted until
+              you press the button below, and every field stays editable — please check them.
+            </p>
+          </div>
         )}
       </div>
 

@@ -1,4 +1,10 @@
 import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import {
+  CV_MAX_BYTES,
+  CV_TYPE_ERROR,
+  cvSizeError,
+  isAcceptedCvType,
+} from "@/modules/careers/cv-rules";
 
 /**
  * Public CV upload endpoint.
@@ -10,14 +16,6 @@ import { getSupabaseAnonClient } from "@/lib/supabase/anon";
  * entirely, and orphans are invisible to staff until an application references
  * them.
  */
-
-const MAX_BYTES = 5 * 1024 * 1024;
-const ALLOWED_TYPES = new Set([
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-]);
 
 export async function POST(request: Request): Promise<Response> {
   let form: FormData;
@@ -42,18 +40,12 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // Re-validated server-side: a client MIME type proves nothing.
-  if (!ALLOWED_TYPES.has(fileEntry.type)) {
-    return Response.json(
-      { error: "Attach a PDF, Word document or plain-text CV." },
-      { status: 415 }
-    );
+  if (!isAcceptedCvType(fileEntry.type)) {
+    return Response.json({ error: CV_TYPE_ERROR }, { status: 415 });
   }
 
-  if (fileEntry.size > MAX_BYTES) {
-    return Response.json(
-      { error: "That file is larger than 5 MB." },
-      { status: 413 }
-    );
+  if (fileEntry.size > CV_MAX_BYTES) {
+    return Response.json({ error: cvSizeError() }, { status: 413 });
   }
 
   const supabase = getSupabaseAnonClient();
