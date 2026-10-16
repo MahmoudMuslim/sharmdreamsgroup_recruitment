@@ -2,6 +2,11 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import {
+  agendaWindow,
+  AGENDA_APPLICATION_EMBED,
+  PENDING_INTERVIEW_STATUS,
+} from "./agenda-model";
 
 export interface AgendaInterview {
   id: string;
@@ -40,12 +45,14 @@ function nested<T>(value: unknown): T | null {
 }
 
 /**
- * Every interview in a +/- window around today.
+ * Every interview in the agenda window around today.
  *
  * The window is fetched whole and sliced in the browser afterwards, so switching
- * between "today" and "next 30 days" costs no round trip. Bookings far outside
- * the window are rare enough that leaving them out of an agenda is acceptable —
- * the candidate drawer still lists them all.
+ * between "today" and "next 90 days" costs no round trip. Its bounds come from
+ * `agenda-model`, which the app bar's interview alert reads too, so the number on
+ * that row and the widest range here are one set. The two day counts can still be
+ * widened by a caller — the assistant uses that to answer "what is booked next
+ * quarter" — but the page and the alert never pass them.
  */
 export async function getInterviewAgenda(
   input: { pastDays?: number; futureDays?: number } = {}
@@ -53,14 +60,13 @@ export async function getInterviewAgenda(
   await requireStaff("/interviews");
 
   const supabase = await createSupabaseServerClient();
-  const past = new Date(Date.now() - (input.pastDays ?? 30) * 86_400_000).toISOString();
-  const future = new Date(Date.now() + (input.futureDays ?? 90) * 86_400_000).toISOString();
+  const agenda = agendaWindow(new Date(), input.pastDays, input.futureDays);
 
   const { data, error } = await supabase
     .from("interview_schedules")
     .select(AGENDA_SELECT)
-    .gte("scheduled_at", past)
-    .lte("scheduled_at", future)
+    .gte("scheduled_at", agenda.past)
+    .lte("scheduled_at", agenda.future)
     .order("scheduled_at", { ascending: true });
 
   if (error) {
@@ -93,5 +99,48 @@ export async function getInterviewAgenda(
         interviewer_profile_id: (row.interviewer_profile_id as string | null) ?? null,
       };
     })
+    // A panel whose candidate the reader cannot see is not something they can
+    // move, so it is left out — and the interview alert counts with the same
+    // requirement on the database side (`AGENDA_APPLICATION_EMBED`) so the number
+    // on that row can never describe a panel this list refuses to show.
     .filter((row) => row.application_id !== "");
+}
+
+/**
+ * Panels awaiting an outcome that fall outside the agenda window, on each edge.
+ *
+ * A window is a promise with two edges, so the page names what it cannot show:
+ * `ahead` is booked beyond the horizon, `overdue` is a slot further back than the
+ * agenda reads that nobody ever marked completed, cancelled or a no-show. Both
+ * are counted on the status the "awaiting an outcome" chip filters to.
+ */
+export async function countInterviewsOutsideAgenda(): Promise<{
+  ahead: number;
+  overdue: number;
+}> {
+  await requireStaff("/interviews");
+
+  const supabase = await createSupabaseServerClient();
+  const { past, future } = agendaWindow();
+
+  const [ahead, overdue] = await Promise.all([
+    supabase
+      .from("interview_schedules")
+      .select(`id, ${AGENDA_APPLICATION_EMBED}`, { count: "exact", head: true })
+      .eq("status", PENDING_INTERVIEW_STATUS)
+      .gt("scheduled_at", future),
+    supabase
+      .from("interview_schedules")
+      .select(`id, ${AGENDA_APPLICATION_EMBED}`, { count: "exact", head: true })
+      .eq("status", PENDING_INTERVIEW_STATUS)
+      .lt("scheduled_at", past),
+  ]);
+
+  for (const edge of [ahead, overdue]) {
+    if (edge.error) {
+      console.error("[interviews] window edge count failed:", edge.error.message);
+    }
+  }
+
+  return { ahead: ahead.count ?? 0, overdue: overdue.count ?? 0 };
 }

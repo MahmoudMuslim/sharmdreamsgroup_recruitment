@@ -19,18 +19,36 @@ import {
   fromZoneInputValue,
   toZoneInputValue,
 } from "@/lib/timezone";
-import { getInterviewAgenda, type AgendaInterview } from "./actions";
-
-type Range = "today" | "week" | "month" | "past";
+import {
+  countInterviewsOutsideAgenda,
+  getInterviewAgenda,
+  type AgendaInterview,
+} from "./actions";
+import {
+  agendaRangeLabel,
+  AGENDA_FUTURE_DAYS,
+  AGENDA_PAST_DAYS,
+  AGENDA_RANGES,
+  inAgendaRange,
+  PENDING_INTERVIEW_STATUS,
+  type AgendaRange,
+  type InterviewStatus,
+} from "./agenda-model";
 
 type Outcome = "COMPLETED" | "NO_SHOW" | "CANCELLED";
 
-const RANGES: { id: Range; label: string }[] = [
-  { id: "today", label: "Today" },
-  { id: "week", label: "Next 7 days" },
-  { id: "month", label: "Next 30 days" },
-  { id: "past", label: "Last 30 days" },
+/** The status chips, in the order a recruiter reads them. */
+const RAIL_STATUSES: { status: InterviewStatus; label: string }[] = [
+  { status: "SCHEDULED", label: "Awaiting outcome" },
+  { status: "COMPLETED", label: "Completed" },
+  { status: "NO_SHOW", label: "No-show" },
+  { status: "CANCELLED", label: "Cancelled" },
 ];
+
+/** The chip a status is filed under, for prose that has to name the filter in view. */
+function statusLabel(status: InterviewStatus): string {
+  return RAIL_STATUSES.find((option) => option.status === status)?.label ?? status;
+}
 
 const OUTCOMES: { status: Outcome; label: string }[] = [
   { status: "COMPLETED", label: "Completed" },
@@ -88,12 +106,20 @@ function slotLabel(iso: string, timeZone: string): string {
  * Times are typed against `organisation.timezone`, the zone the panel physically
  * runs in, and converted to an absolute instant before they leave the browser, so
  * a recruiter on holiday moves a slot to the same minute as one at the desk.
+ *
+ * The two rails are the view: a range and a status, both written to the address as
+ * they are chosen, because the interview alert in the app bar counts one slice of
+ * this table and has to land on that same slice.
  */
 export function InterviewAgenda({
   interviews,
   timeZone,
   canWrite,
   interviewers,
+  initialRange,
+  initialStatus,
+  outsideAgenda,
+  readAt,
 }: {
   interviews: AgendaInterview[];
   timeZone: string;
@@ -101,9 +127,34 @@ export function InterviewAgenda({
   canWrite: boolean;
   /** Who may sit on a panel, read in the page render rather than on first click. */
   interviewers: InterviewerOption[];
+  /** The range `?range=` named, already validated by the page. */
+  initialRange: AgendaRange;
+  /** The status `?status=` named, or null when the view shows every one. */
+  initialStatus: InterviewStatus | null;
+  /** Panels awaiting an outcome beyond each edge of the window this list can show. */
+  outsideAgenda: { ahead: number; overdue: number };
+  /**
+   * The instant the page read the window at, and the moment every range is
+   * measured from. It arrives as a prop rather than from the browser clock so the
+   * slice starts where the server's `scheduled_at >= now` predicate started — and
+   * so a re-render cannot quietly move the boundary.
+   */
+  readAt: string;
 }) {
   const [rows, setRows] = useState<AgendaInterview[]>(interviews);
-  const [range, setRange] = useState<Range>("week");
+  const [outside, setOutside] = useState(outsideAgenda);
+  const [seededFrom, setSeededFrom] = useState(interviews);
+  // A panel booked from a candidate's profile, or by the assistant, re-renders
+  // this page with a fresh read. Adopting it is what keeps the agenda and the
+  // interview alert describing one set: the Bell re-counts the database on every
+  // live change, and a list left on the rows it arrived with would disagree.
+  if (interviews !== seededFrom) {
+    setSeededFrom(interviews);
+    setRows(interviews);
+    setOutside(outsideAgenda);
+  }
+  const [range, setRange] = useState<AgendaRange>(initialRange);
+  const [status, setStatus] = useState<InterviewStatus | null>(initialStatus);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("45");
@@ -113,37 +164,78 @@ export function InterviewAgenda({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const groups = useMemo(() => {
-    const within = (row: AgendaInterview) => {
-      const offsetDays = dayOffset(row.scheduled_at, timeZone);
-      if (range === "past") return offsetDays < 0 && offsetDays >= -30;
-      if (range === "today") return offsetDays === 0;
-      if (range === "week") return offsetDays >= 0 && offsetDays <= 7;
-      return offsetDays >= 0 && offsetDays <= 30;
-    };
+  const view = useMemo(() => {
+    const nowMs = Date.parse(readAt);
+    const todayKey = dayKeyInZone(readAt, timeZone);
+    const withinRange = rows.filter(
+      (row) =>
+        // "Today" is the organisation's calendar day; every other range is a span
+        // of absolute instants measured from the same `readAt` the window was cut at.
+        inAgendaRange(
+          Date.parse(row.scheduled_at),
+          range,
+          nowMs,
+          dayKeyInZone(row.scheduled_at, timeZone) === todayKey
+        )
+    );
+    const shown = status ? withinRange.filter((row) => row.status === status) : withinRange;
 
     const byDay = new Map<string, AgendaInterview[]>();
-    for (const row of rows.filter(within)) {
+    for (const row of shown) {
       const key = dayKeyInZone(row.scheduled_at, timeZone);
       const bucket = byDay.get(key);
       if (bucket) bucket.push(row);
       else byDay.set(key, [row]);
     }
 
-    return [...byDay.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([, items]) => ({
-        label: dayLabel(items[0].scheduled_at, timeZone),
-        rows: items.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)),
-      }));
-  }, [rows, range, timeZone]);
+    return {
+      groups: [...byDay.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([, items]) => ({
+          label: dayLabel(items[0].scheduled_at, timeZone),
+          rows: items.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)),
+        })),
+      // Counted over the range, whatever the status chip is set to: this is the
+      // number the interview alert makes its claim with, so a chip that quietly
+      // removed it from view would only restart the disagreement.
+      awaitingOutcome: withinRange.filter((row) => row.status === PENDING_INTERVIEW_STATUS).length,
+      hasForward: rows.some((row) => Date.parse(row.scheduled_at) >= nowMs),
+      hasPast: rows.some((row) => Date.parse(row.scheduled_at) < nowMs),
+      hasOtherStatuses: status ? withinRange.some((row) => row.status !== status) : false,
+    };
+  }, [rows, range, status, timeZone, readAt]);
 
-  const visible = groups.reduce((sum, group) => sum + group.rows.length, 0);
-  const pendingOutcome = rows.filter((row) => row.status === "SCHEDULED").length;
+  const visible = view.groups.reduce((sum, group) => sum + group.rows.length, 0);
 
-  /** Reads the window again, so a moved panel leaves the day it was in. */
+  /**
+   * Move the view, then put the same view in the address.
+   *
+   * The whole window is already in `rows`, so a chip is answered locally and the
+   * URL is rewritten rather than navigated: the address stays true for a refresh
+   * or a paste — the page reads both parameters back through its own validators —
+   * and changing range costs no round trip.
+   */
+  function applyView(next: AgendaRange, nextStatus: InterviewStatus | null) {
+    setRange(next);
+    setStatus(nextStatus);
+    const search = new URLSearchParams();
+    search.set("range", next);
+    if (nextStatus) search.set("status", nextStatus);
+    const qs = search.toString();
+    window.history.replaceState(null, "", qs ? `/interviews?${qs}` : "/interviews");
+  }
+
+  /**
+   * Reads the window and its two edges again, so a moved panel leaves the day it
+   * was in and the horizon note never lags behind the list under it.
+   */
   async function reload() {
-    setRows(await getInterviewAgenda());
+    const [fresh, edges] = await Promise.all([
+      getInterviewAgenda(),
+      countInterviewsOutsideAgenda(),
+    ]);
+    setRows(fresh);
+    setOutside(edges);
   }
 
   function closeEditor() {
@@ -200,20 +292,20 @@ export function InterviewAgenda({
     }
   }
 
-  async function mark(row: AgendaInterview, status: Outcome) {
+  async function mark(row: AgendaInterview, outcome: Outcome) {
     setPending(true);
     setError(null);
     setNotice(null);
     try {
-      const result = await setInterviewStatus({ interviewId: row.id, status });
+      const result = await setInterviewStatus({ interviewId: row.id, status: outcome });
       if (!result.ok) {
         setError(result.error ?? "The outcome was not recorded.");
         return;
       }
       setNotice(
-        status === "CANCELLED"
+        outcome === "CANCELLED"
           ? `Panel cancelled. ${channelSummary(result.channels, result.notified)}`
-          : status === "NO_SHOW"
+          : outcome === "NO_SHOW"
             ? "Recorded as a no-show. The candidate is not messaged."
             : "Recorded as completed. The candidate is not messaged."
       );
@@ -229,11 +321,11 @@ export function InterviewAgenda({
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
-        {RANGES.map((option) => (
+        {AGENDA_RANGES.map((option) => (
           <button
             key={option.id}
             type="button"
-            onClick={() => setRange(option.id)}
+            onClick={() => applyView(option.id, status)}
             className={cn(
               "rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
               range === option.id
@@ -244,9 +336,45 @@ export function InterviewAgenda({
             {option.label}
           </button>
         ))}
-        <span className="ml-auto text-xs text-brand-ink/50">
-          {visible} shown · {pendingOutcome} awaiting an outcome
+        <span
+          className="ml-auto text-xs text-brand-ink/50"
+          title={`Awaiting an outcome counts every scheduled panel in ${agendaRangeLabel(range)}, whatever the status chip is set to — the same set the interview alert in the app bar counts.`}
+        >
+          {visible} shown · {view.awaitingOutcome} awaiting an outcome in this range
         </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-ink/40">
+          Status
+        </span>
+        <button
+          type="button"
+          onClick={() => applyView(range, null)}
+          className={cn(
+            "rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
+            !status
+              ? "border-brand-ink bg-brand-ink text-brand-cream"
+              : "border-brand-line bg-white hover:bg-brand-sand"
+          )}
+        >
+          All
+        </button>
+        {RAIL_STATUSES.map((option) => (
+          <button
+            key={option.status}
+            type="button"
+            onClick={() => applyView(range, status === option.status ? null : option.status)}
+            className={cn(
+              "rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
+              status === option.status
+                ? "border-brand-gold-dark bg-brand-gold/15 text-brand-gold-dark"
+                : "border-brand-line bg-white hover:bg-brand-sand"
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
 
       {!canWrite && rows.length > 0 && (
@@ -256,19 +384,65 @@ export function InterviewAgenda({
         </p>
       )}
 
+      {(outside.ahead > 0 || outside.overdue > 0) && (
+        <p className="text-xs text-brand-ink/50">
+          Outside this window:{" "}
+          {[
+            outside.ahead > 0
+              ? `${outside.ahead} ${outside.ahead === 1 ? "panel is" : "panels are"} booked beyond the ${AGENDA_FUTURE_DAYS}-day horizon`
+              : null,
+            outside.overdue > 0
+              ? `${outside.overdue} ${outside.overdue === 1 ? "slot is" : "slots are"} further back than ${AGENDA_PAST_DAYS} days and still awaiting an outcome`
+              : null,
+          ]
+            .filter((part) => part !== null)
+            .join("; ")}
+          . Each is on the candidate&apos;s profile.
+        </p>
+      )}
+
       <FormMessage error={error} success={notice} />
 
       {visible === 0 && (
         <Card>
           <EmptyState
-            title="Nothing booked here"
-            description="Interviews appear once they are scheduled from a candidate's profile."
+            title={rows.length === 0 ? "Nothing booked here" : "Nothing in this view"}
+            description={
+              rows.length === 0
+                ? "Interviews appear once they are scheduled from a candidate's profile."
+                : `This calendar holds ${rows.length} panel${rows.length === 1 ? "" : "s"}, but none of them fall in ${agendaRangeLabel(range)}${
+                    status ? ` under the "${statusLabel(status)}" chip` : ""
+                  }.`
+            }
             icon={<CalendarDays className="h-6 w-6" aria-hidden />}
           />
+          {rows.length > 0 && (
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {status && view.hasOtherStatuses && (
+                <Button size="sm" variant="outline" onClick={() => applyView(range, null)}>
+                  Show every status
+                </Button>
+              )}
+              {range !== "upcoming" && view.hasForward && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => applyView("upcoming", status)}
+                >
+                  {agendaRangeLabel("upcoming")}
+                </Button>
+              )}
+              {range !== "past" && view.hasPast && (
+                <Button size="sm" variant="outline" onClick={() => applyView("past", status)}>
+                  {agendaRangeLabel("past")}
+                </Button>
+              )}
+            </div>
+          )}
         </Card>
       )}
 
-      {groups.map((group) => (
+      {view.groups.map((group) => (
         <section key={group.label}>
           <h2 className="mb-2 font-display text-sm font-bold uppercase tracking-[0.14em] text-brand-ink/45">
             {group.label}

@@ -1,5 +1,11 @@
 import { CalendarDays } from "lucide-react";
-import { getInterviewAgenda } from "./actions";
+import {
+  AGENDA_FUTURE_DAYS,
+  AGENDA_PAST_DAYS,
+  isAgendaRange,
+  isInterviewStatus,
+} from "./agenda-model";
+import { countInterviewsOutsideAgenda, getInterviewAgenda } from "./actions";
 import { InterviewAgenda } from "./InterviewAgenda";
 import { listInterviewers } from "@/app/(admin)/candidates/interview-actions";
 import { requireStaff } from "@/lib/auth/session";
@@ -17,13 +23,33 @@ export const metadata = {
 /** Auth-gated route: content is fully session/RLS dependent. */
 export const instant = false;
 
-export default async function InterviewsPage() {
+/**
+ * The two rails are part of the address, because the interview alert in the app
+ * bar links here with them. Both are read through the agenda model's validators,
+ * so `?range=` naming no range leaves the default view standing rather than
+ * emptying it.
+ */
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+export default async function InterviewsPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
   await connection();
-  const [user, interviews, timeZone, canWrite] = await Promise.all([
+  const params = await searchParams;
+  const range = isAgendaRange(params.range) ?? "week";
+  const status = isInterviewStatus(params.status);
+  // One instant for the read and the slice: it goes to the view as `readAt`, so
+  // the range rails measure from the same "now" the window was cut with.
+  const readAt = new Date().toISOString();
+
+  const [user, interviews, timeZone, canWrite, outsideAgenda] = await Promise.all([
     requireStaff("/interviews"),
     getInterviewAgenda(),
     getOrganisationTimeZone(),
     hasPermissionForUser("candidates.write"),
+    countInterviewsOutsideAgenda(),
   ]);
   // Read in the render rather than on first click, so opening an editor never
   // stalls on a round-trip for the panel roster.
@@ -34,14 +60,22 @@ export default async function InterviewsPage() {
       <PageHeader
         eyebrow="Hiring calendar"
         title="Interviews"
-        description={`Scheduled panels for the whole group. Times and day boundaries follow the organisation timezone (${timeZone}).`}
+        description={`Scheduled panels for the whole group, ${AGENDA_PAST_DAYS} days back to ${AGENDA_FUTURE_DAYS} ahead. Times and day boundaries follow the organisation timezone (${timeZone}).`}
       />
 
+      {/* The address is the view: a link with different rails in it is a
+          different page, so the component starts over rather than keeping the
+          range the recruiter was last looking at. */}
       <InterviewAgenda
+        key={`${range}|${status ?? "all"}`}
         interviews={interviews}
         timeZone={timeZone}
         canWrite={canWrite}
         interviewers={interviewers}
+        initialRange={range}
+        initialStatus={status}
+        outsideAgenda={outsideAgenda}
+        readAt={readAt}
       />
 
       <Card className="mt-6 flex items-start gap-4 p-5">
