@@ -794,10 +794,20 @@ export function AssistantChat({
             {messages.length === 0 && !pending && !opening && (
               <div>
                 <p className="text-xs leading-relaxed text-brand-ink/55">
-                  I can read and analyse every screen here, and make the changes your role allows:
-                  openings, candidates, screening, assessments, sourcing, the message outbox and the
-                  AI model routing. Attach a CV or any document and I will read it, and anything I
-                  change comes back with a link to the record.
+                  I read and change the same data the screens do — openings, candidates, screening,
+                  assessments, interviews, onboarding, the apply questions, sourcing, stored files,
+                  the message outbox, the analytics report, the row-level reports, the activity
+                  trail and the settings, team and model-routing consoles — by calling the very
+                  actions those pages call, so the permissions on your role apply here unchanged.
+                  Time Tracker is the one data screen I cannot reach: its ledger table is not on the
+                  database yet. The “What can the assistant do?” button above lists every one.
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
+                  Attach a CV and I read it — PDF, Word or plain text, through the same parser the
+                  apply form uses, so it reads the way it did when it arrived. Only the first 12,000
+                  characters reach the model and the file is not stored. Anything I change comes back
+                  with a link to where you can see it: the record when the page opens one, the page
+                  itself otherwise.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/45">
                   <Sparkles className="mr-1 inline h-3 w-3 text-brand-gold" aria-hidden />

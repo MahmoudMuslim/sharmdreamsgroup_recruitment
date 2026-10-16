@@ -94,6 +94,7 @@ import {
 } from "@/app/(admin)/settings/actions";
 import { convertProspect, sendProspectOutreach } from "@/app/(admin)/sourcing/actions";
 import { getProspectProfile, pasteProspectProfile } from "@/app/(admin)/sourcing/profile-actions";
+import { getAnalyticsReport } from "@/app/(admin)/analytics/actions";
 import { getRowReport } from "@/app/(admin)/reports/actions";
 import { REPORTS } from "@/modules/analytics/domain/documents";
 import { ANALYTICS_WINDOWS } from "@/modules/analytics/domain/report";
@@ -516,6 +517,73 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         /** The page previews more rows than a reply carries, and says so. */
         total_rows: preview.totalRows ?? 0,
         limitations: preview.limitations ?? [],
+      };
+    },
+  },
+  {
+    name: "get_analytics_report",
+    label: "Reading the analytics report",
+    description:
+      "The aggregate figures /analytics draws for one window: tests issued → opened → finished with the median score, sourcing contacted → replied → converted, messages counted per channel, and interview panels with their no-shows. `complete` is false when a source hit its row cap, and the caveats say which, so a rate from here is never quoted as a full history it does not have. A portal notice is counted as read, never as delivered — only email and WhatsApp pass a relay.",
+    args: {
+      window: `string — one of ${ANALYTICS_WINDOWS.map((option) => option.key).join(", ")}, where all is every record`,
+    },
+    run: async (args) => {
+      const result = await getAnalyticsReport(str(args, "window").toLowerCase());
+      if (!result.ok || !result.report) {
+        return { ok: false, error: result.error ?? "The report could not be built." };
+      }
+      const report = result.report;
+      const { assessments, sourcing, messages, interviews } = report;
+      return {
+        ok: true,
+        window: report.windowLabel,
+        as_of: report.generatedAt,
+        time_zone: report.timeZone,
+        complete: report.complete,
+        scores_hidden: report.scoresHidden,
+        limitations: report.limitations,
+        assessments: {
+          issued: assessments.issued,
+          opened: assessments.opened,
+          submitted: assessments.submitted,
+          graded: assessments.graded,
+          in_progress: assessments.inProgress,
+          expired: assessments.expired,
+          open_rate: assessments.openRate,
+          finish_rate: assessments.finishRate,
+          median_invite_to_open_hours: assessments.medianInviteToOpenHours,
+          median_time_on_test_minutes: assessments.medianTimeOnTestMinutes,
+          median_score_percent: assessments.medianScorePercent,
+          score_bands: assessments.scoreBands,
+        },
+        sourcing: {
+          total: sourcing.total,
+          contacted: sourcing.contacted,
+          replied: sourcing.replied,
+          interviewing: sourcing.interviewing,
+          converted: sourcing.converted,
+          reply_rate: sourcing.replyRate,
+          conversion_rate: sourcing.conversionRate,
+          stages: sourcing.stages,
+        },
+        messages: {
+          scanned: messages.scanned,
+          delivered: messages.delivered,
+          undelivered: messages.undelivered,
+          read: messages.read,
+          by_channel: messages.byChannel,
+        },
+        interviews: {
+          booked: interviews.booked,
+          completed: interviews.completed,
+          cancelled: interviews.cancelled,
+          no_show: interviews.noShow,
+          upcoming: interviews.upcoming,
+          no_show_rate: interviews.noShowRate,
+          median_lead_days: interviews.medianLeadDays,
+          by_interviewer: interviews.byInterviewer,
+        },
       };
     },
   },

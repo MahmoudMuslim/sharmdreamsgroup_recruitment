@@ -121,6 +121,8 @@ export function linkForTool(
       return { href: "/sourcing", label: "Open the sourcing board" };
     case "get_report":
       return { href: "/reports", label: "Open the reports" };
+    case "get_analytics_report":
+      return { href: "/analytics", label: "Open the analytics report" };
     case "save_assessment_suite":
     case "set_assessment_suite_active":
     case "delete_assessment_suite":
