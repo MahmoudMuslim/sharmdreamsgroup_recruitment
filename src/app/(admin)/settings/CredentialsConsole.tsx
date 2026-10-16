@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -29,6 +29,7 @@ import {
 } from "@/modules/settings/application/credential-actions";
 import { PROVIDER_GROUPS, type ProviderGroup } from "@/modules/settings/domain/providers";
 import { credentialsTab } from "@/modules/settings/domain/settingsNav";
+import { trailProvider, trailScope, trailScopeNote } from "@/modules/settings/domain/credentialTrail";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
@@ -335,18 +336,22 @@ function CredentialCard({
  * fire on mount.
  *
  * The group tab is carried in `?tab=` like the other two tabbed consoles, so
- * clicking one leaves an address that names what is on screen.
+ * clicking one leaves an address that names what is on screen. The trail is
+ * scoped by `?provider=`, which the page applies to the read it already made —
+ * the console only has to re-read when that address changes underneath it.
  */
 export function CredentialsConsole({
   encryptionConfigured,
   editable,
   initialCredentials,
   initialAudit,
+  auditTotal,
 }: {
   encryptionConfigured: boolean;
   editable: boolean;
   initialCredentials: CredentialView[];
   initialAudit: AuditEntryView[];
+  auditTotal: number;
 }) {
   const params = useSearchParams();
   const pathname = usePathname();
@@ -367,9 +372,46 @@ export function CredentialsConsole({
     setLastAppliedTab(incomingTab);
     setTab(incomingTab);
   }
+
   const [audit, setAudit] = useState<AuditEntryView[]>(initialAudit);
+  const [total, setTotal] = useState(auditTotal);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * `?provider=` narrows the change trail to one provider's rows. The address bar
+   * and the rows themselves are the two writers, so the parameter is held the way
+   * the tab strip holds its own: last value applied from the URL is tracked, and a
+   * click writes the address back. The first paint already carries that scope,
+   * because the page applied it to the read it made; only a *change* costs a round
+   * trip, whether it arrives as a chat link or as a clicked provider name.
+   */
+  const incomingTrail = trailScope(params.get("provider"));
+  const [trail, setTrail] = useState<string | null>(incomingTrail);
+  const [lastAppliedTrail, setLastAppliedTrail] = useState<string | null>(incomingTrail);
+  if (incomingTrail !== lastAppliedTrail) {
+    setLastAppliedTrail(incomingTrail);
+    setTrail(incomingTrail);
+  }
+  const readTrail = useRef(trail);
+
+  useEffect(() => {
+    if (readTrail.current === trail) return;
+    readTrail.current = trail;
+    let live = true;
+    listCredentialAudit({ provider: trail })
+      .then((entries) => {
+        if (!live) return;
+        setAudit(entries.entries);
+        setTotal(entries.total);
+      })
+      .catch(() => {
+        if (live) setError("Could not load the credential store.");
+      });
+    return () => {
+      live = false;
+    };
+  }, [trail]);
 
   /**
    * Re-reads the store (used by the Refresh button and after any card action).
@@ -381,9 +423,14 @@ export function CredentialsConsole({
   async function reload() {
     setRefreshing(true);
     try {
-      const [creds, entries] = await Promise.all([listCredentials(), listCredentialAudit(12)]);
+      const [creds, entries] = await Promise.all([
+        listCredentials(),
+        listCredentialAudit({ provider: trail }),
+      ]);
       setCredentials(creds);
-      setAudit(entries);
+      setAudit(entries.entries);
+      setTotal(entries.total);
+      readTrail.current = trail;
       setError(null);
     } catch {
       setError("Could not load the credential store.");
@@ -409,6 +456,20 @@ export function CredentialsConsole({
     search.set("tab", next);
     window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
   }
+
+  /** Narrow the trail to one provider, or back to the whole history. */
+  function openTrail(next: string | null) {
+    setTrail(next);
+    const search = new URLSearchParams(window.location.search);
+    if (next === null) search.delete("provider");
+    else search.set("provider", next);
+    window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+  }
+
+  // A scope the address bar named keeps its heading even when no row matches it,
+  // so a link to one provider's history never arrives at a page that shows
+  // nothing and says nothing about why.
+  const trailDefinition = trailProvider(trail);
 
   return (
     <div className="space-y-6">
@@ -499,23 +560,55 @@ export function CredentialsConsole({
         ))}
       </div>
 
-      {audit.length > 0 && (
+      {(trail !== null || audit.length > 0) && (
         <section>
-          <h3 className="mb-3 font-display text-base font-bold">Recent changes</h3>
-          <ul className="divide-y divide-brand-line rounded-2xl border border-brand-line bg-white">
-            {audit.map((entry) => (
-              <li key={entry.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
-                <span className="rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-ink/60">
-                  {entry.action}
-                </span>
-                <span className="font-medium">{entry.provider ?? "—"}</span>
-                <span className="min-w-0 flex-1 truncate text-xs text-brand-ink/55">{entry.detail}</span>
-                <span className="shrink-0 text-[11px] text-brand-ink/40">
-                  {entry.actor ?? "system"} · {new Date(entry.createdAt).toLocaleString()}
-                </span>
-              </li>
-            ))}
-          </ul>
+          <div className="flex flex-wrap items-center gap-3">
+            <h3 className="font-display text-base font-bold">
+              {trailDefinition ? `Recent changes — ${trailDefinition.displayName}` : "Recent changes"}
+            </h3>
+            {trail !== null && (
+              <button
+                type="button"
+                onClick={() => openTrail(null)}
+                className="text-xs font-semibold text-brand-gold-dark underline underline-offset-2"
+              >
+                Show every provider
+              </button>
+            )}
+          </div>
+          <p className="mb-3 mt-1 text-xs leading-relaxed text-brand-ink/55">
+            {trailScopeNote({ providerId: trail, total, loaded: audit.length })}
+            {audit.length > 0 && (
+              <span className="text-brand-ink/40"> Pick a provider in a row to read only its history.</span>
+            )}
+          </p>
+          {audit.length > 0 && (
+            <ul className="divide-y divide-brand-line rounded-2xl border border-brand-line bg-white">
+              {audit.map((entry) => (
+                <li key={entry.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
+                  <span className="rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-ink/60">
+                    {entry.action}
+                  </span>
+                  {entry.provider ? (
+                    <button
+                      type="button"
+                      onClick={() => openTrail(entry.provider ?? null)}
+                      title={trailProvider(entry.provider)?.displayName ?? entry.provider}
+                      className="text-sm font-semibold text-brand-gold-dark underline underline-offset-2"
+                    >
+                      {entry.provider}
+                    </button>
+                  ) : (
+                    <span className="font-medium">—</span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-xs text-brand-ink/55">{entry.detail}</span>
+                  <span className="shrink-0 text-[11px] text-brand-ink/40">
+                    {entry.actor ?? "system"} · {new Date(entry.createdAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       )}
     </div>

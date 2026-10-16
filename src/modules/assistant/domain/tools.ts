@@ -49,6 +49,7 @@ import { getMasterOptions } from "@/modules/settings/application/master-data-act
 import {
   deleteCredential,
   getModelCatalogue,
+  listCredentialAudit,
   listCredentials,
   listModelRouting,
   saveCredential,
@@ -61,6 +62,7 @@ import {
   providerById,
 } from "@/modules/settings/domain/providers";
 import { credentialsTab } from "@/modules/settings/domain/settingsNav";
+import { trailScope, trailScopeNote } from "@/modules/settings/domain/credentialTrail";
 import {
   modelReadNote,
   modelSearchWords,
@@ -1297,7 +1299,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       }
       if (fromEnv > 0) {
         parts.push(
-          "An environment-served provider has no row to write to, so a Test outcome for one lands only in the console's audit list: a null last_verified here does not mean it was never tested."
+          "An environment-served provider has no row to write to, so a Test outcome for one lands only in the credential trail — get_credential_audit reads it, and a null last_verified here does not mean it was never tested."
         );
       }
       if (unset > 0) {
@@ -1332,6 +1334,49 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           last_verified_status: card.lastVerifiedStatus,
           last_verified_detail: card.lastVerifiedDetail,
         })),
+      };
+    },
+  },
+  {
+    name: "get_credential_audit",
+    label: "Reading the credential trail",
+    description:
+      "The API keys console's own \"Recent changes\" list, row for row: who changed or tested a provider's credential and what the provider said. `provider` narrows it to one provider's history, exactly as the console's `?provider=` does, and both read the same newest rows — so this answer and that section can never disagree about which rows exist. A `VERIFIED` row records that somebody pressed Test and what came back; the coming-back is in `detail`, so a refused key is filed under the same action as a working one. Nothing in a row is a key value: the writer stores a fixed phrase or a masked hint.",
+    args: {
+      provider:
+        "string — optional, one provider id exactly as list_credentials returns it, to read only its history",
+    },
+    run: async (args) => {
+      const asked = optionalStr(args, "provider");
+      const scope = asked === undefined ? null : trailScope(asked);
+      if (asked !== undefined && scope === null) {
+        throw new ToolArgumentError(
+          "That is not a provider the API keys console lists — read list_credentials first."
+        );
+      }
+      const { entries, total } = await listCredentialAudit({ provider: scope });
+      const shown = entries.slice(0, ANSWER_ROWS);
+      const parts = [
+        trailScopeNote({ providerId: scope, total, loaded: shown.length }),
+        "A provider whose key comes from the environment has no stored row to stamp, so for it this trail is the only record a Test left.",
+        "Each row names the person who acted, or system when no profile was found for that session.",
+      ];
+      return {
+        audit_note: parts.join(" "),
+        audit_scope: scope,
+        audit_total: total,
+        audit: shown.map((entry) => {
+          const definition = providerById(entry.provider ?? "");
+          return {
+            provider: entry.provider,
+            name: definition?.displayName ?? entry.provider,
+            group: definition?.group ?? null,
+            action: entry.action,
+            detail: entry.detail,
+            actor: entry.actor ?? "system",
+            at: entry.createdAt,
+          };
+        }),
       };
     },
   },
@@ -3042,6 +3087,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "list_model_routing",
   "get_audit_log",
   "list_credentials",
+  "get_credential_audit",
   "get_candidate_dossier",
   "get_assessment_suite",
   "get_attempt_grades",

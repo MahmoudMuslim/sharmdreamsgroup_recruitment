@@ -16,6 +16,7 @@ import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/setti
 import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import { TeamSection } from "./TeamSection";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
+import { trailScope } from "@/modules/settings/domain/credentialTrail";
 import type { MasterData } from "@/modules/settings/domain/types";
 
 export const metadata = {
@@ -45,7 +46,11 @@ function masterCounts(master: MasterData): Record<string, number> {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ area?: string | string[]; section?: string | string[] }>;
+  searchParams: Promise<{
+    area?: string | string[];
+    section?: string | string[];
+    provider?: string | string[];
+  }>;
 }) {
   // Admin content is per-session; stop the static shell before any rendering so
   // time-dependent code (and the session check) only runs per request.
@@ -70,6 +75,13 @@ export default async function SettingsPage({
     area,
     typeof params.section === "string" ? params.section : undefined
   );
+
+  // `?provider=` scopes the keys console's change trail, so a chat answer about
+  // one provider's history lands on that history rather than on the newest rows
+  // of every provider. Applied before the read so the first paint already holds
+  // the filtered set — an unknown id scopes nothing, same as every other
+  // parameter on this route.
+  const trail = trailScope(typeof params.provider === "string" ? params.provider : undefined);
 
   // Shown by the create-user form, enforced again inside `createUser` — read from
   // the same loaded row so the hint can never drift from the rule.
@@ -147,7 +159,7 @@ export default async function SettingsPage({
         )}
 
         {area.id === "providers" && (
-          <ProvidersPanel editable={editable} section={section.id} />
+          <ProvidersPanel editable={editable} section={section.id} trail={trail} />
         )}
       </SettingsShell>
     </AdminShell>

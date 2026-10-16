@@ -12,6 +12,7 @@ import {
 } from "@/modules/settings/domain/settingsNav";
 import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
 import { settingsSection } from "@/modules/settings/domain/settingSearch";
+import { trailProvider, trailScope } from "@/modules/settings/domain/credentialTrail";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -259,6 +260,31 @@ function credentialGroups(result: unknown): (string | null)[] {
     );
   }
   return [typeof record.group === "string" ? record.group : null];
+}
+
+/**
+ * The keys console, scoped to the one provider whose history the answer read.
+ *
+ * `?provider=` is applied to the page's own read, so the click lands on the rows
+ * the answer counted rather than on the newest rows of every provider — which is
+ * what makes a counted trail checkable instead of merely plausible. A held card
+ * has read nothing, and an unscoped read names exactly what the section already
+ * shows, so both go to the console itself.
+ */
+function credentialTrailView(result: unknown): AssistantLink {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return CREDENTIALS_CONSOLE;
+  const scope = (result as { audit_scope?: unknown }).audit_scope;
+  const id = trailScope(typeof scope === "string" ? scope : null);
+  const definition = trailProvider(id);
+  if (!definition || !id) return CREDENTIALS_CONSOLE;
+  return {
+    href: `/settings${query([
+      ["area", "providers"],
+      ["section", "credentials"],
+      ["provider", id],
+    ])}`,
+    label: `Open ${definition.displayName}'s key history`,
+  };
 }
 
 /**
@@ -538,6 +564,8 @@ export function linkForTool(
       // Three provider groups share one page and it opens on the AI tab, so a
       // read that only listed messaging channels has to carry its group.
       return credentialsView(credentialGroups(result));
+    case "get_credential_audit":
+      return credentialTrailView(result);
     case "get_settings":
       return settingsView(settingKeys(result), words(args.query));
     case "get_master_data":

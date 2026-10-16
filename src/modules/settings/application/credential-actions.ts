@@ -28,6 +28,7 @@ import {
   type ModelOption,
   type ProviderGroup,
 } from "@/modules/settings/domain/providers";
+import { TRAIL_LIMIT, trailScope } from "@/modules/settings/domain/credentialTrail";
 
 /**
  * Credential management.
@@ -1262,17 +1263,39 @@ export interface AuditEntryView {
   createdAt: string;
 }
 
-/** Credential change history. Contains no secret material by construction. */
-export async function listCredentialAudit(limit = 30): Promise<AuditEntryView[]> {
+/**
+ * Credential change history, newest first, with the count the listing is drawn
+ * from.
+ *
+ * `total` carries the same provider predicate as the rows, so a scoped answer can
+ * say "12 of 14 for OpenRouter" rather than quoting the whole table beside a
+ * filtered list. Contains no secret material by construction: the writer stores a
+ * fixed phrase or a masked hint, never a value.
+ */
+export async function listCredentialAudit(
+  scope: { provider?: string | null; limit?: number } = {}
+): Promise<{ entries: AuditEntryView[]; total: number }> {
   await requireStaff("/settings");
 
-  const { data } = await getSupabaseServiceClient()
-    .from("credential_audit_log")
-    .select("id, provider, action, detail, created_at, actor_id, user_profiles(full_name)")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const provider = trailScope(scope.provider);
+  const limit = scope.limit ?? TRAIL_LIMIT;
+  const admin = getSupabaseServiceClient();
 
-  return ((data ?? []) as unknown[]).map((row) => {
+  const rowsQuery = admin
+    .from("credential_audit_log")
+    .select("id, provider, action, detail, created_at, actor_id, user_profiles(full_name)");
+  const countQuery = admin
+    .from("credential_audit_log")
+    .select("id", { count: "exact", head: true });
+
+  const [{ data }, { count }] = await Promise.all([
+    provider
+      ? rowsQuery.eq("provider", provider).order("created_at", { ascending: false }).limit(limit)
+      : rowsQuery.order("created_at", { ascending: false }).limit(limit),
+    provider ? countQuery.eq("provider", provider) : countQuery,
+  ]);
+
+  const entries = ((data ?? []) as unknown[]).map((row) => {
     const r = row as {
       id: string;
       provider: string | null;
@@ -1291,4 +1314,6 @@ export async function listCredentialAudit(limit = 30): Promise<AuditEntryView[]>
       createdAt: r.created_at,
     };
   });
+
+  return { entries, total: count ?? entries.length };
 }

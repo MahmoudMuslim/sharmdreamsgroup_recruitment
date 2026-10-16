@@ -11,13 +11,21 @@ import { isEncryptionConfigured } from "@/lib/crypto/secrets";
  *
  * Which half is open is decided by the settings dock (URL), not a tab strip in
  * here — the page already has one navigation, and this used to add a second.
+ *
+ * `trail` is the `?provider=` scope the page already validated, applied to the
+ * read rather than to the rendered rows: a chat link asking for one provider's
+ * history has to arrive holding that history, not the newest rows of everyone
+ * else's. The console tracks the same parameter client-side for the same reason
+ * the tabs do.
  */
 export async function ProvidersPanel({
   editable,
   section,
+  trail,
 }: {
   editable: boolean;
   section: string;
+  trail: string | null;
 }) {
   if (section === "models") return <ModelRoutingConsole editable={editable} />;
 
@@ -27,7 +35,7 @@ export async function ProvidersPanel({
   // own. Three serialized trips put the first card on screen 13 s after the page.
   const [credentials, audit] = await Promise.all([
     listCredentials(),
-    listCredentialAudit(12),
+    listCredentialAudit({ provider: trail }),
   ]);
 
   return (
@@ -35,7 +43,8 @@ export async function ProvidersPanel({
       encryptionConfigured={isEncryptionConfigured()}
       editable={editable}
       initialCredentials={credentials}
-      initialAudit={audit}
+      initialAudit={audit.entries}
+      auditTotal={audit.total}
     />
   );
 }
