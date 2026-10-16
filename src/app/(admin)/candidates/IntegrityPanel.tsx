@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import {
+  AlertTriangle,
   Check,
   Clock,
   Laptop,
@@ -13,8 +14,14 @@ import {
   X,
 } from "lucide-react";
 import { getAttemptIntegrity, type AttemptIntegrity } from "./integrity-actions";
-import { getAttemptAiGrades, type AttemptGrades } from "./assessment-actions";
+import {
+  getAttemptAiGrades,
+  scoreAttemptResponse,
+  type AttemptGrades,
+  type QuestionGrade,
+} from "./assessment-actions";
 import { INTEGRITY_LABELS } from "@/modules/assessment/domain/integrity";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/modules/analytics/presentation/ui";
 
 const QUESTION_TYPE_LABELS: Record<string, string> = {
@@ -38,10 +45,40 @@ function scoreTone(score: number | null) {
 }
 
 /**
+ * What the report may honestly say about an unfinished attempt.
+ *
+ * The chip this replaces promised "Grading in progress" for every non-GRADED
+ * status. Nothing is in progress: no scheduler calls `/api/cron/grading`, so
+ * the retry sweep only runs if someone hits it, and an answer the engine parked
+ * stays parked. Each line here states only what the status and the response
+ * rows prove — and names the desk below when this reviewer can finish the job.
+ */
+function statusNote(grades: AttemptGrades): { text: string; actionable: boolean } | null {
+  if (grades.status === "GRADED") return null;
+  if (grades.status === "NOT_STARTED") return { text: "Not started yet", actionable: false };
+  if (grades.status === "IN_PROGRESS") return { text: "Still being answered", actionable: false };
+  // Set both when a deadline ran out and when a recruiter revoked the link.
+  if (grades.status === "EXPIRED") return { text: "Link closed", actionable: false };
+  if (grades.unscored === 0) {
+    return { text: "Every answer is marked — only the status is behind", actionable: false };
+  }
+  return {
+    text: `${grades.unscored} answer${grades.unscored === 1 ? "" : "s"} left unscored${
+      grades.can_score ? " — award them below" : ""
+    }`,
+    actionable: grades.can_score,
+  };
+}
+
+/**
  * Recruiter-facing integrity report.
  *
  * Signals are advisory context, not a verdict — the copy makes that explicit so
  * nobody auto-rejects on a single tab switch.
+ *
+ * It is also the desk where an answer the AI could not score gets its marks,
+ * because this is the only screen that shows a recruiter the evidence — the
+ * answer, the recording, the transcript — the mark would be awarded from.
  */
 export function IntegrityPanel({
   accessToken,
@@ -56,10 +93,13 @@ export function IntegrityPanel({
   const [grades, setGrades] = useState<AttemptGrades | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function openPanel() {
-    setOpen(true);
-    if (report || loading) return;
-    setLoading(true);
+  /**
+   * `silent` keeps the report on screen while it re-reads, which is what a
+   * hand-awarded mark needs: the panel must not blank itself into a spinner
+   * under the recruiter's own cursor.
+   */
+  async function fetchReport({ silent = false }: { silent?: boolean } = {}) {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const [integrityResult, gradesResult] = await Promise.all([
@@ -71,9 +111,17 @@ export function IntegrityPanel({
     } catch {
       setError("Could not load the integrity report.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
+
+  async function openPanel() {
+    setOpen(true);
+    if (report || loading) return;
+    await fetchReport();
+  }
+
+  const note = grades ? statusNote(grades) : null;
 
   return (
     <>
@@ -187,10 +235,21 @@ export function IntegrityPanel({
                         <Sparkles className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
                         AI feedback — {grades.template_name}
                       </h3>
-                      {grades.status !== "GRADED" && (
-                        <span className="inline-flex items-center gap-1 rounded bg-brand-cream px-2 py-1 text-[11px] font-semibold text-brand-ink/55">
-                          <Clock className="h-3 w-3" aria-hidden />
-                          Grading in progress
+                      {note && (
+                        <span
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-semibold",
+                            note.actionable
+                              ? "bg-amber-50 text-amber-800"
+                              : "bg-brand-cream text-brand-ink/55"
+                          )}
+                        >
+                          {note.actionable ? (
+                            <AlertTriangle className="h-3 w-3" aria-hidden />
+                          ) : (
+                            <Clock className="h-3 w-3" aria-hidden />
+                          )}
+                          {note.text}
                         </span>
                       )}
                     </div>
@@ -207,6 +266,13 @@ export function IntegrityPanel({
                               <p className="text-[11px] font-semibold uppercase tracking-wider text-brand-ink/45">
                                 {QUESTION_TYPE_LABELS[grade.question_type] ?? grade.question_type}
                               </p>
+                              {grade.awarded_by && (
+                                <p className="text-[11px] text-brand-ink/40">
+                                  {grade.awarded_by === "STAFF"
+                                    ? "Marks awarded by a person"
+                                    : "Marks awarded by the AI"}
+                                </p>
+                              )}
                             </div>
                             <Badge
                               tone={
@@ -284,6 +350,14 @@ export function IntegrityPanel({
                               </p>
                             </details>
                           )}
+
+                          {grades.can_score && (
+                            <ScoreEditor
+                              key={grade.response_id}
+                              grade={grade}
+                              onReload={() => void fetchReport({ silent: true })}
+                            />
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -351,5 +425,127 @@ export function IntegrityPanel({
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Award or amend one answer's marks by hand.
+ *
+ * Rendered only when the server says this reviewer may grade and can see points,
+ * so the control never offers a mark its own action would refuse. What is typed
+ * here is written onto the response and into the change trail, and the attempt's
+ * totals are recomputed by the grading engine's own rule — so marking the last
+ * unscored answer is what finally moves a stuck test to GRADED.
+ */
+function ScoreEditor({
+  grade,
+  onReload,
+}: {
+  grade: QuestionGrade;
+  onReload: () => void;
+}) {
+  const [points, setPoints] = useState(grade.score === null ? "" : String(grade.score));
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<{ text: string; bad: boolean } | null>(null);
+
+  const max = Number(grade.max_score ?? 0);
+  const unscored = grade.score === null;
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    const value = Number(points);
+    if (!Number.isInteger(value) || value < 0) {
+      setMessage({ text: "Whole points only, 0 included.", bad: true });
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await scoreAttemptResponse({
+        responseId: grade.response_id,
+        score: value,
+        note: reason,
+      });
+      if (!result.ok) {
+        setMessage({ text: result.error ?? "The mark was not saved.", bad: true });
+        return;
+      }
+
+      setReason("");
+      onReload();
+      const left = result.remaining_unscored ?? 0;
+      setMessage({
+        text:
+          left === 0
+            ? `Awarded ${value} — that was the last unscored answer, so the test is now graded.`
+            : `Awarded ${value} — ${left} answer${left === 1 ? "" : "s"} still unscored.`,
+        bad: false,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details className="mt-3 border-t border-brand-line pt-3">
+      <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-brand-ink/40 hover:text-brand-ink/60">
+        {unscored
+          ? "Award marks by hand"
+          : `Re-mark this answer (now ${grade.score} of ${max})`}
+      </summary>
+
+      <form onSubmit={(event) => void save(event)} className="mt-2 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-xs font-semibold text-brand-ink/60">
+            Points
+            <input
+              type="number"
+              min={0}
+              max={max || undefined}
+              step={1}
+              value={points}
+              onChange={(event) => setPoints(event.target.value)}
+              className="w-20 rounded-lg border border-brand-line bg-white px-2 py-1 text-sm focus:border-brand-gold focus:outline-none"
+              required
+            />
+          </label>
+          <span className="text-[11px] text-brand-ink/45">
+            of {max || "?"} this answer carries
+          </span>
+        </div>
+
+        <textarea
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          rows={2}
+          maxLength={500}
+          placeholder="Why — written onto the answer and into the change trail."
+          className="w-full rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs leading-relaxed focus:border-brand-gold focus:outline-none"
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="submit"
+            disabled={busy}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-brand-ink px-3 py-1.5 text-xs font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
+            {unscored ? "Award" : "Save mark"}
+          </button>
+          {message && (
+            <p
+              className={cn(
+                "text-[11px] leading-tight",
+                message.bad ? "text-rose-700" : "text-emerald-800"
+              )}
+            >
+              {message.text}
+            </p>
+          )}
+        </div>
+      </form>
+    </details>
   );
 }

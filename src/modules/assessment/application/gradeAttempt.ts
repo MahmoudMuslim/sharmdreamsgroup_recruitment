@@ -77,6 +77,18 @@ type GradeOutcome =
   | { status: "MANUAL"; reason: string }
   | { status: "UNSUPPORTED" };
 
+/** What an attempt's response rows add up to, as recomputed by {@link resyncAttemptTotals}. */
+export interface AttemptTotals {
+  total: number;
+  max: number;
+  responses: number;
+  /** How many of them still carry no score — what keeps the attempt open. */
+  unscored: number;
+  /** Every response carries a score — the only thing that makes an attempt GRADED. */
+  complete: boolean;
+  error?: string;
+}
+
 const clampPct = (value: number): number => Math.max(0, Math.min(100, Math.round(value)));
 
 const GRADING_PASSES = 3;
@@ -154,7 +166,7 @@ export async function gradeAttemptResponses(
     if (failed === 0) break;
   }
 
-  await finalizeAttemptTotals(supabase, attemptId, trail);
+  await finalizeAttemptTotals(attemptId, trail);
 
   if (failed > 0) {
     await recordActivity({
@@ -507,12 +519,20 @@ async function ensureTranscript(
 }
 
 
-/** Recomputes attempt totals from the response rows and marks the attempt GRADED. */
-async function finalizeAttemptTotals(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
-  attemptId: string,
-  trail: GradingTrail
-): Promise<void> {
+/**
+ * Recomputes an attempt's totals from its own response rows.
+ *
+ * The single rule both graders go through: an attempt crosses into GRADED only
+ * when every one of its responses carries a score, so a mark awarded by hand
+ * lands the attempt in exactly the state the AI passes would have put it in.
+ * Returns what the rows added up to and never writes the trail — the caller
+ * knows whether it was a machine or a person, and says so itself.
+ */
+export async function resyncAttemptTotals(
+  attemptId: string
+): Promise<AttemptTotals> {
+  const supabase = getSupabaseServiceClient();
+
   const { data: rows } = await supabase
     .from("candidate_responses")
     .select("score, max_score")
@@ -521,11 +541,12 @@ async function finalizeAttemptTotals(
   const responses = (rows ?? []) as { score: number | null; max_score: number }[];
   const total = responses.reduce((sum, row) => sum + (row.score ?? 0), 0);
   const max = responses.reduce((sum, row) => sum + (row.max_score ?? 0), 0);
-  // Judged by the rows themselves, not by whether this pass errored: a
-  // recording parked for manual review keeps the attempt honestly SUBMITTED.
-  const complete = responses.length > 0 && responses.every((row) => row.score !== null);
+  const unscored = responses.filter((row) => row.score === null).length;
+  // Judged by the rows themselves, not by whether a grading pass errored: a
+  // recording parked for review keeps the attempt honestly SUBMITTED.
+  const complete = responses.length > 0 && unscored === 0;
 
-  const { error: updateError } = await supabase
+  const { error } = await supabase
     .from("candidate_attempts")
     .update({
       status: complete ? "GRADED" : "SUBMITTED",
@@ -534,20 +555,37 @@ async function finalizeAttemptTotals(
     })
     .eq("id", attemptId);
 
+  return {
+    total,
+    max,
+    responses: responses.length,
+    unscored,
+    complete,
+    error: error?.message,
+  };
+}
+
+/** Recomputes attempt totals and records the crossing into GRADED, if this pass caused it. */
+async function finalizeAttemptTotals(
+  attemptId: string,
+  trail: GradingTrail
+): Promise<void> {
+  const totals = await resyncAttemptTotals(attemptId);
+
   // Only the crossing into GRADED is recorded: a sweep that re-adds the same
   // totals to an already-graded attempt would otherwise repeat the same row.
-  if (complete && !updateError && !trail.wasGraded) {
+  if (totals.complete && !totals.error && !trail.wasGraded) {
     await recordActivity({
       ...trail.actor,
       area: "assessments",
       action: "attempt_graded",
       entity: "attempt",
       entityId: attemptId,
-      summary: `Graded ${trail.candidateName}'s ${trail.jobTitle} test — ${total} of ${max} points across ${responses.length} response${responses.length === 1 ? "" : "s"}`,
+      summary: `Graded ${trail.candidateName}'s ${trail.jobTitle} test — ${totals.total} of ${totals.max} points across ${totals.responses} response${totals.responses === 1 ? "" : "s"}`,
       detail: {
-        total_score: total,
-        max_score: max,
-        responses: responses.length,
+        total_score: totals.total,
+        max_score: totals.max,
+        responses: totals.responses,
         status: "SUBMITTED → GRADED",
       },
     });

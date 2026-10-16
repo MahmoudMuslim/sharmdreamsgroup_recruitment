@@ -2,6 +2,8 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
+import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
+import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
 /* -------------------------------------------------------------------------- */
 /* Shared                                                     types           */
@@ -264,6 +266,14 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
   const [newCount, ungradedCount, upcomingCount, failedCount, parkedCount] =
     results.map((result) => result.count ?? 0);
 
+  // Exactly the gate `getAttemptAiGrades` applies to its own mark editor, asked
+  // here so this feed never points at a control the reader cannot open.
+  const [mayGrade, scoresMasked] = await Promise.all([
+    hasPermissionForUser("assessments.grade"),
+    scoresAreMaskedForCurrentUser(),
+  ]);
+  const mayAwardMarks = mayGrade && !scoresMasked;
+
   const alerts: StaffAlert[] = [
     {
       id: "new-applications",
@@ -276,12 +286,14 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
     {
       id: "ungraded",
       label: "Assessments submitted, not graded",
-      // Nothing on this console grades an attempt: the AI scores it from the
-      // submit route and the cron sweep retries what failed, and a response
-      // parked for review stays unscored with no staff control to finish it.
-      // So the row says only that grading did not complete, never that a
-      // recruiter can run it here.
-      detail: "AI grades it on submit — a queue here means grading never finished",
+      // The engine grades on submit and no scheduler re-runs it, so a queue
+      // here means grading never finished. What a recruiter can do about it
+      // depends on them, not the queue: the report's mark editor needs
+      // `assessments.grade` and unmasked points, so the row names that desk
+      // only for a reader who would actually see it.
+      detail: mayAwardMarks
+        ? "Award what the AI left from each candidate’s Integrity report"
+        : "AI grades it on submit — a queue here means grading never finished",
       count: ungradedCount,
       href: "/candidates?stage=ASSESSMENT",
       tone: "info",
