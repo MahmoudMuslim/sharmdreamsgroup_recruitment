@@ -5,6 +5,7 @@ import {
   Download,
   ExternalLink,
   File as FileIcon,
+  FileText,
   Loader2,
   Music,
   Paperclip,
@@ -17,10 +18,20 @@ import {
   type AttachmentRule,
 } from "@/modules/careers/attachment-rules";
 import { deleteAttachment } from "./attachment-actions";
+import { readAttachmentAsCv } from "./cv-actions";
 import type { DossierAttachment } from "./dossier-actions";
 
 const CONTROL =
   "inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-50";
+
+/** The parser reads text out of documents only, so a voice note offers no CV control. */
+function readableAsCv(attachment: DossierAttachment): boolean {
+  const mime = (attachment.mime_type ?? "").toLowerCase();
+  if (mime === "application/pdf" || mime.includes("wordprocessingml") || mime === "text/plain") {
+    return true;
+  }
+  return /\.(pdf|docx|txt|md)$/i.test(attachment.name);
+}
 
 /**
  * The files a recruiter adds to a candidate after the application landed.
@@ -43,6 +54,7 @@ export function AttachmentPanel({
 }) {
   const [uploading, setUploading] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [reading, setReading] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "error" | "ok"; text: string } | null>(null);
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -66,14 +78,34 @@ export function AttachmentPanel({
     try {
       const response = await fetch("/api/files/upload", { method: "POST", body });
       const json = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string }
+        | {
+            ok?: boolean;
+            error?: string;
+            cv?: { state: "filled" | "kept" | "unreadable" | "none"; note?: string };
+          }
         | null;
 
       if (!response.ok || !json?.ok) {
         setMessage({ tone: "error", text: json?.error ?? "The file could not be uploaded. Please try again." });
         return;
       }
-      setMessage({ tone: "ok", text: `Attached “${file.name}”.` });
+
+      // A stored CV file is not by itself a screenable CV — the engine reads the
+      // text held on the row. So the upload reports what happened to that text,
+      // rather than leaving "Attached" to imply the record can now be screened.
+      const cv = json.cv;
+      if (cv?.state === "unreadable") {
+        setMessage({ tone: "error", text: `Attached “${file.name}”. ${cv.note ?? ""}`.trim() });
+      } else if (cv?.state === "kept") {
+        setMessage({
+          tone: "ok",
+          text: `Attached “${file.name}”. ${cv.note ?? ""} Use Read as CV to put this file in front of the engine instead.`.trim(),
+        });
+      } else if (cv?.state === "filled") {
+        setMessage({ tone: "ok", text: `Attached “${file.name}”. ${cv.note ?? ""}`.trim() });
+      } else {
+        setMessage({ tone: "ok", text: `Attached “${file.name}”.` });
+      }
       onChanged();
     } catch {
       setMessage({ tone: "error", text: "The upload did not reach the portal. Check your connection and try again." });
@@ -107,9 +139,50 @@ export function AttachmentPanel({
     }
   }
 
+  /**
+   * Parses this file and stores the text on the candidate row, which is what the
+   * screening engine reads. Attaching alone does not — the file sits in storage
+   * while the record still reports no CV.
+   */
+  async function readAsCv(attachment: DossierAttachment) {
+    setReading(attachment.id);
+    setMessage(null);
+    try {
+      let result = await readAttachmentAsCv({ applicationId, attachmentId: attachment.id });
+
+      // The record may hold text the candidate typed or whose CV the site parsed.
+      // The action refuses rather than overwriting it, and only a confirmed
+      // Replace goes ahead.
+      if (!result.ok && result.needsReplace) {
+        if (!window.confirm(`${result.error}\n\nThe text already on file is lost.`)) return;
+        result = await readAttachmentAsCv({
+          applicationId,
+          attachmentId: attachment.id,
+          replace: true,
+        });
+      }
+
+      if (!result.ok) {
+        setMessage({ tone: "error", text: result.error ?? "The file could not be read." });
+        return;
+      }
+      setMessage({ tone: "ok", text: result.note ?? `Read “${attachment.name}” into the record.` });
+      onChanged();
+    } catch {
+      setMessage({ tone: "error", text: "Something went wrong reading the file." });
+    } finally {
+      setReading(null);
+    }
+  }
+
   return (
     <div className="space-y-3">
       {attachments.length > 0 && (
+        <>
+        <p className="text-[11px] leading-relaxed text-brand-ink/45">
+          Attaching a file stores it on the record. AI screening reads the CV text held on the row,
+          so use Read as CV to put a staff-attached document in front of the engine.
+        </p>
         <ul className="divide-y divide-brand-line rounded-xl border border-brand-line bg-white">
           {attachments.map((attachment) => {
             const href = `/api/files/link?bucket=${encodeURIComponent(attachment.bucket)}&path=${encodeURIComponent(attachment.path)}`;
@@ -143,6 +216,22 @@ export function AttachmentPanel({
                 </div>
 
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                  {canWrite && readableAsCv(attachment) && (
+                    <button
+                      type="button"
+                      disabled={reading !== null || uploading !== null}
+                      onClick={() => void readAsCv(attachment)}
+                      title="Parse this file and store its text on the candidate row, so AI screening can run."
+                      className={CONTROL}
+                    >
+                      {reading === attachment.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      Read as CV
+                    </button>
+                  )}
                   <a
                     href={href}
                     target="_blank"
@@ -176,6 +265,7 @@ export function AttachmentPanel({
             );
           })}
         </ul>
+        </>
       )}
 
       {attachments.length === 0 && (

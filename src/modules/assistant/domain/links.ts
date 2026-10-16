@@ -96,6 +96,7 @@ export function linkForTool(
     case "draft_interview_guide":
     case "schedule_interview":
     case "edit_candidate_contact":
+    case "read_candidate_cv":
     case "set_candidate_archive":
       return applicationId ? candidate(applicationId) : null;
     case "assign_assessment": {

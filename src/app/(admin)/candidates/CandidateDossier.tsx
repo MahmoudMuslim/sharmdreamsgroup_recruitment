@@ -475,7 +475,7 @@ export function CandidateDossier({
               <p className="mt-2 text-xs text-brand-ink/50">
                 {app.cv_name
                   ? "No text could be read from this file — open it to read the CV as submitted."
-                  : "No CV was attached to this application."}
+                  : "No CV text on this record — attach the file under Files added by staff, then use Read as CV so the screening engine can use it."}
               </p>
             )
           )}

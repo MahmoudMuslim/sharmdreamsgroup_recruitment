@@ -131,7 +131,7 @@ export function NewCandidateDrawer() {
         title="Record a candidate by hand"
         subtitle={
           created
-            ? "Filed under New — screening waits for a CV on the record."
+            ? "Filed under New — attach a CV on the record and read it in before screening."
             : "For someone who never applied through the careers site."
         }
         onSubmit={submit}

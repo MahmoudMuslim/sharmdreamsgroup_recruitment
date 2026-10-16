@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
+import { readAttachmentAsCv } from "@/app/(admin)/candidates/cv-actions";
 import {
   ATTACHMENT_RULES,
   attachmentPath,
@@ -155,5 +156,23 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({ ok: true, attachment });
+  // A CV a recruiter attaches is not what the screening engine reads: the engine
+  // takes `applications.cv_text`, and `cv_file_path` only ever names the object
+  // the career site wrote into `candidate-cvs`. So a document dropped into
+  // `resumes` is parsed into the row in the same click, and the recruiter is
+  // told which way it landed rather than left believing the file is screened.
+  let cv: { state: "filled" | "kept" | "unreadable" | "none"; note?: string } = { state: "none" };
+  if (rule.bucket === "resumes") {
+    const read = await readAttachmentAsCv({
+      applicationId: String(applicationId),
+      attachmentId: String(attachment.id),
+    });
+    cv = read.ok
+      ? { state: "filled", note: read.note }
+      : read.needsReplace
+        ? { state: "kept", note: "The record already holds CV text, so this file sits alongside it." }
+        : { state: "unreadable", note: read.error };
+  }
+
+  return NextResponse.json({ ok: true, attachment, cv });
 }
