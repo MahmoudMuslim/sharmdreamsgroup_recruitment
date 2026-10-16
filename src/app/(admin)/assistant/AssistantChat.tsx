@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RichReply } from "@/modules/assistant/presentation/RichReply";
+import { ReplyChart } from "@/modules/assistant/presentation/ReplyChart";
+import type { AssistantChart } from "@/modules/assistant/domain/charts";
 import type { AssistantLink } from "@/modules/assistant/domain/links";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import type { AssistantApproval } from "@/modules/assistant/domain/approvals";
@@ -352,6 +354,20 @@ function endingOf(steps: AssistantStep[] | undefined): AssistantStep | null {
   for (let index = steps.length - 1; index >= 0; index -= 1) {
     const step = steps[index];
     if (step.ask || step.approval) return step;
+  }
+  return null;
+}
+
+/**
+ * The chart this turn earned, walked backwards for the same reason `endingOf`
+ * does: a turn can read the metrics more than once, and the last read is the one
+ * the answer below it is built on.
+ */
+function chartOf(steps: AssistantStep[] | undefined): AssistantChart | null {
+  if (!steps) return null;
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const chart = steps[index].chart;
+    if (chart) return chart;
   }
   return null;
 }
@@ -1010,6 +1026,7 @@ export function AssistantChat({
               const ending = endingOf(message.steps);
               const ask = ending?.ask ?? null;
               const approval = ending?.approval ?? null;
+              const chart = chartOf(message.steps);
               const answered = ask
                 ? (messages.slice(index + 1).find((entry) => entry.role === "user")?.text ?? null)
                 : null;
@@ -1020,6 +1037,15 @@ export function AssistantChat({
                   <StepChips steps={message.steps ?? []} />
                   <div className="rounded-2xl rounded-bl-sm border border-brand-line bg-brand-cream px-3 py-2.5 text-sm leading-relaxed text-brand-ink">
                     <RichReply text={ask ? askBubble(ask) : message.text} />
+                    {chart && !ask && (
+                      <>
+                        <ReplyChart chart={chart} className="mt-2.5" />
+                        <p className="mt-1.5 text-[10px] leading-snug text-brand-ink/40">
+                          These bars are drawn by the portal from the figures this answer read —
+                          the model chose the view, not the numbers.
+                        </p>
+                      </>
+                    )}
                   </div>
                   {ask && (
                     <QuestionChoices

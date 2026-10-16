@@ -63,6 +63,7 @@ import {
   listJobOpenings,
   type JobReadFilter,
 } from "@/modules/assistant/infrastructure/reads";
+import { CHART_VIEWS, chartForView, isChartView } from "@/modules/assistant/domain/charts";
 import {
   getQuestionsForEditor,
   getTemplateDetail,
@@ -545,11 +546,14 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "dashboard_analytics",
     label: "Reading hiring metrics",
     description:
-      "Group-wide hiring analytics: totals, the stage funnel with conversion rates, channel effectiveness, AI fit-score distribution, 14-day application volume and time-to-hire trend. Quote `candidates_note` whenever the ten candidates are named: they are the board's ranking of the rows it loads, not the pipeline.",
-    args: {},
-    run: async () => {
+      "Group-wide hiring analytics: totals, the stage funnel with conversion rates, channel effectiveness, AI fit-score distribution, 14-day application volume and time-to-hire trend. Quote `candidates_note` whenever the ten candidates are named: they are the board's ranking of the rows it loads, not the pipeline. Pass `chart` when the answer is a shape — the chart is drawn from these figures on the recruiter's screen, not from anything you write, so say what it shows instead of reciting every row.",
+    args: {
+      chart: `string — optional, draw one of ${CHART_VIEWS.join(", ")} as a chart under your answer`,
+    },
+    run: async (args) => {
       const analytics = await getDashboardAnalytics();
-      return {
+      const requested = typeof args.chart === "string" ? args.chart.trim().toLowerCase() : "";
+      const result: Record<string, unknown> = {
         total_applications: analytics.total_applications,
         active_jobs: analytics.active_jobs,
         hires_this_quarter: analytics.hires_this_quarter,
@@ -577,6 +581,24 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           analytics.scores_masked ? "newest, because fit scores are masked for you" : "best-matching by AI fit"
         }.`,
       };
+
+      if (!requested) return result;
+      // A bad view name is a mistake about an option, not a failed read: the
+      // figures above still answer the question, so this reports the choice that
+      // exists rather than refusing the call.
+      if (!isChartView(requested)) {
+        return {
+          ...result,
+          chart_error: `No chart is called “${requested}”. Draw one of: ${CHART_VIEWS.join(", ")}.`,
+        };
+      }
+      const build = chartForView(requested, result);
+      if (!build.chart) {
+        // The reason travels, so the reply says the picture could not be drawn
+        // and why, instead of leaving a gap the recruiter fills in themselves.
+        return { ...result, chart_view: requested, chart_unavailable: build.reason };
+      }
+      return { ...result, chart_view: requested };
     },
   },
   {

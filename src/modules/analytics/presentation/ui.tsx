@@ -142,7 +142,7 @@ export function Meter({
 }: {
   value: number;
   max?: number;
-  tone?: "gold" | "ink" | "success";
+  tone?: "gold" | "ink" | "success" | "danger";
   className?: string;
 }) {
   const pct = max === 0 ? 0 : Math.max(0, Math.min(100, (value / max) * 100));
@@ -153,7 +153,8 @@ export function Meter({
           "h-full rounded-full transition-[width] duration-700",
           tone === "gold" && "bg-gradient-to-r from-brand-gold-dark to-brand-gold-light",
           tone === "ink" && "bg-brand-ink",
-          tone === "success" && "bg-gradient-to-r from-emerald-700 to-emerald-400"
+          tone === "success" && "bg-gradient-to-r from-emerald-700 to-emerald-400",
+          tone === "danger" && "bg-gradient-to-r from-rose-700 to-rose-400"
         )}
         style={{ width: `${pct}%` }}
       />

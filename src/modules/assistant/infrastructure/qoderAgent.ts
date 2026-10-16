@@ -26,6 +26,7 @@ import {
   requiresApproval,
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
+import { chartForTool } from "@/modules/assistant/domain/charts";
 import {
   ASSISTANT_RULES,
   type AssistantProvider,
@@ -178,6 +179,7 @@ function definitionFor(
         detail: detail.slice(0, 220),
         link: linkForTool(tool.name, input, value) ?? undefined,
         ask: ask ?? undefined,
+        chart: chartForTool(tool.name, value) ?? undefined,
       });
       return { content: [{ type: "text", text: detail }], isError: !ok };
     } catch (error) {

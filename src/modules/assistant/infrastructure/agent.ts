@@ -20,6 +20,7 @@ import {
   requiresApproval,
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
+import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
 import type { ChatCompletionMessage } from "@/types";
 
@@ -49,6 +50,12 @@ export interface AssistantStep {
    * an approval card; the arguments themselves stay on the server.
    */
   approval?: AssistantApproval;
+  /**
+   * A chart built from this tool's own result. The model names the view and the
+   * server draws it, so the bars can only ever show figures the read returned —
+   * and they never travel back into the model's context.
+   */
+  chart?: AssistantChart;
 }
 
 /** Which engine actually served the turn, shown in the chat footer. */
@@ -296,6 +303,7 @@ async function executeTool(
         detail: detail.slice(0, 220),
         link: linkForTool(tool.name, args, value) ?? undefined,
         ask: tool.name === "ask_question" ? asQuestion(value) ?? undefined : undefined,
+        chart: chartForTool(tool.name, value) ?? undefined,
       },
       result: detail,
     };
