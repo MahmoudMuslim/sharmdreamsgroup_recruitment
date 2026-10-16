@@ -58,6 +58,11 @@ import {
   reissueAttemptLink,
   revokeAttempt,
 } from "@/app/(admin)/candidates/attempt-actions";
+import {
+  getAttemptGrades,
+  retryAttemptGrading,
+  scoreAttemptResponse,
+} from "@/app/(admin)/candidates/assessment-actions";
 import { deleteAttachment } from "@/app/(admin)/candidates/attachment-actions";
 import {
   createCandidate,
@@ -962,6 +967,50 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     },
   },
   {
+    name: "get_attempt_grades",
+    label: "Reading an attempt's grades",
+    description:
+      "One assessment attempt answer by answer, in the order the exam was sat: the question, the candidate's own words, the transcript of a recording, the mark and whose verdict it is, and what the AI said for and against it. Also reports how many answers carry no mark at all, whether this recruiter may award them, and whether the engine can be asked to try again. Read this before award_marks or retry_grading: both the response id and the points bound a mark may come from are here, nowhere else.",
+    args: { attempt_id: "string — from get_candidate_dossier" },
+    run: async (args) => {
+      const attemptId = str(args, "attempt_id");
+      const grades = await getAttemptGrades(attemptId);
+      if (!grades) return { ok: false, error: "No assessment attempt has that id." };
+
+      return {
+        ok: true,
+        attempt_id: grades.attempt_id,
+        application_id: grades.application_id,
+        suite: grades.template_name,
+        status: grades.status,
+        scores_masked: grades.scores_masked,
+        total_score: grades.total_score,
+        max_score: grades.max_score,
+        unscored: grades.unscored,
+        may_award_marks: grades.can_score,
+        may_retry_grading: grades.can_retry,
+        ai_grading: grades.ai_grading,
+        answers: grades.grades.map((grade) => ({
+          response_id: grade.response_id,
+          title: grade.title,
+          type: grade.question_type,
+          score: grade.score,
+          max_score: grade.max_score,
+          awarded_by: grade.awarded_by,
+          answer: clip(grade.answer_preview, 700),
+          transcript: clip(grade.transcript, 500),
+          // A signed playback URL is an hour-long door into a private bucket and
+          // a chat transcript is stored, so the answer here is that a recording
+          // exists — the recruiter watches it on the report itself.
+          has_recording: Boolean(grade.video_url),
+          rationale: clip(grade.rationale, 500),
+          strengths: grade.strengths,
+          improvements: grade.improvements,
+        })),
+      };
+    },
+  },
+  {
     name: "list_interviews",
     label: "Reading the interview agenda",
     description:
@@ -1489,6 +1538,34 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       "Replace a link the candidate never opened with a fresh one and send the invitation again — for the invite that bounced, expired or was lost. The old address stops resolving the moment this runs. A test that was already opened is refused, because a second link would hand a second sitting of the same paper.",
     args: { attempt_id: "string — from get_candidate_dossier" },
     run: async (args) => report(await reissueAttemptLink(str(args, "attempt_id"))),
+  },
+  /* ----------------------------- Grading ------------------------------- */
+  {
+    name: "award_marks",
+    label: "Awarding marks by hand",
+    description:
+      "Put a mark on one answer, exactly as the mark editor on the candidate's Integrity report does. For an answer the AI left unscored or parked for review, after reading it with get_attempt_grades: the number is whole points out of that answer's own max_score, never a percentage, and the note is saved as the reason a person decided. Refused when the recruiter's role has its marks withheld — that is the same rule that hides the editor on screen.",
+    args: {
+      response_id: "string — from get_attempt_grades",
+      score: "number — whole points, from 0 up to that answer's max_score",
+      note: "string — why, in the recruiter's words. Optional",
+    },
+    run: async (args) =>
+      report(
+        await scoreAttemptResponse({
+          responseId: str(args, "response_id"),
+          score: num(args, "score"),
+          note: optionalStr(args, "note") ?? "",
+        })
+      ),
+  },
+  {
+    name: "retry_grading",
+    label: "Re-running the AI grading",
+    description:
+      "One more pass by the grading engine over an attempt's unscored answers — the same run the report's “Ask the AI again” button starts. It is the only way marks come back from the AI on an attempt that was already submitted, since nothing schedules the timed sweep. Marks it writes are the engine's own; the trail also records that this person asked. Refused when AI grading is off or no provider is configured, which get_attempt_grades reports in advance.",
+    args: { attempt_id: "string — from get_candidate_dossier" },
+    run: async (args) => report(await retryAttemptGrading(str(args, "attempt_id"))),
   },
 
   /* ----------------------------- Interviews ------------------------------ */

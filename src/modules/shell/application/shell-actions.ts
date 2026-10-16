@@ -2,6 +2,8 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
+import { hasAiProvider } from "@/lib/config.server";
+import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
@@ -266,13 +268,21 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
   const [newCount, ungradedCount, upcomingCount, failedCount, parkedCount] =
     results.map((result) => result.count ?? 0);
 
-  // Exactly the gate `getAttemptAiGrades` applies to its own mark editor, asked
-  // here so this feed never points at a control the reader cannot open.
-  const [mayGrade, scoresMasked] = await Promise.all([
+  // Exactly the gates the Integrity report applies to its own two controls, asked
+  // here so this feed never points at something the reader cannot open.
+  const [mayGrade, scoresMasked, automation] = await Promise.all([
     hasPermissionForUser("assessments.grade"),
     scoresAreMaskedForCurrentUser(),
+    getAiAutomationSettings(),
   ]);
   const mayAwardMarks = mayGrade && !scoresMasked;
+  // The retry button is rendered only when the engine can actually run, so a
+  // reader whose AI grading is switched off must not be promised a pass.
+  const mayRetryGrading = mayGrade && automation.aiEnabled && hasAiProvider();
+  const gradingHint = [
+    mayRetryGrading ? "ask the AI to grade the open answers again" : null,
+    mayAwardMarks ? "award the marks yourself" : null,
+  ].filter(Boolean);
 
   const alerts: StaffAlert[] = [
     {
@@ -286,13 +296,12 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
     {
       id: "ungraded",
       label: "Assessments submitted, not graded",
-      // The engine grades on submit and no scheduler re-runs it, so a queue
-      // here means grading never finished. What a recruiter can do about it
-      // depends on them, not the queue: the report's mark editor needs
-      // `assessments.grade` and unmasked points, so the row names that desk
-      // only for a reader who would actually see it.
-      detail: mayAwardMarks
-        ? "Award what the AI left from each candidate’s Integrity report"
+      // The engine grades on submit and no scheduler re-runs it, so a queue here
+      // means grading never finished. What a recruiter can do about it depends on
+      // them, not the queue, so the row lists only the doors this reader would
+      // actually find open on the report.
+      detail: gradingHint.length
+        ? `From each candidate’s Integrity report, ${gradingHint.join(" or ")}`
         : "AI grades it on submit — a queue here means grading never finished",
       count: ungradedCount,
       href: "/candidates?stage=ASSESSMENT",

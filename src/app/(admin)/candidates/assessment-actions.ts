@@ -35,6 +35,8 @@ export interface QuestionGrade {
 
 export interface AttemptGrades {
   attempt_id: string;
+  /** What a chat answer can deep-link to; the drawer already knows the record. */
+  application_id: string | null;
   template_name: string | null;
   status: string;
   total_score: number | null;
@@ -56,7 +58,8 @@ export interface AttemptGrades {
    * `assessments.grade` is the gate the permission console has always listed. A
    * masked reviewer is refused as well: every bound the editor would need —
    * each question's points and the attempt's total — is something the masking
-   * rule deliberately hides, so it would be typing into the dark.
+   * rule deliberately hides, so it would be typing into the dark. `scoreAttemptResponse`
+   * applies the same refusal, so this is the rule and not only the widget.
    */
   can_score: boolean;
   /**
@@ -72,17 +75,47 @@ export interface AttemptGrades {
 }
 
 /**
- * Per-question AI grades for one attempt, newest structure aside — ordered by
- * the template's question position so the recruiter reads it like the exam.
- * Rationale text is capped client-side; the full answer stays in the database.
+ * Per-question AI grades for one attempt, found by the candidate's access
+ * token — which is the only handle the invitation link carries, so it is how
+ * the drawer reads the report.
+ */
+export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGrades | null> {
+  await requireStaff("/candidates");
+  const supabase = await createSupabaseServerClient();
+
+  const { data: found } = await supabase
+    .from("candidate_attempts")
+    .select("id")
+    .eq("access_token", accessToken)
+    .maybeSingle();
+
+  if (!found) return null;
+  return attemptGrades(found.id);
+}
+
+/**
+ * The same report addressed by attempt id, which is how the assistant reads it.
+ *
+ * An access token is the candidate's start link, and a chat transcript is
+ * stored — so the token never appears in a tool's arguments or result, and
+ * every grading id the assistant works with comes from the dossier instead.
+ */
+export async function getAttemptGrades(attemptId: string): Promise<AttemptGrades | null> {
+  await requireStaff("/candidates");
+  return attemptGrades(attemptId);
+}
+
+/**
+ * Per-question AI grades for one attempt, ordered by the template's question
+ * position so the report reads like the exam. Rationale text is capped
+ * client-side; the full answer stays in the database.
  *
  * The marks themselves follow the same rule as the candidate table: under
  * `security.mask_scores_for_reviewers` they are dropped here, so a reviewer
  * without `scores.view_unmasked` cannot recover them from this report either.
  * Answers, recordings and the AI's written feedback stay visible.
  */
-export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGrades | null> {
-  await requireStaff("/candidates");
+async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
   const [supabase, masked, mayGrade, automation] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
@@ -92,8 +125,8 @@ export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGr
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
-    .select("id, status, total_score, max_score, assessment_templates(name)")
-    .eq("access_token", accessToken)
+    .select("id, application_id, status, total_score, max_score, assessment_templates(name)")
+    .eq("id", attemptId)
     .maybeSingle();
 
   if (!attempt) return null;
@@ -169,6 +202,7 @@ export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGr
 
   return {
     attempt_id: attempt.id,
+    application_id: (attempt.application_id as string | null | undefined) ?? null,
     template_name: template?.name ?? "Assessment",
     status: attempt.status,
     total_score: masked || attempt.total_score === null ? null : Number(attempt.total_score),
@@ -191,6 +225,11 @@ export interface ManualScoreResult {
   error?: string;
   /** Left when the mark was the last missing one, so the caller can say the test is now graded. */
   remaining_unscored?: number;
+  /** The attempt's running totals, so the answer that finishes the paper can report the result. */
+  total_score?: number;
+  max_score?: number;
+  /** So a chat answer can link back to the person whose marks it just changed. */
+  application_id?: string | null;
 }
 
 /** Pulls a to-one embed out of whichever shape PostgREST returned. */
@@ -198,6 +237,9 @@ function one<T extends object>(value: T | T[] | null | undefined): T | null {
   const row = Array.isArray(value) ? value[0] : value;
   return row ?? null;
 }
+
+/** PostgREST returns a to-one embed as an object or as a one-row array. */
+type ApplicationsEmbed = { id?: string; full_name?: string } | { id?: string; full_name?: string }[];
 
 /**
  * Award a response's marks by hand.
@@ -222,10 +264,26 @@ export async function scoreAttemptResponse(input: {
 }): Promise<ManualScoreResult> {
   await requireStaff("/candidates");
 
-  if (!(await hasPermissionForUser("assessments.grade"))) {
+  const [mayGrade, masked] = await Promise.all([
+    hasPermissionForUser("assessments.grade"),
+    scoresAreMaskedForCurrentUser(),
+  ]);
+
+  if (!mayGrade) {
     return {
       ok: false,
       error: "Awarding marks needs the Grade assessments permission.",
+    };
+  }
+
+  // Checked here as well as through `can_score`, which is what hides the editor
+  // on the report: a reviewer whose marks are withheld is refused the same way
+  // at every door, including a chat that never renders that drawer.
+  if (masked) {
+    return {
+      ok: false,
+      error:
+        "Your role has its marks withheld, so it cannot award them either. Grading by hand needs “View unmasked scores”, or “Mask scores for interviewers” switched off.",
     };
   }
 
@@ -240,7 +298,7 @@ export async function scoreAttemptResponse(input: {
   const { data: found } = await supabase
     .from("candidate_responses")
     .select(
-      "id, attempt_id, score, max_score, ai_evaluation, assessment_questions(title), candidate_attempts(status, applications(full_name))"
+      "id, attempt_id, score, max_score, ai_evaluation, assessment_questions(title), candidate_attempts(status, applications(id, full_name))"
     )
     .eq("id", input.responseId)
     .maybeSingle();
@@ -255,11 +313,11 @@ export async function scoreAttemptResponse(input: {
     ai_evaluation: { rationale?: string } | null;
     assessment_questions?: { title?: string } | { title?: string }[] | null;
     candidate_attempts?:
-      | { status?: string; applications?: { full_name?: string } | { full_name?: string }[] }
+      | { status?: string; applications?: ApplicationsEmbed }
       | null
       | {
           status?: string;
-          applications?: { full_name?: string } | { full_name?: string }[];
+          applications?: ApplicationsEmbed;
         }[];
   };
 
@@ -334,7 +392,13 @@ export async function scoreAttemptResponse(input: {
 
   revalidatePath("/candidates");
 
-  return { ok: true, remaining_unscored: totals.unscored };
+  return {
+    ok: true,
+    remaining_unscored: totals.unscored,
+    total_score: totals.total,
+    max_score: totals.max,
+    application_id: one(attempt?.applications)?.id ?? null,
+  };
 }
 
 export interface GradingRetryResult {
@@ -343,6 +407,8 @@ export interface GradingRetryResult {
   /** What this run moved, so the report can say it out loud instead of reloading in silence. */
   scored?: number;
   still_unscored?: number;
+  /** So a chat answer can link back to the person whose answers it just graded. */
+  application_id?: string | null;
 }
 
 /** How many of an attempt's answers carry no mark, as the caller's session sees them. */
@@ -363,12 +429,13 @@ async function openAnswers(
  *
  * The retry path lived only in `/api/cron/grading`, and nothing schedules that
  * route — so an answer the AI failed to score at submit had no way of ever
- * getting a mark except from a person. One pass, deliberately: someone is
- * watching this button, and the engine's three-pass budget with its
- * twenty-second waits is for callers nobody is waiting on.
+ * getting a mark except from a person. One pass, deliberately: whoever asks is
+ * watching a spinner or waiting on a reply, and the engine's three-pass budget
+ * with its twenty-second waits is for callers nobody is waiting on.
  *
  * The marks the engine writes are recorded as the engine's own. This row is the
- * separate fact that a person asked for the run.
+ * separate fact that a person asked for the run — from the report's button or
+ * from the assistant, which calls this same action.
  */
 export async function retryAttemptGrading(attemptId: string): Promise<GradingRetryResult> {
   await requireStaff("/candidates");
@@ -384,7 +451,7 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   const { data: found } = await supabase
     .from("candidate_attempts")
-    .select("id, applications ( full_name )")
+    .select("id, applications ( id, full_name )")
     .eq("id", attemptId)
     .maybeSingle();
 
@@ -393,7 +460,12 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
   const openBefore = await openAnswers(supabase, attemptId);
   if (openBefore === 0) {
     // Nothing for the engine to do — saying so beats spending a provider call.
-    return { ok: true, scored: 0, still_unscored: 0 };
+    return {
+      ok: true,
+      scored: 0,
+      still_unscored: 0,
+      application_id: one(found.applications)?.id ?? null,
+    };
   }
 
   const { aiEnabled } = await getAiAutomationSettings();
@@ -429,5 +501,10 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   revalidatePath("/candidates");
 
-  return { ok: true, scored, still_unscored: openAfter };
+  return {
+    ok: true,
+    scored,
+    still_unscored: openAfter,
+    application_id: one(found.applications)?.id ?? null,
+  };
 }

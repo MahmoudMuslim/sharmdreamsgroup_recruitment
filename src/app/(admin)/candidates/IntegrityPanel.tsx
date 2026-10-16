@@ -85,10 +85,11 @@ function statusNote(grades: AttemptGrades): { text: string; actionable: boolean 
  * Signals are advisory context, not a verdict — the copy makes that explicit so
  * nobody auto-rejects on a single tab switch.
  *
- * It is also the desk where an answer the AI could not score gets its marks:
- * this is the only screen that shows a recruiter the evidence — the answer, the
- * recording, the transcript — a mark would be awarded from, and the only place
- * the engine can be asked to try the open answers again.
+ * It is also the desk where an answer the AI could not score gets its marks: the
+ * recording a mark would be judged from is played here, and this is where one is
+ * typed by hand. The assistant can read this same report and run both grading
+ * actions, but only through the very two actions called below — so a role
+ * refused on this screen is refused in the chat as well.
  */
 export function IntegrityPanel({
   accessToken,

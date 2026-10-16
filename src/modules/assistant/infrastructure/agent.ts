@@ -101,8 +101,9 @@ export const ASSISTANT_RULES: readonly string[] = [
   "    each one the real template_id the read returned. The same holds for gate questions, notification",
   "    templates, onboarding tasks and staff records — read the row, then write that row.",
   "13. Ids come from reads, never from memory: application ids from search_candidates or the dossier,",
-  "    attempt ids from the dossier, interview ids from list_interviews, plan ids from list_onboarding_plans,",
-  "    staff profile ids from list_team, file keys from list_files.",
+  "    attempt ids from the dossier, response ids from get_attempt_grades, interview ids from",
+  "    list_interviews, plan ids from list_onboarding_plans, staff profile ids from list_team,",
+  "    file keys from list_files.",
   "14. Dates and times carry their own UTC offset (…T10:30:00+03:00, or Z). A time the recruiter gave in",
   "    words is read against the organisation timezone from get_settings, then converted before you send it.",
 ];

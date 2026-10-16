@@ -134,6 +134,17 @@ export function linkForTool(
     case "reissue_attempt":
     case "delete_attempt":
       return { href: "/assessments", label: "Open the assessment suites" };
+    case "get_attempt_grades":
+    case "award_marks":
+    case "retry_grading": {
+      // Grading lives on the candidate's own Integrity report, and all three
+      // actions report whose attempt they read or touched, so the chat lands on
+      // the person rather than on the whole pipeline.
+      const id = token((result as { application_id?: unknown } | null)?.application_id);
+      return id
+        ? candidate(id)
+        : { href: "/candidates", label: "Open the candidate pipeline" };
+    }
     case "list_interviews":
     case "reschedule_interview":
     case "set_interview_status":
