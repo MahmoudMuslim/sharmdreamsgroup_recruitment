@@ -1,9 +1,10 @@
 /**
  * Every read behind an exportable report, in one place.
  *
- * The page, the window switcher and the download route all come through here,
- * so a file that leaves the building is built from the same query as the screen
- * the recruiter was looking at. Two implementations of one report is how an
+ * The page, the window switcher, the drill-down popups and the download route
+ * all come through here, so a file that leaves the building is built from the
+ * same query as the screen the recruiter was looking at, and a popup lists the
+ * rows the figure above it counted. Two implementations of one report is how an
  * export ends up disagreeing with the page that produced it.
  *
  * Reads are bounded and newest-first, because a report must cost the same no
@@ -52,10 +53,14 @@ import {
   windowLabel,
   type AnalyticsReport,
   type AnalyticsWindow,
+  type AttemptRow,
+  type InterviewRow,
+  type LogRow,
+  type ProspectRow,
 } from "@/modules/analytics/domain/report";
 
-/** Row budgets per table, shared by the aggregates and the row-level lists. */
-const LIMITS = {
+/** Row budgets per table, shared by the aggregates, the row-level lists and the popups. */
+export const LIMITS = {
   attempts: 5000,
   prospects: 3000,
   logs: 5000,
@@ -128,12 +133,36 @@ async function contextFor(
 
 /* ------------------------------------------------------------- analytics -- */
 
-export type AnalyticsRead =
-  | { report: AnalyticsReport; error: null }
-  | { report: null; error: string };
+/** The four window-scoped reads, as the typed rows the page and popups share. */
+export interface AnalyticsRows {
+  attempts: AttemptRow[];
+  prospects: ProspectRow[];
+  logs: LogRow[];
+  interviews: InterviewRow[];
+  /** Which read hit its row budget, so its count is a floor rather than a total. */
+  floored: Record<"attempts" | "prospects" | "logs" | "interviews", boolean>;
+  context: ReadContext;
+}
 
-/** The four newest-first reads behind every aggregate on the Analytics page. */
-export async function readAnalyticsReport(window: AnalyticsWindow): Promise<AnalyticsRead> {
+export type AnalyticsRowsRead =
+  | { rows: AnalyticsRows; error: null }
+  | { rows: null; error: string };
+
+/**
+ * Every row the Analytics page is built from, read once.
+ *
+ * The aggregates and the drill-down popups both come through here, so a number
+ * on the screen and the list behind it are counted from the same rows under the
+ * same window and the same row budget. Two reads of one table is how a popup
+ * ends up naming a total the card above it does not show.
+ *
+ * Selects carry the columns a list needs (names, openings, subjects) as well as
+ * the ones the aggregates use, because a popup that re-queried for its own
+ * columns would need its own budget and its own window edge. When the
+ * score-masking setting applies to this account the scores are dropped here, so
+ * no score reaches a list that was not allowed to read one.
+ */
+export async function readAnalyticsRows(window: AnalyticsWindow): Promise<AnalyticsRowsRead> {
   const { context, cutoff } = await contextFor(window);
   const supabase = await createSupabaseServerClient();
 
@@ -146,26 +175,125 @@ export async function readAnalyticsReport(window: AnalyticsWindow): Promise<Anal
   const [attempts, prospects, logs, interviews] = await Promise.all([
     scoped<Raw>(
       "candidate_attempts",
-      "status, created_at, started_at, submitted_at, total_score, max_score",
+      "id, application_id, status, created_at, started_at, submitted_at, total_score, max_score, " +
+        "applications ( full_name, job_openings ( title ) ), assessment_templates ( name )",
       LIMITS.attempts
     ),
-    scoped<Raw>("sourced_prospects", "id, stage, created_at, application_id", LIMITS.prospects),
-    scoped<Raw>("communication_logs", "channel, delivered, read_at, created_at, prospect_id", LIMITS.logs),
+    scoped<Raw>(
+      "sourced_prospects",
+      "id, full_name, headline, company, location, email, origin, stage, created_at, last_contacted_at, application_id",
+      LIMITS.prospects
+    ),
+    scoped<Raw>(
+      "communication_logs",
+      "id, channel, direction, recipient, subject, delivered, read_at, error_message, created_at, " +
+        "prospect_id, application_id, applications ( full_name )",
+      LIMITS.logs
+    ),
     scoped<Raw>(
       "interview_schedules",
-      "status, scheduled_at, created_at, applications ( created_at ), user_profiles ( full_name )",
+      "id, status, scheduled_at, created_at, duration_minutes, meeting_link, application_id, " +
+        "applications ( created_at, job_openings ( title ) ), user_profiles ( full_name )",
       LIMITS.interviews
     ),
   ]);
 
   const failed = [attempts, prospects, logs, interviews].find((result) => result.error);
-  if (failed) return { report: null, error: failed.error as string };
+  if (failed) return { rows: null, error: failed.error as string };
 
+  const hidden = context.scoresHidden;
+
+  return {
+    rows: {
+      context,
+      floored: {
+        attempts: attempts.truncated,
+        prospects: prospects.truncated,
+        logs: logs.truncated,
+        interviews: interviews.truncated,
+      },
+      attempts: attempts.rows.map((row) => {
+        const application = embedded(row, "applications");
+        return {
+          id: str(row.id),
+          application_id: text(row.application_id),
+          candidate: text(application.full_name) ?? "(no name on file)",
+          opening: text(embedded(application, "job_openings").title),
+          suite: text(embedded(row, "assessment_templates").name),
+          // A status chip and the list behind it are matched on this string, so
+          // a row with no status has to carry the same word the chip prints.
+          status: text(row.status) ?? "UNKNOWN",
+          created_at: text(row.created_at),
+          started_at: text(row.started_at),
+          submitted_at: text(row.submitted_at),
+          total_score: hidden ? null : num(row.total_score),
+          max_score: hidden ? null : num(row.max_score),
+        };
+      }),
+      prospects: prospects.rows.map((row) => ({
+        id: str(row.id),
+        candidate: str(row.full_name) || "(no name on file)",
+        headline: text(row.headline),
+        company: text(row.company),
+        location: text(row.location),
+        email: text(row.email),
+        origin: text(row.origin) ?? "LINKEDIN",
+        stage: text(row.stage) ?? "NEW",
+        created_at: text(row.created_at),
+        last_contacted_at: text(row.last_contacted_at),
+        application_id: text(row.application_id),
+      })),
+      logs: logs.rows.map((row) => ({
+        id: str(row.id),
+        channel: text(row.channel) ?? "UNKNOWN",
+        direction: text(row.direction) ?? "OUTBOUND",
+        recipient: str(row.recipient),
+        subject: text(row.subject),
+        delivered: row.delivered === true,
+        read_at: text(row.read_at),
+        error_message: text(row.error_message),
+        created_at: text(row.created_at),
+        prospect_id: text(row.prospect_id),
+        application_id: text(row.application_id),
+        candidate: text(embedded(row, "applications").full_name),
+      })),
+      interviews: interviews.rows.map((row) => {
+        const application = embedded(row, "applications");
+        return {
+          id: str(row.id),
+          status: text(row.status) ?? "UNKNOWN",
+          scheduled_at: text(row.scheduled_at),
+          created_at: text(row.created_at),
+          interviewer: text(embedded(row, "user_profiles").full_name),
+          candidate: text(application.full_name),
+          opening: text(embedded(application, "job_openings").title),
+          application_id: text(row.application_id),
+          duration_minutes: num(row.duration_minutes),
+          meeting_link: text(row.meeting_link),
+          application_created_at: text(application.created_at),
+        };
+      }),
+    },
+    error: null,
+  };
+}
+
+export type AnalyticsRead =
+  | { report: AnalyticsReport; error: null }
+  | { report: null; error: string };
+
+/** The aggregate report, built from the shared row read. */
+export async function readAnalyticsReport(window: AnalyticsWindow): Promise<AnalyticsRead> {
+  const read = await readAnalyticsRows(window);
+  if (!read.rows) return { report: null, error: read.error };
+
+  const { rows } = read;
+  const { context } = rows;
   const limitations: string[] = [];
-  if (attempts.truncated) limitations.push(floor(LIMITS.attempts, "assessment attempts"));
-  if (prospects.truncated) limitations.push(floor(LIMITS.prospects, "sourced prospects"));
-  if (logs.truncated) limitations.push(floor(LIMITS.logs, "messages"));
-  if (interviews.truncated) limitations.push(floor(LIMITS.interviews, "interview panels"));
+  if (rows.floored.attempts) limitations.push(floor(LIMITS.attempts, "assessment attempts"));
+  if (rows.floored.prospects) limitations.push(floor(LIMITS.prospects, "sourced prospects"));
+  if (rows.floored.logs) limitations.push(floor(LIMITS.logs, "messages"));
+  if (rows.floored.interviews) limitations.push(floor(LIMITS.interviews, "interview panels"));
   if (context.scoresHidden) {
     limitations.push(
       "Test scores are withheld from your account by the score-masking setting, so the score spread is not shown."
@@ -179,37 +307,13 @@ export async function readAnalyticsReport(window: AnalyticsWindow): Promise<Anal
     window,
     timeZone: context.timeZone,
     generatedAt: context.generatedAt,
-    complete: ![attempts, prospects, logs, interviews].some((result) => result.truncated),
+    complete: !Object.values(rows.floored).some(Boolean),
     scoresHidden: context.scoresHidden,
     limitations,
-    attempts: attempts.rows.map((row) => ({
-      status: str(row.status),
-      created_at: text(row.created_at),
-      started_at: text(row.started_at),
-      submitted_at: text(row.submitted_at),
-      total_score: num(row.total_score),
-      max_score: num(row.max_score),
-    })),
-    prospects: prospects.rows.map((row) => ({
-      id: str(row.id),
-      stage: text(row.stage) ?? "NEW",
-      created_at: text(row.created_at),
-      application_id: text(row.application_id),
-    })),
-    logs: logs.rows.map((row) => ({
-      channel: text(row.channel) ?? "UNKNOWN",
-      delivered: row.delivered === true,
-      read_at: text(row.read_at),
-      created_at: text(row.created_at),
-      prospect_id: text(row.prospect_id),
-    })),
-    interviews: interviews.rows.map((row) => ({
-      status: str(row.status),
-      scheduled_at: text(row.scheduled_at),
-      created_at: text(row.created_at),
-      interviewer: text(embedded(row, "user_profiles").full_name),
-      application_created_at: text(embedded(row, "applications").created_at),
-    })),
+    attempts: rows.attempts,
+    prospects: rows.prospects,
+    logs: rows.logs,
+    interviews: rows.interviews,
   });
 
   return { report, error: null };

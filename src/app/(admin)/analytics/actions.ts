@@ -1,7 +1,16 @@
 "use server";
 
 import { requireStaff } from "@/lib/auth/session";
-import { ANALYTICS_WINDOWS, type AnalyticsReport, type AnalyticsWindow } from "@/modules/analytics/domain/report";
+import {
+  ANALYTICS_WINDOWS,
+  type AnalyticsReport,
+  type AnalyticsWindow,
+} from "@/modules/analytics/domain/report";
+import {
+  parseDrillScope,
+  readAnalyticsDrill,
+  type AnalyticsDrillResult,
+} from "@/modules/analytics/infrastructure/analyticsDrill";
 import { readAnalyticsReport } from "@/modules/analytics/infrastructure/reportReader";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
@@ -40,4 +49,30 @@ export async function getAnalyticsReport(value: unknown): Promise<AnalyticsResul
   return report
     ? { ok: true, report }
     : { ok: false, error: error ?? "The report could not be built." };
+}
+
+/**
+ * The rows behind one figure, for the popup that opens when it is clicked.
+ *
+ * `{ window, scope }` is built in the browser, so both halves are re-checked
+ * here: the window against the four the page offers, the scope against the
+ * figures the page draws. The rows come from the same read as the report, which
+ * is what lets a popup name a total its card agrees with — and why a caller
+ * with masked scores gets a list with no scores in it, since the reader drops
+ * them before a figure is ever counted.
+ */
+export async function getAnalyticsDrilldown(input: unknown): Promise<AnalyticsDrillResult> {
+  await requireStaff("/analytics");
+
+  if (!(await hasPermissionForUser("analytics.view"))) {
+    return { ok: false, error: VIEW_DENIED };
+  }
+
+  const request = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : null;
+  if (!request) return { ok: false, error: "No figure was asked for." };
+
+  const scope = parseDrillScope(request.scope);
+  if (!scope) return { ok: false, error: "That figure is not one this page can list." };
+
+  return readAnalyticsDrill(scope, safeWindow(request.window));
 }
