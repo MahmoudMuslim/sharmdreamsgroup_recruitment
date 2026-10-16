@@ -22,6 +22,8 @@ import {
 } from "@/modules/assistant/infrastructure/transcriptStore";
 import { isAssistantEngine, type AssistantEngine } from "@/modules/assistant/domain/engine";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
+import { resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
+import { getModelCatalogue } from "@/modules/settings/application/credential-actions";
 import {
   CvExtractionError,
   describeExtractionFailure,
@@ -91,6 +93,14 @@ export interface AssistantAttachment {
 /** Turns kept from the client's transcript — enough for context, not for a novel. */
 const MAX_HISTORY = 12;
 const MAX_MESSAGE_CHARS = 4000;
+/** Long enough for any real routing id, short enough that a stuffed one is refused. */
+const MAX_MODEL_ID_CHARS = 160;
+/**
+ * The shape every provider publishes its ids in — `vendor/name:variant`, a bare
+ * Google name, or a `provider:`-prefixed routing id. Nothing that could steer a
+ * request somewhere else (a space, a `?`, a slash-dot) is allowed through.
+ */
+const MODEL_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
 /** An attached document is read, not stored; this is the part the model sees. */
 const MAX_ATTACHMENT_CHARS = 12_000;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -203,6 +213,12 @@ export async function sendAssistantMessage(input: {
   prompt: string;
   allowDestructive: boolean;
   engine?: AssistantEngine;
+  /**
+   * A model chosen for this conversation, tried on its own instead of through
+   * the routing table. Nothing in Settings is written by it, and it applies to
+   * the gateway engine, which is the one that takes a model id.
+   */
+  model?: string | null;
   attachment?: AssistantAttachment;
   /** The saved conversation to append to; a first turn with none starts one. */
   sessionId?: string | null;
@@ -215,7 +231,22 @@ export async function sendAssistantMessage(input: {
     return { ok: false, error: `Keep the question under ${MAX_MESSAGE_CHARS} characters.` };
   }
 
-  const engine: AssistantEngine = isAssistantEngine(input.engine) ? input.engine : "auto";
+  let engine: AssistantEngine = isAssistantEngine(input.engine) ? input.engine : "auto";
+
+  const chosen = typeof input.model === "string" ? input.model.trim() : "";
+  if (chosen && (chosen.length > MAX_MODEL_ID_CHARS || !MODEL_ID_SHAPE.test(chosen))) {
+    return { ok: false, error: "That is not a model id this portal can call." };
+  }
+  const model = chosen || null;
+
+  // Qoder runs on its own model and takes no direction from the catalogue, so a
+  // chosen model has to be served by the gateway. Saying nothing here would let
+  // the recruiter believe the engine they left selected answered.
+  let modelNote: string | undefined;
+  if (model && engine !== "gateway") {
+    modelNote = `${model} answers through the model gateway — the Qoder engine picks its own model and cannot be pointed at one.`;
+    engine = "gateway";
+  }
 
   const history: ChatCompletionMessage[] = [
     ...sanitize(input.history),
@@ -232,7 +263,7 @@ export async function sendAssistantMessage(input: {
 
   try {
     let turn: AssistantTurn | null = null;
-    let note: string | undefined;
+    let note: string | undefined = modelNote ?? undefined;
 
     if (engine !== "gateway") {
       const status = await qoderEngineStatus();
@@ -265,7 +296,7 @@ export async function sendAssistantMessage(input: {
     if (!turn) {
       try {
         turn = await withActivityContext({ via: "assistant" }, () =>
-          runAssistantTurn(history, allowDestructive)
+          runAssistantTurn(history, allowDestructive, model)
         );
       } catch (error) {
         // The gateway's own message already names the models it tried and why each
@@ -365,4 +396,80 @@ export async function getAssistantCapabilities(): Promise<AssistantCapability[]>
     description: tool.description,
     destructive: tool.destructive === true,
   }));
+}
+
+/** One model the assistant can be pointed at for a conversation. */
+export interface AssistantModelChoice {
+  id: string;
+  name: string;
+  /** Which provider publishes it, so the picker can group the list. */
+  provider: string;
+  /** That provider's own name, as the AI models console spells it. */
+  providerLabel: string;
+  free: boolean;
+}
+
+export interface AssistantModelChoices {
+  ok: boolean;
+  error?: string;
+  models: AssistantModelChoice[];
+  /** The model the routing table answers with when nothing is chosen here. */
+  defaultModel: string;
+  /** True when at least one provider could not be listed, so the list is short. */
+  degraded: boolean;
+}
+
+/**
+ * The picker's list: every model this portal can actually call.
+ *
+ * The catalogue is the one Settings → AI models reads, cached for a few minutes,
+ * so opening the picker costs one read however many turns follow. Rows are
+ * dropped when the portal stores no code path to call them (`routable`) or when
+ * the provider lists them but this account cannot use them (`enabled: false`) —
+ * offering either would be a model that fails on the first question.
+ */
+export async function getAssistantModelChoices(): Promise<AssistantModelChoices> {
+  await requireStaff("/assistant");
+
+  try {
+    const [catalogue, routing] = await Promise.all([
+      getModelCatalogue(),
+      resolveModelRouting("assistant"),
+    ]);
+
+    // The catalogue labels its own sources, so the picker groups under the same
+    // names the AI models console shows without reaching into the provider registry.
+    const labels = new Map(catalogue.sources.map((source) => [source.id, source.displayName]));
+
+    return {
+      ok: true,
+      models: catalogue.models
+        .filter((model) => model.routable && model.enabled !== false)
+        .map((model) => ({
+          id: model.id,
+          name: model.name,
+          provider: model.provider,
+          providerLabel: labels.get(model.provider) ?? model.provider,
+          free: model.free,
+        }))
+        .sort(
+          (a, b) =>
+            a.provider.localeCompare(b.provider) ||
+            a.name.localeCompare(b.name, undefined, { numeric: true })
+        ),
+      defaultModel: routing.enabled ? routing.primaryModel : "",
+      degraded: catalogue.degraded,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "The model list could not be read — the assistant keeps using its routing.",
+      models: [],
+      defaultModel: "",
+      degraded: false,
+    };
+  }
 }

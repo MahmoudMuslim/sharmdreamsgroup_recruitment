@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Check,
+  CornerUpLeft,
   ExternalLink,
   FileText,
   ListTree,
@@ -21,13 +22,16 @@ import { RichReply } from "@/modules/assistant/presentation/RichReply";
 import type { AssistantLink } from "@/modules/assistant/domain/links";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import type { AssistantStep } from "@/modules/assistant/infrastructure/agent";
+import type { AssistantQuestion } from "@/modules/assistant/domain/tools";
 import {
   extractAssistantAttachmentText,
   getAssistantCapabilities,
+  getAssistantModelChoices,
   openAssistantSession,
   sendAssistantMessage,
   type AssistantAttachment,
   type AssistantCapability,
+  type AssistantModelChoice,
 } from "./actions";
 
 /**
@@ -77,7 +81,7 @@ const ENGINES: readonly { id: AssistantEngine; label: string; hint: string }[] =
   {
     id: "gateway",
     label: "Gateway",
-    hint: "Always the routed model in Settings → AI models, through the gateway.",
+    hint: "Always the model gateway — either the one routed in Settings → AI models, or the one picked below.",
   },
 ];
 
@@ -110,6 +114,72 @@ function writeStoredEngine(value: AssistantEngine): void {
     window.localStorage.setItem(ENGINE_KEY, value);
   } catch {
     // Storage blocked (private mode) — the choice simply applies to this panel.
+  }
+}
+
+/* ----------------------------- Model override ----------------------------- */
+
+const MODEL_KEY = "sdg-assistant-model";
+
+/**
+ * The model chosen for this conversation.
+ *
+ * `sessionStorage`, not `localStorage`, and nothing written to Settings: a model
+ * picked to try an answer is a decision about this sitting-down, and closing the
+ * tab hands the routing table back its authority. The engine the recruiter chose
+ * is a preference and does live in `localStorage` — this is not.
+ */
+function readStoredModel(): string {
+  try {
+    return window.sessionStorage.getItem(MODEL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredModel(value: string): void {
+  try {
+    if (value) window.sessionStorage.setItem(MODEL_KEY, value);
+    else window.sessionStorage.removeItem(MODEL_KEY);
+  } catch {
+    // Storage blocked — the choice simply applies to this panel.
+  }
+}
+
+/* ------------------------------ Draft notes ------------------------------ */
+
+const DRAFT_KEY = "sdg-assistant-draft";
+/** Past a month the browser stops carrying it; it is a note, not a record. */
+const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Exactly the longest question the server will accept, so nothing kept here is unsendable. */
+const MAX_DRAFT_CHARS = 4_000;
+
+function readDraft(): string {
+  try {
+    const raw = window.localStorage.getItem(DRAFT_KEY);
+    if (!raw) return "";
+    const parsed = JSON.parse(raw) as { text?: unknown; at?: unknown };
+    if (typeof parsed?.text !== "string" || typeof parsed.at !== "number") return "";
+    if (Date.now() - parsed.at > DRAFT_TTL_MS || parsed.text.length > MAX_DRAFT_CHARS) {
+      window.localStorage.removeItem(DRAFT_KEY);
+      return "";
+    }
+    return parsed.text;
+  } catch {
+    return "";
+  }
+}
+
+/** An empty or over-long box stores nothing: the first is sent, the second refused. */
+function writeDraft(text: string): void {
+  try {
+    if (text.trim().length === 0 || text.length > MAX_DRAFT_CHARS) {
+      window.localStorage.removeItem(DRAFT_KEY);
+    } else {
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ text, at: Date.now() }));
+    }
+  } catch {
+    // Storage blocked or full — the draft simply lives only in this panel.
   }
 }
 
@@ -189,6 +259,86 @@ function StepChips({ steps }: { steps: AssistantStep[] }) {
       ))}
     </ul>
   );
+}
+
+/**
+ * The answer buttons for a question the assistant asked.
+ *
+ * Choosing sends that option as the next message, so the reply the model reads
+ * is exactly what the recruiter picked — no id or index for it to reinterpret.
+ * A question the conversation has moved past stays on screen, greyed and marked
+ * with what was actually answered, so an old thread reads as a Q&A and not as a
+ * list of open tasks.
+ */
+function QuestionChoices({
+  ask,
+  live,
+  answered,
+  pending,
+  onChoose,
+}: {
+  ask: AssistantQuestion;
+  live: boolean;
+  answered: string | null;
+  pending: boolean;
+  onChoose: (option: string) => void;
+}) {
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {ask.options.map((option, index) => {
+        const chosen = answered === option;
+        return (
+          <button
+            key={option}
+            type="button"
+            disabled={!live || pending}
+            onClick={() => onChoose(option)}
+            title={
+              live
+                ? `Answer: ${option}`
+                : answered
+                  ? `Already answered: ${answered}`
+                  : "Answered by a later message — click through the composer instead"
+            }
+            aria-disabled={!live || pending}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-left text-[11px] font-semibold transition",
+              chosen
+                ? "border-brand-gold bg-brand-gold/20 text-brand-ink"
+                : live
+                  ? "border-brand-line bg-white text-brand-ink/75 hover:border-brand-gold hover:bg-brand-gold/10"
+                  : "border-brand-line/60 bg-brand-cream text-brand-ink/40"
+            )}
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+                chosen ? "bg-brand-gold-dark text-brand-cream" : "bg-brand-sand text-brand-ink/60"
+              )}
+            >
+              {chosen ? <Check className="h-2.5 w-2.5" aria-hidden /> : index + 1}
+            </span>
+            <span className="min-w-0">{option}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The question as a bubble: its text, not the numbered list the model was fed. */
+function askBubble(ask: AssistantQuestion): string {
+  return ask.context ? `${ask.context}\n\n${ask.question}` : ask.question;
+}
+
+/** The last question in a turn, when the turn ended by asking one. */
+function askOf(steps: AssistantStep[] | undefined): AssistantQuestion | null {
+  if (!steps) return null;
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    if (steps[index].ask) return steps[index].ask as AssistantQuestion;
+  }
+  return null;
 }
 
 function Capabilities({ onClose }: { onClose: () => void }) {
@@ -286,7 +436,7 @@ export function AssistantChat({
   variant,
 }: AssistantChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftState] = useState(() => readDraft());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -296,6 +446,12 @@ export function AssistantChat({
   // would make the first client render disagree with the server's, because the
   // server has no localStorage to read.
   const [engine, setEngine] = useState<AssistantEngine>("auto");
+  /** "" means the routing table answers; anything else is this conversation's model. */
+  const [model, setModel] = useState("");
+  /** null while the catalogue is still being read, an empty list when it failed. */
+  const [models, setModels] = useState<AssistantModelChoice[] | null>(null);
+  const [modelListError, setModelListError] = useState<string | null>(null);
+  const [routedModel, setRoutedModel] = useState("");
   const [attachment, setAttachment] = useState<AssistantAttachment | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [opening, setOpening] = useState(sessionId !== null);
@@ -313,6 +469,23 @@ export function AssistantChat({
    * trigger a reload of the exchange the panel just wrote.
    */
   const shownSession = useRef<string | null>(null);
+
+  /**
+   * The half-typed question, kept in the browser.
+   *
+   * Closing the docked panel unmounts this component, and so does walking to
+   * another screen, so the composer's text would otherwise be thrown away and the
+   * recruiter would retype it. One slot rather than one per conversation: the
+   * question being written belongs to the person, not to the thread it will
+   * land in, and a first turn renames the thread while the box is still empty.
+   */
+  const draftRef = useRef(draft);
+
+  function setDraft(text: string) {
+    draftRef.current = text;
+    setDraftState(text);
+    writeDraft(text);
+  }
 
   // Keep the newest exchange in view, including while an answer is still coming.
   useEffect(() => {
@@ -381,6 +554,64 @@ export function AssistantChat({
     writeStoredEngine(next);
   }
 
+  /**
+   * A named model is served by the gateway, which is the engine that takes a
+   * model id, so the control above moves with the choice rather than leaving a
+   * selected Qoder that would quietly answer with something else.
+   */
+  function chooseModel(next: string) {
+    setModel(next);
+    writeStoredModel(next);
+    if (next && engine !== "gateway") chooseEngine("gateway");
+  }
+
+  // Read the catalogue this panel is allowed to offer, once, and restore whatever
+  // this browser session was already using.
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      setModel(readStoredModel());
+
+      try {
+        const result = await getAssistantModelChoices();
+        if (!active) return;
+        if (result.ok) {
+          setModels(result.models);
+          setRoutedModel(result.defaultModel);
+          setModelListError(
+            result.degraded
+              ? "Some providers did not answer just now, so this list may be shorter than usual."
+              : null
+          );
+        } else {
+          setModels([]);
+          setModelListError(result.error ?? "The model list could not be read.");
+        }
+      } catch {
+        if (active) {
+          setModels([]);
+          setModelListError("The model list could not be read.");
+        }
+      }
+    };
+
+    void load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const modelGroups = useMemo(() => {
+    const groups: { provider: string; label: string; models: AssistantModelChoice[] }[] = [];
+    for (const entry of models ?? []) {
+      const last = groups[groups.length - 1];
+      if (last && last.provider === entry.provider) last.models.push(entry);
+      else groups.push({ provider: entry.provider, label: entry.providerLabel, models: [entry] });
+    }
+    return groups;
+  }, [models]);
+
   async function attachFile(file: File) {
     if (file.size > MAX_UPLOAD_BYTES) {
       setError("That file is larger than 8 MB.");
@@ -412,6 +643,26 @@ export function AssistantChat({
       0,
       MAX_ATTACHMENT_IN_HISTORY
     )}\n"""`;
+  }
+
+  /**
+   * Put a question that was already sent back into the composer — after a failed
+   * answer, or to ask the same thing of a different candidate. Only the click
+   * does this: a turn that failed leaves the question where it is and nothing is
+   * typed into the recruiter's box unasked.
+   */
+  function reuse(message: ChatMessage) {
+    setDraft(message.text);
+    if (message.attachmentName && message.attachmentText) {
+      setAttachment({ name: message.attachmentName, text: message.attachmentText });
+    }
+    setError(null);
+    requestAnimationFrame(() => {
+      const box = inputRef.current;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
   }
 
   async function send(promptRaw?: string) {
@@ -448,6 +699,7 @@ export function AssistantChat({
         prompt,
         allowDestructive,
         engine,
+        model: model || null,
         attachment: attached ?? undefined,
         sessionId,
       });
@@ -550,7 +802,9 @@ export function AssistantChat({
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/45">
                   <Sparkles className="mr-1 inline h-3 w-3 text-brand-gold" aria-hidden />
                   Every conversation you start here is saved — pick it up from the Assistant page,
-                  or close this panel and carry on where you left off.
+                  or close this panel and carry on where you left off. Anything you have typed but
+                  not sent comes back with it, and when a request could mean several records I ask
+                  and put the choices under the question for you to click.
                 </p>
                 <ul className="mt-3 space-y-1.5">
                   {STARTERS.map((starter) => (
@@ -575,25 +829,58 @@ export function AssistantChat({
               </p>
             )}
 
-            {messages.map((message) =>
-              message.role === "user" ? (
-                <div key={message.id} className="ml-auto max-w-[85%] space-y-1">
-                  <p className="whitespace-pre-wrap rounded-2xl rounded-br-sm bg-brand-ink px-3 py-2 text-sm text-brand-cream">
-                    {message.text}
-                  </p>
-                  {message.attachmentName && (
-                    <p className="flex items-center justify-end gap-1.5 pr-1 text-[11px] font-semibold text-brand-ink/50">
-                      <FileText className="h-3 w-3" aria-hidden />
-                      {message.attachmentName}
+            {messages.map((message, index) => {
+              if (message.role === "user") {
+                return (
+                  <div key={message.id} className="ml-auto max-w-[85%] space-y-1">
+                    <p className="whitespace-pre-wrap rounded-2xl rounded-br-sm bg-brand-ink px-3 py-2 text-sm text-brand-cream">
+                      {message.text}
                     </p>
-                  )}
-                </div>
-              ) : (
+                    {message.attachmentName && (
+                      <p className="flex items-center justify-end gap-1.5 pr-1 text-[11px] font-semibold text-brand-ink/50">
+                        <FileText className="h-3 w-3" aria-hidden />
+                        {message.attachmentName}
+                      </p>
+                    )}
+                    <p className="flex justify-end pr-1">
+                      <button
+                        type="button"
+                        onClick={() => reuse(message)}
+                        disabled={pending || extracting}
+                        title="Put this question back in the box to edit and send again"
+                        className="inline-flex items-center gap-1 rounded-md px-1 py-0.5 text-[10px] font-semibold text-brand-ink/40 transition hover:bg-brand-sand hover:text-brand-ink/70 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        <CornerUpLeft className="h-3 w-3" aria-hidden />
+                        Edit and send again
+                      </button>
+                    </p>
+                  </div>
+                );
+              }
+
+              // A turn that ended by asking a question shows the question and its
+              // choices; the numbered list the model was fed stays out of the bubble.
+              const ask = askOf(message.steps);
+              const answered = ask
+                ? (messages.slice(index + 1).find((entry) => entry.role === "user")?.text ?? null)
+                : null;
+              const live = Boolean(ask) && !pending && index === messages.length - 1;
+
+              return (
                 <div key={message.id} className="max-w-[92%]">
                   <StepChips steps={message.steps ?? []} />
                   <div className="rounded-2xl rounded-bl-sm border border-brand-line bg-brand-cream px-3 py-2.5 text-sm leading-relaxed text-brand-ink">
-                    <RichReply text={message.text} />
+                    <RichReply text={ask ? askBubble(ask) : message.text} />
                   </div>
+                  {ask && (
+                    <QuestionChoices
+                      ask={ask}
+                      live={live}
+                      answered={answered}
+                      pending={pending}
+                      onChoose={(option) => void send(option)}
+                    />
+                  )}
                   {message.note && (
                     <p className="mt-1 pl-1 text-[11px] leading-relaxed text-amber-700">
                       {message.note}
@@ -605,8 +892,8 @@ export function AssistantChat({
                     </p>
                   )}
                 </div>
-              )
-            )}
+              );
+            })}
 
             {pending && (
               <p className="flex items-center gap-2 text-xs text-brand-ink/50">
@@ -645,6 +932,52 @@ export function AssistantChat({
                 </button>
               </p>
             )}
+
+            <div className="mb-2">
+              <label className="flex items-center gap-2">
+                <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                  Model
+                </span>
+                {models === null ? (
+                  <span className="flex items-center gap-1.5 text-[11px] text-brand-ink/45" role="status">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                    Reading the model list…
+                  </span>
+                ) : (
+                  <select
+                    value={model}
+                    onChange={(event) => chooseModel(event.target.value)}
+                    aria-label="Model for this conversation"
+                    title="Choose which provider answers this conversation. Nothing in Settings is changed."
+                    className="rail-scroll min-w-0 flex-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[11px] font-semibold text-brand-ink outline-none transition focus:border-brand-gold"
+                  >
+                    <option value="">
+                      {routedModel ? `Default routing — ${routedModel}` : "Default routing"}
+                    </option>
+                    {modelGroups.map((group) => (
+                      <optgroup key={group.provider} label={group.label}>
+                        {group.models.map((entry) => (
+                          <option key={entry.id} value={entry.id}>
+                            {entry.name}
+                            {entry.free ? " · free" : ""}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                )}
+              </label>
+              {modelListError && (
+                <p className="mt-1 text-[10px] leading-relaxed text-amber-700">{modelListError}</p>
+              )}
+              {model && (
+                <p className="mt-1 text-[10px] leading-relaxed text-brand-ink/40">
+                  {model} answers this conversation through the model gateway, and this tab closes
+                  the choice away. Settings → AI models still routes every other screen, the rest of
+                  the portal and any other conversation.
+                </p>
+              )}
+            </div>
 
             <label className="mb-2 flex items-start gap-2 text-[11px] leading-snug text-brand-ink/55">
               <input
@@ -714,6 +1047,14 @@ export function AssistantChat({
                 )}
               </button>
             </div>
+
+            {draft.trim().length > 0 && !pending && (
+              <p className="mt-1.5 text-[10px] leading-relaxed text-brand-ink/40">
+                {draft.trim().length.toLocaleString()} characters kept in this browser — close the
+                panel or go and look at another screen, and this question is still here when you
+                come back. An attached file is not.
+              </p>
+            )}
           </div>
         </footer>
       )}

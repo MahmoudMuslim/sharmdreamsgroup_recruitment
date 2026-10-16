@@ -6,7 +6,10 @@ import {
 } from "@/modules/screening/infrastructure/aiGateway";
 import {
   ASSISTANT_TOOLS,
+  asQuestion,
+  questionAsReply,
   toolByName,
+  type AssistantQuestion,
   type ToolArgs,
 } from "@/modules/assistant/domain/tools";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
@@ -31,6 +34,8 @@ export interface AssistantStep {
   detail: string;
   /** Where to inspect the record this step touched, when there is one. */
   link?: AssistantLink;
+  /** Set when the step is a question: the choices are rendered as buttons. */
+  ask?: AssistantQuestion;
 }
 
 /** Which engine actually served the turn, shown in the chat footer. */
@@ -43,8 +48,12 @@ export interface AssistantTurn {
   provider: AssistantProvider;
 }
 
-/** Model turns spent on tools before the loop gives up and asks for a retry. */
-const MAX_TOOL_ROUNDS = 6;
+/**
+ * Model turns spent on tools before the loop gives up and asks for a retry.
+ * Authoring a record is a chain — read the master data, read the record, write
+ * it, add its parts, read it back — so the budget has to cover a whole one.
+ */
+const MAX_TOOL_ROUNDS = 12;
 /** A tool result is context, not a document — clip it so one read cannot eat the budget. */
 const MAX_RESULT_CHARS = 6000;
 
@@ -65,7 +74,8 @@ export const ASSISTANT_RULES: readonly string[] = [
   "3. Before editing a job, call get_job and send the whole record back with only the intended change.",
   "4. Before creating or editing a job, call get_master_data for valid company, department, location and currency values.",
   "5. Anything that changes data must come from what the user actually asked for. If a request is",
-  "   ambiguous about which record to change, ask instead of guessing.",
+  "   ambiguous about which record to change, ask instead of guessing — with ask_question, listing the",
+  "   real candidates from a tool result as the choices rather than asking an open question.",
   "6. Quote real numbers from tool results. If a tool returned nothing, say so — do not fill the gap.",
   "7. Replies are read by recruiters: short, plain, specific. Use the record's real name and id.",
   "8. Format the answer for the chat panel, which renders markdown: a table when the answer has",
@@ -74,10 +84,27 @@ export const ASSISTANT_RULES: readonly string[] = [
   "9. Point at screens with real links so the recruiter can click through:",
   "   [the opening](/jobs?job=<id>), [this candidate](/candidates?application=<id>),",
   "   [the prospect](/sourcing?prospect=<id>), [the outbox](/whatsapp),",
-  "   [the model routing](/settings?area=providers&section=models).",
+  "   [the model routing](/settings?area=providers&section=models), [the suites](/assessments),",
+  "   [the interview agenda](/interviews), [the checklists](/onboarding), [the file manager](/files),",
+  "   [the gate questions](/apply-questions), [the templates](/settings?area=notifications&section=templates),",
+  "   [the team](/settings?area=access&section=team), [the activity trail](/activity).",
   "   A filtered board is the same idea: [interview stage](/dashboard?stage=INTERVIEW) —",
-  "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q= and ?stage=.",
+  "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q= and ?stage=;",
+  "   /jobs takes ?job=; /sourcing takes ?prospect=; /settings takes ?area= and ?section=.",
+  "   Only those five screens read a query string, so never dress another one with a parameter",
+  "   it would ignore — link to the plain page and name the record in the words beside it.",
   "10. Only put an id in a link that a tool actually returned this conversation.",
+  "11. ask_question ends your turn. Ask once with 2 to 6 choices, then wait for the answer — never",
+  "    ask a question in prose and answer it yourself in the same turn.",
+  "12. Authoring reads before it writes. Before save_assessment_suite, send get_assessment_suite back",
+  "    whole with only the intended change; add its questions one at a time with save_question, giving",
+  "    each one the real template_id the read returned. The same holds for gate questions, notification",
+  "    templates, onboarding tasks and staff records — read the row, then write that row.",
+  "13. Ids come from reads, never from memory: application ids from search_candidates or the dossier,",
+  "    attempt ids from the dossier, interview ids from list_interviews, plan ids from list_onboarding_plans,",
+  "    staff profile ids from list_team, file keys from list_files.",
+  "14. Dates and times carry their own UTC offset (…T10:30:00+03:00, or Z). A time the recruiter gave in",
+  "    words is read against the organisation timezone from get_settings, then converted before you send it.",
 ];
 
 function toolCatalogue(allowDestructive: boolean): string {
@@ -204,6 +231,7 @@ async function runTool(
         ok: typeof value === "object" && value !== null && (value as { ok?: boolean }).ok !== false,
         detail: detail.slice(0, 220),
         link: linkForTool(tool.name, args, value) ?? undefined,
+        ask: tool.name === "ask_question" ? asQuestion(value) ?? undefined : undefined,
       },
       result: detail,
     };
@@ -222,8 +250,11 @@ async function runTool(
  */
 export async function runAssistantTurn(
   history: ChatCompletionMessage[],
-  allowDestructive: boolean
+  allowDestructive: boolean,
+  /** A model the recruiter chose for this conversation, or nothing to route as usual. */
+  modelOverride?: string | null
 ): Promise<AssistantTurn> {
+  const chosen = modelOverride?.trim() || undefined;
   const messages: ChatCompletionMessage[] = [
     { role: "system", content: systemPrompt(allowDestructive) },
     ...history,
@@ -242,6 +273,7 @@ export async function runAssistantTurn(
       // own budget instead of inheriting the routing row's.
       maxTokens: 2200,
       jsonMode: true,
+      modelOverride: chosen,
     });
     model = completion.model;
     provider = completion.provider;
@@ -265,6 +297,14 @@ export async function runAssistantTurn(
 
     const { step, result } = await runTool(answer.name, answer.args, allowDestructive);
     steps.push(step);
+
+    // A question is an answer as far as this turn is concerned: the choices go on
+    // screen and the recruiter's click arrives as the next user message, so
+    // feeding the tool's own result back would only invite the model to answer
+    // its own question.
+    if (step.ask) {
+      return { reply: questionAsReply(step.ask), steps, model, provider };
+    }
 
     // The call and its result are appended as a normal exchange: the protocol
     // has no tool role, and echoing the model's own JSON back keeps it on format.

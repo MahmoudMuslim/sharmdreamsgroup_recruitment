@@ -13,6 +13,9 @@ import {
 } from "@/modules/screening/infrastructure/qoderCompletion";
 import {
   ASSISTANT_TOOLS,
+  asQuestion,
+  questionAsReply,
+  type AssistantQuestion,
   type AssistantTool,
   type ToolArgs,
 } from "@/modules/assistant/domain/tools";
@@ -54,7 +57,7 @@ const MCP_SERVER_NAME = "talentsphere";
 
 /** Bound so a wedged runtime cannot hold a request open forever. */
 const TURN_TIMEOUT_MS = 120_000;
-const MAX_AGENT_TURNS = 12;
+const MAX_AGENT_TURNS = 24;
 const MAX_RESULT_CHARS = 6000;
 
 const TYPE_SCHEMAS: Record<string, z.ZodTypeAny> = {
@@ -63,6 +66,8 @@ const TYPE_SCHEMAS: Record<string, z.ZodTypeAny> = {
   boolean: z.boolean(),
   "string[]": z.array(z.string()),
   "number[]": z.array(z.number()),
+  object: z.record(z.string(), z.unknown()),
+  "object[]": z.array(z.record(z.string(), z.unknown())),
 };
 
 /**
@@ -107,13 +112,21 @@ function asText(value: unknown): string {
 function definitionFor(
   sdk: typeof import("@qoder-ai/qoder-agent-sdk"),
   tool: AssistantTool,
-  steps: AssistantStep[]
+  steps: AssistantStep[],
+  asks: AssistantQuestion[]
 ): SdkMcpToolDefinition {
   const handler = AsyncResource.bind(async (args: ToolArgs): Promise<CallToolResult> => {
     const input = (args ?? {}) as ToolArgs;
     try {
       const value = await tool.run(input);
-      const detail = asText(value);
+      const ask = tool.name === "ask_question" ? asQuestion(value) : null;
+      if (ask) asks.push(ask);
+      const detail = ask
+        ? `{"ok":true,"shown_to_user":true,"question":${JSON.stringify(
+            ask.question
+          )},"options":${JSON.stringify(ask.options)},"instruction":"The question and its choices " +
+            "are on the recruiter's screen now. End your turn — their click arrives as the next message."}`
+        : asText(value);
       const ok =
         typeof value === "object" && value !== null && (value as { ok?: boolean }).ok !== false;
       steps.push({
@@ -122,6 +135,7 @@ function definitionFor(
         ok,
         detail: detail.slice(0, 220),
         link: linkForTool(tool.name, input, value) ?? undefined,
+        ask: ask ?? undefined,
       });
       return { content: [{ type: "text", text: detail }], isError: !ok };
     } catch (error) {
@@ -235,7 +249,8 @@ export async function runQoderAssistantTurn(
 
   const tools = ASSISTANT_TOOLS.filter((tool) => allowDestructive || !tool.destructive);
   const steps: AssistantStep[] = [];
-  const definitions = tools.map((tool) => definitionFor(sdk, tool, steps));
+  const asks: AssistantQuestion[] = [];
+  const definitions = tools.map((tool) => definitionFor(sdk, tool, steps, asks));
   const server = sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, tools: definitions });
 
   const allowed = tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool.name}`);
@@ -312,10 +327,18 @@ export async function runQoderAssistantTurn(
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 
-  if (!reply.trim()) {
+  // A question is a whole answer here: the choices are on screen, so an agent
+  // that asked and then fell silent is not an agent that failed to reply.
+  const asked = asks[asks.length - 1];
+  if (!reply.trim() && !asked) {
     throw new QoderAssistantError("Qoder answered without any text.");
   }
 
   const provider: AssistantProvider = "qoder";
-  return { reply: reply.trim(), steps, model: model || "qoder", provider };
+  return {
+    reply: reply.trim() || questionAsReply(asked!),
+    steps,
+    model: model || "qoder",
+    provider,
+  };
 }

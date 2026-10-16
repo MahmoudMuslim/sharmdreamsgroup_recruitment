@@ -33,6 +33,13 @@ export interface CompletionRequest {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  /**
+   * One model, tried for this call alone, chosen by the person asking rather
+   * than by the routing table. Nothing else is tried and the compiled-in chain
+   * is skipped: a model picked on purpose has to report its own failure rather
+   * than answer quietly from the default behind the picker.
+   */
+  modelOverride?: string;
 }
 
 /** Which provider answered. Every member here has a caller in this file. */
@@ -566,12 +573,17 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
     );
   }
 
-  // Chain: the capability's configured primary + fallback, then the compiled-in
-  // defaults as a last resort.
-  const chain = [
-    ...(routing.enabled ? [routing.primaryModel, routing.fallbackModel] : []),
-    ...modelChains[request.capability],
-  ].filter((id, i, arr): id is string => Boolean(id) && arr.indexOf(id) === i);
+  // Chain: the model chosen for this call, or the capability's configured
+  // primary + fallback, then the compiled-in defaults as a last resort.
+  const chosen = request.modelOverride?.trim();
+  const chain = (
+    chosen
+      ? [chosen]
+      : [
+          ...(routing.enabled ? [routing.primaryModel, routing.fallbackModel] : []),
+          ...modelChains[request.capability],
+        ]
+  ).filter((id, i, arr): id is string => Boolean(id) && arr.indexOf(id) === i);
 
   const effective: CompletionRequest = {
     ...request,
@@ -814,6 +826,15 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
         });
       }
     }
+  }
+
+  // A model chosen for this call gets no rescue: whatever the routing table or
+  // Google's compiled chain would have answered with is not what was asked for.
+  if (chosen) {
+    throw new AiGatewayError(
+      `"${chosen}" did not answer: ${attempts.map((a) => a.error ?? "ok").join(" | ") || "no provider is configured for it"}`,
+      attempts
+    );
   }
 
   // Final fallback: Google's compiled-in chain, minus any id just tried.
