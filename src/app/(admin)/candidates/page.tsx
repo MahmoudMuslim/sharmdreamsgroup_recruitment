@@ -1,5 +1,5 @@
 import { CalendarDays, Sparkles, Upload } from "lucide-react";
-import { getCandidateByRef, getCandidateList } from "./actions";
+import { getCandidateByRef, getCandidateList, getCvCoverage, type CvCoverage } from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
 import { NewCandidateDrawer } from "./NewCandidateDrawer";
 import { requireStaff } from "@/lib/auth/session";
@@ -17,6 +17,33 @@ export const metadata = {
 
 /** Auth-gated route: content is fully session/RLS dependent. */
 export const instant = false;
+
+/**
+ * The screening card quotes what the pipeline can actually be scored on.
+ *
+ * Screening reads the CV *text* stored on a record, so a file nobody parsed and
+ * a record with no CV at all are not covered by the old promise that parsing
+ * "runs on every application". The counts are read live, in the same render as
+ * the table, so the sentence cannot drift from the pipeline it describes.
+ */
+function describeCvCoverage(coverage: CvCoverage): string {
+  if (coverage.total === 0) return "No live applications yet, so nothing has been screened.";
+  if (coverage.withText === coverage.total)
+    return `CV parsing with demographic anonymisation and match scoring reads the CV text stored on each application — all ${coverage.total} live records carry it.`;
+
+  const sentences = [
+    `CV parsing with demographic anonymisation and match scoring reads the CV text stored on each application. ${coverage.withText} of ${coverage.total} live records carry it.`,
+  ];
+  if (coverage.fileNotRead > 0)
+    sentences.push(
+      `${coverage.fileNotRead} hold a CV file whose text has never been read out — open the candidate and choose "Read the stored CV".`
+    );
+  if (coverage.noCv > 0)
+    sentences.push(
+      `${coverage.noCv} have no CV on file at all, so screening has nothing to read for them.`
+    );
+  return sentences.join(" ");
+}
 
 /**
  * Deep links arrive from the job opening's applicant list (`?c=SDG-…`), the
@@ -46,13 +73,15 @@ export default async function CandidatesPage({
   const focused = hasRef ? await getCandidateByRef(ref) : null;
   const showArchived = params.archived === "1" || Boolean(focused?.archived_at);
 
-  const [candidates, canWrite, canExport, timeZone, canGenerateQuestions] = await Promise.all([
-    getCandidateList(showArchived),
-    hasPermissionForUser("candidates.write"),
-    hasPermissionForUser("analytics.export"),
-    getOrganisationTimeZone(),
-    getBoolSetting("ai.interview_questions", true),
-  ]);
+  const [candidates, canWrite, canExport, timeZone, canGenerateQuestions, coverage] =
+    await Promise.all([
+      getCandidateList(showArchived),
+      hasPermissionForUser("candidates.write"),
+      hasPermissionForUser("analytics.export"),
+      getOrganisationTimeZone(),
+      getBoolSetting("ai.interview_questions", true),
+      getCvCoverage(),
+    ]);
 
   // The table only loads the newest 50 applications; a link to anyone older is
   // fetched on its own so the profile can still open.
@@ -89,7 +118,7 @@ export default async function CandidatesPage({
           </div>
           <h3 className="font-display text-base font-bold">AI screening</h3>
           <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
-            CV parsing with demographic anonymisation and match scoring runs on every application.
+            {describeCvCoverage(coverage)}
           </p>
         </Card>
 

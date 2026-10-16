@@ -115,3 +115,56 @@ export async function getCandidateByRef(input: {
   const row = (data ?? [])[0] as CandidateJoin | undefined;
   return row ? flattenCandidate(row, masked) : null;
 }
+
+/** How much of the live pipeline AI screening can read. */
+export interface CvCoverage {
+  /** Live applications this recruiter can see. */
+  total: number;
+  /** Of those, the ones holding CV text the screening engine can score. */
+  withText: number;
+  /** CV file stored, text never read out of it — the dossier's read door fixes these. */
+  fileNotRead: number;
+  /** Nothing on file to read at all. */
+  noCv: number;
+}
+
+/**
+ * CV coverage across the live pipeline.
+ *
+ * Screening scores the text on `applications.cv_text`, so a record whose text
+ * never landed is scored from a re-read of the file at best, and one with no CV
+ * at all is not screened whatever the page promises. Every writer stores null
+ * when there is no text — `finalCvText || null` on the career site, the sourcing
+ * conversion, and the read door, which refuses a shorter text than the engine
+ * would accept — so a null column really does mean "nothing has been read".
+ *
+ * Three head counts, no rows: the summary line under the table quotes these
+ * instead of claiming parsing runs on every application.
+ */
+export async function getCvCoverage(): Promise<CvCoverage> {
+  const supabase = await createSupabaseServerClient();
+  const live = () =>
+    supabase
+      .from("applications")
+      .select("id", { count: "exact", head: true })
+      .is("archived_at", null);
+
+  const [total, unread, fromFile] = await Promise.all([
+    live(),
+    live().is("cv_text", null),
+    live().is("cv_text", null).not("cv_file_path", "is", null),
+  ]);
+
+  for (const query of [total, unread, fromFile]) {
+    if (query.error) console.error("[candidates] CV coverage count failed:", query.error.message);
+  }
+
+  const noCv = unread.count ?? 0;
+  const fileNotRead = fromFile.count ?? 0;
+  return {
+    total: total.count ?? 0,
+    withText: Math.max(0, (total.count ?? 0) - noCv),
+    fileNotRead,
+    noCv: Math.max(0, noCv - fileNotRead),
+  };
+}
