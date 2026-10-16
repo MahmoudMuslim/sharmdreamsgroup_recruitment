@@ -130,6 +130,8 @@ export default async function SettingsPage({
                 staff={bundle.staff}
                 invites={staffConsole.invites}
                 access={staffConsole.access}
+                accessError={staffConsole.accessError}
+                invitesError={staffConsole.invitesError}
                 companies={bundle.companies}
                 passwordMinLength={passwordMinLength}
                 canManage={canManageStaff}

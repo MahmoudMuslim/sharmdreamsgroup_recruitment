@@ -73,6 +73,7 @@ export interface StaffMember {
   email: string;
   role: AppRole;
   tenant_id: string | null;
+  phone: string | null;
   created_at: string;
 }
 

@@ -7,12 +7,15 @@ import {
   CalendarClock,
   KeyRound,
   Loader2,
+  Pencil,
   Plus,
   RotateCcw,
   Trash2,
   UserCheck,
 } from "lucide-react";
 import { UserCreatePanel } from "./UserCreatePanel";
+import { MemberEditPanel } from "./MemberEditPanel";
+import { InviteEditPanel } from "./InviteEditPanel";
 import { CredentialReveal } from "./CredentialReveal";
 import { Button, Badge } from "@/modules/analytics/presentation/ui";
 import { ASSIGNABLE_ROLE_KEYS, ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
@@ -39,6 +42,10 @@ interface TeamSectionProps {
   invites: StaffInvite[];
   /** profile id → the moment their ban ends, or null/absent when they can sign in. */
   access: Record<string, string | null>;
+  /** Why the sign-in directory could not be read, or null. */
+  accessError: string | null;
+  /** Why pending invites could not be read, or null. */
+  invitesError: string | null;
   companies: Company[];
   passwordMinLength: number;
   canManage: boolean;
@@ -58,10 +65,24 @@ function roleLabel(role: string): string {
   return ASSIGNABLE_STAFF_ROLES.find((r) => r.value === role)?.label ?? role.replace(/_/g, " ");
 }
 
+/** A read that failed, said out loud instead of drawn as an empty console. */
+function Notice({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      role="status"
+      className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-900"
+    >
+      {children}
+    </p>
+  );
+}
+
 export function TeamSection({
   staff,
   invites,
   access,
+  accessError,
+  invitesError,
   companies,
   passwordMinLength,
   canManage,
@@ -69,6 +90,8 @@ export function TeamSection({
   timeZone,
 }: TeamSectionProps) {
   const [userPanelOpen, setUserPanelOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState<StaffMember | null>(null);
+  const [editingInvite, setEditingInvite] = useState<StaffInvite | null>(null);
   const router = useRouter();
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
   const enabledCount = staff.filter((m) => !access[m.id]).length;
@@ -87,7 +110,13 @@ export function TeamSection({
           <div>
             <h2 className="font-display text-lg font-bold">Team members</h2>
             <p className="mt-1 text-sm text-brand-ink/60">
-              {enabledCount} of {staff.length} account{staff.length === 1 ? "" : "s"} can sign in
+              {accessError ? (
+                <>Sign-in state unknown — {staff.length} account{staff.length === 1 ? "" : "s"} listed</>
+              ) : (
+                <>
+                  {enabledCount} of {staff.length} account{staff.length === 1 ? "" : "s"} can sign in
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -103,6 +132,17 @@ export function TeamSection({
           </div>
         </header>
 
+        {accessError && (
+          <div className="mb-4">
+            <Notice>
+              Supabase Auth could not be read, so no badge below can be trusted — a disabled
+              account may be showing as Active. Editing details and company still works, but
+              disabling an account, deleting one, and changing a Super Admin&rsquo;s role are
+              refused until the directory answers again.
+            </Notice>
+          </div>
+        )}
+
         {staff.length === 0 ? (
           <p className="rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-sm text-brand-ink/60">
             No staff accounts yet.
@@ -114,10 +154,12 @@ export function TeamSection({
                 key={member.id}
                 member={member}
                 bannedUntil={access[member.id] ?? null}
+                accessUnknown={Boolean(accessError)}
                 isSelf={member.auth_user_id === viewerAuthUserId}
                 companies={companies}
                 companyName={companyName}
                 canManage={canManage}
+                onEdit={() => setEditingMember(member)}
                 onChanged={() => router.refresh()}
               />
             ))}
@@ -137,11 +179,22 @@ export function TeamSection({
           <header className="mb-3">
             <h2 className="font-display text-lg font-bold">Pending invites</h2>
             <p className="mt-1 text-sm text-brand-ink/60">
-              {invites.length === 0
-                ? "Nothing waiting. Invites recorded here are not emailed by the platform."
-                : `${invites.length} recorded — no account exists yet, so these people cannot sign in.`}
+              {invitesError
+                ? "Could not be read — see the notice below."
+                : invites.length === 0
+                  ? "Nothing waiting. Invites recorded here are not emailed by the platform."
+                  : `${invites.length} recorded — no account exists yet, so these people cannot sign in.`}
             </p>
           </header>
+
+          {invitesError && (
+            <div className="mb-3">
+              <Notice>
+                The invite list could not be read, so it is shown empty rather than guessed at.
+                Recording a new invite still works; it will appear once this reads again.
+              </Notice>
+            </div>
+          )}
 
           {issued && (
             <CredentialReveal
@@ -160,6 +213,7 @@ export function TeamSection({
                   companyName={companyName}
                   timeZone={timeZone}
                   onIssued={setIssued}
+                  onEdit={() => setEditingInvite(invite)}
                   onChanged={() => router.refresh()}
                 />
               ))}
@@ -175,6 +229,25 @@ export function TeamSection({
         onClose={() => setUserPanelOpen(false)}
         onSuccess={() => setUserPanelOpen(false)}
       />
+
+      {editingMember && (
+        <MemberEditPanel
+          key={editingMember.id}
+          member={editingMember}
+          onClose={() => setEditingMember(null)}
+          onSaved={() => router.refresh()}
+        />
+      )}
+
+      {editingInvite && (
+        <InviteEditPanel
+          key={editingInvite.id}
+          invite={editingInvite}
+          companies={companies}
+          onClose={() => setEditingInvite(null)}
+          onSaved={() => router.refresh()}
+        />
+      )}
     </>
   );
 }
@@ -182,22 +255,27 @@ export function TeamSection({
 function MemberRow({
   member,
   bannedUntil,
+  accessUnknown,
   isSelf,
   companies,
   companyName,
   canManage,
+  onEdit,
   onChanged,
 }: {
   member: StaffMember;
   bannedUntil: string | null;
+  accessUnknown: boolean;
   isSelf: boolean;
   companies: Company[];
   companyName: Map<string, string>;
   canManage: boolean;
+  onEdit: () => void;
   onChanged: () => void;
 }) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [credential, setCredential] = useState<string | null>(null);
   const disabled = Boolean(bannedUntil);
 
@@ -205,6 +283,7 @@ function MemberRow({
     if (warning && !window.confirm(warning)) return;
     setPending(action);
     setError(null);
+    setNotice(null);
     setCredential(null);
     try {
       const result = await fn();
@@ -212,6 +291,9 @@ function MemberRow({
         setError(result.error ?? `Could not ${action.toLowerCase()}.`);
         return;
       }
+      // Done, but not everything the button promised — the account exists and the
+      // invite did not, for example. Said out loud rather than reported as clean.
+      if (result.error) setNotice(result.error);
       if (result.temp_password) setCredential(result.temp_password);
       // Role and company come from the server component's props, so the panel has
       // to be re-fetched — and the revealed password survives because it is held
@@ -235,10 +317,15 @@ function MemberRow({
             <span className="block truncate text-sm font-semibold">{member.full_name}</span>
             {isSelf && <Badge tone="info">You</Badge>}
           </span>
-          <span className="block truncate text-xs text-brand-ink/50">{member.email}</span>
+          <span className="block truncate text-xs text-brand-ink/50">
+            {member.email}
+            {member.phone ? ` · ${member.phone}` : ""}
+          </span>
         </span>
         {canManage && (
-          <Badge tone={disabled ? "danger" : "success"}>{disabled ? "Disabled" : "Active"}</Badge>
+          <Badge tone={disabled ? "danger" : accessUnknown ? "neutral" : "success"}>
+            {disabled ? "Disabled" : accessUnknown ? "State unknown" : "Active"}
+          </Badge>
         )}
       </div>
 
@@ -293,6 +380,15 @@ function MemberRow({
 
       {canManage && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className={ACTION}
+            disabled={pending !== null}
+            onClick={onEdit}
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden />
+            Edit details
+          </button>
           <button
             type="button"
             className={ACTION}
@@ -383,6 +479,12 @@ function MemberRow({
         />
       )}
 
+      {notice && (
+        <div className="mt-3">
+          <Notice>{notice}</Notice>
+        </div>
+      )}
+
       {error && (
         <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
           {error}
@@ -397,28 +499,33 @@ function InviteRow({
   companyName,
   timeZone,
   onIssued,
+  onEdit,
   onChanged,
 }: {
   invite: StaffInvite;
   companyName: Map<string, string>;
   timeZone: string;
   onIssued: (credential: { label: string; password: string }) => void;
+  onEdit: () => void;
   onChanged: () => void;
 }) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const assignable = ASSIGNABLE_ROLE_KEYS.has(invite.role);
 
   async function run(action: string, fn: () => Promise<StaffActionResult>, warning?: string) {
     if (warning && !window.confirm(warning)) return;
     setPending(action);
     setError(null);
+    setNotice(null);
     try {
       const result = await fn();
       if (!result.ok) {
         setError(result.error ?? `Could not ${action.toLowerCase()}.`);
         return;
       }
+      if (result.error) setNotice(result.error);
       if (result.temp_password) {
         onIssued({ label: `Password for ${invite.full_name}`, password: result.temp_password });
       }
@@ -446,13 +553,17 @@ function InviteRow({
         <Badge tone={assignable ? "neutral" : "danger"}>Pending</Badge>
       </div>
 
-      {!assignable ? (
-        <p className="mt-2.5 text-[11px] leading-relaxed text-brand-ink/50">
-          This invite asks for the {roleLabel(invite.role)} role, which no account can hold yet —
-          cancel it and send a new one with a role that is listed under Role.
-        </p>
-      ) : (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className={ACTION}
+          disabled={pending !== null}
+          onClick={onEdit}
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden />
+          Edit
+        </button>
+        {assignable && (
           <button
             type="button"
             className={ACTION}
@@ -469,22 +580,35 @@ function InviteRow({
             )}
             Create account
           </button>
-          <button
-            type="button"
-            className={ACTION}
-            disabled={pending !== null}
-            onClick={() =>
-              run("Cancel invite", () => cancelInvite(invite.id),
-                `Discard the invite for ${invite.email}? The email is then free to invite again.`)
-            }
-          >
-            {pending === "Cancel invite" ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-            )}
-            Cancel invite
-          </button>
+        )}
+        <button
+          type="button"
+          className={ACTION}
+          disabled={pending !== null}
+          onClick={() =>
+            run("Cancel invite", () => cancelInvite(invite.id),
+              `Discard the invite for ${invite.email}? The email is then free to invite again.`)
+          }
+        >
+          {pending === "Cancel invite" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          ) : (
+            <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+          )}
+          Cancel invite
+        </button>
+      </div>
+
+      {!assignable && (
+        <p className="mt-2.5 text-[11px] leading-relaxed text-brand-ink/50">
+          This invite asks for the {roleLabel(invite.role)} role, which no account can hold yet —
+          Create account stays hidden until you Edit it onto a role that is offered there.
+        </p>
+      )}
+
+      {notice && (
+        <div className="mt-3">
+          <Notice>{notice}</Notice>
         </div>
       )}
 

@@ -14,6 +14,7 @@ import {
 import type { AssignableStaffRole, StaffInvite } from "@/modules/settings/domain/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordActivity } from "@/modules/activity/application/record";
+import { changePhrase, scalarEdits } from "@/modules/activity/domain/trail";
 
 /** A role as the trail names it, so a demotion reads as a sentence. */
 const ROLE_WORDS: Record<string, string> = {
@@ -119,38 +120,62 @@ async function requireStaffManager(): Promise<Actor | null> {
   return profile ? { profileId: profile.id as string } : null;
 }
 
-/** Auth ids whose ban is still in force — the real source of "deactivated". */
-async function bannedAuthIds(supabase: SupabaseClient): Promise<Set<string>> {
+/**
+ * Auth ids whose ban is still in force — the real source of "deactivated".
+ *
+ * The failure is returned rather than swallowed because both of this module's
+ * safety guards are decided from this set. An empty set reads as "nobody is
+ * blocked", which counts every banned Super Admin as active, lets the last-admin
+ * protection pass, and would delete an account that was never deactivated.
+ */
+async function bannedAuthIds(
+  supabase: SupabaseClient
+): Promise<{ ids: Set<string>; error: string | null }> {
   const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  if (error) return new Set();
+  if (error) return { ids: new Set(), error: error.message };
   const now = Date.now();
-  return new Set(
-    data.users
-      .filter((u) => u.banned_until && new Date(u.banned_until).getTime() > now)
-      .map((u) => u.id)
-  );
+  return {
+    ids: new Set(
+      data.users
+        .filter((u) => u.banned_until && new Date(u.banned_until).getTime() > now)
+        .map((u) => u.id)
+    ),
+    error: null,
+  };
 }
 
 /**
  * Super Admin accounts that can still sign in.
  *
  * Deactivating, demoting or deleting the last one would leave nobody who can
- * grant the permission back, so the guards refuse when the count is one.
+ * grant the permission back, so the guards refuse when the count is one — and
+ * refuse when the directory could not be read, because then the count is unknown.
  */
-async function activeSuperAdminIds(supabase: SupabaseClient): Promise<Set<string>> {
-  const { data: admins } = await supabase
+async function activeSuperAdminIds(
+  supabase: SupabaseClient
+): Promise<{ ids: Set<string>; error: string | null }> {
+  const { data: admins, error } = await supabase
     .from("user_profiles")
     .select("id, auth_user_id")
     .eq("role", "SUPER_ADMIN");
-  if (!admins?.length) return new Set();
+  if (error) return { ids: new Set(), error: error.message };
 
   const banned = await bannedAuthIds(supabase);
-  return new Set(
-    admins
-      .filter((a) => !banned.has(a.auth_user_id as string))
-      .map((a) => a.id as string)
-  );
+  if (banned.error) return banned;
+
+  return {
+    ids: new Set(
+      (admins ?? [])
+        .filter((a) => !banned.ids.has(a.auth_user_id as string))
+        .map((a) => a.id as string)
+    ),
+    error: null,
+  };
 }
+
+/** Returned when a guard could not be answered at all, rather than answered wrongly. */
+const ACCESS_UNKNOWN =
+  "Who can still sign in could not be read, so this change is refused — try again.";
 
 async function auditStaffChange(
   supabase: SupabaseClient,
@@ -254,10 +279,14 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
   if (existingProfile) {
     return { ok: false, error: "A profile with that email already exists." };
   }
+  // Only a *pending* invite blocks a new one — the database's unique index is
+  // partial for exactly this reason, so an address whose earlier invite was
+  // accepted or expired must stay invitable.
   const { data: existingInvite } = await supabase
     .from("user_invites")
     .select("id, status")
     .eq("email", email)
+    .eq("status", "PENDING")
     .maybeSingle();
   if (existingInvite) {
     return { ok: false, error: `An invite for that email already exists (${existingInvite.status.toLowerCase()}).` };
@@ -377,6 +406,16 @@ export interface StaffConsoleState {
   invites: StaffInvite[];
   /** profile id → `banned_until`, or absent when the account was never banned. */
   access: Record<string, string | null>;
+  /**
+   * Why the sign-in directory could not be read, or null.
+   *
+   * Without this a failed Auth read leaves `access` empty, and every disabled
+   * account renders the "Active" badge — the console would be saying something
+   * the database never told it.
+   */
+  accessError: string | null;
+  /** Why pending invites could not be read, or null. */
+  invitesError: string | null;
 }
 
 const STAFF_ROLE_KEYS = ["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"];
@@ -393,11 +432,13 @@ const STAFF_ROLE_KEYS = ["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"];
  */
 export async function loadStaffConsole(): Promise<StaffConsoleState> {
   await requireStaff("/settings");
-  if (!(await canManageStaffUsers())) return { invites: [], access: {} };
+  if (!(await canManageStaffUsers())) {
+    return { invites: [], access: {}, accessError: null, invitesError: null };
+  }
 
   const supabase = getSupabaseServiceClient();
 
-  const [{ data: invites }, { data: profiles }] = await Promise.all([
+  const [inviteRead, profileRead] = await Promise.all([
     supabase
       .from("user_invites")
       .select("id, email, full_name, role, company_id, status, expires_at, created_at")
@@ -410,27 +451,43 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
   ]);
 
   const access: Record<string, string | null> = {};
-  if (profiles?.length) {
-    const byAuthId = new Map(profiles.map((p) => [p.auth_user_id as string, p.id as string]));
-    const { data: directory } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    const now = Date.now();
-    for (const user of directory?.users ?? []) {
-      const profileId = byAuthId.get(user.id);
-      if (!profileId) continue;
-      // A temporary ban that has already run out means the account can sign in
-      // again, so it must not still be badged as Disabled.
-      const outstanding = user.banned_until && new Date(user.banned_until).getTime() > now;
-      access[profileId] = outstanding ? (user.banned_until as string) : null;
+  let accessError: string | null = profileRead.error?.message ?? null;
+
+  if (profileRead.data?.length) {
+    const byAuthId = new Map(
+      profileRead.data.map((p) => [p.auth_user_id as string, p.id as string])
+    );
+    const { data: directory, error } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    if (error) {
+      accessError = error.message;
+    } else {
+      const now = Date.now();
+      for (const user of directory?.users ?? []) {
+        const profileId = byAuthId.get(user.id);
+        if (!profileId) continue;
+        // A temporary ban that has already run out means the account can sign in
+        // again, so it must not still be badged as Disabled.
+        const outstanding = user.banned_until && new Date(user.banned_until).getTime() > now;
+        access[profileId] = outstanding ? (user.banned_until as string) : null;
+      }
     }
   }
 
-  return { invites: (invites ?? []) as StaffInvite[], access };
+  return {
+    invites: (inviteRead.data ?? []) as StaffInvite[],
+    access,
+    accessError,
+    invitesError: inviteRead.error?.message ?? null,
+  };
 }
 
 async function loadTargetProfile(supabase: SupabaseClient, profileId: string) {
   const { data } = await supabase
     .from("user_profiles")
-    .select("id, auth_user_id, full_name, email, role, tenant_id")
+    .select("id, auth_user_id, full_name, email, role, tenant_id, phone")
     .eq("id", profileId)
     .maybeSingle();
   return data as
@@ -441,6 +498,7 @@ async function loadTargetProfile(supabase: SupabaseClient, profileId: string) {
         email: string;
         role: string;
         tenant_id: string | null;
+        phone: string | null;
       }
     | null;
 }
@@ -470,7 +528,8 @@ export async function setStaffActive(
     }
     if (target.role === "SUPER_ADMIN") {
       const admins = await activeSuperAdminIds(supabase);
-      if (admins.size <= 1) {
+      if (admins.error) return { ok: false, error: ACCESS_UNKNOWN };
+      if (admins.ids.size <= 1) {
         return {
           ok: false,
           error: "This is the only active Super Admin. Make another account a Super Admin first.",
@@ -581,7 +640,8 @@ export async function updateStaffRole(
   // that changes roles, so the last Super Admin is protected either way.
   if (target.role === "SUPER_ADMIN") {
     const admins = await activeSuperAdminIds(supabase);
-    if (admins.size <= 1) {
+    if (admins.error) return { ok: false, error: ACCESS_UNKNOWN };
+    if (admins.ids.size <= 1) {
       return { ok: false, error: "This is the only active Super Admin account." };
     }
   }
@@ -604,7 +664,7 @@ export async function updateStaffRole(
   });
 
   await recordActivity({
-    area: "access",
+    area: "team",
     action: "staff_role_change",
     entity: "staff user",
     entityId: profileId,
@@ -667,6 +727,144 @@ export async function updateStaffCompany(
   return { ok: true };
 }
 
+/** The contact half of a team record — everything except role and company. */
+export interface UpdateStaffDetailsInput {
+  full_name: string;
+  email: string;
+  phone?: string | null;
+}
+
+/**
+ * Edits the person behind an account: name, sign-in address and phone.
+ *
+ * `user_profiles.locale` is deliberately not offered here — nothing reads it. The
+ * candidate portal's language comes from the two organisation settings, and the
+ * staff portal only ever renders in English, so an editor for that column would
+ * be a control that changes a value nobody consumes.
+ *
+ * Two stores have to move together. `user_profiles` is what the portal prints and
+ * what `getSessionUser()` reads first, while GoTrue's `auth.users` is what
+ * actually signs them in. Change one and the other keeps the old address, so a
+ * colleague can be told to sign in with an email that no longer works — therefore
+ * Auth is written first and put back if the profile write fails, which is the
+ * only order that can leave a working account rather than a dead credential.
+ *
+ * `email_confirm: true` is not a shortcut: this portal has no address-verification
+ * route, so a confirmation ticket sent to the new address would be the only way
+ * to finish the change and there is nothing here to receive it.
+ */
+export async function updateStaffDetails(
+  profileId: string,
+  input: UpdateStaffDetailsInput
+): Promise<StaffActionResult> {
+  const actor = await requireStaffManager();
+  if (!actor) return { ok: false, error: "You need the Manage users permission." };
+
+  const fullName = input.full_name.trim();
+  if (!fullName) return { ok: false, error: "Full name is required." };
+
+  const email = input.email.trim().toLowerCase();
+  if (!email.includes("@") || email.startsWith("@") || email.includes("@@")) {
+    return { ok: false, error: "A valid email is required." };
+  }
+
+  const phone = input.phone?.trim() ?? "";
+  if (phone.length > 32) {
+    return { ok: false, error: "Phone numbers are kept to 32 characters." };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const target = await loadTargetProfile(supabase, profileId);
+  if (!target) return { ok: false, error: "That team member no longer exists." };
+
+  const emailChanged = target.email.toLowerCase() !== email;
+  if (emailChanged) {
+    const { data: directory, error: directoryError } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    if (directoryError) {
+      return { ok: false, error: `The sign-in directory could not be checked: ${directoryError.message}` };
+    }
+    if (directory.users.some((u) => u.email?.toLowerCase() === email && u.id !== target.auth_user_id)) {
+      return { ok: false, error: "Another account already signs in with that email." };
+    }
+    const { data: clash } = await supabase
+      .from("user_profiles")
+      .select("id")
+      .eq("email", email)
+      .neq("id", profileId)
+      .maybeSingle();
+    if (clash) return { ok: false, error: "Another team record already uses that email." };
+  }
+
+  const patch = { full_name: fullName, email, phone: phone || null };
+  const edits = scalarEdits(
+    { full_name: target.full_name, email: target.email, phone: target.phone },
+    patch
+  );
+  if (Object.keys(edits).length === 0) return { ok: true };
+
+  const { error: authError } = await supabase.auth.admin.updateUserById(target.auth_user_id, {
+    ...(emailChanged ? { email, email_confirm: true } : {}),
+    // The display name is copied into Auth metadata at creation; left behind it
+    // is what any screen reading the auth record directly would print.
+    user_metadata: { full_name: fullName },
+  });
+  if (authError) return { ok: false, error: authError.message };
+
+  const { data: updated, error } = await supabase
+    .from("user_profiles")
+    .update(patch)
+    .eq("id", profileId)
+    .select("id");
+
+  if (error || !updated?.length) {
+    const reason =
+      error?.code === "23505"
+        ? "That email belongs to another team record."
+        : (error?.message ?? "That team member no longer exists.");
+    if (!emailChanged) return { ok: false, error: reason };
+
+    // Auth moved but the profile did not, so undo the half-change.
+    const back = await supabase.auth.admin.updateUserById(target.auth_user_id, {
+      email: target.email,
+      email_confirm: true,
+    });
+    return {
+      ok: false,
+      error: back.error
+        ? `${reason} The sign-in address had already moved and could not be put back: ${back.error.message}`
+        : `${reason} — the sign-in address was put back, so nothing was left half-changed.`,
+    };
+  }
+
+  await auditStaffChange(supabase, {
+    key: `staff.details:${profileId}`,
+    previous: {
+      full_name: target.full_name,
+      email: target.email,
+      phone: target.phone,
+    },
+    next: patch,
+    changedBy: actor.profileId,
+  });
+
+  await recordActivity({
+    area: "team",
+    action: "staff_update",
+    entity: "staff user",
+    entityId: profileId,
+    summary: `Updated ${fullName}’s team record — ${changePhrase(edits)}${
+      emailChanged ? ", and that is now the address they sign in with" : ""
+    }`,
+    detail: edits,
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 /**
  * Permanently removes an account.
  *
@@ -689,13 +887,15 @@ export async function deleteStaffAccount(profileId: string): Promise<StaffAction
   }
   if (target.role === "SUPER_ADMIN") {
     const admins = await activeSuperAdminIds(supabase);
-    if (admins.has(profileId) && admins.size <= 1) {
+    if (admins.error) return { ok: false, error: ACCESS_UNKNOWN };
+    if (admins.ids.has(profileId) && admins.ids.size <= 1) {
       return { ok: false, error: "This is the only active Super Admin account." };
     }
   }
 
   const banned = await bannedAuthIds(supabase);
-  if (!banned.has(target.auth_user_id)) {
+  if (banned.error) return { ok: false, error: ACCESS_UNKNOWN };
+  if (!banned.ids.has(target.auth_user_id)) {
     return {
       ok: false,
       error: "Deactivate this account first — deleting it is permanent.",
@@ -729,6 +929,136 @@ export async function deleteStaffAccount(profileId: string): Promise<StaffAction
   return { ok: true };
 }
 
+/** What a recorded invite can still be corrected to. */
+export interface UpdateStaffInviteInput {
+  email: string;
+  full_name: string;
+  role: AssignableStaffRole;
+  company_id?: string | null;
+}
+
+/**
+ * Corrects a pending invite in place.
+ *
+ * Until now the only way to fix a typo, or to move an invite onto a role an
+ * account can actually hold, was to cancel it and record it again — which loses
+ * who invited it and when, and reads as a cancellation followed by a new invite
+ * in the trail. Only a PENDING invite can be edited: an accepted one already
+ * became an account, and rewriting it would describe a person who exists.
+ */
+export async function updateStaffInvite(
+  inviteId: string,
+  input: UpdateStaffInviteInput
+): Promise<StaffActionResult> {
+  const actor = await requireStaffManager();
+  if (!actor) return { ok: false, error: "You need the Manage users permission." };
+
+  const fullName = input.full_name.trim();
+  if (!fullName) return { ok: false, error: "Full name is required." };
+
+  const email = input.email.trim().toLowerCase();
+  if (!email.includes("@") || email.startsWith("@") || email.includes("@@")) {
+    return { ok: false, error: "A valid email is required." };
+  }
+  if (!ASSIGNABLE_ROLE_KEYS.has(input.role)) {
+    return { ok: false, error: "That role cannot be assigned yet — see the note under Role." };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data: invite } = await supabase
+    .from("user_invites")
+    .select("id, email, full_name, role, company_id, status")
+    .eq("id", inviteId)
+    .maybeSingle();
+
+  if (!invite) return { ok: false, error: "That invite no longer exists." };
+  if (invite.status !== "PENDING") {
+    return { ok: false, error: `That invite is already ${String(invite.status).toLowerCase()} — it cannot be edited.` };
+  }
+
+  const companyId = input.company_id ? input.company_id : null;
+  const row = { email, full_name: fullName, role: input.role, company_id: companyId };
+  const edits = scalarEdits(
+    {
+      email: invite.email as string,
+      full_name: invite.full_name as string,
+      role: invite.role as string,
+      company_id: invite.company_id as string | null,
+    },
+    row
+  );
+  if (Object.keys(edits).length === 0) return { ok: true };
+
+  if (email !== String(invite.email).toLowerCase()) {
+    const { data: directory, error: directoryError } = await supabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 1000,
+    });
+    if (directoryError) {
+      return { ok: false, error: `The sign-in directory could not be checked: ${directoryError.message}` };
+    }
+    if (directory.users.some((u) => u.email?.toLowerCase() === email)) {
+      return { ok: false, error: "An account already signs in with that email." };
+    }
+    const { data: clash } = await supabase
+      .from("user_profiles")
+      .select("id")
+      .eq("email", email)
+      .maybeSingle();
+    if (clash) return { ok: false, error: "A team record already uses that email." };
+
+    const { data: pendingClash } = await supabase
+      .from("user_invites")
+      .select("id")
+      .eq("email", email)
+      .eq("status", "PENDING")
+      .neq("id", inviteId)
+      .maybeSingle();
+    if (pendingClash) return { ok: false, error: "That email already has another pending invite." };
+  }
+
+  const { data: updated, error } = await supabase
+    .from("user_invites")
+    .update(row)
+    .eq("id", inviteId)
+    .eq("status", "PENDING")
+    .select("id");
+
+  if (error || !updated?.length) {
+    return {
+      ok: false,
+      error:
+        error?.code === "23505"
+          ? "That email already has another pending invite."
+          : (error?.message ?? "That invite is no longer pending."),
+    };
+  }
+
+  await auditStaffChange(supabase, {
+    key: `staff.invite:${inviteId}`,
+    previous: {
+      email: invite.email,
+      full_name: invite.full_name,
+      role: invite.role,
+      company_id: invite.company_id,
+    },
+    next: row,
+    changedBy: actor.profileId,
+  });
+
+  await recordActivity({
+    area: "team",
+    action: "invite_update",
+    entity: "user invite",
+    entityId: inviteId,
+    summary: `Corrected the pending invite for ${fullName} (${email}) — ${changePhrase(edits)}`,
+    detail: edits,
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
 /**
  * Turns a recorded invite into a real account.
  *
@@ -755,7 +1085,7 @@ export async function provisionInvite(inviteId: string): Promise<StaffActionResu
   if (!ASSIGNABLE_ROLE_KEYS.has(invite.role)) {
     return {
       ok: false,
-      error: "This invite asks for a role that cannot be assigned yet — change it by cancelling and re-inviting.",
+      error: "This invite asks for a role that cannot be assigned yet — correct it with Edit first.",
     };
   }
 

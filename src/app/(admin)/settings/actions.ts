@@ -39,7 +39,7 @@ export async function loadSettings(): Promise<SettingsBundle> {
       supabase.from("permissions").select("key, label, group_name, description").order("group_name"),
       supabase.from("role_permissions").select("role_key, permission_key, granted"),
       supabase.from("tenants_and_companies").select("id, name, slug, sector, country").order("name"),
-      supabase.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, created_at").in("role", STAFF_ROLES),
+      supabase.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, phone, created_at").in("role", STAFF_ROLES),
       supabase.from("notification_templates").select("id, key, channel, subject, body, is_active").order("key"),
     ]);
 
