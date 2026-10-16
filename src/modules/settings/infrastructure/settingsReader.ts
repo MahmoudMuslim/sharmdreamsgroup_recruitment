@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cacheLife, cacheTag } from "next/cache";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { isValidTimeZone } from "@/lib/timezone";
 
@@ -10,18 +11,38 @@ import { isValidTimeZone } from "@/lib/timezone";
  *
  * Writes stay gated on `settings.manage_platform` (see
  * `src/app/(admin)/settings/actions.ts`); this module only reads.
+ *
+ * Cached, because these rows are the same for every person in the building:
+ * `GLOBAL` scope, read with the service client, no session in the key. One page
+ * asks for the timezone, the score mask and the interview-question switch
+ * separately, and an hour of portal traffic used to mean one query per ask.
+ *
+ * Staleness is bounded twice over: `minutes` revalidates on its own, and
+ * `saveSettings` evicts the tag the moment anything is written, so a saved
+ * number is read fresh on the next render rather than five minutes later.
  */
 export async function readGlobalSettings(keys: string[]): Promise<Map<string, unknown>> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag("app-settings");
+
   if (keys.length === 0) return new Map();
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
-    .from("app_settings")
-    .select("key, value")
-    .eq("scope", "GLOBAL")
-    .in("key", keys);
+  try {
+    const supabase = getSupabaseServiceClient();
+    const { data } = await supabase
+      .from("app_settings")
+      .select("key, value")
+      .eq("scope", "GLOBAL")
+      .in("key", keys);
 
-  return new Map((data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
+    return new Map((data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
+  } catch {
+    // A read that cannot reach the database answers with nothing, which every
+    // caller below turns into its shipped default — the same degradation an
+    // ignored `error` produced before this went into the cache.
+    return new Map();
+  }
 }
 
 /**

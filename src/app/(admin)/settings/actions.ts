@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
@@ -228,6 +228,10 @@ export async function saveSettings(
   }
 
   revalidatePath("/settings");
+  // The settings read is cached for everyone, so say out loud that it changed:
+  // evicting the tag is what makes the number you just saved the one the next
+  // render sees, instead of the one from up to a minute ago.
+  updateTag("app-settings");
   return { ok: true, saved: entries.map(([key]) => key), error: undefined };
 }
 

@@ -8,6 +8,7 @@ import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import { AppBar } from "@/modules/shell/presentation/AppBar";
+import { LiveChrome } from "@/modules/live/presentation/Live";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
 import {
   expandedOnServer,
@@ -379,6 +380,7 @@ export function AdminShell({
         </div>
       </div>
 
+      <LiveChrome />
       <AssistantDock />
     </div>
   );

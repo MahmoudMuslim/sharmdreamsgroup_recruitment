@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
+import { LiveBadge, useLive } from "@/modules/live/presentation/Live";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import {
@@ -454,6 +455,13 @@ function GuidePanel({ open }: { open: Panel }) {
           A candidate moves New → AI screening → Assessment → Interview → Offer →
           Hired, or out to Rejected. Screening, scoring and feedback are
           model-assisted; human review is always final.
+        </p>
+        <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+          The <span className="font-semibold">Live</span> chip in this bar is the
+          portal&rsquo;s own pulse: it re-checks the hiring tables every few
+          seconds and reloads the page you are standing on when one of them
+          moves, so a colleague&rsquo;s change or a new application arrives
+          without anyone pressing refresh. Click it to reload now.
         </p>
       </div>
     </PanelShell>
@@ -1048,6 +1056,7 @@ export function AppBar({
   const [alertsReadAt, setAlertsReadAt] = useState<string | null>(null);
   const barRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
+  const { lastChange } = useLive();
 
   const acks = useSyncExternalStore(
     subscribeAcks,
@@ -1071,6 +1080,13 @@ export function AppBar({
   useEffect(() => {
     loadAlerts();
   }, [loadAlerts]);
+
+  // The waiting numbers are counted from the same tables the live channel
+  // watches, so a colleague's stage move re-counts the Bell instead of leaving
+  // a badge that only lies until somebody opens it.
+  useEffect(() => {
+    if (lastChange) loadAlerts();
+  }, [lastChange, loadAlerts]);
 
   // Arriving on a new page closes the bar, exactly as it closes the drawer.
   const [lastPath, setLastPath] = useState(pathname);
@@ -1146,6 +1162,7 @@ export function AppBar({
       />
 
       <div className="relative flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <LiveBadge />
         <BarButton label="Guide" active={panel === "guide"} onClick={() => toggle("guide")}>
           <BookOpen className="h-4 w-4" aria-hidden />
         </BarButton>
