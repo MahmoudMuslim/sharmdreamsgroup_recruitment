@@ -223,7 +223,7 @@ export async function readActivityTrail(filters: ActivityFilters): Promise<Trail
       more: false,
       total: 0,
       error: missing
-        ? "The change trail has not been created yet. Apply the activity trail migration, then reload."
+        ? "The change trail has not been created yet. Apply supabase/migrations/024_activity_log.sql, then reload this page."
         : `The change trail could not be read: ${error.message}`,
     };
   }
