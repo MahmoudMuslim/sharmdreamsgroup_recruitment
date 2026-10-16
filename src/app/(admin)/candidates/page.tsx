@@ -2,6 +2,7 @@ import { CalendarDays, Sparkles, Upload } from "lucide-react";
 import {
   getCandidateByRef,
   getCandidateList,
+  getCandidateTally,
   getCvCoverage,
   getUngradedAssessmentQueue,
   type CvCoverage,
@@ -11,6 +12,11 @@ import { NewCandidateDrawer } from "./NewCandidateDrawer";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
+import {
+  isApplicationSource,
+  isPipelineStage,
+  type CandidateTally,
+} from "@/modules/candidates/domain/listFilters";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
@@ -104,6 +110,11 @@ async function readAlertSwitches(): Promise<AlertSwitches> {
  * interview agenda (`?c=…`) and the assistant (`?application=<id>`).
  * `?archived=1` opens the archive the filing door emptied, and `?ungraded=1`
  * opens the grading queue the Bell counts — see `getUngradedAssessmentQueue`.
+ * `?stage=` and `?source=` are the two rails' own filters, applied in the
+ * database over every matching application: the attention feed links by stage,
+ * so the rows a recruiter lands on have to be the rows that count described.
+ * Both are read through the domain's validators, so a parameter that names no
+ * stage narrows nothing rather than silently emptying the table.
  */
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
@@ -130,10 +141,17 @@ export default async function CandidatesPage({
   // The queue the attention feed counts and links here. The archive outranks it
   // when both arrive: a filed-away record is not work waiting on a person.
   const gradingView = !showArchived && params.ungraded === "1";
+  const railStage = isPipelineStage(params.stage);
+  const railSource = isApplicationSource(params.source);
 
-  const [candidates, canWrite, canExport, timeZone, canGenerateQuestions, coverage, switches] =
+  const [candidates, tally, canWrite, canExport, timeZone, canGenerateQuestions, coverage, switches] =
     await Promise.all([
-      gradingView ? getUngradedAssessmentQueue() : getCandidateList(showArchived),
+      gradingView
+        ? getUngradedAssessmentQueue(railStage, railSource)
+        : getCandidateList(showArchived, railStage, railSource),
+      // The queue is a set the page already holds in full, so its rails count
+      // those rows; the pipeline and the archive count everything they match.
+      gradingView ? Promise.resolve<CandidateTally | null>(null) : getCandidateTally(showArchived),
       hasPermissionForUser("candidates.write"),
       hasPermissionForUser("analytics.export"),
       getOrganisationTimeZone(),
@@ -166,6 +184,9 @@ export default async function CandidatesPage({
         candidates={rows}
         archivedView={showArchived}
         gradingView={gradingView}
+        railStage={railStage}
+        railSource={railSource}
+        tally={tally}
         canWrite={canWrite}
         canExport={canExport}
         exportFormats={EXPORT_FORMATS}

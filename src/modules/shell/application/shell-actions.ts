@@ -232,12 +232,16 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
 
   const [newApplications, ungraded, upcoming, failedSends, parkedJobs] =
     await Promise.all([
+      // Counted over the same two columns the candidates page filters on for
+      // `?stage=NEW`, and with the same head-count shape as its rail: the number
+      // on this row is the number on the New chip, not a recent slice of it. A
+      // 7-day window here used to promise "waiting" while hiding every older
+      // application still sitting in New — a stale lead is still a lead.
       supabase
         .from("applications")
         .select("id", { count: "exact", head: true })
         .eq("stage", "NEW")
-        .is("archived_at", null)
-        .gte("created_at", since),
+        .is("archived_at", null),
       // Counted over `applications` with the same `!inner` embed the candidates
       // page reads for `?ungraded=1`, so the number on this row is the number of
       // rows the recruiter lands on. Counting `candidate_attempts` directly — the
@@ -299,7 +303,10 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
     {
       id: "new-applications",
       label: "Applications waiting in New",
-      detail: `Filed in the last ${RECENT_WINDOW_DAYS} days`,
+      // Names the door it opens rather than a window the query no longer applies:
+      // the page's New chip runs the same count, so clicking through lands on the
+      // rows this number described, newest first.
+      detail: "The pipeline lists them under its New chip, which counts the same query",
       count: newCount,
       href: "/candidates?stage=NEW",
       tone: "info",

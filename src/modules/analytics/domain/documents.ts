@@ -13,6 +13,7 @@
 
 import "server-only";
 
+import { CANDIDATE_ROW_LIMIT } from "@/modules/candidates/domain/listFilters";
 import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import type { ExportCell, ExportDocument, ExportSheet } from "./exportDocument";
 import type { AnalyticsReport } from "./report";
@@ -110,7 +111,7 @@ export const CANDIDATE_LIST: ListDefinition = {
   blurb:
     "One row per application matching the filters on the candidates screen: contact details, where the candidate stands, what the AI and the test said, and whether a panel is booked.",
   caveats: [
-    "The candidates screen lists only the newest 50 applications. This file is built from every application matching the same filters, so it can hold more rows than were on screen.",
+    `The candidates screen lists the newest ${CANDIDATE_ROW_LIMIT} applications its filters match, while its rail counts cover the whole set. This file is built from every application matching the same filters, so it can hold more rows than were on screen.`,
     "Stage dates are not kept. A move overwrites the row, so Applied and Last update are the only history a stage column sits between.",
     "Assessment columns show the newest attempt issued to a candidate. When several were issued, the older ones are not here.",
     "Next panel is the soonest slot still on the calendar. A call arranged outside the portal is not recorded anywhere, so it does not appear.",

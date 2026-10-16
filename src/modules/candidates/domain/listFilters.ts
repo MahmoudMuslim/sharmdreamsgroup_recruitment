@@ -60,6 +60,67 @@ export const UNGRADED_ATTEMPT_FILTER = "candidate_attempts.status";
  */
 export const GRADING_QUEUE_LIMIT = 200;
 
+/**
+ * How many rows the candidates table lists, in whichever view is open.
+ *
+ * The rail chips count the whole set behind the view, so a chip number is a
+ * promise about rows the page can list — and past this ceiling it is not. The
+ * view says so rather than letting a recruiter count forty rows under a chip
+ * that said two hundred. It is the same size as the grading queue so the two
+ * rails explain one ceiling, not two.
+ */
+export const CANDIDATE_ROW_LIMIT = 200;
+
+/**
+ * How far the rail counts read back to count stage and channel.
+ *
+ * One small-columns read beats a count query per stage, and it gives both rails
+ * their numbers from the same set the table lists. Past this many applications
+ * the counts stop being exact, so `truncated` carries that to the page and the
+ * page says it out loud instead of printing a stale number as a fact.
+ */
+export const CANDIDATE_COUNT_SCAN_LIMIT = 2000;
+
+/** A row small enough to count: the two columns the rails filter on. */
+export interface CountableCandidate {
+  stage: string;
+  source: string;
+}
+
+/** What the rails are allowed to claim about the set behind the table. */
+export interface CandidateTally {
+  /** Applications in the set the view lists, live or archive. */
+  total: number;
+  /** Pipeline stage → how many sit there. */
+  stages: Record<string, number>;
+  /** Application source → how many came that way. */
+  sources: Record<string, number>;
+  /** True when the scan hit its ceiling, so these counts are a floor. */
+  truncated: boolean;
+}
+
+/**
+ * Count a set by stage and channel.
+ *
+ * Kept here rather than in the read so the client rail and the server action
+ * tally the same way — and so the grading queue, which counts the rows it
+ * actually loaded, uses this same function over a smaller set.
+ */
+export function tallyCandidates(rows: CountableCandidate[]): CandidateTally {
+  const stages: Record<string, number> = {};
+  const sources: Record<string, number> = {};
+  for (const row of rows) {
+    stages[row.stage] = (stages[row.stage] ?? 0) + 1;
+    sources[row.source] = (sources[row.source] ?? 0) + 1;
+  }
+  return {
+    total: rows.length,
+    stages,
+    sources,
+    truncated: rows.length >= CANDIDATE_COUNT_SCAN_LIMIT,
+  };
+}
+
 export const CANDIDATE_SORTS: { key: CandidateSort; label: string }[] = [
   { key: "recent", label: "newest first" },
   { key: "fit", label: "highest AI fit first" },

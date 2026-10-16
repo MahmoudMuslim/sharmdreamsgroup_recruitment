@@ -29,11 +29,15 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { Badge, Button, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import {
+  CANDIDATE_COUNT_SCAN_LIMIT,
+  CANDIDATE_ROW_LIMIT,
   GRADING_QUEUE_LIMIT,
   PIPELINE_STAGES as STAGES,
   filterCandidates,
   sortCandidates,
+  tallyCandidates,
   type CandidateSort,
+  type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
 import {
   draftCandidateFeedback,
@@ -190,11 +194,20 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
  * `gradingView` means the server loaded only the candidates whose assessment came
  * back from the grading engine without marks — the set the Bell counts. Search and
  * the two rails then filter inside that queue, and the download carries it too.
+ *
+ * `railStage` / `railSource` are the two rails read back out of the URL, and
+ * `tally` is how many applications the rails' set really holds. A chip click writes
+ * the parameter and the server narrows the query, so a number on a rail is the size
+ * of the stage rather than the size of whatever this page loaded. `tally` is null
+ * inside the grading queue, where the rows on the page *are* the set.
  */
 export function CandidateBrowser({
   candidates,
   archivedView,
   gradingView,
+  railStage,
+  railSource,
+  tally,
   canWrite,
   canExport,
   exportFormats,
@@ -208,6 +221,12 @@ export function CandidateBrowser({
   archivedView: boolean;
   /** True when the server loaded only the ungraded-assessment queue. */
   gradingView: boolean;
+  /** The stage the URL asks for, already validated against the pipeline. */
+  railStage: string | null;
+  /** The channel the URL asks for, already validated against the sources. */
+  railSource: string | null;
+  /** Counts over the set the rails filter, or null for the queue's own rows. */
+  tally: CandidateTally | null;
   canWrite: boolean;
   /** `analytics.export` — the same grant the download route re-checks. */
   canExport: boolean;
@@ -222,13 +241,10 @@ export function CandidateBrowser({
 }) {
   const router = useRouter();
   const params = useSearchParams();
-  // `?c=` arrives from the interviews agenda and `?q=`/`?stage=` from the
-  // dashboard board: open the page already filtered to what the recruiter
-  // was looking at.
+  // `?c=` arrives from the interviews agenda and `?q=` from the dashboard board:
+  // open the page already showing what the recruiter was looking at.
   const trackedCode = params.get("c");
   const [query, setQuery] = useState(params.get("q") ?? trackedCode ?? "");
-  const [stageFilter, setStageFilter] = useState(params.get("stage") ?? "");
-  const [sourceFilter, setSourceFilter] = useState("");
   const [sortBy, setSortBy] = useState<CandidateSort>("recent");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [profile, setProfile] = useState<CandidateRow | null>(
@@ -300,42 +316,66 @@ export function CandidateBrowser({
     router.push(archived ? "/candidates?archived=1" : "/candidates");
   }
 
-  /** Stage → count, for the rail. Computed over the unfiltered list. */
-  const stageCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of candidates) counts.set(c.stage, (counts.get(c.stage) ?? 0) + 1);
-    return counts;
-  }, [candidates]);
+  /**
+   * Move a rail and let the server answer for the rows.
+   *
+   * The filter goes in the URL rather than in local state, so the chips, the table,
+   * the attention feed's count and the download all read one query — and a link the
+   * assistant hands out lands on exactly the rows a recruiter gets by clicking the
+   * chip. The deep link's own focus (`?application=` / `?c=`) is dropped: a rail is
+   * a question about a set, not about one candidate.
+   */
+  function openRail(next: { stage: string | null; source: string | null }) {
+    const search = new URLSearchParams();
+    if (gradingView) search.set("ungraded", "1");
+    else if (archivedView) search.set("archived", "1");
+    if (next.stage) search.set("stage", next.stage);
+    if (next.source) search.set("source", next.source);
+    const qs = search.toString();
+    router.push(`/candidates${qs ? `?${qs}` : ""}`);
+  }
+
+  /**
+   * Stage → count, for the rail.
+   *
+   * These are the whole set behind the view, not the rows this page loaded, so the
+   * number on "New" is the number the attention feed counts and the database holds.
+   */
+  const stageCounts = useMemo(
+    () => new Map(Object.entries(tally?.stages ?? tallyCandidates(candidates).stages)),
+    [tally, candidates]
+  );
 
   /** Source → count, busiest first, for the channel rail. */
   const sourceCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const c of candidates) counts.set(c.source, (counts.get(c.source) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [candidates]);
+    const counts = tally?.sources ?? tallyCandidates(candidates).sources;
+    return [...Object.entries(counts)].sort((a, b) => b[1] - a[1]);
+  }, [tally, candidates]);
 
   /* One predicate with the export: the file a recruiter downloads from this
-   * toolbar answers the filters they are looking at, not a near-copy of them. */
+   * toolbar answers the filters they are looking at, not a near-copy of them. The
+   * rails have already narrowed the rows on the server, so this pass keeps the
+   * search box and the sort working inside them. */
   const filtered = useMemo(
     () =>
       sortCandidates(
         filterCandidates(candidates, {
-          stage: stageFilter || null,
-          source: sourceFilter || null,
+          stage: railStage,
+          source: railSource,
           query,
           sort: sortBy,
         }),
         sortBy
       ),
-    [candidates, query, stageFilter, sourceFilter, sortBy]
+    [candidates, query, railStage, railSource, sortBy]
   );
 
   /* The href carries the filters exactly as this toolbar holds them, and the
    * route re-reads the rows from the database on click — a download is never a
    * copy of whatever this page happened to load. */
   const exportQuery = new URLSearchParams({ report: "candidates", sort: sortBy });
-  if (stageFilter) exportQuery.set("stage", stageFilter);
-  if (sourceFilter) exportQuery.set("source", sourceFilter);
+  if (railStage) exportQuery.set("stage", railStage);
+  if (railSource) exportQuery.set("source", railSource);
   if (query.trim()) exportQuery.set("q", query.trim());
   if (archivedView) exportQuery.set("archived", "1");
   if (gradingView) exportQuery.set("ungraded", "1");
@@ -357,28 +397,45 @@ export function CandidateBrowser({
     setSelected(allVisibleSelected ? new Set() : new Set(filtered.map((c) => c.id)));
 
   if (candidates.length === 0) {
+    const railed = Boolean(railStage || railSource);
     return (
       <Card>
         <EmptyState
           title={
             gradingView
               ? "Nothing is waiting to be graded"
-              : archivedView
-                ? "Nothing is filed away"
-                : "No applications yet"
+              : railed
+                ? "No application matches this filter"
+                : archivedView
+                  ? "Nothing is filed away"
+                  : "No applications yet"
           }
           description={
             gradingView
               ? "Every assessment a candidate submitted has its marks. A queue appears here the moment the grading engine leaves an answer unscored — and it stays until a person or a retry closes it."
-              : archivedView
-                ? "Filing a candidate takes them out of the pipeline without erasing their answers, scores or the notices they were sent. Anything filed shows up here."
-                : "New submissions appear here as soon as they arrive, newest first."
+              : railed
+                ? `The rails narrow the query in the database, so this is the honest answer: none of the ${tally?.total ?? 0} applications this view counts sits at ${[railStage, railSource].filter(Boolean).join(" and ")}.`
+                : archivedView
+                  ? "Filing a candidate takes them out of the pipeline without erasing their answers, scores or the notices they were sent. Anything filed shows up here."
+                  : "New submissions appear here as soon as they arrive, newest first."
           }
         />
-        {(archivedView || gradingView) && (
+        {(archivedView || gradingView || railed) && (
           <div className="flex justify-center pb-6">
-            <Button variant="outline" size="sm" onClick={() => openView(false)}>
-              {gradingView ? "Show the whole pipeline" : "Back to the live pipeline"}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                railed && !archivedView && !gradingView
+                  ? openRail({ stage: null, source: null })
+                  : openView(false)
+              }
+            >
+              {gradingView
+                ? "Show the whole pipeline"
+                : railed && !archivedView
+                  ? "Clear the filters"
+                  : "Back to the live pipeline"}
             </Button>
           </div>
         )}
@@ -461,8 +518,11 @@ export function CandidateBrowser({
             <option value="name">Name A–Z</option>
           </select>
 
-          <span className="text-xs text-brand-ink/50">
-            {filtered.length} of {candidates.length}
+          <span
+            className="text-xs text-brand-ink/50"
+            title="Rows on this page, out of the rows the query listed. The rail counts are the whole set behind it."
+          >
+            {filtered.length} of {candidates.length} listed
           </span>
 
           {selected.size > 0 && (
@@ -509,17 +569,17 @@ export function CandidateBrowser({
         <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-0.5 sm:mx-0 sm:px-0">
           <FilterRail
             label="All stages"
-            count={candidates.length}
-            active={stageFilter === ""}
-            onClick={() => setStageFilter("")}
+            count={tally?.total ?? candidates.length}
+            active={!railStage}
+            onClick={() => openRail({ stage: null, source: railSource })}
           />
           {STAGES.map((s) => (
             <FilterRail
               key={s}
               label={s.replace("_", " ")}
               count={stageCounts.get(s) ?? 0}
-              active={stageFilter === s}
-              onClick={() => setStageFilter(stageFilter === s ? "" : s)}
+              active={railStage === s}
+              onClick={() => openRail({ stage: railStage === s ? null : s, source: railSource })}
             />
           ))}
 
@@ -551,11 +611,27 @@ export function CandidateBrowser({
                 label={source.replace("_", " ")}
                 count={count}
                 tone="muted"
-                active={sourceFilter === source}
-                onClick={() => setSourceFilter(sourceFilter === source ? "" : source)}
+                active={railSource === source}
+                onClick={() =>
+                  openRail({ stage: railStage, source: railSource === source ? null : source })
+                }
               />
             ))}
           </div>
+        )}
+
+        {/* A rail counts the whole stage; this table lists the newest rows the query
+            returns. When those two numbers differ the page names which one it is
+            showing, instead of letting a recruiter count rows against a chip that
+            promised more. */}
+        {tally && tally.total > candidates.length && (
+          <p className="text-[11px] leading-relaxed text-brand-ink/45">
+            The rail counts cover all {tally.total.toLocaleString()}{" "}
+            {archivedView ? "filed" : "live"} applications. This table lists the newest{" "}
+            {CANDIDATE_ROW_LIMIT} of them, so a stage can count rows that are not on the page.
+            {tally.truncated &&
+              ` Past the newest ${CANDIDATE_COUNT_SCAN_LIMIT.toLocaleString()} applications even the counts stop being exact.`}
+          </p>
         )}
 
         {canExport && (

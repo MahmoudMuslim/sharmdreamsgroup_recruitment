@@ -3,10 +3,14 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import {
+  CANDIDATE_COUNT_SCAN_LIMIT,
+  CANDIDATE_ROW_LIMIT,
   GRADING_QUEUE_LIMIT,
   UNSCORED_ATTEMPT_STATUS,
   UNGRADED_ATTEMPT_EMBED,
   UNGRADED_ATTEMPT_FILTER,
+  tallyCandidates,
+  type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
 import { INTERVIEW_SELECT, toInterviewRecord, type InterviewRecord } from "./interviews-model";
 import type { Application } from "@/types";
@@ -67,23 +71,56 @@ function flattenCandidate(row: CandidateJoin, masked: boolean): CandidateRow {
  * emptied. An archived row keeps every answer, notice and score it ever had —
  * it is hidden from staff reads, not deleted — so it appears only when the
  * recruiter asks for it and restores from there.
+ *
+ * The two rail filters are pushed into the query, not applied to whatever the
+ * page happened to load: that is what lets a chip's number and the rows under it
+ * be the same set, and what the download already does with the same parameters.
+ * The PostgREST builder accumulates, so each `.eq` narrows the one query.
  */
-export async function getCandidateList(archived = false): Promise<CandidateRow[]> {
+export async function getCandidateList(
+  archived = false,
+  stage: string | null = null,
+  source: string | null = null
+): Promise<CandidateRow[]> {
   const [supabase, masked] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
   const base = supabase.from("applications").select(CANDIDATE_SELECT);
-  const { data, error } = await (archived
-    ? base.not("archived_at", "is", null)
-    : base.is("archived_at", null)
-  )
+  const read = archived ? base.not("archived_at", "is", null) : base.is("archived_at", null);
+  if (stage) read.eq("stage", stage);
+  if (source) read.eq("source", source);
+  const { data, error } = await read
     .order("created_at", { ascending: false })
-    .limit(50);
+    .limit(CANDIDATE_ROW_LIMIT);
 
   if (error) console.error("[candidates] list query failed:", error.message);
 
   return (data ?? []).map((row) => flattenCandidate(row as CandidateJoin, masked));
+}
+
+/**
+ * How many applications sit behind the view, by stage and channel.
+ *
+ * The rails quote these so a chip is the size of the stage rather than the size
+ * of the rows the table loaded, and so the attention feed's "waiting in New" and
+ * the New chip are the same query on the same table. Two columns, no embeds,
+ * newest first: `truncated` in the result is the page's cue to say the counts
+ * stop being exact at the scan ceiling.
+ */
+export async function getCandidateTally(archived = false): Promise<CandidateTally> {
+  const supabase = await createSupabaseServerClient();
+  const base = supabase.from("applications").select("stage, source");
+  const read = archived ? base.not("archived_at", "is", null) : base.is("archived_at", null);
+  const { data, error } = await read
+    .order("created_at", { ascending: false })
+    .limit(CANDIDATE_COUNT_SCAN_LIMIT);
+
+  if (error) console.error("[candidates] rail counts failed:", error.message);
+
+  const rows = (data ?? []) as { stage: string; source: string }[];
+  const tally = tallyCandidates(rows);
+  return { ...tally, truncated: rows.length >= CANDIDATE_COUNT_SCAN_LIMIT };
 }
 
 /**
@@ -104,20 +141,26 @@ const UNGRADED_SELECT = `*, job_openings(title), ${UNGRADED_ATTEMPT_EMBED}, inte
  * The Bell counts this set and links here, so the number a recruiter clicks is
  * the number of rows they land on — not a nearby pipeline stage. Newest first
  * like the pipeline, and bounded, because a queue this long means grading is
- * down rather than busy.
+ * down rather than busy. The rails narrow it the same way they narrow the
+ * pipeline, so a chip inside the queue still counts rows the queue holds.
  */
 export async function getUngradedAssessmentQueue(
+  stage: string | null = null,
+  source: string | null = null,
   limit = GRADING_QUEUE_LIMIT
 ): Promise<CandidateRow[]> {
   const [supabase, masked] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
-  const { data, error } = await supabase
+  const read = supabase
     .from("applications")
     .select(UNGRADED_SELECT)
     .is("archived_at", null)
-    .eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS)
+    .eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS);
+  if (stage) read.eq("stage", stage);
+  if (source) read.eq("source", source);
+  const { data, error } = await read
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -129,7 +172,7 @@ export async function getUngradedAssessmentQueue(
 /**
  * The one application a deep link points at, by id or tracking code.
  *
- * The table only ever loads the newest 50 applications, so a link from a job
+ * The table loads only the newest rows its rails query returns, so a link from a job
  * opening, the interview agenda or the assistant can name a candidate that the
  * list does not contain. Resolving it here means the profile opens whatever its
  * age, instead of the recruiter landing on an unfiltered table.
