@@ -64,6 +64,7 @@ import {
   type JobReadFilter,
 } from "@/modules/assistant/infrastructure/reads";
 import { CHART_VIEWS, chartForView, isChartView } from "@/modules/assistant/domain/charts";
+import { reachNote } from "@/modules/assistant/domain/reach-note";
 import {
   getQuestionsForEditor,
   getTemplateDetail,
@@ -116,6 +117,7 @@ import {
   setGateQuestionActive,
 } from "@/app/(admin)/apply-questions/actions";
 import { deleteStoredFile, getFileBrowserData, openFolder } from "@/app/(admin)/files/actions";
+import { LIST_LIMIT } from "@/app/(admin)/files/storage-list";
 import { getInterviewAgenda } from "@/app/(admin)/interviews/actions";
 import {
   AGENDA_CHAT_ROW_LIMIT,
@@ -276,6 +278,20 @@ function report<T extends { ok: boolean; error?: string }>(
  * note, so the number named is the number the recruiter is told about.
  */
 const ANSWER_ROWS = 50;
+
+/**
+ * The other caps in this registry, named so each one's read can quote it.
+ *
+ * `ANSWER_ROWS` covers the list tools that filter a set; these four bound the
+ * long tails hanging off a single record — a dossier's message history, the
+ * hires still without a checklist, one folder's files, the openings a gate
+ * question can be scoped to.
+ */
+const DOSSIER_ALERT_ROWS = 20;
+const UNPLANNED_HIRE_ROWS = 20;
+const FOLDER_FILE_ROWS = 60;
+const ROOT_FILE_ROWS = 40;
+const GATE_JOB_ROWS = 40;
 
 /**
  * An optional argument that has to name one of a set.
@@ -1089,7 +1105,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "get_candidate_dossier",
     label: "Reading a candidate dossier",
     description:
-      "Everything on one application: what they submitted, their viability-gate answers, every assessment attempt with its status and deadline, every alert on the record with its status (delivered or failed for email and WhatsApp, queued for a WhatsApp still waiting, written for a portal notice — a notice is an inbox entry, nothing sent it through a relay), attached files, onboarding progress, and their other applications. This is where attempt, attachment and alert ids come from.",
+      "Everything on one application: what they submitted, their viability-gate answers, every assessment attempt with its status and deadline, every alert on the record with its status (delivered or failed for email and WhatsApp, queued for a WhatsApp still waiting, written for a portal notice — a notice is an inbox entry, nothing sent it through a relay), attached files, onboarding progress, and their other applications. This is where attempt, attachment and alert ids come from. `alerts_note` says whether the message list below is the whole history or only its first rows.",
     args: { application_id: "string — the application's id" },
     run: async (args) => {
       const applicationId = str(args, "application_id");
@@ -1100,7 +1116,20 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       // A start link is the only thing standing between a stranger and this
       // person's test, and a chat transcript is stored — so the token never
       // leaves the dossier screen that shows it in a copy field.
+      const alerts = dossier.alerts.slice(0, DOSSIER_ALERT_ROWS).map((alert) => ({
+        id: alert.id,
+        channel: alert.channel,
+        status: alert.status,
+        subject: alert.subject,
+        body: clip(alert.body, 240),
+        error: alert.error,
+        occurred_at: alert.occurred_at,
+      }));
+
       return {
+        // Leads the result because a dossier this long is clipped before the
+        // model reads it, and the rows the note is about sit at the end of it.
+        alerts_note: reachNote("message attempts on this record", dossier.alerts.length, alerts.length),
         ok: true,
         application: {
           id: dossier.application.id,
@@ -1144,15 +1173,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           uploaded_at: file.uploaded_at,
           uploaded_by: file.uploaded_by,
         })),
-        alerts: dossier.alerts.slice(0, 20).map((alert) => ({
-          id: alert.id,
-          channel: alert.channel,
-          status: alert.status,
-          subject: alert.subject,
-          body: clip(alert.body, 240),
-          error: alert.error,
-          occurred_at: alert.occurred_at,
-        })),
+        alerts,
         onboarding: dossier.onboarding,
         other_applications: dossier.other_applications,
       };
@@ -1282,13 +1303,21 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_onboarding_plans",
     label: "Reading onboarding plans",
     description:
-      "Every hire's checklist with progress, each task's id, title, owner, category, due offset and completion, plus the hires who have no plan yet. Task ids come from here.",
+      "Every hire's checklist with progress, each task's id, title, owner, category, due offset and completion, plus the hires who have no plan yet. Task ids come from here. `unplanned_note` says whether the waiting list below names every hire without a checklist or only its first rows.",
     args: {},
     run: async () => {
       const data = await getOnboardingData();
+      const unplanned = data.unplanned.slice(0, UNPLANNED_HIRE_ROWS);
       return {
+        // Leads because the plans below are long — a hire waiting for a
+        // checklist could otherwise be reported as one that does not exist.
+        unplanned_note: reachNote(
+          "hires with no checklist yet",
+          data.unplanned.length,
+          unplanned.length
+        ),
         summary: data.summary,
-        unplanned: data.unplanned.slice(0, 20),
+        unplanned,
         plans: data.plans.map((plan) => ({
           id: plan.id,
           application_id: plan.application_id,
@@ -1316,7 +1345,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_files",
     label: "Reading stored files",
     description:
-      "The storage buckets this portal writes, with file counts, and the folder listing inside one bucket. Without arguments it opens the CV bucket's root.",
+      "The storage buckets this portal writes, with file counts, and the folder listing inside one bucket. Without arguments it opens the CV bucket's root. `listing_note`/`root_note` name how many files the read actually carries — a folder's own `truncated` flag only describes the listing behind it, not this answer.",
     args: {
       bucket: `string — optional, one of candidate-cvs, resumes, candidate-audio`,
       prefix: "string — optional, a folder path ending in /",
@@ -1326,38 +1355,57 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       if (bucket) {
         const view = await openFolder(bucket, optionalStr(args, "prefix") ?? "");
         if (!view.ok) return { ok: false, error: view.error };
+        const files = view.listing.files.slice(0, FOLDER_FILE_ROWS).map((file) => ({
+          path: file.path,
+          name: file.name,
+          bytes: file.bytes,
+          mime_type: file.mimeType,
+          modified_at: file.modifiedAt,
+          owner: file.owner,
+        }));
         return {
+          // The page's `truncated` flag only describes the storage listing's own
+          // cap, so a folder of exactly 200 files read as complete from here
+          // after this answer had dropped 140 of them. Both cuts are named.
+          listing_note: `${reachNote(
+            "files in this folder",
+            view.listing.files.length,
+            files.length
+          )}${
+            view.listing.truncated
+              ? ` The listing that filled this answer stops at ${LIST_LIMIT.toLocaleString()} entries, so the total it counted is itself a floor.`
+              : ""
+          }`,
           bucket: view.listing.bucketLabel,
           prefix: view.listing.prefix,
           folders: view.listing.folders.map((folder) => folder.prefix),
-          files: view.listing.files.slice(0, 60).map((file) => ({
-            path: file.path,
-            name: file.name,
-            bytes: file.bytes,
-            mime_type: file.mimeType,
-            modified_at: file.modifiedAt,
-            owner: file.owner,
-          })),
+          files,
           truncated: view.listing.truncated,
         };
       }
 
       const { buckets, view } = await getFileBrowserData();
+      const rootFiles = view.ok
+        ? view.listing.files.slice(0, ROOT_FILE_ROWS).map((file) => ({
+            path: file.path,
+            name: file.name,
+            bytes: file.bytes,
+            owner: file.owner,
+          }))
+        : null;
       return {
+        // Leads for the same reason: the bucket tile counts every object, and a
+        // root listing hands back a fraction of them.
+        root_note: view.ok
+          ? reachNote("files in this bucket's root", view.listing.files.length, rootFiles?.length ?? 0)
+          : "The root folder could not be listed, so no files are named.",
         buckets: buckets.map((each) => ({
           key: each.key,
           label: each.label,
           files: each.files,
           exact_count: each.exact,
         })),
-        root: view.ok
-          ? view.listing.files.slice(0, 40).map((file) => ({
-              path: file.path,
-              name: file.name,
-              bytes: file.bytes,
-              owner: file.owner,
-            }))
-          : { error: view.error },
+        root: view.ok ? rootFiles : { error: view.error },
       };
     },
   },
@@ -1365,11 +1413,15 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_gate_questions",
     label: "Reading viability gate questions",
     description:
-      "The questions the public apply form asks, which options keep an application in the running, which role each is asked on, and the openings they can be scoped to.",
+      "The questions the public apply form asks, which options keep an application in the running, which role each is asked on, and the openings they can be scoped to. Every question is listed; `jobs_note` says whether the openings beside them are all the console holds.",
     args: {},
     run: async () => {
       const console_ = await getGateConsoleData();
+      const jobs = console_.jobs.slice(0, GATE_JOB_ROWS);
       return {
+        // The questions below are uncapped, so an opening missing from this
+        // list is a scoping limit of the read, not a role with no gate.
+        jobs_note: reachNote("openings in the gate console", console_.jobs.length, jobs.length),
         questions: console_.questions.map((question) => ({
           id: question.id,
           question: question.question,
@@ -1380,7 +1432,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           is_active: question.isActive,
           options: question.options,
         })),
-        jobs: console_.jobs.slice(0, 40),
+        jobs,
       };
     },
   },
