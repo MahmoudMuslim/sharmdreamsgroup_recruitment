@@ -4,8 +4,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { supabaseConfig } from "@/lib/config";
 import { coerceNumber } from "@/modules/settings/infrastructure/settingsReader";
 
-/** Recruiter-only areas. Everything else (public job board, candidate portal,
- *  tokenised assessment runner) stays reachable without a session. */
+/*
+ * Recruiter-only areas. Everything else (public job board, candidate portal,
+ * tokenised assessment runner) stays reachable without a session.
+ *
+ * This list is the edge half of a two-part gate: every route under
+ * `src/app/(admin)` is here, and every one of them also calls `requireStaff()`.
+ * The page check is what stops an anonymous visitor; this one is what stops the
+ * *idle* staff session further below, so a console missing from the list keeps
+ * working long after `security.session_timeout_minutes` has run out — and a
+ * signed-in candidate can open it. A new admin page has to be added here as
+ * well as in the nav table.
+ */
 const PROTECTED_PREFIXES = [
   "/dashboard",
   "/candidates",
@@ -16,6 +26,13 @@ const PROTECTED_PREFIXES = [
   "/files",
   "/interviews",
   "/settings",
+  "/activity",
+  "/analytics",
+  "/assistant",
+  "/reports",
+  "/sourcing",
+  "/time",
+  "/whatsapp",
 ];
 
 const STAFF_ROLES = new Set(["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"]);
