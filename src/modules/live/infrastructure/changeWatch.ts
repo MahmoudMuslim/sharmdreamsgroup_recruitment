@@ -75,6 +75,17 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     paths: ["/whatsapp", "/candidates", "/files"],
   },
   {
+    // The other half of /whatsapp. A queued alert is not a delivery until the
+    // dispatcher writes its log row, so without this the queue itself — a
+    // colleague's retry, a cancel, a job flipping to parked — sits still while
+    // the page claims it is live. `error_log` is left out: it grows on every
+    // failed attempt and would reload the page for noise the list already shows.
+    area: "queue",
+    table: "scheduled_whatsapp_jobs",
+    columns: ["id", "status", "scheduled_for", "attempts", "sent_at"],
+    paths: ["/whatsapp"],
+  },
+  {
     area: "gate questions",
     table: "application_gate_questions",
     stamp: "updated_at",
@@ -105,6 +116,17 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
  * for not putting an `updated_at` on those tables.
  */
 const HASH_ROWS = 500;
+
+/**
+ * The column that says which rows are newest.
+ *
+ * Not `id`: every one of these tables keys on `gen_random_uuid()`, so ordering
+ * by it is lexicographic, and a row inserted this second lands anywhere in the
+ * ranking — usually outside a 500-row window once the table outgrows it. Each
+ * hashed table carries `created_at` with a `default now()`, which is the only
+ * real newest-first order available without adding an update stamp.
+ */
+const NEWEST_COLUMN = "created_at";
 
 /** Fingerprint per area, or `undefined` when the table could not be read. */
 export type LiveFingerprints = Record<string, string | undefined>;
@@ -164,7 +186,7 @@ async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<
   const { data, error } = await supabase
     .from(watch.table)
     .select(columns.join(","))
-    .order("id", { ascending: false })
+    .order(NEWEST_COLUMN, { ascending: false })
     .limit(HASH_ROWS);
 
   if (error) throw new Error(error.message);
