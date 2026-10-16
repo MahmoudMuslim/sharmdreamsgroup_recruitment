@@ -45,6 +45,54 @@ function describeCvCoverage(coverage: CvCoverage): string {
   return sentences.join(" ");
 }
 
+/** The four switches `notifyStageChange` reads before it tells anybody anything. */
+interface AlertSwitches {
+  stageAlerts: boolean;
+  email: boolean;
+  inApp: boolean;
+  whatsapp: boolean;
+}
+
+/**
+ * The alerts card names the switches the dispatcher actually reads.
+ *
+ * "Every pipeline move emails the candidate" was not true in two ways: each
+ * channel sits behind its own Settings switch, and the one stage move that
+ * never notifies is the candidate submitting their own test — the pipeline
+ * advances, and telling them about it would be noise. Defaults here mirror the
+ * dispatcher exactly, WhatsApp included, which stays off until credentials are
+ * set up.
+ */
+function describeAlerts(switches: AlertSwitches): string {
+  if (!switches.stageAlerts)
+    return "Stage-change alerts are switched off in Settings → Notifications, so a pipeline move sends no email, leaves no notice and queues no WhatsApp.";
+
+  const routes = [
+    switches.email ? "an email with the live template copy" : null,
+    switches.inApp ? "a notice in their portal inbox" : null,
+    switches.whatsapp ? "a WhatsApp queued for the next dispatcher pass" : null,
+  ].filter((line): line is string => line !== null);
+
+  if (routes.length === 0)
+    return "Every candidate channel is switched off in Settings → Notifications, so a pipeline move tells the candidate nothing at all.";
+
+  const reached =
+    routes.length === 1 ? routes[0] : `${routes.slice(0, -1).join(", ")} and ${routes[routes.length - 1]}`;
+
+  return `Every move staff or the AI engine makes reaches the candidate as ${reached}. What each send actually did — accepted, refused, or never attempted because no SMTP relay is set — is on the Candidate messaging page, and the one move that stays silent is the candidate's own test submission.`;
+}
+
+/** The four switches, read the way the dispatcher reads them. */
+async function readAlertSwitches(): Promise<AlertSwitches> {
+  const [stageAlerts, email, inApp, whatsapp] = await Promise.all([
+    getBoolSetting("notifications.notify_on_stage_change", true),
+    getBoolSetting("notifications.email_enabled", true),
+    getBoolSetting("notifications.in_app_enabled", true),
+    getBoolSetting("notifications.whatsapp_enabled", false),
+  ]);
+  return { stageAlerts, email, inApp, whatsapp };
+}
+
 /**
  * Deep links arrive from the job opening's applicant list (`?c=SDG-…`), the
  * interview agenda (`?c=…`) and the assistant (`?application=<id>`).
@@ -73,7 +121,7 @@ export default async function CandidatesPage({
   const focused = hasRef ? await getCandidateByRef(ref) : null;
   const showArchived = params.archived === "1" || Boolean(focused?.archived_at);
 
-  const [candidates, canWrite, canExport, timeZone, canGenerateQuestions, coverage] =
+  const [candidates, canWrite, canExport, timeZone, canGenerateQuestions, coverage, switches] =
     await Promise.all([
       getCandidateList(showArchived),
       hasPermissionForUser("candidates.write"),
@@ -81,6 +129,7 @@ export default async function CandidatesPage({
       getOrganisationTimeZone(),
       getBoolSetting("ai.interview_questions", true),
       getCvCoverage(),
+      readAlertSwitches(),
     ]);
 
   // The table only loads the newest 50 applications; a link to anyone older is
@@ -128,8 +177,7 @@ export default async function CandidatesPage({
           </div>
           <h3 className="font-display text-base font-bold">Candidate alerts</h3>
           <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
-            Every pipeline move emails the candidate, queues a WhatsApp where one is enabled, and
-            leaves a notice in their portal inbox.
+            {describeAlerts(switches)}
           </p>
         </Card>
 
