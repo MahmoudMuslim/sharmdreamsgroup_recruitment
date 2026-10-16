@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { FIT_BUCKETS, bucketBounds } from "@/modules/analytics/domain/fitBuckets";
+import { BOARD_LIMIT } from "@/app/(admin)/dashboard/board-model";
 import { isApplicationSource, isPipelineStage } from "@/modules/candidates/domain/listFilters";
 import type {
   ApplicationStage,
@@ -215,8 +216,11 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     Math.max(time_to_hire_trend.filter((p) => p.avg_days > 0).length, 1);
 
   // --- Candidate board -------------------------------------------------------
-  // Every application, not just the ten best: the board filters and sorts
-  // client-side, so a stage or channel click has to work on the full set.
+  // The board filters and sorts in the browser, so it is shipped as much of the
+  // pipeline as a panel can hold: `BOARD_LIMIT` rows, best-fitting first (or
+  // newest-first when scores are masked). That is a cap, not the set — the
+  // tiles above count every live application, and the view names the difference
+  // rather than letting a stage rail look like a filter over the whole pipeline.
   const scoreByApplication = new Map(attempts.map((a) => [a.application_id, a.total_score]));
 
   const candidates: DashboardCandidate[] = [...applications]
@@ -227,7 +231,7 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
         ? String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
         : (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1)
     )
-    .slice(0, 200)
+    .slice(0, BOARD_LIMIT)
     .map((app) => {
       const job = one<JobShape>(app.job_openings);
       return {

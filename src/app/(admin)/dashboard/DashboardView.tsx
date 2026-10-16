@@ -34,6 +34,7 @@ import {
 } from "@/modules/analytics/presentation/ui";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import { inBucket } from "@/modules/analytics/domain/fitBuckets";
+import { BOARD_LIMIT } from "@/app/(admin)/dashboard/board-model";
 import { cn, formatDateTime } from "@/lib/utils";
 import {
   getDashboardDrilldown,
@@ -551,6 +552,39 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
   const maxRole = Math.max(...analytics.roles.map((r) => r.applications), 1);
   const activeFilters = Boolean(stage || source || bucket || query);
   const masked = analytics.scores_masked;
+
+  /**
+   * The one rail the board is filtered by, and the count its own tile claims.
+   *
+   * Those tiles are server counts of every live application while this board can
+   * only hold `BOARD_LIMIT` of them, so a rail click narrows a slice, not the set
+   * the number describes. Only a single active rail can be attributed to one
+   * tile; with two, neither count belongs to the intersection.
+   */
+  const rail = useMemo(() => {
+    if ([stage, source, bucket].filter(Boolean).length !== 1) return null;
+    if (stage) {
+      const step = analytics.pipeline.find((item) => item.stage === stage);
+      return step ? { label: `${prettyStage(step.stage)} tile`, total: step.count, href: `/candidates?stage=${step.stage}` } : null;
+    }
+    if (source) {
+      const channel = analytics.channels.find((item) => item.source === source);
+      return channel
+        ? { label: `${channel.source} tile`, total: channel.applications, href: `/candidates?source=${channel.source}` }
+        : null;
+    }
+    if (bucket) {
+      const band = analytics.fit_distribution.find((item) => item.range === bucket);
+      // A fit band has no rail on the candidates board, so its own popup is the
+      // only door that reads the whole set.
+      return band ? { label: `fit ${band.range} tile`, total: band.count, href: null } : null;
+    }
+    return null;
+  }, [analytics, stage, source, bucket]);
+
+  const boardHolds = analytics.candidates.length;
+  const rowsNotLoaded = Math.max(0, analytics.total_applications - boardHolds);
+  const railHidden = rail ? Math.max(0, rail.total - filtered.length) : 0;
 
   function drill(scope: DashboardDrillScope) {
     setPanel({ kind: "applications", scope });
@@ -1147,9 +1181,40 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
             <h2 className="font-display text-base font-bold sm:text-lg">Candidate board</h2>
             <p className="mt-0.5 text-xs text-brand-ink/45">
               Showing {filtered.length} of{" "}
-              {analytics.candidates.length.toLocaleString()} loaded applications · click a name for
+              {boardHolds.toLocaleString()} loaded applications · click a name for
               the full record
             </p>
+            {(rowsNotLoaded > 0 || railHidden > 0) && (
+              <div className="mt-2 max-w-3xl space-y-1 text-[11px] leading-relaxed text-brand-ink/60">
+                {rowsNotLoaded > 0 && (
+                  <p>
+                    This board is shipped with the {BOARD_LIMIT} {masked ? "newest" : "best-matching"} live
+                    applications, so {rowsNotLoaded.toLocaleString()} of the{" "}
+                    {analytics.total_applications.toLocaleString()} in the pipeline are not in it. The figures
+                    above count them anyway.
+                  </p>
+                )}
+                {railHidden > 0 && rail && (
+                  <p>
+                    The {rail.label} counts {rail.total.toLocaleString()}. A rail can only filter the rows this
+                    page loaded, so {railHidden} {railHidden === 1 ? "is" : "are"} counted but not listed
+                    {rail.href ? (
+                      <>
+                        {" — "}
+                        <Link
+                          href={rail.href}
+                          className="font-semibold text-brand-gold-dark underline underline-offset-2"
+                        >
+                          read them all
+                        </Link>
+                      </>
+                    ) : (
+                      " — the tile's See who popup reads them from the database."
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 rounded-xl border border-brand-line bg-brand-cream px-3 py-1.5 focus-within:border-brand-gold focus-within:bg-white">

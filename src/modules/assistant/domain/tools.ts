@@ -465,7 +465,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "dashboard_analytics",
     label: "Reading hiring metrics",
     description:
-      "Group-wide hiring analytics: totals, the stage funnel with conversion rates, channel effectiveness, AI fit-score distribution, 14-day application volume and time-to-hire trend.",
+      "Group-wide hiring analytics: totals, the stage funnel with conversion rates, channel effectiveness, AI fit-score distribution, 14-day application volume and time-to-hire trend. Quote `candidates_note` whenever the ten candidates are named: they are the board's ranking of the rows it loads, not the pipeline.",
     args: {},
     run: async () => {
       const analytics = await getDashboardAnalytics();
@@ -490,6 +490,12 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           match_score: candidate.match_score,
           stage: candidate.stage,
         })),
+        // The board's read is capped and ranked, and a masked caller is not
+        // ranked at all — so name which ten these are instead of calling them
+        // "top" and letting the count be inferred.
+        candidates_note: `These ${Math.min(10, analytics.candidates.length)} of the ${analytics.candidates.length} applications the board loads (${analytics.total_applications} live in the pipeline) are the ${
+          analytics.scores_masked ? "newest, because fit scores are masked for you" : "best-matching by AI fit"
+        }.`,
       };
     },
   },
