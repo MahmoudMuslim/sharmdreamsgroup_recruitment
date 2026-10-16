@@ -457,14 +457,22 @@ function GuidePanel({ open }: { open: Panel }) {
         <p className="text-[11px] leading-relaxed text-brand-ink/55">
           A candidate moves New → AI screening → Assessment → Interview → Offer →
           Hired, or out to Rejected. Screening, scoring and feedback are
-          model-assisted; human review is always final.
+          model-assisted, and offers and hires are always decided by a person.
+          The two thresholds in Settings → AI &amp; screening are the exception:
+          a screened score at or above the auto-advance threshold (75% as
+          shipped) moves an application nobody has touched yet to Assessment,
+          and one below the auto-reject threshold (40%) closes it, storing that
+          score and summary as the rejection reason the candidate sees. Set
+          either to 0 and that side stops.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           The <span className="font-semibold">Live</span> chip in this bar is the
-          portal&rsquo;s own pulse: it re-checks the hiring tables every few
-          seconds and reloads the page you are standing on when one of them
-          moves, so a colleague&rsquo;s change or a new application arrives
-          without anyone pressing refresh. Click it to reload now.
+          portal&rsquo;s own pulse: while this tab is in the foreground it
+          re-checks the hiring tables every few seconds and reloads the page you
+          are standing on when one of them moves, so a colleague&rsquo;s change
+          or a new application arrives without anyone pressing refresh. A
+          background tab stops checking and catches up the moment you come back
+          to it. Click the chip to reload now.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           The palette button walks <span className="font-semibold">Light → Dark →

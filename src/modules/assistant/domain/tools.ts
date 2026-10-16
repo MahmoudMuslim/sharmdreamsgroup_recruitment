@@ -1363,7 +1363,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     label: "Changing settings",
     description:
       "Change one or more settings keys. Only keys that already appear in get_settings are accepted; each change is written to the audit log.",
-    args: { values: "object — setting key to new value, e.g. {\"ai.auto_advance_threshold\": 75}" },
+    args: { values: "object — setting key to new value, e.g. {\"ai.match_threshold_advance\": 75}" },
     run: async (args) => {
       const values = args.values;
       if (typeof values !== "object" || values === null || Array.isArray(values)) {

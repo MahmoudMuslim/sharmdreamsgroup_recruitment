@@ -53,8 +53,8 @@ function CollapseToggle({
  * The rail itself: the nav table cut into its four groups, one row per page.
  *
  * A row stays one line tall and only the page you are standing on unfurls its
- * description — the other fourteen hand theirs over on hover, which is what keeps
- * fifteen doors scannable instead of a wall of subtext. Folded, the group headers
+ * description — the other fifteen hand theirs over on hover, which is what keeps
+ * sixteen doors scannable instead of a wall of subtext. Folded, the group headers
  * give way to hairlines.
  */
 function NavLinks({
@@ -160,7 +160,7 @@ function NavLinks({
 /** The AI-engine note — part of the scrollable rail, not the pinned footer. */
 function EngineNote({ collapsed = false }: { collapsed?: boolean }) {
   const note =
-    "Screening, scoring and feedback are model-assisted. Human review is always final.";
+    "Screening, scoring and feedback are model-assisted, and offers and hires stay with a person. The auto-advance and auto-reject thresholds in Settings → AI & screening move or close an untouched application on their own; 0 switches each side off.";
 
   if (collapsed) {
     return (
