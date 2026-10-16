@@ -18,6 +18,9 @@ export const AGENDA_PAST_DAYS = 30;
 /** Days forward from now the agenda reads — its horizon, and the widest range on offer. */
 export const AGENDA_FUTURE_DAYS = 90;
 
+/** Panels one chat read is handed, so a long window cannot bury the answer. */
+export const AGENDA_CHAT_ROW_LIMIT = 80;
+
 /** The status a panel holds until a recruiter records what happened. */
 export const PENDING_INTERVIEW_STATUS = "SCHEDULED";
 
@@ -93,6 +96,30 @@ export function agendaWindow(
 }
 
 /**
+ * The day counts `agendaWindow` will use when a caller leaves a bound out.
+ *
+ * The chat reads this to describe the window it actually asked for; defaulting in
+ * one place keeps its sentence and the query from disagreeing.
+ */
+export function agendaWindowDays(input: {
+  pastDays?: number;
+  futureDays?: number;
+}): { pastDays: number; futureDays: number } {
+  // A caller may be the model, so a negative or unparseable day count arrives
+  // here too. Rounded and floored rather than refused: the window it produces is
+  // still the window the read runs, and `agendaReadNote` describes it truthfully.
+  const days = (value: number | undefined, fallback: number) => {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.max(0, Math.round(value));
+  };
+
+  return {
+    pastDays: days(input.pastDays, AGENDA_PAST_DAYS),
+    futureDays: days(input.futureDays, AGENDA_FUTURE_DAYS),
+  };
+}
+
+/**
  * Whether a booking falls in `range`, measured against absolute instants.
  *
  * Forward ranges start at *now*, not at midnight, because that is the predicate
@@ -113,4 +140,39 @@ export function inAgendaRange(
   return days < 0
     ? scheduledMs < nowMs && scheduledMs >= nowMs + days * DAY_MS
     : scheduledMs >= nowMs && scheduledMs <= nowMs + days * DAY_MS;
+}
+
+/**
+ * What one chat read of the agenda actually covered.
+ *
+ * The page always asks for its own window and lists every panel inside it. The
+ * assistant may widen the two day counts to answer "what is booked next quarter",
+ * and its link still lands on the 90-day board — so a wider read is true but
+ * partly unreachable from the screen the answer points at, and a window holding
+ * more panels than the cap is cut. Neither shows in the rows themselves, so the
+ * read says it here.
+ */
+export function agendaReadNote(input: {
+  pastDays: number;
+  futureDays: number;
+  total: number;
+  shown: number;
+}): string {
+  const { pastDays, futureDays, total, shown } = input;
+  const window = `${pastDays} days back to ${futureDays} days forward`;
+
+  if (total === 0) {
+    return `Nothing is booked between ${window}, so the list is empty — that is the window this read asked for, not the whole calendar.`;
+  }
+
+  const beyond =
+    pastDays > AGENDA_PAST_DAYS || futureDays > AGENDA_FUTURE_DAYS
+      ? ` It reaches past the agenda board, which covers the ${AGENDA_PAST_DAYS} days back and the ${AGENDA_FUTURE_DAYS} days forward from today, so a panel outside that is a real booking the page will not show.`
+      : "";
+  const reach =
+    shown < total
+      ? ` ${total.toLocaleString()} panels are in the window and the ${shown.toLocaleString()} earliest of them are below, so a later panel in the same window is out of reach from here.`
+      : ` All ${total.toLocaleString()} panels in the window are below.`;
+
+  return `Read ${window}.${beyond}${reach}`;
 }

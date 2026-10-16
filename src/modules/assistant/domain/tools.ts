@@ -117,6 +117,11 @@ import {
 } from "@/app/(admin)/apply-questions/actions";
 import { deleteStoredFile, getFileBrowserData, openFolder } from "@/app/(admin)/files/actions";
 import { getInterviewAgenda } from "@/app/(admin)/interviews/actions";
+import {
+  AGENDA_CHAT_ROW_LIMIT,
+  agendaReadNote,
+  agendaWindowDays,
+} from "@/app/(admin)/interviews/agenda-model";
 import { getOnboardingData } from "@/app/(admin)/onboarding/actions";
 import { generateOnboardingPlan } from "@/app/(admin)/onboarding/onboarding-actions";
 import { deleteTask, saveTask, setTaskCompleted } from "@/app/(admin)/onboarding/task-actions";
@@ -554,6 +559,18 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       const analytics = await getDashboardAnalytics();
       const requested = typeof args.chart === "string" ? args.chart.trim().toLowerCase() : "";
       const result: Record<string, unknown> = {
+        // Both caveats lead, because a long result is clipped before the model
+        // reads it and a sentence that falls off the end was never said.
+        //
+        // A stage count read as a transition is the oldest lie on this board, so
+        // the read says what the figures are before the model can guess.
+        pipeline_note: `${analytics.total_applications} live applications, each sitting at exactly one stage. These are current populations, not moves: vs_previous_stage compares two counts taken now, and Rejected carries none because it closes applications at every stage. Never describe any of these as a conversion rate.`,
+        // The board's read is capped and ranked, and a masked caller is not
+        // ranked at all — so name which ten these are instead of calling them
+        // "top" and letting the count be inferred.
+        candidates_note: `These ${Math.min(10, analytics.candidates.length)} of the ${analytics.candidates.length} applications the board loads (${analytics.total_applications} live in the pipeline) are the ${
+          analytics.scores_masked ? "newest, because fit scores are masked for you" : "best-matching by AI fit"
+        }.`,
         total_applications: analytics.total_applications,
         active_jobs: analytics.active_jobs,
         hires_this_quarter: analytics.hires_this_quarter,
@@ -563,9 +580,6 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         scores_masked: analytics.scores_masked,
         avg_time_to_hire_days: analytics.avg_time_to_hire_days,
         pipeline: analytics.pipeline,
-        // A stage count read as a transition is the oldest lie on this board, so
-        // the read says what the figures are before the model can guess.
-        pipeline_note: `${analytics.total_applications} live applications, each sitting at exactly one stage. These are current populations, not moves: vs_previous_stage compares two counts taken now, and Rejected carries none because it closes applications at every stage. Never describe any of these as a conversion rate.`,
         channels: analytics.channels,
         fit_distribution: analytics.fit_distribution,
         time_to_hire_trend: analytics.time_to_hire_trend,
@@ -577,12 +591,6 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           match_score: candidate.match_score,
           stage: candidate.stage,
         })),
-        // The board's read is capped and ranked, and a masked caller is not
-        // ranked at all — so name which ten these are instead of calling them
-        // "top" and letting the count be inferred.
-        candidates_note: `These ${Math.min(10, analytics.candidates.length)} of the ${analytics.candidates.length} applications the board loads (${analytics.total_applications} live in the pipeline) are the ${
-          analytics.scores_masked ? "newest, because fit scores are masked for you" : "best-matching by AI fit"
-        }.`,
       };
 
       if (!requested) return result;
@@ -1237,17 +1245,20 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_interviews",
     label: "Reading the interview agenda",
     description:
-      "Interviews booked around today with candidate, role, interviewer, time, length, meeting link and status (SCHEDULED, COMPLETED, NO_SHOW, CANCELLED). Gives the interview ids that reschedule and outcome tools need.",
+      "Interviews booked around today with candidate, role, interviewer, time, length, meeting link and status (SCHEDULED, COMPLETED, NO_SHOW, CANCELLED). Gives the interview ids that reschedule and outcome tools need. Read `agenda_note` before saying \"all\" or counting these rows: it names the window asked for, whether that window is wider than the agenda page can list, and whether the list was cut.",
     args: {
-      past_days: "number — optional, how many days back to include, defaults to 30",
-      future_days: "number — optional, how many days forward, defaults to 90",
+      past_days:
+        "number — optional, how many days back to include, defaults to the agenda's own 30",
+      future_days:
+        "number — optional, how many days forward, defaults to the agenda's own 90; a wider read is real but partly off the board, and `agenda_note` says so",
     },
     run: async (args) => {
-      const rows = await getInterviewAgenda({
+      const days = agendaWindowDays({
         pastDays: args.past_days === undefined ? undefined : num(args, "past_days"),
         futureDays: args.future_days === undefined ? undefined : num(args, "future_days"),
       });
-      return rows.slice(0, 80).map((row) => ({
+      const rows = await getInterviewAgenda(days);
+      const shown = rows.slice(0, AGENDA_CHAT_ROW_LIMIT).map((row) => ({
         id: row.id,
         application_id: row.application_id,
         candidate: row.candidate_name,
@@ -1259,6 +1270,12 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         meeting_link: row.meeting_link,
         status: row.status,
       }));
+      return {
+        // First key on purpose: the result handed to the model is clipped, so a
+        // note that sat behind eighty panels could be cut off along with them.
+        agenda_note: agendaReadNote({ ...days, total: rows.length, shown: shown.length }),
+        interviews: shown,
+      };
     },
   },
   {
