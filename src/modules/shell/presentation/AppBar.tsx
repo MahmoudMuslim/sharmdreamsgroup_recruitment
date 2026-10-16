@@ -19,6 +19,7 @@ import {
   CheckCheck,
   ChevronDown,
   Download,
+  Droplets,
   Eraser,
   Languages,
   Loader2,
@@ -65,6 +66,8 @@ import {
 import {
   applyTheme,
   lightOnServer,
+  NEXT_PALETTE,
+  PALETTE_LABEL,
   readTheme,
   subscribeTheme,
   writeTheme,
@@ -463,6 +466,14 @@ function GuidePanel({ open }: { open: Panel }) {
           moves, so a colleague&rsquo;s change or a new application arrives
           without anyone pressing refresh. Click it to reload now.
         </p>
+        <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+          The palette button walks <span className="font-semibold">Light → Dark →
+          Liquid glass</span>, and Account → Preferences lets you pick one
+          directly. The choice is kept on this browser only, so a shared machine
+          stays as each person left it. Liquid glass makes the panels translucent
+          over a moving gold backdrop; a browser asked for less transparency gets
+          the same palette as flat paint.
+        </p>
       </div>
     </PanelShell>
   );
@@ -741,6 +752,13 @@ function AlertsPanel({
 /* Theme + rail, shared with the rail's own toggle                            */
 /* -------------------------------------------------------------------------- */
 
+/** The three palettes the CSS ships, in the order the app bar button walks. */
+const PALETTE_ICON: Record<ThemeChoice, typeof Sun> = {
+  light: Sun,
+  dark: Moon,
+  glass: Droplets,
+};
+
 function useTheme(): [ThemeChoice, (next: ThemeChoice) => void] {
   const theme = useSyncExternalStore(subscribeTheme, readTheme, lightOnServer);
   // The head script writes the attribute before this hook exists; syncing here
@@ -858,15 +876,21 @@ function PreferenceChoice({
   label,
   value,
   options,
+  columns = 2,
 }: {
   label: string;
   value: string;
   options: { key: string; label: string; icon: typeof Sun; onClick: () => void }[];
+  columns?: 2 | 3;
 }) {
   return (
     <div>
       <p className="mb-1.5 text-[11px] font-semibold text-brand-ink/55">{label}</p>
-      <div role="group" aria-label={label} className="grid grid-cols-2 gap-1.5">
+      <div
+        role="group"
+        aria-label={label}
+        className={cn("grid gap-1.5", columns === 3 ? "grid-cols-3" : "grid-cols-2")}
+      >
         {options.map((option) => {
           const active = option.key === value;
           return (
@@ -905,9 +929,11 @@ function PreferencesSection() {
       <PreferenceChoice
         label="Palette — kept on this browser"
         value={theme}
+        columns={3}
         options={[
           { key: "light", label: "Light", icon: Sun, onClick: () => setTheme("light") },
           { key: "dark", label: "Dark", icon: Moon, onClick: () => setTheme("dark") },
+          { key: "glass", label: "Glass", icon: Droplets, onClick: () => setTheme("glass") },
         ]}
       />
       <PreferenceChoice
@@ -1051,6 +1077,7 @@ export function AppBar({
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [theme, setTheme] = useTheme();
+  const PaletteIcon = PALETTE_ICON[theme];
   const [alerts, setAlerts] = useState<StaffAlert[] | null>(null);
   const [alertsError, setAlertsError] = useState<string | null>(null);
   const [alertsReadAt, setAlertsReadAt] = useState<string | null>(null);
@@ -1176,18 +1203,14 @@ export function AppBar({
         </BarButton>
         <button
           type="button"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          aria-label={
-            theme === "dark" ? "Switch to the light palette" : "Switch to the dark palette"
-          }
-          title={theme === "dark" ? "Dark palette" : "Light palette"}
+          onClick={() => setTheme(NEXT_PALETTE[theme])}
+          aria-label={`Switch to the ${PALETTE_LABEL[NEXT_PALETTE[theme]].toLowerCase()} palette`}
+          title={`${PALETTE_LABEL[theme]} palette — click for ${PALETTE_LABEL[
+            NEXT_PALETTE[theme]
+          ].toLowerCase()}`}
           className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand-line bg-white text-brand-ink/60 transition hover:bg-brand-sand hover:text-brand-ink"
         >
-          {theme === "dark" ? (
-            <Moon className="h-4 w-4" aria-hidden />
-          ) : (
-            <Sun className="h-4 w-4" aria-hidden />
-          )}
+          <PaletteIcon className="h-4 w-4" aria-hidden />
         </button>
 
         <div className="relative">

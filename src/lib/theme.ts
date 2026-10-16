@@ -8,12 +8,27 @@
  */
 export const THEME_KEY = "sdg-theme";
 
-export type ThemeChoice = "light" | "dark";
+export type ThemeChoice = "light" | "dark" | "glass";
+
+const CHOICES: readonly ThemeChoice[] = ["light", "dark", "glass"];
+
+/** What each palette is called in the chrome, and which one clicking gives. */
+export const PALETTE_LABEL: Record<ThemeChoice, string> = {
+  light: "Light",
+  dark: "Dark",
+  glass: "Liquid glass",
+};
+
+export const NEXT_PALETTE: Record<ThemeChoice, ThemeChoice> = {
+  light: "dark",
+  dark: "glass",
+  glass: "light",
+};
 
 function stored(): ThemeChoice | null {
   try {
     const value = window.localStorage.getItem(THEME_KEY);
-    return value === "dark" || value === "light" ? value : null;
+    return CHOICES.includes(value as ThemeChoice) ? (value as ThemeChoice) : null;
   } catch {
     return null;
   }
@@ -56,4 +71,6 @@ export function subscribeTheme(notify: () => void): () => void {
 }
 
 /** Runs from the root layout before hydration so the first paint is already right. */
-export const themeBootstrap = `(function(){try{var v=localStorage.getItem(${JSON.stringify(THEME_KEY)});if(v!=="dark"&&v!=="light"){v=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.dataset.theme=v}catch(e){document.documentElement.dataset.theme="light"}})();`;
+export const themeBootstrap = `(function(){try{var k=${JSON.stringify(CHOICES)},v=localStorage.getItem(${JSON.stringify(
+  THEME_KEY
+)});if(k.indexOf(v)<0){v=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.dataset.theme=v}catch(e){document.documentElement.dataset.theme="light"}})();`;
