@@ -573,12 +573,24 @@ export interface CandidateExportFilters extends CandidateListFilters {
   archived: boolean;
   /** The grading queue: only candidates whose attempt is still unscored. */
   ungraded: boolean;
+  /**
+   * The company rail, as the toolbar holds it.
+   *
+   * A uuid, or `null` — `candidateFilters` drops anything else. Not passed to
+   * `filterCandidates`: the database narrows the rows with it, and the shared
+   * predicate has no company column to compare against on the JS side.
+   */
+  company: string | null;
 }
 
 /** Every application the console is filtered to, not the 50 rows it loaded. */
-const CANDIDATE_EXPORT_SELECT = (ungraded: boolean) =>
+const CANDIDATE_EXPORT_SELECT = (ungraded: boolean, company: string | null) =>
   "full_name, email, phone, tracking_code, stage, source, ai_match_score, created_at, updated_at, hired_at, rejection_reason, archived_at, " +
-  "job_openings ( title ), " +
+  // `applications` carries no company of its own, so the rail reaches one through
+  // the opening — and only `!inner` makes that filter move candidate rows rather
+  // than trim an array hanging off them. Probed on the live pool: without it every
+  // application of the group survives a single company's predicate.
+  `${company ? "job_openings!inner" : "job_openings"} ( title, tenant_id, tenants_and_companies ( name ) ), ` +
   // `!inner` is what makes the attempt status filter the *candidate* rows rather
   // than only the array hanging off them. Same `!inner` + status + live-rows
   // predicate the page and the Bell read, so a download from the grading queue
@@ -592,7 +604,7 @@ const CANDIDATE_EXPORT_SELECT = (ungraded: boolean) =>
 const lower = (value: string): string => value.replace(/_/g, " ").toLowerCase();
 
 /** The sentence that tells a reader which applications their file holds. */
-function candidateScope(filters: CandidateExportFilters): string {
+function candidateScope(filters: CandidateExportFilters, companyName: string | null): string {
   const parts = [
     filters.ungraded
       ? "Applications whose assessment is submitted and still ungraded"
@@ -602,6 +614,7 @@ function candidateScope(filters: CandidateExportFilters): string {
   ];
   if (filters.stage) parts.push(`stage ${lower(filters.stage)}`);
   if (filters.source) parts.push(`source ${lower(filters.source)}`);
+  if (filters.company) parts.push(`company ${companyName ?? filters.company}`);
   const q = (filters.query ?? "").trim();
   if (q) parts.push(`matching "${q}"`);
   parts.push(candidateSortLabel(filters.sort));
@@ -635,6 +648,11 @@ function nextPanel(row: Raw, now: number): string | null {
   return booked[0] ?? null;
 }
 
+/** The company the opening sits under, two embeds deep. */
+function companyNameOf(row: Raw): string | null {
+  return text(embedded(embedded(row, "job_openings"), "tenants_and_companies").name);
+}
+
 function toCandidateRow(row: Raw, scoresHidden: boolean): CandidateListRow {
   const attempt = newestAttempt(row);
   return {
@@ -643,6 +661,7 @@ function toCandidateRow(row: Raw, scoresHidden: boolean): CandidateListRow {
     email: str(row.email),
     phone: text(row.phone),
     job_title: text(embedded(row, "job_openings").title),
+    company_name: companyNameOf(row),
     stage: text(row.stage) ?? "NEW",
     source: text(row.source) ?? "CAREER_SITE",
     /* Masked before the search and the sort, so "highest AI fit" cannot order
@@ -663,11 +682,11 @@ function toCandidateRow(row: Raw, scoresHidden: boolean): CandidateListRow {
 /**
  * The candidates console as a file.
  *
- * Stage, source, the archive view and the grading queue go into SQL because they
- * are exact matches. The free text does not: `ILIKE` reads the `_` and `%` in a
- * real name as wildcards, so the search runs through the same predicate the table
- * uses — which is how a download answers the question on the screen instead of a
- * near copy of it.
+ * Stage, source, the company rail, the archive view and the grading queue go
+ * into SQL because they are exact matches. The free text does not: `ILIKE` reads
+ * the `_` and `%` in a real name as wildcards, so the search runs through the
+ * same predicate the table uses — which is how a download answers the question on
+ * the screen instead of a near copy of it.
  */
 export async function buildCandidateExport(
   filters: CandidateExportFilters,
@@ -679,9 +698,30 @@ export async function buildCandidateExport(
   ]);
   const supabase = await createSupabaseServerClient();
 
-  let query = supabase.from("applications").select(CANDIDATE_EXPORT_SELECT(filters.ungraded));
+  /* The rail is quoted by name in the file's own "Covers" line, so it is looked
+   * up before anything is read — and an id no company carries is refused rather
+   * than answered with an empty spreadsheet that implies a real group has nobody
+   * in it. The same refusal the chat makes on the same id. */
+  let companyName: string | null = null;
+  if (filters.company) {
+    const one = await supabase
+      .from("tenants_and_companies")
+      .select("name")
+      .eq("id", filters.company)
+      .maybeSingle();
+    if (one.error) return { error: `That company could not be read: ${one.error.message}` };
+    if (!one.data) {
+      return { error: "No company carries that id, so there is nothing to download under it." };
+    }
+    companyName = (one.data as { name: string }).name;
+  }
+
+  let query = supabase
+    .from("applications")
+    .select(CANDIDATE_EXPORT_SELECT(filters.ungraded, filters.company));
   if (filters.stage) query = query.eq("stage", filters.stage);
   if (filters.source) query = query.eq("source", filters.source);
+  if (filters.company) query = query.eq("job_openings.tenant_id", filters.company);
   if (filters.ungraded) query = query.eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS);
   // The queue is by definition live records — a filed-away candidate is not work
   // waiting on a person — so asking for both views cannot quietly cancel the
@@ -718,7 +758,7 @@ export async function buildCandidateExport(
       CANDIDATE_LIST,
       candidateListSheet(kept, { timeZone, scoresHidden }),
       {
-        scope: candidateScope(filters),
+        scope: candidateScope(filters, companyName),
         timeZone,
         generatedAt,
         scoresHidden,

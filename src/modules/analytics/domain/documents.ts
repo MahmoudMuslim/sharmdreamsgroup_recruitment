@@ -109,7 +109,7 @@ export interface ListDefinition {
 export const CANDIDATE_LIST: ListDefinition = {
   label: "Candidate pipeline",
   blurb:
-    "One row per application matching the filters on the candidates screen: contact details, where the candidate stands, what the AI and the test said, and whether a panel is booked.",
+    "One row per application matching the filters on the candidates screen: contact details, the role and the company it was filed under, where the candidate stands, what the AI and the test said, and whether a panel is booked.",
   caveats: [
     `The candidates screen lists the newest ${CANDIDATE_ROW_LIMIT} applications its filters match, while its rail counts cover the whole set. This file is built from every application matching the same filters, so it can hold more rows than were on screen.`,
     "Stage dates are not kept. A move overwrites the row, so Applied and Last update are the only history a stage column sits between.",
@@ -235,6 +235,8 @@ export interface CandidateListRow {
   email: string;
   phone: string | null;
   job_title: string | null;
+  /** The company the application's opening belongs to, reached through `job_openings`. */
+  company_name: string | null;
   stage: string;
   source: string;
   /** Null until screened, and while this reader's scores are masked. */
@@ -420,6 +422,7 @@ export function candidateListSheet(
       { header: "Email", value: (row) => row.email },
       { header: "Phone", value: (row) => row.phone },
       { header: "Role", value: (row) => row.job_title },
+      { header: "Company", value: (row) => row.company_name },
       {
         header: "Stage",
         value: (row) => (row.archived_at ? `${row.stage} (filed)` : row.stage),

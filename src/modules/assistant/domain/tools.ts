@@ -48,9 +48,11 @@ import {
   APPLICATION_SOURCES,
   PIPELINE_STAGES,
   candidateScopeNote,
+  candidateSearchWords,
   filterCandidates,
 } from "@/modules/candidates/domain/listFilters";
 import {
+  companyNameById,
   getJobOpening,
   listJobOpenings,
   type JobReadFilter,
@@ -742,24 +744,36 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_candidates",
     label: "Reading candidates",
     description:
-      "The most recent applications with their pipeline stage, AI match score, job, assessment attempt and tracking code, filtered the way the candidates page's rails and search box filter. Quote `scope_note` whenever the pipeline is counted or somebody is reported missing: the rows listed are a window, the note holds the counts and says what a search could have reached.",
+      "The most recent applications with their pipeline stage, AI match score, job, company, assessment attempt and tracking code, filtered the way the candidates page's rails and search box filter. `stage`, `source` and `company` are answered by the database, so `scope_note` counts that set. Quote `scope_note` whenever the pipeline is counted or somebody is reported missing: the rows listed are a window, the note holds the counts and says what a search could have reached.",
     args: {
       stage: `string — optional, one of ${PIPELINE_STAGES.join(", ")} — the stage rail`,
       source: `string — optional, one of ${APPLICATION_SOURCES.join(", ")} — the channel rail`,
+      company:
+        "string — optional, one company's id from get_master_data (its id, not its name) — the company rail, so the set counted is that company's applications rather than the group's",
       archived:
         "boolean — optional, true for the archive the delete door files into instead of the live pipeline",
-      query:
-        "string — optional, the table's own search box: name, email, job title or tracking code, matched over the rows the read carries",
+      query: `string — optional, the table's own search box: ${candidateSearchWords()}, matched over the rows the read carries`,
     },
     run: async (args) => {
       const stage = optionalChoice(args, "stage", PIPELINE_STAGES);
       const source = optionalChoice(args, "source", APPLICATION_SOURCES);
+      const company = optionalId(args, "company");
       const archived = bool(args, "archived", false);
       const query = optionalStr(args, "query")?.trim() ?? "";
-      const [rows, tally] = await Promise.all([
-        getCandidateList(archived, stage, source),
+      const [named, rows, tally] = await Promise.all([
+        // Named in the same breath as the reads, and refused below before the
+        // answer is written: an id no company carries must not come back as "that
+        // company has no applications", which is what an empty read also looks like.
+        company ? companyNameById(company) : Promise.resolve<string | null>(null),
+        getCandidateList(archived, stage, source, company),
         getCandidateTally(archived),
       ]);
+      if (company && !named) {
+        throw new ToolArgumentError(
+          "No company carries that id. get_master_data lists the group's companies with their ids."
+        );
+      }
+      const scoped = company && named ? { id: company, name: named } : null;
       // The rails already narrowed the query in the database, so only the text
       // half is applied here — through the table's own predicate, so a match in
       // the chat is a match the recruiter can reproduce by typing the words.
@@ -770,6 +784,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           archived,
           stage,
           source,
+          company: scoped,
           shown: shown.length,
           loaded: rows.length,
           tally,
@@ -785,6 +800,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           phone: row.phone,
           stage: row.stage,
           job_title: row.job_title,
+          company: row.company_name,
           ai_match_score: row.ai_match_score,
           attempt_status: row.attempt_status,
           attempt_score: row.attempt_score,

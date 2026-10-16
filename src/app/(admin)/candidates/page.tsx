@@ -14,6 +14,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import {
   isApplicationSource,
+  isCompanyId,
   isPipelineStage,
   type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
@@ -110,11 +111,13 @@ async function readAlertSwitches(): Promise<AlertSwitches> {
  * interview agenda (`?c=…`) and the assistant (`?application=<id>`).
  * `?archived=1` opens the archive the filing door emptied, and `?ungraded=1`
  * opens the grading queue the Bell counts — see `getUngradedAssessmentQueue`.
- * `?stage=` and `?source=` are the two rails' own filters, applied in the
+ * `?stage=` and `?source=` are two of the rails' own filters, applied in the
  * database over every matching application: the attention feed links by stage,
  * so the rows a recruiter lands on have to be the rows that count described.
- * Both are read through the domain's validators, so a parameter that names no
- * stage narrows nothing rather than silently emptying the table.
+ * `?company=<id>` is the third rail, narrowed through the opening each
+ * application points at. All three are read through the domain's validators, so a
+ * parameter that names no stage, channel or company id narrows nothing rather
+ * than silently emptying the table.
  */
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
@@ -143,12 +146,16 @@ export default async function CandidatesPage({
   const gradingView = !showArchived && params.ungraded === "1";
   const railStage = isPipelineStage(params.stage);
   const railSource = isApplicationSource(params.source);
+  // The company rail is an id, because `applications` carries no company of its
+  // own and the query has to narrow the opening's tenant. A name in this slot
+  // names no embed, so it is dropped and the table stays unfiltered.
+  const railCompany = isCompanyId(params.company);
 
   const [candidates, tally, canWrite, canExport, timeZone, canGenerateQuestions, coverage, switches] =
     await Promise.all([
       gradingView
-        ? getUngradedAssessmentQueue(railStage, railSource)
-        : getCandidateList(showArchived, railStage, railSource),
+        ? getUngradedAssessmentQueue(railStage, railSource, railCompany)
+        : getCandidateList(showArchived, railStage, railSource, railCompany),
       // The queue is a set the page already holds in full, so its rails count
       // those rows; the pipeline and the archive count everything they match.
       gradingView ? Promise.resolve<CandidateTally | null>(null) : getCandidateTally(showArchived),
@@ -186,6 +193,7 @@ export default async function CandidatesPage({
         gradingView={gradingView}
         railStage={railStage}
         railSource={railSource}
+        railCompany={railCompany}
         tally={tally}
         canWrite={canWrite}
         canExport={canExport}

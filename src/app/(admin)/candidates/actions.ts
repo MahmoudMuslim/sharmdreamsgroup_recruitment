@@ -18,6 +18,15 @@ import type { Application } from "@/types";
 /** An application joined with its parent job opening (one-to-one via `job_id`). */
 export type CandidateRow = Application & {
   job_title: string | null;
+  /**
+   * The company the opening belongs to, resolved through `job_openings`.
+   *
+   * `applications` carries no `tenant_id` of its own, so this is how the rail
+   * knows which rows to offer and the table knows whose role a candidate applied
+   * to. Null only when this session cannot read the opening.
+   */
+  tenant_id: string | null;
+  company_name: string | null;
   /** Present only when an assessment has been assigned to this candidate. */
   attempt_token: string | null;
   attempt_status: string | null;
@@ -33,7 +42,10 @@ export type CandidateRow = Application & {
 
 /** One `applications` row with its embeds, before they are flattened. */
 type CandidateJoin = Application & {
-  job_openings?: { title?: string } | { title?: string }[] | null;
+  job_openings?:
+    | { title?: string; tenant_id?: string; tenants_and_companies?: { name?: string } | null }
+    | { title?: string; tenant_id?: string; tenants_and_companies?: { name?: string } | null }[]
+    | null;
   candidate_attempts?:
     | { access_token: string; status: string; total_score: number | null }
     | { access_token: string; status: string; total_score: number | null }[]
@@ -41,7 +53,22 @@ type CandidateJoin = Application & {
   interview_schedules?: Record<string, unknown>[] | null;
 };
 
-const CANDIDATE_SELECT = `*, job_openings(title), candidate_attempts(access_token, status, total_score), interview_schedules(${INTERVIEW_SELECT})`;
+/**
+ * The opening embed, `!inner` only when a company narrows the read.
+ *
+ * `applications` has no company column, so the rail reaches one through the
+ * opening the candidate applied to. Probed on the live pool: the same
+ * `.eq("job_openings.tenant_id", …)` **without** `!inner` left every application
+ * in and filtered only the embedded object — the rows and the count would have
+ * disagreed quietly. `applications.job_id` is `not null` with an `ON DELETE
+ * CASCADE` foreign key, so the inner join moves no row out of the set.
+ */
+function openingsEmbed(company: string | null): string {
+  return `${company ? "job_openings!inner" : "job_openings"}(title, tenant_id, tenants_and_companies(name))`;
+}
+
+const candidateSelect = (company: string | null): string =>
+  `*, ${openingsEmbed(company)}, candidate_attempts(access_token, status, total_score), interview_schedules(${INTERVIEW_SELECT})`;
 
 function flattenCandidate(row: CandidateJoin, masked: boolean): CandidateRow {
   const joined = Array.isArray(row.job_openings) ? row.job_openings[0] : row.job_openings;
@@ -55,6 +82,8 @@ function flattenCandidate(row: CandidateJoin, masked: boolean): CandidateRow {
     ...row,
     ai_match_score: masked ? null : row.ai_match_score ?? null,
     job_title: joined?.title ?? null,
+    tenant_id: joined?.tenant_id ?? null,
+    company_name: joined?.tenants_and_companies?.name ?? null,
     attempt_token: attempt?.access_token ?? null,
     attempt_status: attempt?.status ?? null,
     attempt_score: masked ? null : attempt?.total_score ?? null,
@@ -72,45 +101,61 @@ function flattenCandidate(row: CandidateJoin, masked: boolean): CandidateRow {
  * it is hidden from staff reads, not deleted — so it appears only when the
  * recruiter asks for it and restores from there.
  *
- * The two rail filters are pushed into the query, not applied to whatever the
+ * The three rail filters are pushed into the query, not applied to whatever the
  * page happened to load: that is what lets a chip's number and the rows under it
  * be the same set, and what the download already does with the same parameters.
  * The PostgREST builder accumulates, so each `.eq` narrows the one query.
+ *
+ * The company rail narrows through the opening the candidate applied to, which is
+ * why its embed turns `!inner` — see `openingsEmbed`.
  */
 export async function getCandidateList(
   archived = false,
   stage: string | null = null,
-  source: string | null = null
+  source: string | null = null,
+  company: string | null = null
 ): Promise<CandidateRow[]> {
   const [supabase, masked] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
-  const base = supabase.from("applications").select(CANDIDATE_SELECT);
+  const base = supabase.from("applications").select(candidateSelect(company));
   const read = archived ? base.not("archived_at", "is", null) : base.is("archived_at", null);
   if (stage) read.eq("stage", stage);
   if (source) read.eq("source", source);
+  if (company) read.eq("job_openings.tenant_id", company);
   const { data, error } = await read
     .order("created_at", { ascending: false })
     .limit(CANDIDATE_ROW_LIMIT);
 
   if (error) console.error("[candidates] list query failed:", error.message);
 
-  return (data ?? []).map((row) => flattenCandidate(row as CandidateJoin, masked));
+  // The select is assembled at runtime, so its type is a plain string and the
+  // generated row types describe none of it; the shape these rows really have is
+  // what the probe of the live pool showed.
+  return (data ?? []).map((row) => flattenCandidate(row as unknown as CandidateJoin, masked));
 }
 
 /**
- * How many applications sit behind the view, by stage and channel.
+ * How many applications sit behind the view, by stage, channel and company.
  *
  * The rails quote these so a chip is the size of the stage rather than the size
  * of the rows the table loaded, and so the attention feed's "waiting in New" and
- * the New chip are the same query on the same table. Two columns, no embeds,
- * newest first: `truncated` in the result is the page's cue to say the counts
- * stop being exact at the scan ceiling.
+ * the New chip are the same query on the same table. Small columns plus the
+ * opening's company, newest first: `truncated` in the result is the page's cue to
+ * say the counts stop being exact at the scan ceiling.
+ *
+ * Deliberately *not* narrowed by the company rail: a recruiter who lights one
+ * company still needs the other chips to describe the view, and the scoped
+ * company's own number is already in `companies`.
  */
 export async function getCandidateTally(archived = false): Promise<CandidateTally> {
   const supabase = await createSupabaseServerClient();
-  const base = supabase.from("applications").select("stage, source");
+  const base = supabase
+    .from("applications")
+    .select(
+      "stage, source, job_openings(tenant_id, tenants_and_companies(name))"
+    );
   const read = archived ? base.not("archived_at", "is", null) : base.is("archived_at", null);
   const { data, error } = await read
     .order("created_at", { ascending: false })
@@ -118,8 +163,18 @@ export async function getCandidateTally(archived = false): Promise<CandidateTall
 
   if (error) console.error("[candidates] rail counts failed:", error.message);
 
-  const rows = (data ?? []) as { stage: string; source: string }[];
-  const tally = tallyCandidates(rows);
+  const rows = (data ?? []) as unknown as {
+    stage: string;
+    source: string;
+    job_openings?: { tenant_id?: string; tenants_and_companies?: { name?: string } | null } | null;
+  }[];
+  const countable = rows.map((row) => ({
+    stage: row.stage,
+    source: row.source,
+    tenant_id: row.job_openings?.tenant_id ?? null,
+    company_name: row.job_openings?.tenants_and_companies?.name ?? null,
+  }));
+  const tally = tallyCandidates(countable);
   return { ...tally, truncated: rows.length >= CANDIDATE_COUNT_SCAN_LIMIT };
 }
 
@@ -129,9 +184,11 @@ export async function getCandidateTally(archived = false): Promise<CandidateTall
  * The embed is `!inner` so the status filter restricts the *candidate* rows
  * rather than only the array attached to them — which is what lets the attention
  * feed count the same set this page lists. A filed-away candidate is left out:
- * the queue is work waiting on a person, and an archived record is not.
+ * the queue is work waiting on a person, and an archived record is not. The
+ * opening embed turns `!inner` for the same reason when a company narrows it.
  */
-const UNGRADED_SELECT = `*, job_openings(title), ${UNGRADED_ATTEMPT_EMBED}, interview_schedules(${INTERVIEW_SELECT})`;
+const ungradedSelect = (company: string | null): string =>
+  `*, ${openingsEmbed(company)}, ${UNGRADED_ATTEMPT_EMBED}, interview_schedules(${INTERVIEW_SELECT})`;
 
 /**
  * The grading queue: every candidate whose assessment is still sitting in
@@ -147,6 +204,7 @@ const UNGRADED_SELECT = `*, job_openings(title), ${UNGRADED_ATTEMPT_EMBED}, inte
 export async function getUngradedAssessmentQueue(
   stage: string | null = null,
   source: string | null = null,
+  company: string | null = null,
   limit = GRADING_QUEUE_LIMIT
 ): Promise<CandidateRow[]> {
   const [supabase, masked] = await Promise.all([
@@ -155,18 +213,19 @@ export async function getUngradedAssessmentQueue(
   ]);
   const read = supabase
     .from("applications")
-    .select(UNGRADED_SELECT)
+    .select(ungradedSelect(company))
     .is("archived_at", null)
     .eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS);
   if (stage) read.eq("stage", stage);
   if (source) read.eq("source", source);
+  if (company) read.eq("job_openings.tenant_id", company);
   const { data, error } = await read
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) console.error("[candidates] grading queue read failed:", error.message);
 
-  return (data ?? []).map((row) => flattenCandidate(row as CandidateJoin, masked));
+  return (data ?? []).map((row) => flattenCandidate(row as unknown as CandidateJoin, masked));
 }
 
 /**
@@ -193,7 +252,7 @@ export async function getCandidateByRef(input: {
 
   const supabase = await createSupabaseServerClient();
   const masked = await scoresAreMaskedForCurrentUser();
-  const base = supabase.from("applications").select(CANDIDATE_SELECT);
+  const base = supabase.from("applications").select(candidateSelect(null));
   const { data, error } = await (id
     ? base.eq("id", id)
     : base.ilike("tracking_code", code ?? "")
@@ -201,7 +260,7 @@ export async function getCandidateByRef(input: {
 
   if (error) console.error("[candidates] deep link lookup failed:", error.message);
 
-  const row = (data ?? [])[0] as CandidateJoin | undefined;
+  const row = (data ?? [])[0] as unknown as CandidateJoin | undefined;
   return row ? flattenCandidate(row, masked) : null;
 }
 

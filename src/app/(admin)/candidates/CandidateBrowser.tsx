@@ -33,9 +33,11 @@ import {
   CANDIDATE_ROW_LIMIT,
   GRADING_QUEUE_LIMIT,
   PIPELINE_STAGES as STAGES,
+  candidateSearchWords,
   filterCandidates,
   sortCandidates,
   tallyCandidates,
+  tallyCompanies,
   type CandidateSort,
   type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
@@ -193,13 +195,14 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
  *
  * `gradingView` means the server loaded only the candidates whose assessment came
  * back from the grading engine without marks — the set the Bell counts. Search and
- * the two rails then filter inside that queue, and the download carries it too.
+ * the three rails then filter inside that queue, and the download carries it too.
  *
- * `railStage` / `railSource` are the two rails read back out of the URL, and
- * `tally` is how many applications the rails' set really holds. A chip click writes
- * the parameter and the server narrows the query, so a number on a rail is the size
- * of the stage rather than the size of whatever this page loaded. `tally` is null
- * inside the grading queue, where the rows on the page *are* the set.
+ * `railStage` / `railSource` / `railCompany` are the three rails read back out of
+ * the URL, and `tally` is how many applications the rails' set really holds. A
+ * chip click writes the parameter and the server narrows the query, so a number
+ * on a rail is the size of the stage rather than the size of whatever this page
+ * loaded. `tally` is null inside the grading queue, where the rows on the page
+ * *are* the set.
  */
 export function CandidateBrowser({
   candidates,
@@ -207,6 +210,7 @@ export function CandidateBrowser({
   gradingView,
   railStage,
   railSource,
+  railCompany,
   tally,
   canWrite,
   canExport,
@@ -225,6 +229,8 @@ export function CandidateBrowser({
   railStage: string | null;
   /** The channel the URL asks for, already validated against the sources. */
   railSource: string | null;
+  /** The company the URL asks for, already validated as an id. */
+  railCompany: string | null;
   /** Counts over the set the rails filter, or null for the queue's own rows. */
   tally: CandidateTally | null;
   canWrite: boolean;
@@ -323,17 +329,39 @@ export function CandidateBrowser({
    * the attention feed's count and the download all read one query — and a link the
    * assistant hands out lands on exactly the rows a recruiter gets by clicking the
    * chip. The deep link's own focus (`?application=` / `?c=`) is dropped: a rail is
-   * a question about a set, not about one candidate.
+   * a question about a set, not about one candidate. All three rails are named at
+   * every call so lighting one never quietly drops the other two.
    */
-  function openRail(next: { stage: string | null; source: string | null }) {
+  function openRail(next: {
+    stage: string | null;
+    source: string | null;
+    company: string | null;
+  }) {
     const search = new URLSearchParams();
     if (gradingView) search.set("ungraded", "1");
     else if (archivedView) search.set("archived", "1");
     if (next.stage) search.set("stage", next.stage);
     if (next.source) search.set("source", next.source);
+    if (next.company) search.set("company", next.company);
     const qs = search.toString();
     router.push(`/candidates${qs ? `?${qs}` : ""}`);
   }
+
+  /**
+   * Company → count, busiest first, for the third rail.
+   *
+   * The tally counts the whole view and is not narrowed by this rail, so its
+   * numbers stay comparable while one company is lit. Inside the grading queue
+   * there is no tally, and the queue's own rows are the set.
+   */
+  const companyCounts = useMemo(
+    () => tally?.companies ?? tallyCompanies(candidates),
+    [tally, candidates]
+  );
+
+  /** The lit company's name, for the empty state that has to say whose rows it looked for. */
+  const railCompanyName =
+    companyCounts.find((entry) => entry.id === railCompany)?.name ?? null;
 
   /**
    * Stage → count, for the rail.
@@ -376,6 +404,7 @@ export function CandidateBrowser({
   const exportQuery = new URLSearchParams({ report: "candidates", sort: sortBy });
   if (railStage) exportQuery.set("stage", railStage);
   if (railSource) exportQuery.set("source", railSource);
+  if (railCompany) exportQuery.set("company", railCompany);
   if (query.trim()) exportQuery.set("q", query.trim());
   if (archivedView) exportQuery.set("archived", "1");
   if (gradingView) exportQuery.set("ungraded", "1");
@@ -397,7 +426,22 @@ export function CandidateBrowser({
     setSelected(allVisibleSelected ? new Set() : new Set(filtered.map((c) => c.id)));
 
   if (candidates.length === 0) {
-    const railed = Boolean(railStage || railSource);
+    const railed = Boolean(railStage || railSource || railCompany);
+    const railWords = [
+      railStage ? `stage ${railStage}` : null,
+      railSource ? `channel ${railSource}` : null,
+      // An id no company carries still narrows the query to nothing, so the
+      // answer names where it looked without inventing a name for it.
+      railCompany
+        ? railCompanyName
+          ? `company ${railCompanyName}`
+          : "the company in the address bar"
+        : null,
+    ].filter((word): word is string => word !== null);
+    const andList = (words: string[]) =>
+      words.length <= 1
+        ? words.join("")
+        : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
     return (
       <Card>
         <EmptyState
@@ -414,7 +458,7 @@ export function CandidateBrowser({
             gradingView
               ? "Every assessment a candidate submitted has its marks. A queue appears here the moment the grading engine leaves an answer unscored — and it stays until a person or a retry closes it."
               : railed
-                ? `The rails narrow the query in the database, so this is the honest answer: none of the ${tally?.total ?? 0} applications this view counts sits at ${[railStage, railSource].filter(Boolean).join(" and ")}.`
+                ? `The rails narrow the query in the database, so this is the honest answer: none of the ${tally?.total ?? 0} applications this view counts sits at ${andList(railWords)}.`
                 : archivedView
                   ? "Filing a candidate takes them out of the pipeline without erasing their answers, scores or the notices they were sent. Anything filed shows up here."
                   : "New submissions appear here as soon as they arrive, newest first."
@@ -427,7 +471,7 @@ export function CandidateBrowser({
               size="sm"
               onClick={() =>
                 railed && !archivedView && !gradingView
-                  ? openRail({ stage: null, source: null })
+                  ? openRail({ stage: null, source: null, company: null })
                   : openView(false)
               }
             >
@@ -501,7 +545,7 @@ export function CandidateBrowser({
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, email, role or tracking code"
+              placeholder={`Search ${candidateSearchWords()}`}
               aria-label="Search candidates"
               className="w-full rounded-xl border border-brand-line bg-white py-2.5 pl-10 pr-3 text-sm focus:border-brand-gold focus:outline-none"
             />
@@ -571,7 +615,7 @@ export function CandidateBrowser({
             label="All stages"
             count={tally?.total ?? candidates.length}
             active={!railStage}
-            onClick={() => openRail({ stage: null, source: railSource })}
+            onClick={() => openRail({ stage: null, source: railSource, company: railCompany })}
           />
           {STAGES.map((s) => (
             <FilterRail
@@ -579,7 +623,13 @@ export function CandidateBrowser({
               label={s.replace("_", " ")}
               count={stageCounts.get(s) ?? 0}
               active={railStage === s}
-              onClick={() => openRail({ stage: railStage === s ? null : s, source: railSource })}
+              onClick={() =>
+                openRail({
+                  stage: railStage === s ? null : s,
+                  source: railSource,
+                  company: railCompany,
+                })
+              }
             />
           ))}
 
@@ -613,7 +663,38 @@ export function CandidateBrowser({
                 tone="muted"
                 active={railSource === source}
                 onClick={() =>
-                  openRail({ stage: railStage, source: railSource === source ? null : source })
+                  openRail({
+                    stage: railStage,
+                    source: railSource === source ? null : source,
+                    company: railCompany,
+                  })
+                }
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Company rail — which group the candidate's opening sits under. Counted
+            over the whole view by the same tally, so lighting one company leaves
+            the other chips describing the set they always described. */}
+        {companyCounts.length > 1 && (
+          <div className="-mx-4 flex items-center gap-1.5 overflow-x-auto px-4 pb-0.5 sm:mx-0 sm:px-0">
+            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-brand-ink/40">
+              Company
+            </span>
+            {companyCounts.map((entry) => (
+              <FilterRail
+                key={entry.id}
+                label={entry.name}
+                count={entry.count}
+                tone="muted"
+                active={railCompany === entry.id}
+                onClick={() =>
+                  openRail({
+                    stage: railStage,
+                    source: railSource,
+                    company: railCompany === entry.id ? null : entry.id,
+                  })
                 }
               />
             ))}
@@ -646,7 +727,11 @@ export function CandidateBrowser({
         <Card>
           <EmptyState
             title="No matches"
-            description="Adjust the search or stage filter to see candidates again."
+            description={`None of the ${candidates.length.toLocaleString()} application${
+              candidates.length === 1 ? "" : "s"
+            } these rails leave on the page holds “${query.trim()}” in ${candidateSearchWords()}. A rail
+            narrows the query in the database; this box only reads the rows already listed, so an
+            application older than the newest ${CANDIDATE_ROW_LIMIT} cannot be found from here.`}
           />
         </Card>
       ) : (
@@ -696,7 +781,16 @@ export function CandidateBrowser({
                       <p className="text-xs text-brand-ink/50">{c.email}</p>
                       <p className="font-mono text-[11px] text-brand-ink/40">{c.tracking_code}</p>
                     </td>
-                    <td className="px-4 py-4 text-brand-ink/65">{c.job_title ?? "—"}</td>
+                    <td className="px-4 py-4 text-brand-ink/65">
+                      <p className="max-w-56 truncate">{c.job_title ?? "—"}</p>
+                      {/* Whose role it is: the company rail and the search box both
+                          reach this column, so a row matched on it says so. */}
+                      {c.company_name && (
+                        <p className="max-w-56 truncate text-[11px] text-brand-ink/40">
+                          {c.company_name}
+                        </p>
+                      )}
+                    </td>
                     <td className="px-4 py-4 text-xs uppercase tracking-wide text-brand-ink/55">
                       {c.source.replace("_", " ")}
                     </td>
@@ -810,7 +904,12 @@ export function CandidateBrowser({
                 </div>
 
                 <div className="space-y-1.5">
-                  <p className="truncate text-sm text-brand-ink/65">{c.job_title ?? "—"}</p>
+                  <p className="truncate text-sm text-brand-ink/65">
+                    {c.job_title ?? "—"}
+                    {c.company_name && (
+                      <span className="text-[11px] text-brand-ink/40"> · {c.company_name}</span>
+                    )}
+                  </p>
                   <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] uppercase tracking-wide text-brand-ink/45">
                     <span>{c.source.replace("_", " ")}</span>
                     <span aria-hidden>·</span>

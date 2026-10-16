@@ -121,6 +121,27 @@ export interface AssistantJobRead {
   unknownCompany: boolean;
 }
 
+/**
+ * The company carrying an id, by name — or `null` when none does.
+ *
+ * Both rails that light by company id, the openings grid and the candidates
+ * table, have to tell "this company has nobody in it" apart from "no company
+ * carries that id", and a read of the child rows cannot: an empty set looks the
+ * same either way. So the id is looked up on its own before anything is counted,
+ * and a caller turns `null` into a refusal rather than an empty list.
+ */
+export async function companyNameById(id: string): Promise<string | null> {
+  const supabase = await createSupabaseServerClient();
+  const one = await supabase
+    .from("tenants_and_companies")
+    .select("name")
+    .eq("id", id)
+    .maybeSingle();
+  if (one.error) throw new Error(`That company could not be read: ${one.error.message}`);
+  const name = (one.data as { name?: string } | null)?.name;
+  return typeof name === "string" && name !== "" ? name : null;
+}
+
 /** Openings newest first, with their live applicant count and the set's size. */
 export async function listJobOpenings(
   filter: JobReadFilter = null,
@@ -132,16 +153,9 @@ export async function listJobOpenings(
   // The company is named before its openings are counted, and an id no company
   // carries is reported rather than answered with an empty list a caller could
   // mistake for "that company has nothing".
-  let companyName: string | null = null;
-  if (companyId) {
-    const one = await supabase
-      .from("tenants_and_companies")
-      .select("name")
-      .eq("id", companyId)
-      .maybeSingle();
-    if (one.error) throw new Error(`That company could not be read: ${one.error.message}`);
-    if (!one.data) return { jobs: [], total: 0, companyName: null, unknownCompany: true };
-    companyName = (one.data as { name: string }).name;
+  const companyName = companyId ? await companyNameById(companyId) : null;
+  if (companyId && !companyName) {
+    return { jobs: [], total: 0, companyName: null, unknownCompany: true };
   }
 
   const rowsQuery = supabase.from("job_openings").select(JOB_SELECT);

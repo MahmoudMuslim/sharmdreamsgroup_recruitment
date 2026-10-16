@@ -25,6 +25,7 @@ import { REPORTS, type ReportId } from "@/modules/analytics/domain/documents";
 import {
   isApplicationSource,
   isCandidateSort,
+  isCompanyId,
   isPipelineStage,
   type CandidateSort,
 } from "@/modules/candidates/domain/listFilters";
@@ -60,15 +61,18 @@ function safeFormat(value: string | null): ExportFormat | null {
  *
  * Stage and source are whitelisted enums and an unknown value is dropped rather
  * than passed on; the free text is only ever compared in JavaScript, so its
- * length is capped and no SQL operator can be spelled with it. The two view
- * switches are flags a page sets on this same href, so they are read here as the
- * booleans the reader already sees.
+ * length is capped and no SQL operator can be spelled with it. The company is a
+ * uuid or nothing, because it is the one of these that reaches Postgres as an
+ * embed filter — a name in that slot would surface as a database error mid-
+ * download. The two view switches are flags a page sets on this same href, so
+ * they are read here as the booleans the reader already sees.
  */
 function candidateFilters(params: URLSearchParams): CandidateExportFilters {
   const sort: CandidateSort = isCandidateSort(params.get("sort"));
   return {
     stage: isPipelineStage(params.get("stage")),
     source: isApplicationSource(params.get("source")),
+    company: isCompanyId(params.get("company")),
     query: params.get("q")?.trim().slice(0, 120) || null,
     sort,
     archived: params.get("archived") === "1",

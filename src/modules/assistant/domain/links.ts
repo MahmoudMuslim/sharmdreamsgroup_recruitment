@@ -270,11 +270,13 @@ export function linkForTool(
       return { href: "/jobs", label: "Open the openings" };
     case "list_candidates":
       // The rails are query parameters, so the click-through can open the same
-      // set the answer just described rather than the whole pipeline.
+      // set the answer just described rather than the whole pipeline. The company
+      // travels as its id, which is what that rail reads back out of the address bar.
       return {
         href: `/candidates${query([
           ["stage", named(args.stage, PIPELINE_STAGES)],
           ["source", named(args.source, APPLICATION_SOURCES)],
+          ["company", token(args.company)],
           ["q", words(args.query)],
           ["archived", args.archived === true || args.archived === "true" ? "1" : null],
         ])}`,
