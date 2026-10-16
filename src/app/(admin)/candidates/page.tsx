@@ -1,6 +1,7 @@
 import { CalendarDays, Sparkles, Upload } from "lucide-react";
 import { getCandidateByRef, getCandidateList } from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
+import { NewCandidateDrawer } from "./NewCandidateDrawer";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
@@ -66,6 +67,7 @@ export default async function CandidatesPage({
         eyebrow="Talent database"
         title="Candidates"
         description="Every application across the group, with bias-reduced AI screening scores and assessment status — and the filtered list as a CSV, Excel or PDF download."
+        actions={canWrite ? <NewCandidateDrawer /> : undefined}
       />
 
       <CandidateBrowser

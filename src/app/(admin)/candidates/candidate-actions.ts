@@ -18,6 +18,7 @@ import {
   type TemplateVars,
 } from "@/modules/settings/domain/templates";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
+import { isApplicationSource } from "@/modules/candidates/domain/listFilters";
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import {
   generateFeedbackForApplication,
@@ -455,6 +456,198 @@ export async function draftCandidateFeedback(applicationId: string): Promise<Scr
   }
 
   return generateFeedbackForApplication(applicationId);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Manual entry                                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface ManualOpeningOption {
+  id: string;
+  title: string;
+  department: string;
+  status: string;
+}
+
+export interface ManualOpeningsResult {
+  ok: boolean;
+  error?: string;
+  openings: ManualOpeningOption[];
+}
+
+/**
+ * The openings a walk-in can be filed under.
+ *
+ * Read when the drawer opens rather than in the page render: recording someone
+ * by hand is rare next to the table, and an extra query on every Candidates
+ * load would tax it for everyone.
+ *
+ * The failure is reported rather than folded into an empty list — a recruiter
+ * who saw no options would otherwise conclude the group has no openings.
+ */
+export async function listManualOpenings(): Promise<ManualOpeningsResult> {
+  await requireStaff("/candidates");
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("job_openings")
+    .select("id, title, department, status")
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    console.error("[candidates] manual entry openings failed:", error.message);
+    return { ok: false, error: error.message, openings: [] };
+  }
+
+  return {
+    ok: true,
+    openings: (data ?? []).map((row: Record<string, unknown>) => ({
+      id: String(row.id),
+      title: String(row.title ?? ""),
+      department: String(row.department ?? ""),
+      status: String(row.status ?? "DRAFT"),
+    })),
+  };
+}
+
+export interface CreatedCandidate {
+  id: string;
+  full_name: string;
+  email: string;
+  tracking_code: string;
+  job_title: string;
+}
+
+export interface CreateCandidateResult {
+  ok: boolean;
+  error?: string;
+  candidate?: CreatedCandidate;
+}
+
+/**
+ * Records an applicant who never came through the career site.
+ *
+ * A CV a candidate mailed, a name taken during a phone screen, a row from an
+ * old spreadsheet — until now the only doors into `applications` were the
+ * public form and converting a sourced prospect, so a walk-in could not be
+ * worked as a candidate at all.
+ *
+ * Nothing is messaged. The recruiter wrote this record; the candidate never
+ * applied, so an auto-confirmed "thanks for your application" would be a lie.
+ * Screening waits for a CV to be attached on the record.
+ */
+export async function createCandidate(input: {
+  jobId: string;
+  fullName: string;
+  email: string;
+  phone?: string;
+  source: string;
+}): Promise<CreateCandidateResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+
+  const fullName = input.fullName.trim();
+  const email = input.email.trim().toLowerCase();
+  const phone = input.phone?.trim() ?? "";
+  const source = isApplicationSource(input.source);
+
+  if (fullName.length < 2) return { ok: false, error: "The name needs at least two characters." };
+  if (fullName.length > 160) return { ok: false, error: "The name is too long." };
+  if (!EMAIL_PATTERN.test(email)) return { ok: false, error: "Enter a valid email address." };
+  if (email.length > 254) return { ok: false, error: "The email address is too long." };
+  if (phone.length > 40) return { ok: false, error: "The phone number is too long." };
+  if (!source) return { ok: false, error: "Pick where this applicant came from." };
+
+  const supabase = await createSupabaseServerClient();
+
+  // The opening is read through RLS before anything is written, so a recruiter
+  // can only file someone under a role their own scope reaches.
+  const { data: opening, error: openingError } = await supabase
+    .from("job_openings")
+    .select("id, title")
+    .eq("id", input.jobId)
+    .maybeSingle();
+
+  if (openingError?.code === "22P02" || !opening) {
+    return { ok: false, error: "Pick the opening this applicant is being recorded against." };
+  }
+
+  const { error } = await supabase.from("applications").insert({
+    job_id: opening.id,
+    full_name: fullName,
+    email,
+    phone: phone || null,
+    source,
+  });
+
+  if (error) {
+    // The same live-application-per-address rule the contact edit maps: a second
+    // record for someone already in this opening's pipeline is refused by the
+    // database, not by a check that could race.
+    if (error.code === "23505") {
+      return {
+        ok: false,
+        error: `${fullName} already has a live application for ${opening.title} — open that record instead of adding a second.`,
+      };
+    }
+    return { ok: false, error: error.message };
+  }
+
+  // Read back what landed: PostgREST reports a write an RLS policy refused as a
+  // success with no rows, so an insert that nothing answered is reported as a
+  // failure rather than as a candidate the list never shows.
+  const { data: created } = await supabase
+    .from("applications")
+    .select("id, full_name, email, tracking_code")
+    .eq("job_id", opening.id)
+    .eq("email", email)
+    .is("archived_at", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!created) {
+    return {
+      ok: false,
+      error: "The record was refused — this opening may sit outside your company's scope.",
+    };
+  }
+
+  const candidate: CreatedCandidate = {
+    id: String(created.id),
+    full_name: String(created.full_name),
+    email: String(created.email),
+    tracking_code: String(created.tracking_code),
+    job_title: opening.title,
+  };
+
+  await recordActivity({
+    area: "candidates",
+    action: "candidate_create",
+    entity: "application",
+    entityId: candidate.id,
+    summary: `Recorded ${candidate.full_name} by hand for ${opening.title} (${source.replace(/_/g, " ").toLowerCase()})`,
+    detail: {
+      job_id: opening.id,
+      email: candidate.email,
+      phone: phone || null,
+      source,
+      stage: "NEW",
+      tracking_code: candidate.tracking_code,
+    },
+  });
+
+  // Three consoles read this row: the table, the openings' applicant counts and
+  // the pipeline figures on the dashboard.
+  revalidatePath("/candidates");
+  revalidatePath("/jobs");
+  revalidatePath("/dashboard");
+
+  return { ok: true, candidate };
 }
 
 /* -------------------------------------------------------------------------- */

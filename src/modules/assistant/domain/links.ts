@@ -81,6 +81,13 @@ export function linkForTool(
       const id = fromArgs(args, "job_id");
       return id ? { href: `/jobs?job=${id}`, label: JOB_VIEW.label } : null;
     }
+    case "record_candidate": {
+      // A create reports its id nested under `candidate`, where `fromResult`
+      // would not look, and there is no application_id argument to fall back on.
+      const created = (result as { candidate?: { id?: unknown } } | null)?.candidate?.id;
+      const id = token(created);
+      return id ? candidate(id) : null;
+    }
     case "screen_candidate":
     case "draft_candidate_feedback":
     case "set_candidate_stage":

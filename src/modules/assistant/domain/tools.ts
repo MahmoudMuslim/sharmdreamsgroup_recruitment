@@ -58,6 +58,7 @@ import {
 } from "@/app/(admin)/candidates/attempt-actions";
 import { deleteAttachment } from "@/app/(admin)/candidates/attachment-actions";
 import {
+  createCandidate,
   sendBulkEmail,
   sendBulkWhatsApp,
   setCandidateArchive,
@@ -201,6 +202,7 @@ function report<T extends { ok: boolean; error?: string }>(
 const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
 const JOB_STATUSES = ["DRAFT", "PUBLISHED", "PAUSED", "CLOSED"];
 const PROSPECT_STAGES = ["NEW", "CONTACTED", "REPLIED", "INTERVIEW", "CONVERTED", "PASSED"];
+const APPLICATION_SOURCES = ["LINKEDIN", "WHATSAPP", "JOB_BOARD", "CAREER_SITE", "REFERRAL", "ATS_IMPORT"];
 
 /** Everything `create_job` / `update_job` write, so both paths stay identical. */
 function jobDraft(args: ToolArgs): JobDraft {
@@ -1488,6 +1490,29 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   },
 
   /* --------------------------- Candidate records ------------------------- */
+  {
+    name: "record_candidate",
+    label: "Recording a candidate by hand",
+    description:
+      "File an applicant who never came through the careers site — a mailed CV, a name from a phone screen, a row from an old spreadsheet. Starts them at New with a tracking code. Nothing is messaged: they didn't apply, so a confirmation would be wrong. A second live record for the same address in the same opening is refused.",
+    args: {
+      job_id: "string — from list_jobs",
+      full_name: "string — at least two characters",
+      email: "string — stored lowercase",
+      phone: "string — optional; needed for WhatsApp notices",
+      source: `string — one of ${APPLICATION_SOURCES.join(", ")}`,
+    },
+    run: async (args) =>
+      report(
+        await createCandidate({
+          jobId: str(args, "job_id"),
+          fullName: str(args, "full_name"),
+          email: str(args, "email"),
+          phone: optionalStr(args, "phone"),
+          source: str(args, "source"),
+        })
+      ),
+  },
   {
     name: "edit_candidate_contact",
     label: "Correcting candidate details",
