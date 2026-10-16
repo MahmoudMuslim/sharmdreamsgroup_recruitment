@@ -5,8 +5,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
+import { getBoolSetting, getOrganisationTimeZone, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector, missingSmtpFields } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { humanizeStage, renderTemplate, type TemplateVars } from "@/modules/settings/domain/templates";
+import { appConfig } from "@/lib/config";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase } from "@/modules/activity/domain/trail";
 import { formatInZone } from "@/lib/timezone";
@@ -527,6 +529,57 @@ export async function getEmailOutbox(): Promise<{
 }
 
 /**
+ * The values a stored copy can still be missing.
+ *
+ * A campaign row written before placeholders were substituted holds the template
+ * itself, so re-sending it verbatim would mail a candidate `{{job_title}}`. Only
+ * variables this row can genuinely answer are supplied; anything else stays
+ * visible rather than being blanked, the same rule `renderTemplate` follows.
+ */
+async function retryVars(row: {
+  application_id?: string | null;
+  applications?: { full_name?: string } | { full_name?: string }[] | null;
+}): Promise<TemplateVars> {
+  let fullName = firstOf(row.applications ?? null)?.full_name ?? "";
+  let stage = "";
+  let jobTitle: string | undefined;
+  let accessToken: string | undefined;
+
+  if (row.application_id) {
+    const { data } = await getSupabaseServiceClient()
+      .from("applications")
+      .select("full_name, stage, job_openings(title), candidate_attempts(access_token)")
+      .eq("id", row.application_id)
+      .maybeSingle();
+
+    const application = data as {
+      full_name?: string;
+      stage?: string;
+      job_openings?: { title?: string } | { title?: string }[] | null;
+      candidate_attempts?: { access_token?: string } | { access_token?: string }[] | null;
+    } | null;
+
+    if (application) {
+      fullName = application.full_name ?? fullName;
+      stage = application.stage ?? "";
+      jobTitle = firstOf(application.job_openings ?? null)?.title;
+      accessToken = firstOf(application.candidate_attempts ?? null)?.access_token;
+    }
+  }
+
+  const vars: TemplateVars = {
+    company_name: await getStringSetting("organisation.name", "Sharm Dreams Group"),
+    assessment_link: accessToken
+      ? `${appConfig.url}/test/${accessToken}`
+      : "your candidate portal",
+  };
+  if (fullName) vars.candidate_name = fullName;
+  if (jobTitle) vars.job_title = jobTitle;
+  if (stage) vars.stage = humanizeStage(stage);
+  return vars;
+}
+
+/**
  * Re-sends one stored email using the copy that is already on the row.
  *
  * Only a failed row can be retried: a delivered message re-sent from here would
@@ -574,15 +627,18 @@ export async function resendEmailMessage(id: string): Promise<OutboxResult> {
     return { ok: false, error: "No SMTP relay is configured, so there is nothing to send through (Settings → API keys)." };
   }
 
-  const outcome = await EmailConnector.send({
-    to: row.recipient,
-    subject: row.subject?.trim() || "An update on your application",
-    text: row.body,
-  });
+  const vars = await retryVars(row);
+  const subject = renderTemplate(row.subject?.trim() || "An update on your application", vars).trim();
+  const body = renderTemplate(row.body, vars).trim();
 
+  const outcome = await EmailConnector.send({ to: row.recipient, subject, text: body });
+
+  // The row is rewritten with what actually went out, so a legacy campaign row
+  // that stored the template stops showing placeholders in the outbox after one
+  // retry — and the next re-send has the real copy to work from.
   const { error } = await supabase
     .from("communication_logs")
-    .update({ delivered: outcome.success, error_message: outcome.error ?? null })
+    .update({ subject, body, delivered: outcome.success, error_message: outcome.error ?? null })
     .eq("id", id);
 
   if (error) {
