@@ -21,11 +21,12 @@ import {
 } from "@/app/(admin)/jobs/applicant-actions";
 import {
   deleteProspect,
-  getProspects,
+  getProspectPool,
   importProspects,
   saveProspect,
   setProspectStage,
 } from "@/app/(admin)/sourcing/actions";
+import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
 import { cancelWhatsAppJob, getOutbox, queueWhatsAppMessage } from "@/app/(admin)/whatsapp/actions";
 import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
@@ -214,7 +215,6 @@ function report<T extends { ok: boolean; error?: string }>(
 
 const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
 const JOB_STATUSES = ["DRAFT", "PUBLISHED", "PAUSED", "CLOSED"];
-const PROSPECT_STAGES = ["NEW", "CONTACTED", "REPLIED", "INTERVIEW", "CONVERTED", "PASSED"];
 const APPLICATION_SOURCES = ["LINKEDIN", "WHATSAPP", "JOB_BOARD", "CAREER_SITE", "REFERRAL", "ATS_IMPORT"];
 
 /** Everything `create_job` / `update_job` write, so both paths stay identical. */
@@ -709,20 +709,26 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   {
     name: "list_prospects",
     label: "Reading sourcing pool",
-    description: "The sourced-prospect pool with each prospect's stage, origin and linked opening.",
+    description:
+      "The sourced-prospect pool with each prospect's stage, origin and linked opening. Quote `pool_note` whenever the size of the pool is stated: the rows listed are a window, the counts in the note are the pool.",
     args: {},
     run: async () => {
-      const prospects = await getProspects();
-      return prospects.slice(0, 100).map((prospect) => ({
-        id: prospect.id,
-        full_name: prospect.full_name,
-        headline: prospect.headline,
-        company: prospect.company,
-        stage: prospect.stage,
-        origin: prospect.origin,
-        job_title: prospect.job_title,
-        messages: prospect.messages,
-      }));
+      const { prospects, totals } = await getProspectPool();
+      const shown = prospects.slice(0, 100);
+      return {
+        pool_note: `${totals.total.toLocaleString()} prospects are in the pool. This answer names ${shown.length} of them, taken from the ${totals.loaded.toLocaleString()} newest rows one read carries (${totals.limit.toLocaleString()} at most).`,
+        by_stage: totals.byStage,
+        prospects: shown.map((prospect) => ({
+          id: prospect.id,
+          full_name: prospect.full_name,
+          headline: prospect.headline,
+          company: prospect.company,
+          stage: prospect.stage,
+          origin: prospect.origin,
+          job_title: prospect.job_title,
+          messages: prospect.messages,
+        })),
+      };
     },
   },
   {
@@ -1412,7 +1418,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     },
     run: async (args) => {
       const stage = str(args, "stage").toUpperCase();
-      if (!PROSPECT_STAGES.includes(stage)) {
+      if (!(PROSPECT_STAGES as readonly string[]).includes(stage)) {
         throw new ToolArgumentError(`"stage" must be one of: ${PROSPECT_STAGES.join(", ")}.`);
       }
       return report(await setProspectStage(str(args, "id"), stage));

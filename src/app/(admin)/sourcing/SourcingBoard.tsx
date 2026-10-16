@@ -53,6 +53,14 @@ import {
 } from "./profile-actions";
 import { cn } from "@/lib/utils";
 import {
+  DEDUPE_WINDOW,
+  POOL_LIMIT,
+  PROSPECT_STAGES,
+  stageWord,
+  type ProspectPoolTotals,
+  type ProspectStage,
+} from "./pool-model";
+import {
   convertProspect,
   deleteProspect,
   getProspectHistory,
@@ -65,17 +73,6 @@ import {
   type ProspectHistoryRow,
   type ProspectRow,
 } from "./actions";
-
-const STAGE_LABEL: Record<string, string> = {
-  NEW: "Not contacted",
-  CONTACTED: "Contacted",
-  REPLIED: "Replied",
-  INTERVIEW: "Interview",
-  CONVERTED: "Applied",
-  PASSED: "Passed",
-};
-
-const STAGE_ORDER = ["NEW", "CONTACTED", "REPLIED", "INTERVIEW", "CONVERTED", "PASSED"];
 
 function stageTone(stage: string) {
   if (stage === "CONVERTED" || stage === "REPLIED") return "success" as const;
@@ -148,6 +145,7 @@ function reachDoor(
 
 export function SourcingBoard({
   prospects,
+  totals,
   jobs,
   copy,
   canWrite,
@@ -155,6 +153,7 @@ export function SourcingBoard({
   canSend,
 }: {
   prospects: ProspectRow[];
+  totals: ProspectPoolTotals;
   jobs: JobOption[];
   copy: Record<OutreachChannel, { subject: string; body: string }>;
   canWrite: boolean;
@@ -193,12 +192,6 @@ export function SourcingBoard({
     ? prospects.filter((p) => composerIds.includes(p.id))
     : [];
 
-  const stageCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const p of prospects) counts.set(p.stage, (counts.get(p.stage) ?? 0) + 1);
-    return counts;
-  }, [prospects]);
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return prospects.filter((p) => {
@@ -209,6 +202,20 @@ export function SourcingBoard({
         .some((value) => String(value).toLowerCase().includes(q));
     });
   }, [prospects, query, stageFilter]);
+
+  /**
+   * What the pool holds, against what this render can filter.
+   *
+   * Every figure on the board is counted by the database, so a tile or a rail
+   * describes the whole pool even when the list below carries only the newest
+   * `POOL_LIMIT` rows. A rail click can only narrow the rows that arrived, and
+   * that gap is what the disclosure under the rails says out loud. A search
+   * narrows the same rows by text, so its count belongs to no rail alone.
+   */
+  const stageCount = (stage: string) => totals.byStage[stage as ProspectStage] ?? 0;
+  const rowsNotLoaded = Math.max(0, totals.total - prospects.length);
+  const railHidden =
+    stageFilter && !query.trim() ? Math.max(0, stageCount(stageFilter) - filtered.length) : 0;
 
   const clearNotice = () => setNotice(null);
 
@@ -250,7 +257,7 @@ export function SourcingBoard({
     });
   }
 
-  if (prospects.length === 0) {
+  if (totals.total === 0) {
     return (
       <>
         <Card className="mb-4">
@@ -283,20 +290,20 @@ export function SourcingBoard({
   return (
     <>
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="In the pool" value={prospects.length} hint="Loaded prospects" />
+        <StatTile label="In the pool" value={totals.total} hint="Counted across the whole pool" />
         <StatTile
           label="Not contacted"
-          value={stageCounts.get("NEW") ?? 0}
+          value={stageCount("NEW")}
           hint="Waiting for a first touch"
         />
         <StatTile
           label="Talking"
-          value={(stageCounts.get("CONTACTED") ?? 0) + (stageCounts.get("REPLIED") ?? 0)}
+          value={stageCount("CONTACTED") + stageCount("REPLIED")}
           hint="Contacted or replied"
         />
         <StatTile
           label="Converted"
-          value={stageCounts.get("CONVERTED") ?? 0}
+          value={stageCount("CONVERTED")}
           hint="Now on the Candidates board"
         />
       </div>
@@ -341,21 +348,41 @@ export function SourcingBoard({
         <div className="rail-scroll flex gap-2 overflow-x-auto pb-1">
           <FilterRail
             label="All"
-            count={prospects.length}
+            count={totals.total}
             active={stageFilter === ""}
             onClick={() => setStageFilter("")}
           />
-          {STAGE_ORDER.map((stage) => (
+          {PROSPECT_STAGES.map((stage) => (
             <FilterRail
               key={stage}
-              label={STAGE_LABEL[stage]}
-              count={stageCounts.get(stage) ?? 0}
+              label={stageWord(stage)}
+              count={stageCount(stage)}
               active={stageFilter === stage}
               onClick={() => setStageFilter(stageFilter === stage ? "" : stage)}
             />
           ))}
         </div>
       </div>
+
+      {(rowsNotLoaded > 0 || railHidden > 0) && (
+        <div className="mb-4 max-w-3xl space-y-1 text-[11px] leading-relaxed text-brand-ink/60">
+          {rowsNotLoaded > 0 && (
+            <p>
+              This page lists the newest {prospects.length.toLocaleString()} of the{" "}
+              {totals.total.toLocaleString()} prospects in the pool — one render carries{" "}
+              {POOL_LIMIT.toLocaleString()} rows, so {rowsNotLoaded.toLocaleString()} are counted above
+              but not shown below.
+            </p>
+          )}
+          {railHidden > 0 && stageFilter && (
+            <p>
+              The {stageWord(stageFilter)} rail counts {stageCount(stageFilter).toLocaleString()}. A rail
+              can only narrow the rows this page loaded, so {railHidden}{" "}
+              {railHidden === 1 ? "is" : "are"} counted but not listed.
+            </p>
+          )}
+        </div>
+      )}
 
       {notice && (
         <div className="mb-4">
@@ -367,7 +394,11 @@ export function SourcingBoard({
         {filtered.length === 0 ? (
           <EmptyState
             title="Nothing matches that"
-            description="Clear the search or pick another stage to see the rest of the pool."
+            description={
+              query.trim() || stageFilter
+                ? "Clear the search or pick another stage to see the rest of what this page lists."
+                : "No prospect rows arrived in this render, though the pool counts them above."
+            }
           />
         ) : (
           <div className="overflow-x-auto">
@@ -501,14 +532,14 @@ export function SourcingBoard({
                           aria-label={`Sourcing stage for ${prospect.full_name}`}
                           className="rounded-lg border border-brand-line bg-white px-2 py-1 text-xs font-semibold"
                         >
-                          {STAGE_ORDER.map((stage) => (
+                          {PROSPECT_STAGES.map((stage) => (
                             <option key={stage} value={stage}>
-                              {STAGE_LABEL[stage]}
+                              {stageWord(stage)}
                             </option>
                           ))}
                         </select>
                       ) : (
-                        <Badge tone={stageTone(prospect.stage)}>{STAGE_LABEL[prospect.stage]}</Badge>
+                        <Badge tone={stageTone(prospect.stage)}>{stageWord(prospect.stage)}</Badge>
                       )}
                     </td>
                     <td className="px-2 py-3 text-xs text-brand-ink/55">
@@ -681,7 +712,7 @@ function ImportDrawer({
           onCancel={onClose}
           submitLabel={pending ? "Importing…" : "Import"}
           pending={pending}
-          note="Anything already in the pool by profile link or email is skipped, not duplicated."
+          note={`A profile link already in the pool is refused by the database. An email match is skipped when it sits among the newest ${DEDUPE_WINDOW.toLocaleString()} records.`}
         />
       }
       onSubmit={submit}
@@ -943,7 +974,7 @@ function ProfileDrawer({
     <Drawer
       open
       onClose={onClose}
-      eyebrow={STAGE_LABEL[prospect.stage]}
+      eyebrow={stageWord(prospect.stage)}
       title={prospect.full_name}
       subtitle={[prospect.headline, prospect.company, prospect.location].filter(Boolean).join(" · ")}
       footer={

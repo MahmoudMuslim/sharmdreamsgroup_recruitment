@@ -3,7 +3,7 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
-import { getOutreachCopy, getProspectJobs, getProspects } from "./actions";
+import { getOutreachCopy, getProspectJobs, getProspectPool } from "./actions";
 import { SourcingBoard } from "./SourcingBoard";
 
 export const metadata = {
@@ -18,11 +18,11 @@ export default async function SourcingPage() {
   await connection();
   const user = await requireStaff("/sourcing");
 
-  const [canWrite, canDelete, canSend, prospects, jobs, copy] = await Promise.all([
+  const [canWrite, canDelete, canSend, pool, jobs, copy] = await Promise.all([
     hasPermissionForUser("candidates.write"),
     hasPermissionForUser("candidates.delete"),
     hasPermissionForUser("messages.send"),
-    getProspects(),
+    getProspectPool(),
     getProspectJobs(),
     getOutreachCopy(),
   ]);
@@ -36,7 +36,8 @@ export default async function SourcingPage() {
       />
 
       <SourcingBoard
-        prospects={prospects}
+        prospects={pool.prospects}
+        totals={pool.totals}
         jobs={jobs}
         copy={copy}
         canWrite={canWrite}

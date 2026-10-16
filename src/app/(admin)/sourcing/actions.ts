@@ -27,6 +27,15 @@ import {
   renderProfileText,
   type ProspectProfile,
 } from "@/modules/sourcing/domain/prospect-profile";
+import {
+  DEDUPE_WINDOW,
+  POOL_LIMIT,
+  PROSPECT_STAGES,
+  stageWord,
+  type PoolCounts,
+  type ProspectPoolTotals,
+  type ProspectStage,
+} from "./pool-model";
 
 /**
  * Server actions behind the Sourcing board.
@@ -37,18 +46,6 @@ import {
  * than the service role, so the `candidates.write` grant is the real gate and
  * not just a check the UI performs.
  */
-
-/** Sourcing ladder — see the `stage` check constraint in migration 017. */
-const PROSPECT_STAGES = [
-  "NEW",
-  "CONTACTED",
-  "REPLIED",
-  "INTERVIEW",
-  "CONVERTED",
-  "PASSED",
-] as const;
-
-export type ProspectStage = (typeof PROSPECT_STAGES)[number];
 
 export type OutreachChannel = "EMAIL" | "WHATSAPP";
 
@@ -103,25 +100,6 @@ const PROSPECT_SELECT = `
 `;
 
 const STAGES = new Set<string>(PROSPECT_STAGES);
-
-/**
- * The board's own words for a stage, kept in step with the column labels.
- *
- * A trail row that says "PASSED" where the board says "Passed" (meaning passed
- * over) reads backwards; quoting the same wording the recruiter sees is the fix.
- */
-const STAGE_WORDS: Record<string, string> = {
-  NEW: "Not contacted",
-  CONTACTED: "Contacted",
-  REPLIED: "Replied",
-  INTERVIEW: "Interview",
-  CONVERTED: "Applied",
-  PASSED: "Passed",
-};
-
-function stageWord(stage: string): string {
-  return STAGE_WORDS[stage] ?? stage;
-}
 
 function toRow(row: Record<string, unknown>): ProspectRow {
   const job = row.job_openings as { title?: string } | { title?: string }[] | null;
@@ -183,18 +161,54 @@ interface ProspectFields {
 /* Reads                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export async function getProspects(): Promise<ProspectRow[]> {
+/**
+ * The pool: this render's window into it, and what the whole table holds.
+ *
+ * The list ships the newest `POOL_LIMIT` rows because that is what a board can
+ * carry, but the pool is exactly the table that grows by bulk paste — one import
+ * of a few hundred links moves it further from a fixed page size than anything
+ * else in the portal. So the numbers the rails and tiles show are counted by the
+ * database, not tallied from the slice they happened to arrive on.
+ */
+export async function getProspectPool(): Promise<{
+  prospects: ProspectRow[];
+  totals: ProspectPoolTotals;
+}> {
   await requireStaff("/sourcing");
 
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("sourced_prospects")
-    .select(PROSPECT_SELECT)
-    .order("created_at", { ascending: false })
-    .limit(500);
+  const [rows, total, ...stageCounts] = await Promise.all([
+    supabase
+      .from("sourced_prospects")
+      .select(PROSPECT_SELECT)
+      .order("created_at", { ascending: false })
+      .limit(POOL_LIMIT),
+    supabase.from("sourced_prospects").select("id", { count: "exact", head: true }),
+    ...PROSPECT_STAGES.map((stage) =>
+      supabase
+        .from("sourced_prospects")
+        .select("id", { count: "exact", head: true })
+        .eq("stage", stage)
+    ),
+  ]);
 
-  if (error) return [];
-  return (data ?? []).map((row) => toRow(row as unknown as Record<string, unknown>));
+  const prospects = rows.error
+    ? []
+    : (rows.data ?? []).map((row) => toRow(row as unknown as Record<string, unknown>));
+  const byStage = Object.fromEntries(
+    PROSPECT_STAGES.map((stage, index) => [stage, stageCounts[index]?.count ?? 0])
+  ) as PoolCounts;
+
+  return {
+    prospects,
+    totals: {
+      // A failed head count leaves nothing truer than the rows in hand.
+      total: total.count ?? prospects.length,
+      byStage,
+      loaded: prospects.length,
+      limit: POOL_LIMIT,
+    },
+  };
 }
 
 /** Openings a prospect can be linked to or converted against. */
@@ -310,10 +324,13 @@ export async function importProspects(input: {
 
   const supabase = await createSupabaseServerClient();
 
+  // Newest first, because a list re-imported days after the first paste is a
+  // duplicate of rows near the top of the table, not of an arbitrary slice of it.
   const { data: current } = await supabase
     .from("sourced_prospects")
     .select("linkedin_url, email")
-    .limit(5000);
+    .order("created_at", { ascending: false })
+    .limit(DEDUPE_WINDOW);
 
   const known = new Set<string>();
   for (const row of (current ?? []) as { linkedin_url: string | null; email: string | null }[]) {
