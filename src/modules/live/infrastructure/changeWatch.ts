@@ -86,6 +86,15 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     stamp: "created_at",
     paths: ["/files", "/candidates"],
   },
+  {
+    // `updated_at` rather than `started_at`: stopping a timer moves the end and
+    // the trigger's stamp, not the start, and a colleague's stop is exactly the
+    // change a shared ledger has to show without a refresh.
+    area: "time",
+    table: "time_entries",
+    stamp: "updated_at",
+    paths: ["/time"],
+  },
 ] as const;
 
 /**

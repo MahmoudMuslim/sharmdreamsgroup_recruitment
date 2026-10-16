@@ -31,6 +31,7 @@ export type PermissionKey =
   | "messages.send"
   | "analytics.view"
   | "analytics.export"
+  | "time.track"
   | "settings.manage_users"
   | "settings.manage_roles"
   | "settings.manage_platform"

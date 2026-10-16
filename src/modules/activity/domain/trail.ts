@@ -52,6 +52,7 @@ export const ACTIVITY_AREAS = [
   "gate questions",
   "files",
   "messaging",
+  "time",
   "settings",
   "team",
   "access",
@@ -89,6 +90,7 @@ export const ACTIVITY_ENTITIES = [
   "staff user",
   "scheduled message",
   "template",
+  "time entry",
   "user invite",
 ] as const;
 export type ActivityEntity = (typeof ACTIVITY_ENTITIES)[number];
@@ -445,6 +447,7 @@ export function recordHref(
     "user invite": { href: "/settings?area=access&section=team", label: "Team" },
     setting: { href: "/settings", label: "Settings" },
     template: { href: "/settings?area=access&section=templates", label: "Message templates" },
+    "time entry": { href: "/time", label: "Time ledger" },
     role: { href: "/settings?area=access&section=permissions", label: "Roles & permissions" },
     "staff user": { href: "/settings?area=access&section=team", label: "Team" },
     company: { href: "/settings?area=organisation&section=companies", label: "Companies" },
