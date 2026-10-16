@@ -51,10 +51,13 @@ export function JobsBrowser({
   jobs,
   options,
   canManage,
+  canDecide,
 }: {
   jobs: JobRow[];
   options: JobFormOptions;
   canManage: boolean;
+  /** `candidates.write` — who may move an applicant between stages from the drawer. */
+  canDecide: boolean;
 }) {
   const params = useSearchParams();
   const [status, setStatus] = useState<string>("");
@@ -321,6 +324,7 @@ export function JobsBrowser({
         <JobApplicantsDrawer
           key={applicantsJob.id}
           job={applicantsJob}
+          canDecide={canDecide}
           onClose={() => setApplicantsJob(null)}
         />
       )}

@@ -417,6 +417,12 @@ export async function updateApplicationStage(input: {
     after(() => generateFeedbackForApplication(input.applicationId).then(() => undefined));
   }
 
+  /* The all-group table shows this row's stage and the dashboard counts where the
+   * pipeline sits, so a move taken from anywhere has to invalidate both. Before
+   * the opening's drawer wrote stages, only the table's own refresh hid the gap. */
+  revalidatePath("/candidates");
+  revalidatePath("/dashboard");
+
   return { ok: true, stage: input.stage, auto_feedback: autoFeedback };
 }
 

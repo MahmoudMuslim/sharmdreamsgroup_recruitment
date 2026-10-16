@@ -21,7 +21,7 @@ export default async function JobsPage() {
   const user = await requireStaff("/jobs");
   const supabase = await createSupabaseServerClient();
 
-  const [result, canManage] = await Promise.all([
+  const [result, canManage, canDecide] = await Promise.all([
     supabase
       .from("job_openings")
       .select(
@@ -32,6 +32,7 @@ export default async function JobsPage() {
       .is("applications.archived_at", null)
       .order("created_at", { ascending: false }),
     hasPermissionForUser("jobs.manage"),
+    hasPermissionForUser("candidates.write"),
   ]);
 
   const master = await getMasterOptions();
@@ -52,7 +53,7 @@ export default async function JobsPage() {
         actions={canManage ? <NewJobDrawer options={options} /> : undefined}
       />
 
-      <JobsBrowser jobs={jobs} options={options} canManage={canManage} />
+      <JobsBrowser jobs={jobs} options={options} canManage={canManage} canDecide={canDecide} />
     </AdminShell>
   );
 }

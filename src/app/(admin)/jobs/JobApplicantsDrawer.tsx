@@ -11,10 +11,15 @@ import {
   Loader2,
 } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
-import { Badge, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
-import { FormMessage } from "@/modules/analytics/presentation/Form";
+import { Badge, Button, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
+import { FormMessage, TextArea } from "@/modules/analytics/presentation/Form";
 import { humanizeStage } from "@/modules/settings/domain/templates";
-import { formatDateTime, sourceLabel } from "@/lib/utils";
+import { PIPELINE_STAGES as STAGES } from "@/modules/candidates/domain/listFilters";
+import {
+  updateApplicationStage,
+  type PipelineStage,
+} from "@/app/(admin)/candidates/candidate-actions";
+import { formatDateTime, sourceLabel, cn } from "@/lib/utils";
 import {
   getApplicantSubmission,
   getJobApplicants,
@@ -51,6 +56,152 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 /**
+ * The pipeline decision, taken from the opening's side.
+ *
+ * Deliberately the same writer the candidates table uses: one move means one
+ * reason rule, one trail row and one notice to the candidate, so a recruiter
+ * shortlisting here cannot leave the all-group table saying the person is still
+ * new.
+ */
+function StageDecisions({
+  applicant,
+  onMoved,
+}: {
+  applicant: JobApplicant;
+  onMoved: (applicationId: string, stage: PipelineStage) => void;
+}) {
+  const [pending, setPending] = useState<PipelineStage | null>(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function moveTo(stage: PipelineStage) {
+    if (stage === applicant.stage) return;
+    if (stage === "REJECTED") {
+      setError(null);
+      setNotice(null);
+      setRejectOpen(true);
+      return;
+    }
+    setPending(stage);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await updateApplicationStage({ applicationId: applicant.id, stage });
+      if (!result.ok) {
+        setError(result.error ?? "The applicant was not moved.");
+        return;
+      }
+      onMoved(applicant.id, stage);
+      setNotice(`Moved to ${humanizeStage(stage)}. The candidate is told on the channels Settings allows.`);
+    } catch {
+      setError("The portal did not answer, so the stage is unchanged.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function confirmReject() {
+    setPending("REJECTED");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await updateApplicationStage({
+        applicationId: applicant.id,
+        stage: "REJECTED",
+        reason,
+      });
+      if (!result.ok) {
+        setError(result.error ?? "The applicant was not rejected.");
+        return;
+      }
+      onMoved(applicant.id, "REJECTED");
+      setRejectOpen(false);
+      setReason("");
+      setNotice(
+        result.auto_feedback
+          ? "Rejected. The candidate is told on the channels Settings allows, and a feedback draft is being written."
+          : "Rejected. The candidate is told on the channels Settings allows. Feedback drafting is off in Settings, so no draft was written."
+      );
+    } catch {
+      setError("The portal did not answer, so the applicant is unchanged.");
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <section>
+      <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+        Pipeline
+      </h4>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {STAGES.map((stage) => {
+          const active = applicant.stage === stage;
+          const isReject = stage === "REJECTED";
+          const blocked = active || pending !== null;
+          return (
+            <button
+              key={stage}
+              type="button"
+              disabled={blocked}
+              aria-pressed={active}
+              onClick={() => void moveTo(stage as PipelineStage)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide transition",
+                active
+                  ? "border-brand-gold bg-brand-gold/15 text-brand-gold-dark"
+                  : isReject
+                    ? "border-brand-line bg-white text-rose-700 hover:border-rose-300 hover:bg-rose-50"
+                    : "border-brand-line bg-white text-brand-ink/60 hover:bg-brand-sand",
+                blocked && !active && "cursor-not-allowed opacity-60"
+              )}
+            >
+              {pending === stage && <Loader2 className="h-3 w-3 animate-spin" aria-hidden />}
+              {stage.replace("_", " ")}
+            </button>
+          );
+        })}
+      </div>
+
+      {rejectOpen && (
+        <div className="mt-3 space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3.5">
+          <label htmlFor={`reject-${applicant.id}`} className="block text-xs font-bold text-rose-900">
+            Rejection reason
+          </label>
+          <TextArea
+            id={`reject-${applicant.id}`}
+            rows={2}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why is this applicant not moving forward? It is shown on their profile."
+          />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={pending !== null} onClick={() => void confirmReject()}>
+              {pending === "REJECTED" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
+              Reject
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setRejectOpen(false);
+                setReason("");
+              }}
+            >
+              Keep in the pipeline
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <FormMessage error={error} success={notice} />
+    </section>
+  );
+}
+
+/**
  * One applicant's own submission: the details they typed into the application
  * form, the CV they attached (original file plus the text we read out of it),
  * the AI screening verdict and their assessment attempt.
@@ -62,23 +213,44 @@ function ApplicantDetail({
   applicant,
   submission,
   error,
+  canDecide,
+  onMoved,
 }: {
   applicant: JobApplicant;
   submission: ApplicantSubmission | null;
   error: string | null;
+  canDecide: boolean;
+  onMoved: (applicationId: string, stage: PipelineStage) => void;
 }) {
-  if (error) return <FormMessage error={error} />;
+  // A decision never waits on the CV: the stage lives on the application row,
+  // not in the heavy fields this fetch brings back.
+  const decision = canDecide ? <StageDecisions applicant={applicant} onMoved={onMoved} /> : null;
+  const wrap = "space-y-5 border-t border-brand-line bg-brand-cream/60 px-4 py-4";
+
+  if (error) {
+    return (
+      <div className={wrap}>
+        {decision}
+        <FormMessage error={error} />
+      </div>
+    );
+  }
   if (!submission) {
     return (
-      <p className="flex items-center gap-2 py-3 text-xs text-brand-ink/50">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-        Loading this submission…
-      </p>
+      <div className={wrap}>
+        {decision}
+        <p className="flex items-center gap-2 py-3 text-xs text-brand-ink/50">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          Loading this submission…
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-5 border-t border-brand-line bg-brand-cream/60 px-4 py-4">
+    <div className={wrap}>
+      {decision}
+
       <section>
         <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
           What they entered
@@ -207,16 +379,20 @@ function ApplicantDetail({
 }
 
 /**
- * Every applicant for one opening, with their submission.
+ * Every applicant for one opening, with their submission and the stage decision.
  *
- * Mounted from a job card so a recruiter reads a role's shortlist without
- * filtering the all-group candidate table by hand.
+ * Mounted from a job card so a recruiter works a role's shortlist in order: read
+ * the CV, move the person on or file them out, open the next name — without
+ * filtering the all-group candidate table by hand between two applicants.
  */
 export function JobApplicantsDrawer({
   job,
+  canDecide,
   onClose,
 }: {
   job: { id: string; title: string; status: string };
+  /** `candidates.write` — the grant the stage writer re-checks on the server. */
+  canDecide: boolean;
   onClose: () => void;
 }) {
   const [applicants, setApplicants] = useState<JobApplicant[] | null>(null);
@@ -263,18 +439,39 @@ export function JobApplicantsDrawer({
     }
   }
 
+  /**
+   * Reflects a saved decision in the list.
+   *
+   * The row is patched rather than the whole shortlist re-read: the writer already
+   * returned the destination, and refetching would drop the submissions cached for
+   * the applicants sitting above the one that moved.
+   */
+  function markMoved(applicationId: string, stage: PipelineStage) {
+    setApplicants((current) =>
+      (current ?? []).map((row) => (row.id === applicationId ? { ...row, stage } : row))
+    );
+  }
+
   return (
     <Drawer
       open
       onClose={onClose}
       eyebrow={humanizeStage(job.status)}
       title={job.title}
-      subtitle="Everyone who applied to this role, and what they submitted"
+      subtitle={
+        canDecide
+          ? "Everyone who applied to this role, and what they submitted — decide the next stage from here."
+          : "Everyone who applied to this role, and what they submitted."
+      }
       width="max-w-2xl"
       footer={
         <>
           <p className="text-xs text-brand-ink/55">
-            {applicants ? `${applicants.length} applicant${applicants.length === 1 ? "" : "s"}` : "Loading…"}
+            {!applicants
+              ? "Loading…"
+              : canDecide
+                ? `${applicants.length} applicant${applicants.length === 1 ? "" : "s"}`
+                : `${applicants.length} applicant${applicants.length === 1 ? "" : "s"} · reading a move needs the Edit candidates permission`}
           </p>
           <button
             type="button"
@@ -345,6 +542,8 @@ export function JobApplicantsDrawer({
                     applicant={applicant}
                     submission={submissions[applicant.id] ?? null}
                     error={detailErrors[applicant.id] ?? null}
+                    canDecide={canDecide}
+                    onMoved={markMoved}
                   />
                 )}
               </li>
