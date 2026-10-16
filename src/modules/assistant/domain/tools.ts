@@ -47,10 +47,16 @@ import {
 import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import {
+  getModelCatalogue,
   listModelRouting,
   saveModelRouting,
 } from "@/modules/settings/application/credential-actions";
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
+import {
+  modelReadNote,
+  modelSearchWords,
+  searchModels,
+} from "@/modules/settings/domain/modelSearch";
 import { SECTORS } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES, openingReadNote } from "@/modules/jobs/domain/hireable";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
@@ -306,6 +312,15 @@ const UNPLANNED_HIRE_ROWS = 20;
 const FOLDER_FILE_ROWS = 60;
 const ROOT_FILE_ROWS = 40;
 const GATE_JOB_ROWS = 40;
+
+/**
+ * Rows one catalogue answer lists.
+ *
+ * Below `ANSWER_ROWS` because a model row carries a qualified id, two prices and
+ * a context length, and fifty of them overflow the clip a result is cut at — a
+ * cut reads to the model as a shorter list, not a broken one.
+ */
+const MODEL_ROWS = 30;
 
 /**
  * The storage cap sitting behind a folder answer, said once for both listings.
@@ -1131,6 +1146,62 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           configured: Boolean(row),
         };
       });
+    },
+  },
+  {
+    name: "list_models",
+    label: "Reading the model catalogue",
+    description:
+      `The models this portal can actually call, with the qualified id a routing row is written with, its provider, prices and context length — the same list the AI models console searches and its routing pickers offer. Read it before save_model_routing: a model id invented here is a capability that fails on the next screening. \`query\` is the console's own box and runs over every callable model, so a search that names nothing says nothing about what the vendors list.`,
+    args: {
+      query: `string — optional, the console's own search box: ${modelSearchWords()}, matched over every model this portal can call`,
+    },
+    run: async (args) => {
+      const query = optionalStr(args, "query")?.trim() ?? "";
+      const catalogue = await getModelCatalogue();
+      const labels = new Map(catalogue.sources.map((source) => [source.id, source.displayName]));
+      // What the console's pickers offer, for the same reason: a model with no
+      // caller in the gateway, or one the account switched off, cannot be routed
+      // to, so listing it would invite exactly the routing row that breaks.
+      const callable = catalogue.models.filter(
+        (model) => model.routable && model.enabled !== false
+      );
+      const matched = searchModels(callable, query, labels);
+      const models = matched.slice(0, MODEL_ROWS).map((model) => ({
+        id: model.id,
+        name: model.name,
+        provider: model.provider,
+        provider_label: labels.get(model.provider) ?? model.provider,
+        free: model.free,
+        prompt_price: model.promptPrice,
+        completion_price: model.completionPrice,
+        context_length: model.contextLength,
+        detail: model.detail ?? null,
+      }));
+      return {
+        // Leads for the same reason every other capped read does: the numbers a
+        // recruiter acts on are the set searched, not the rows below them.
+        models_note: `${modelReadNote({
+          carried: catalogue.models.length,
+          callable: callable.length,
+          matched: matched.length,
+          shown: models.length,
+          cap: MODEL_ROWS,
+          search: query || null,
+          degradedSources: catalogue.sources.filter((source) => source.status === "degraded").length,
+          silentSources: catalogue.sources.filter(
+            (source) => source.status !== "ok" && source.status !== "degraded"
+          ).length,
+        })} The read is ${catalogue.degraded ? "partly a built-in fallback list" : "a live provider read"} as of ${catalogue.fetchedAt}.`,
+        models,
+        providers: catalogue.sources.map((source) => ({
+          id: source.id,
+          label: source.displayName,
+          models: source.count,
+          status: source.status,
+          routable: source.routable,
+        })),
+      };
     },
   },
   {

@@ -314,9 +314,14 @@ export function linkForTool(
       };
     }
     case "list_model_routing":
+    case "list_models":
+      // One page, two reads. The label names the console rather than a tab:
+      // routing rows and the catalogue search live on different tabs of it, and
+      // the page opens on routing, so a link that promised the catalogue tiles
+      // would land somewhere else.
       return {
         href: "/settings?area=providers&section=models",
-        label: "Open model routing",
+        label: "Open the AI models console",
       };
     case "get_settings":
       return { href: "/settings", label: "Open settings" };

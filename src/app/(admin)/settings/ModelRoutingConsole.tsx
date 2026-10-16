@@ -39,6 +39,7 @@ import {
   costTierLabel,
   getCostTier,
 } from "@/modules/settings/domain/providers";
+import { modelSearchWords, searchModels } from "@/modules/settings/domain/modelSearch";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, Select, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
@@ -373,17 +374,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
     if (selectedCostTier !== "all") {
       models = models.filter((m) => getCostTier(m.promptPrice, m.isFree) === selectedCostTier);
     }
-    if (globalSearch.trim()) {
-      const q = globalSearch.toLowerCase();
-      models = models.filter(
-        (m) =>
-          m.name.toLowerCase().includes(q) ||
-          m.modelId.toLowerCase().includes(q) ||
-          m.provider.toLowerCase().includes(q)
-      );
-    }
-    return models;
-  }, [groupedModels, selectedCostTier, globalSearch]);
+    // The same predicate the assistant's `list_models` runs, with the provider's
+    // own display name folded in: a row carries `openrouter` while its tab prints
+    // "OpenRouter", so a box that promises "provider" has to read both spellings.
+    const labels = new Map((catalogue?.sources ?? []).map((s) => [s.id, s.displayName]));
+    return searchModels(models, globalSearch, labels);
+  }, [groupedModels, selectedCostTier, globalSearch, catalogue]);
 
   const providersList = useMemo(() => {
     const byId = new Map<string, string>();
@@ -981,7 +977,8 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
             <input
               type="text"
-              placeholder="Search models by name, ID or provider…"
+              placeholder={`Search by ${modelSearchWords()}…`}
+              aria-label="Search the model catalogue"
               value={globalSearch}
               onChange={(e) => setGlobalSearch(e.target.value)}
               className="w-full rounded-xl border border-brand-line bg-brand-cream pl-10 pr-3 py-2.5 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
