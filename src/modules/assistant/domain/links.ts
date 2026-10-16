@@ -112,6 +112,15 @@ export function linkForTool(
       const id = fromArgs(args, "id");
       return id ? prospect(id) : null;
     }
+    case "read_prospect_profile":
+    case "get_prospect_profile": {
+      const id = fromArgs(args, "id");
+      return id ? prospect(id) : null;
+    }
+    case "import_prospects":
+      return { href: "/sourcing", label: "Open the sourcing board" };
+    case "get_report":
+      return { href: "/reports", label: "Open the reports" };
     case "save_assessment_suite":
     case "set_assessment_suite_active":
     case "delete_assessment_suite":
@@ -120,6 +129,7 @@ export function linkForTool(
     case "delete_question":
     case "revoke_attempt":
     case "extend_attempt":
+    case "reissue_attempt":
     case "delete_attempt":
       return { href: "/assessments", label: "Open the assessment suites" };
     case "list_interviews":
@@ -185,6 +195,30 @@ export function linkForTool(
       return { href: "/settings", label: "Open settings" };
     case "dashboard_analytics":
       return { href: "/dashboard", label: "Open the dashboard" };
+    /* Reads whose answer is a page's own table — show the table, not just the rows. */
+    case "list_jobs":
+    case "delete_job":
+      return { href: "/jobs", label: "Open the openings" };
+    case "list_candidates":
+      return { href: "/candidates", label: "Open the candidate pipeline" };
+    case "list_assessment_suites":
+    case "get_assessment_suite":
+      return { href: "/assessments", label: "Open the assessment suites" };
+    case "list_prospects":
+    case "delete_prospect":
+      return { href: "/sourcing", label: "Open the sourcing board" };
+    case "list_outbox":
+    case "list_email_outbox":
+      return { href: "/whatsapp", label: "Open the outbox" };
+    case "list_model_routing":
+      return {
+        href: "/settings?area=providers&section=models",
+        label: "Open model routing",
+      };
+    case "get_settings":
+      return { href: "/settings", label: "Open settings" };
+    case "get_master_data":
+      return { href: "/settings?area=organisation", label: "Open the master data" };
     default:
       return null;
   }

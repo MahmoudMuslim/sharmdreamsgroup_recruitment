@@ -22,6 +22,7 @@ import {
 import {
   deleteProspect,
   getProspects,
+  importProspects,
   saveProspect,
   setProspectStage,
 } from "@/app/(admin)/sourcing/actions";
@@ -54,6 +55,7 @@ import {
 import {
   deleteAttempt,
   extendAttemptLink,
+  reissueAttemptLink,
   revokeAttempt,
 } from "@/app/(admin)/candidates/attempt-actions";
 import { deleteAttachment } from "@/app/(admin)/candidates/attachment-actions";
@@ -91,6 +93,10 @@ import {
   updateRolePermission,
 } from "@/app/(admin)/settings/actions";
 import { convertProspect, sendProspectOutreach } from "@/app/(admin)/sourcing/actions";
+import { getProspectProfile, pasteProspectProfile } from "@/app/(admin)/sourcing/profile-actions";
+import { getRowReport } from "@/app/(admin)/reports/actions";
+import { REPORTS } from "@/modules/analytics/domain/documents";
+import { ANALYTICS_WINDOWS } from "@/modules/analytics/domain/report";
 import {
   getEmailOutbox,
   resendEmailMessage,
@@ -482,6 +488,38 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     },
   },
   {
+    name: "get_report",
+    label: "Reading a report table",
+    description:
+      "One row-level report from /reports — the same list the page shows and every CSV, Excel and PDF export is built from. Returns the columns, the first rows and the caveats that list carries, so a figure quoted from here is quoted with what it leaves out. Totals come from dashboard_analytics; this is the detail behind them.",
+    args: {
+      report: `string — one of ${REPORTS.map((report) => report.id).join(", ")}`,
+      window: `string — one of ${ANALYTICS_WINDOWS.map((option) => option.key).join(", ")}, where all is every record`,
+    },
+    run: async (args) => {
+      const preview = await getRowReport(
+        str(args, "report").toLowerCase(),
+        str(args, "window").toLowerCase()
+      );
+      if (!preview.ok || !preview.sheet) {
+        return { ok: false, error: preview.error ?? "That report could not be read." };
+      }
+      const rows = preview.sheet.rows.slice(0, 12);
+      return {
+        ok: true,
+        report: preview.report,
+        sheet: preview.sheet.name,
+        scope: preview.scope ?? null,
+        columns: preview.sheet.columns,
+        rows: rows.map((row) => row.map((cell) => cell ?? "—")),
+        rows_returned: rows.length,
+        /** The page previews more rows than a reply carries, and says so. */
+        total_rows: preview.totalRows ?? 0,
+        limitations: preview.limitations ?? [],
+      };
+    },
+  },
+  {
     name: "list_jobs",
     label: "Reading job openings",
     description:
@@ -606,6 +644,36 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         job_title: prospect.job_title,
         messages: prospect.messages,
       }));
+    },
+  },
+  {
+    name: "get_prospect_profile",
+    label: "Reading a stored prospect profile",
+    description:
+      "The structured profile stored on a sourced prospect — headline, company, location, skills, experience, education — with how it was captured and when. Nothing here reaches LinkedIn: a profile exists only because a recruiter pasted or uploaded the text themselves.",
+    args: { id: "string — prospect id from list_prospects" },
+    run: async (args) => {
+      const stored = await getProspectProfile(str(args, "id"));
+      if (!stored) return { ok: false, error: "That prospect is no longer in the pool." };
+      if (!stored.profile) {
+        return {
+          ok: true,
+          profile: null,
+          last_error: stored.error,
+          note: stored.error
+            ? "No structured profile is stored, and the read that produced this error is named above."
+            : "No profile has been read for this prospect yet.",
+        };
+      }
+      return {
+        ok: true,
+        full_name: stored.full_name,
+        headline: stored.headline,
+        company: stored.company,
+        captured_by: stored.source,
+        captured_at: stored.captured_at,
+        profile: stored.profile,
+      };
     },
   },
   {
@@ -1346,6 +1414,14 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     run: async (args) =>
       report(await extendAttemptLink(str(args, "attempt_id"), num(args, "hours"))),
   },
+  {
+    name: "reissue_attempt",
+    label: "Re-issuing an assessment link",
+    description:
+      "Replace a link the candidate never opened with a fresh one and send the invitation again — for the invite that bounced, expired or was lost. The old address stops resolving the moment this runs. A test that was already opened is refused, because a second link would hand a second sitting of the same paper.",
+    args: { attempt_id: "string — from get_candidate_dossier" },
+    run: async (args) => report(await reissueAttemptLink(str(args, "attempt_id"))),
+  },
 
   /* ----------------------------- Interviews ------------------------------ */
   {
@@ -1610,6 +1686,42 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       job_id: "string — opening to apply them to",
     },
     run: async (args) => report(await convertProspect({ id: str(args, "id"), job_id: str(args, "job_id") })),
+  },
+  {
+    name: "import_prospects",
+    label: "Importing a prospect list",
+    description:
+      "Load a pasted list into the sourcing pool: one LinkedIn profile URL per line, or a CSV with a header row. The server re-parses the text and skips anyone already in the pool by profile URL or email, so pasting the same list twice adds nobody twice. It stores the list only — no profile is read and no message is sent.",
+    args: {
+      raw: "string — the list as pasted, one profile per line or a CSV with a header row",
+      origin: "string — LINKEDIN or CSV, whichever the text is",
+      job_id: "string — optional opening to attach the pool to",
+    },
+    run: async (args) => {
+      const origin = str(args, "origin").toUpperCase();
+      if (origin !== "LINKEDIN" && origin !== "CSV") {
+        throw new ToolArgumentError('"origin" must be LINKEDIN or CSV.');
+      }
+      return report(
+        await importProspects({
+          raw: str(args, "raw"),
+          origin,
+          job_id: optionalStr(args, "job_id") ?? null,
+        })
+      );
+    },
+  },
+  {
+    name: "read_prospect_profile",
+    label: "Structuring a pasted profile",
+    description:
+      "Structure the profile text a recruiter copied and store it on the prospect. This is the door that always works: a LinkedIn page is behind a login for any automated request, so nothing is fetched on the recruiter's behalf — only the text they pasted is sent to the model, and the stored profile names the model that structured it. Too little text to read a person out of is refused rather than guessed at.",
+    args: {
+      id: "string — prospect id from list_prospects",
+      text: "string — the whole copied page, history and education included",
+    },
+    run: async (args) =>
+      report(await pasteProspectProfile({ id: str(args, "id"), text: str(args, "text") })),
   },
   {
     name: "message_prospects",
