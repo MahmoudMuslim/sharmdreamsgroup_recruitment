@@ -58,6 +58,19 @@ function query(pairs: [string, string | null][]): string {
   return kept.length === 0 ? "" : `?${new URLSearchParams(kept).toString()}`;
 }
 
+/**
+ * Search words, kept as the page would type them.
+ *
+ * Both tables seed their search box from `?q=`, so a click-through can land on
+ * the rows the answer just named — but only when there are words to carry, and
+ * an argument that is only whitespace must drop out rather than send `?q=`.
+ */
+function words(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
 /** The id an action created or changed, when the action reported one. */
 function fromResult(result: unknown, args: ToolArgs, key: string): string | null {
   if (result && typeof result === "object" && !Array.isArray(result)) {
@@ -248,6 +261,7 @@ export function linkForTool(
         href: `/candidates${query([
           ["stage", named(args.stage, PIPELINE_STAGES)],
           ["source", named(args.source, APPLICATION_SOURCES)],
+          ["q", words(args.query)],
           ["archived", args.archived === true || args.archived === "true" ? "1" : null],
         ])}`,
         label: "Open the candidate pipeline",
@@ -257,7 +271,10 @@ export function linkForTool(
       return { href: "/assessments", label: "Open the assessment suites" };
     case "list_prospects":
       return {
-        href: `/sourcing${query([["stage", named(args.stage, PROSPECT_STAGES)]])}`,
+        href: `/sourcing${query([
+          ["stage", named(args.stage, PROSPECT_STAGES)],
+          ["q", words(args.query)],
+        ])}`,
         label: "Open the sourcing board",
       };
     case "delete_prospect":

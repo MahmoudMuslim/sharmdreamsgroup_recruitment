@@ -129,32 +129,47 @@ export function tallyCandidates(rows: CountableCandidate[]): CandidateTally {
  * count the first, the read is bound by the second, and the assistant clips to
  * the third — so whoever lists rows says which of the three it is standing on.
  * A single rail has a count to quote; a stage *and* a channel together is a set
- * nothing counts, and the note admits that instead of inventing a number.
+ * nothing counts, and the note admits that instead of inventing a number. Search
+ * words belong to the third number only: they are matched over the rows the read
+ * carries, so the note says what a search could have reached before anybody is
+ * told a person is not in the pipeline.
  */
 export function candidateScopeNote(input: {
   archived: boolean;
   stage: string | null;
   source: string | null;
+  query?: string | null;
   shown: number;
   loaded: number;
   tally: CandidateTally;
 }): string {
-  const { archived, stage, source, shown, loaded, tally } = input;
+  const { archived, stage, source, query, shown, loaded, tally } = input;
   const view = archived ? "archive" : "live pipeline";
   const apps = (n: number) => `${n.toLocaleString()} application${n === 1 ? "" : "s"}`;
+  // The rails count the set, but a search only ever saw the rows the read
+  // carries, so an empty answer is a fact about the window first.
+  const text = query
+    ? ` “${query}” was matched against the ${loaded.toLocaleString()} row${
+        loaded === 1 ? "" : "s"
+      } the read carries, not against the ${view}, so an application outside that read cannot be found this way.`
+    : "";
   const scan = tally.truncated
     ? ` Counts are drawn from the newest ${CANDIDATE_COUNT_SCAN_LIMIT.toLocaleString()} applications, so they are a floor.`
     : "";
   const asked = stage && source ? `stage ${stage} and channel ${source}` : stage ?? source;
   if (loaded === 0) {
     return asked
-      ? `Nothing in the ${view} matches ${asked}, so this answer names none. It holds ${apps(tally.total)}.${scan}`
-      : `The ${view} holds ${apps(tally.total)}, but the read came back empty, so this answer names none.${scan}`;
+      ? `Nothing in the ${view} matches ${asked}, so this answer names none. It holds ${apps(tally.total)}.${scan}${text}`
+      : `The ${view} holds ${apps(tally.total)}, but the read came back empty, so this answer names none.${scan}${text}`;
   }
   const carried = `${loaded.toLocaleString()} row${loaded === 1 ? "" : "s"} the read carries (${CANDIDATE_ROW_LIMIT.toLocaleString()} at most)`;
+  // A one-row read is not a sample of the ceiling, it is under it, so the
+  // ceiling is dropped rather than named as if it had bound the answer.
   const window =
     shown >= loaded
-      ? `This answer names every one of the ${carried}.`
+      ? loaded === 1
+        ? "This answer names the only row the read carries."
+        : `This answer names every one of the ${carried}.`
       : `This answer names ${shown.toLocaleString()} of the ${carried}.`;
   const rail =
     stage && !source
@@ -164,12 +179,12 @@ export function candidateScopeNote(input: {
         : undefined;
 
   if (stage && source) {
-    return `Filtered to stage ${stage} and channel ${source}, which no rail counts as a pair. ${window} The ${view} holds ${apps(tally.total)}.${scan}`;
+    return `Filtered to stage ${stage} and channel ${source}, which no rail counts as a pair. ${window} The ${view} holds ${apps(tally.total)}.${scan}${text}`;
   }
   if (rail !== undefined) {
-    return `${(stage ?? source) as string} — ${apps(rail)}, out of ${apps(tally.total)} in the ${view}. This answer names ${shown.toLocaleString()} of that rail, taken from the ${carried}.${scan}`;
+    return `${(stage ?? source) as string} — ${apps(rail)}, out of ${apps(tally.total)} in the ${view}. This answer names ${shown.toLocaleString()} of that rail, taken from the ${carried}.${scan}${text}`;
   }
-  return `The ${view} holds ${apps(tally.total)}. ${window}${scan}`;
+  return `The ${view} holds ${apps(tally.total)}. ${window}${scan}${text}`;
 }
 
 export const CANDIDATE_SORTS: { key: CandidateSort; label: string }[] = [

@@ -57,7 +57,9 @@ import {
   DEDUPE_WINDOW,
   POOL_LIMIT,
   PROSPECT_STAGES,
+  prospectSearchWords,
   stageWord,
+  searchPool,
   type ProspectPoolTotals,
   type ProspectStage,
 } from "./pool-model";
@@ -169,7 +171,9 @@ export function SourcingBoard({
   const params = useSearchParams();
   const [pending, startTransition] = useTransition();
 
-  const [query, setQuery] = useState("");
+  // `?q=` seeds the search the way the candidates table does, so an assistant
+  // answer that ran a text search can link to a board showing the same rows.
+  const [query, setQuery] = useState(params.get("q") ?? "");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
   // Which record the editor holds, and the contact field a reach door sent the
@@ -213,15 +217,7 @@ export function SourcingBoard({
     router.push(next ? `/sourcing?stage=${next}` : "/sourcing");
   }
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return prospects;
-    return prospects.filter((p) =>
-      [p.full_name, p.email, p.phone, p.company, p.headline, p.location, p.linkedin_url]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(q))
-    );
-  }, [prospects, query]);
+  const filtered = useMemo(() => searchPool(prospects, query), [prospects, query]);
 
   /**
    * What this page was asked for, against what it can carry.
@@ -340,7 +336,7 @@ export function SourcingBoard({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search name, role, company, email or profile link"
+              placeholder={`Search ${prospectSearchWords()}`}
               aria-label="Search prospects"
               className="w-full rounded-xl border border-brand-line bg-white py-2.5 pl-10 pr-3 text-sm focus:border-brand-gold focus:outline-none"
             />

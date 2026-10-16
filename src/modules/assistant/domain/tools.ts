@@ -29,6 +29,8 @@ import {
 import {
   PROSPECT_STAGES,
   poolScopeNote,
+  prospectSearchWords,
+  searchPool,
   type ProspectStage,
 } from "@/app/(admin)/sourcing/pool-model";
 import { cancelWhatsAppJob, getOutbox, queueWhatsAppMessage } from "@/app/(admin)/whatsapp/actions";
@@ -45,6 +47,7 @@ import {
   APPLICATION_SOURCES,
   PIPELINE_STAGES,
   candidateScopeNote,
+  filterCandidates,
 } from "@/modules/candidates/domain/listFilters";
 import {
   getJobOpening,
@@ -694,22 +697,29 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_candidates",
     label: "Reading candidates",
     description:
-      "The most recent applications with their pipeline stage, AI match score, job, assessment attempt and tracking code, filtered the way the candidates page's own rails filter. Quote `scope_note` whenever the pipeline is counted: the rows listed are a window, the note holds the counts.",
+      "The most recent applications with their pipeline stage, AI match score, job, assessment attempt and tracking code, filtered the way the candidates page's rails and search box filter. Quote `scope_note` whenever the pipeline is counted or somebody is reported missing: the rows listed are a window, the note holds the counts and says what a search could have reached.",
     args: {
       stage: `string — optional, one of ${PIPELINE_STAGES.join(", ")} — the stage rail`,
       source: `string — optional, one of ${APPLICATION_SOURCES.join(", ")} — the channel rail`,
       archived:
         "boolean — optional, true for the archive the delete door files into instead of the live pipeline",
+      query:
+        "string — optional, the table's own search box: name, email, job title or tracking code, matched over the rows the read carries",
     },
     run: async (args) => {
       const stage = optionalChoice(args, "stage", PIPELINE_STAGES);
       const source = optionalChoice(args, "source", APPLICATION_SOURCES);
       const archived = bool(args, "archived", false);
+      const query = optionalStr(args, "query")?.trim() ?? "";
       const [rows, tally] = await Promise.all([
         getCandidateList(archived, stage, source),
         getCandidateTally(archived),
       ]);
-      const shown = rows.slice(0, ANSWER_ROWS);
+      // The rails already narrowed the query in the database, so only the text
+      // half is applied here — through the table's own predicate, so a match in
+      // the chat is a match the recruiter can reproduce by typing the words.
+      const matched = filterCandidates(rows, { stage: null, source: null, query, sort: "recent" });
+      const shown = matched.slice(0, ANSWER_ROWS);
       return {
         scope_note: candidateScopeNote({
           archived,
@@ -718,6 +728,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           shown: shown.length,
           loaded: rows.length,
           tally,
+          query: query || null,
         }),
         // So a hidden score is never described to the recruiter as "not screened".
         scores_masked: rows[0]?.scores_masked ?? false,
@@ -789,16 +800,19 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_prospects",
     label: "Reading sourcing pool",
     description:
-      "The sourced-prospect pool with each prospect's stage, origin and linked opening, filtered the way the board's own rails filter. Quote `pool_note` whenever the size of the pool is stated: the rows listed are a window, the counts in the note are the pool.",
+      "The sourced-prospect pool with each prospect's stage, origin and linked opening, filtered the way the board's rails and search box filter. Quote `pool_note` whenever the size of the pool is stated or a person is reported missing: the rows listed are a window, the counts in the note are the pool, and a search only reaches rows inside it.",
     args: {
       stage: `string — optional, one of ${PROSPECT_STAGES.join(", ")} — the rail to read`,
+      query: `string — optional, the board's own search box: ${prospectSearchWords()}, matched over the rows the read carries`,
     },
     run: async (args) => {
       const stage = optionalChoice(args, "stage", PROSPECT_STAGES) as ProspectStage | null;
+      const query = optionalStr(args, "query")?.trim() ?? "";
       const { prospects, totals } = await getProspectPool({ stage });
-      const shown = prospects.slice(0, ANSWER_ROWS);
+      const matched = searchPool(prospects, query);
+      const shown = matched.slice(0, ANSWER_ROWS);
       return {
-        pool_note: poolScopeNote(totals, stage, shown.length),
+        pool_note: poolScopeNote(totals, stage, shown.length, query || null),
         by_stage: totals.byStage,
         prospects: shown.map((prospect) => ({
           id: prospect.id,
