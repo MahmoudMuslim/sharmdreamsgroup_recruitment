@@ -108,24 +108,62 @@ export interface AssistantJobRead {
   jobs: AssistantJobRow[];
   /** Openings matching the filter, whether or not this read could carry them. */
   total: number;
+  /**
+   * The company the read was scoped to, by name.
+   *
+   * `null` when no company was asked for. Resolved before the openings are
+   * counted so an answer about a company with no roles can still say which
+   * company it looked at — and so the grid's own rail, which holds the same id,
+   * shows the set this read counted.
+   */
+  companyName: string | null;
+  /** True when a company id was passed and no company carries it. */
+  unknownCompany: boolean;
 }
 
 /** Openings newest first, with their live applicant count and the set's size. */
 export async function listJobOpenings(
-  filter: JobReadFilter = null
+  filter: JobReadFilter = null,
+  companyId: string | null = null
 ): Promise<AssistantJobRead> {
   await requireStaff("/jobs");
   const supabase = await createSupabaseServerClient();
 
+  // The company is named before its openings are counted, and an id no company
+  // carries is reported rather than answered with an empty list a caller could
+  // mistake for "that company has nothing".
+  let companyName: string | null = null;
+  if (companyId) {
+    const one = await supabase
+      .from("tenants_and_companies")
+      .select("name")
+      .eq("id", companyId)
+      .maybeSingle();
+    if (one.error) throw new Error(`That company could not be read: ${one.error.message}`);
+    if (!one.data) return { jobs: [], total: 0, companyName: null, unknownCompany: true };
+    companyName = (one.data as { name: string }).name;
+  }
+
   const rowsQuery = supabase.from("job_openings").select(JOB_SELECT);
   const countQuery = supabase.from("job_openings").select("id", { count: "exact", head: true });
-  const scoped =
-    filter === "HIREABLE"
-      ? {
-          rows: rowsQuery.in("status", [...HIREABLE_STATUSES]),
-          count: countQuery.in("status", [...HIREABLE_STATUSES]),
-        }
-      : { rows: rowsQuery.eq("status", filter), count: countQuery.eq("status", filter) };
+  // `null` adds no status predicate at all. `.eq("status", null)` would send
+  // `status=eq.null`, and Postgres rejects that for the enum with
+  // `invalid input value for enum job_status: "null"` — probed on the live pool.
+  const statusScoped =
+    filter === null
+      ? { rows: rowsQuery, count: countQuery }
+      : filter === "HIREABLE"
+        ? {
+            rows: rowsQuery.in("status", [...HIREABLE_STATUSES]),
+            count: countQuery.in("status", [...HIREABLE_STATUSES]),
+          }
+        : { rows: rowsQuery.eq("status", filter), count: countQuery.eq("status", filter) };
+  const scoped = {
+    rows: companyId ? statusScoped.rows.eq("tenant_id", companyId) : statusScoped.rows,
+    // The same two predicates on the count, so `total` describes the set the
+    // rows were taken from rather than a wider one.
+    count: companyId ? statusScoped.count.eq("tenant_id", companyId) : statusScoped.count,
+  };
 
   const [rows, count] = await Promise.all([
     scoped.rows
@@ -148,6 +186,8 @@ export async function listJobOpenings(
     jobs: ((rows.data ?? []) as unknown as RawJobRow[]).map(toJob),
     // A failed head count leaves nothing truer than the rows in hand.
     total: count.count ?? (rows.data ?? []).length,
+    companyName,
+    unknownCompany: false,
   };
 }
 

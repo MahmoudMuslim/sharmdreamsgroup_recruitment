@@ -192,6 +192,27 @@ function optionalStr(args: ToolArgs, key: string): string | undefined {
   return value.trim();
 }
 
+/** Ids reach the database as ids, so a name typed into an id argument is refused here. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * An id that is shaped like one, or `null` when the argument was left out.
+ *
+ * A company *name* passed as an id would otherwise reach Postgres and come back
+ * as "invalid input syntax for type uuid" — true, but useless to a model that has
+ * to retry. This says which argument is wrong and what it wants.
+ */
+function optionalId(args: ToolArgs, key: string): string | null {
+  const value = optionalStr(args, key);
+  if (value === undefined) return null;
+  if (!UUID_SHAPE.test(value)) {
+    throw new ToolArgumentError(
+      `"${key}" must be an id exactly as a read tool returned it — 36 characters, dashes included.`
+    );
+  }
+  return value;
+}
+
 function num(args: ToolArgs, key: string): number {
   const value = args[key];
   const parsed = typeof value === "string" ? Number(value) : value;
@@ -259,11 +280,12 @@ function optionalChoice(args: ToolArgs, key: string, words: readonly string[]): 
 }
 
 /** The set an openings read counted, in the words its scope note quotes back. */
-function openingScopeWords(filter: JobReadFilter): string {
-  if (!filter) return "openings";
+function openingScopeWords(filter: JobReadFilter, company: string | null = null): string {
+  const at = company ? ` at ${company}` : "";
+  if (!filter) return `openings${at}`;
   return filter === "HIREABLE"
-    ? "openings you can still hire for"
-    : `openings marked ${filter}`;
+    ? `openings you can still hire for${at}`
+    : `openings marked ${filter}${at}`;
 }
 
 /** Everything `create_job` / `update_job` write, so both paths stay identical. */
@@ -651,11 +673,13 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_jobs",
     label: "Reading job openings",
     description:
-      "Job openings newest first, with their status, company, department, location, salary band and applicant count, filtered the way the openings grid's own search box filters. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
+      "Job openings newest first, with their status, company, department, location, salary band and applicant count. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
     args: {
       status: `string — optional, one of ${JOB_STATUSES.join(
         ", "
       )}, or HIREABLE for every role a person may still be filed under. Omit for all four.`,
+      company:
+        "string — optional, one company's id from get_master_data (its id, not its name), so the count is that company's openings rather than the group's",
       query: `string — optional, the grid's own search box: ${openingSearchWords()}, matched over the openings this read carries`,
     },
     run: async (args) => {
@@ -666,17 +690,24 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         );
       }
       const filter = (word ?? null) as JobReadFilter;
+      const company = optionalId(args, "company");
       const query = optionalStr(args, "query")?.trim() ?? "";
-      const { jobs, total } = await listJobOpenings(filter);
-      // The status rail is answered by the query itself, so only the words are
+      // Status and company are answered by the query itself, in the database, so
+      // the count is the set's size rather than the window's. Only the words are
       // applied here — through the grid's own predicate, so a role the chat finds
       // is a role the recruiter can find by typing the same letters.
+      const { jobs, total, companyName, unknownCompany } = await listJobOpenings(filter, company);
+      if (unknownCompany) {
+        throw new ToolArgumentError(
+          "No company carries that id. get_master_data lists the group's companies with their ids."
+        );
+      }
       const matched = searchOpenings(jobs, query);
       return {
         scope_note: openingReadNote(
           total,
           jobs.length,
-          openingScopeWords(filter),
+          openingScopeWords(filter, company ? companyName : null),
           matched.length,
           query || null
         ),

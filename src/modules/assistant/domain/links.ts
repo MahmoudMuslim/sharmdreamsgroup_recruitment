@@ -254,13 +254,14 @@ export function linkForTool(
     /* Reads whose answer is a page's own table — show the table, not just the rows. */
     case "list_jobs":
       // The grid takes both its rails and its search box out of the address bar,
-      // so the status the answer counted travels with the link and the click
-      // through shows the set that was counted. A value the rails do not offer
-      // is dropped here rather than sent, because a parameter the page cannot
-      // show makes the link look filtered while the grid holds everything.
+      // so the status and the company the answer counted travel with the link and
+      // the click through shows that set. A value the rails do not offer is
+      // dropped here rather than sent, because a parameter the page cannot show
+      // makes the link look filtered while the grid holds everything.
       return {
         href: `/jobs${query([
           ["status", named(args.status, [...JOB_STATUSES, "HIREABLE"])],
+          ["company", token(args.company)],
           ["q", words(args.query)],
         ])}`,
         label: "Open the openings",
