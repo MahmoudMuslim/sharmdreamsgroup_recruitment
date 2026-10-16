@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Bell,
   Building2,
@@ -13,6 +14,10 @@ import {
   Sparkles,
 } from "lucide-react";
 import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
+import {
+  searchSettingRows,
+  settingSearchWords,
+} from "@/modules/settings/domain/settingSearch";
 import { saveSettings } from "@/app/(admin)/settings/actions";
 import { Button, Card } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -196,6 +201,10 @@ function Field({
  * `SettingsShell` — the console used to carry its own tab strip, which meant
  * two navigation rows on screen at once and a settings page that scrolled
  * horizontally twice.
+ *
+ * `?q=` seeds the box the same way, so an assistant answer that searched the
+ * settings lands on the controls it named rather than on a full section. Moving
+ * on the dock drops the words with the section, which is what the other grids do.
  */
 export function SettingsConsole({
   initialValues,
@@ -206,11 +215,21 @@ export function SettingsConsole({
   editable: boolean;
   section: string;
 }) {
+  const params = useSearchParams();
   const [draft, setDraft] = useState<Draft>(initialValues);
   const [pending, startTransition] = useTransition();
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  // Arriving on this route again re-renders rather than remounts, so the last
+  // value read off the address bar is tracked and typing wins until the URL
+  // itself changes — the same rule the openings grid follows.
+  const incomingQuery = params.get("q");
+  const [query, setQuery] = useState(incomingQuery ?? "");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setQuery(incomingQuery ?? "");
+  }
 
   const active = SETTINGS_SCHEMA.find((s) => s.id === section) ?? SETTINGS_SCHEMA[0];
   const Icon = ICONS[active?.icon ?? ""] ?? Sparkles;
@@ -224,14 +243,7 @@ export function SettingsConsole({
 
   const visible = useMemo(() => {
     if (!active) return [];
-    const q = query.trim().toLowerCase();
-    if (!q) return active.controls;
-    return active.controls.filter(
-      (control) =>
-        control.label.toLowerCase().includes(q) ||
-        control.key.toLowerCase().includes(q) ||
-        (control.help ?? "").toLowerCase().includes(q)
-    );
+    return searchSettingRows(active.controls, query);
   }, [active, query]);
 
   if (!active) return null;
@@ -275,14 +287,17 @@ export function SettingsConsole({
         </div>
       </header>
 
-      {active.controls.length > 4 && (
+      {/* A section this short shows no box of its own — unless the address bar
+          brought words, which is how a chat link's filter stays editable instead
+          of quietly opening a section nobody filtered. */}
+      {(active.controls.length > 4 || (incomingQuery ?? "").trim() !== "") && (
         <div className="flex items-center gap-2 border-b border-brand-line px-5 py-3">
           <Search className="h-4 w-4 shrink-0 text-brand-ink/35" aria-hidden />
           <input
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Search ${active.controls.length} settings in “${active.title}”…`}
+            placeholder={`Search ${active.controls.length} settings by ${settingSearchWords()}…`}
             aria-label="Search settings"
             className="w-full bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none"
           />

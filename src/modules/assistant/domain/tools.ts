@@ -57,6 +57,12 @@ import {
   modelSearchWords,
   searchModels,
 } from "@/modules/settings/domain/modelSearch";
+import {
+  ALL_SETTINGS,
+  searchSettings,
+  settingReadNote,
+  settingSearchWords,
+} from "@/modules/settings/domain/settingSearch";
 import { SECTORS } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES, openingReadNote } from "@/modules/jobs/domain/hireable";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
@@ -1088,12 +1094,14 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "get_settings",
     label: "Reading settings",
     description:
-      "Organisation, assessment, security and AI settings currently in force, plus the staff roster, role permission grants and notification templates.",
-    args: {},
-    run: async () => {
+      `Organisation, assessment, security and AI settings currently in force, plus the staff roster, role permission grants and notification templates. \`query\` is the settings console's own box and runs over every setting it can show — by ${settingSearchWords()} — so an answer that names nothing says the platform has no such setting, and not merely that nobody has changed it. Most settings have no row of their own until someone edits them: a match with \`stored: false\` is real and runs on the default the code ships with.`,
+    args: {
+      query: `string — optional, the console's own search box: ${settingSearchWords()}, matched over every setting the console can show. Omit it for every stored value.`,
+    },
+    run: async (args) => {
       const bundle = await loadSettings();
-      return {
-        values: bundle.values,
+      const query = optionalStr(args, "query")?.trim() ?? "";
+      const rest = {
         companies: bundle.companies.map((company) => ({
           id: company.id,
           name: company.name,
@@ -1114,6 +1122,31 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           channel: template.channel,
           is_active: template.is_active,
         })),
+      };
+      if (!query) return { values: bundle.values, ...rest };
+      // The schema is the searched set, not the stored rows — so a match can be
+      // reported with no value beside it rather than left out of the answer.
+      const listed = searchSettings(query).map((control) => {
+        const value = bundle.values[control.key];
+        return {
+          key: control.key,
+          name: control.label,
+          section: control.sectionTitle,
+          description: control.help ?? null,
+          value: value ?? null,
+          stored: value !== undefined,
+        };
+      });
+      return {
+        query,
+        settings: listed,
+        settings_note: settingReadNote({
+          search: query,
+          searched: ALL_SETTINGS.length,
+          matched: listed.length,
+          stored: listed.filter((row) => row.stored).length,
+        }),
+        ...rest,
       };
     },
   },
@@ -1865,7 +1898,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "save_settings",
     label: "Changing settings",
     description:
-      "Change one or more settings keys. Only keys that already appear in get_settings are accepted; each change is written to the audit log.",
+      "Change one or more settings keys. Only keys the settings console can show are accepted — all of them, whether or not a row has ever been stored, so a setting nobody has changed yet is writable. Each change is written to the audit log.",
     args: { values: "object — setting key to new value, e.g. {\"ai.match_threshold_advance\": 75}" },
     run: async (args) => {
       const values = args.values;

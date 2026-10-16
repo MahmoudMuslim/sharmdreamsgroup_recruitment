@@ -21,6 +21,8 @@ import {
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
+import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
+import { settingSearchWords } from "@/modules/settings/domain/settingSearch";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
 import { BUCKETS } from "@/app/(admin)/files/file-browser-types";
 import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
@@ -130,6 +132,9 @@ export const ASSISTANT_RULES: readonly string[] = [
   `   On the templates console ?tab=${TEMPLATES_TAB_IDS.join("|")} is the channel whose rows it lists — so`,
   "   [the email letters](/settings?area=access&section=templates&tab=email) is a real link, and an empty tab",
   "   says it holds no rows rather than opening a different channel;",
+  `   The Platform area's sections are ${SETTINGS_SCHEMA.map((section) => section.id).join("|")}, and its console box`,
+  `   searches them by ${settingSearchWords()}, so [the password rule](/settings?area=platform&section=security&q=password)`,
+  "   is a real link — words belong in it only when one section holds every setting the answer names;",
   "   Provider health only probes when a person opens that tab itself, so a link there shows nothing run;",
   "   /assessments takes ?q= for its own suite box, and /files takes ?q=,",
   `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,

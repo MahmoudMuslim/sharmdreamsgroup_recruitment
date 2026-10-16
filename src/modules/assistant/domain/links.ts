@@ -9,6 +9,7 @@ import {
   TEMPLATES_CONSOLE_TABS,
   templatesTabForChannel,
 } from "@/modules/settings/domain/settingsNav";
+import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -166,6 +167,49 @@ function fromResult(result: unknown, args: ToolArgs, key: string): string | null
 }
 
 const JOB_VIEW: AssistantLink = { href: "/jobs", label: "View the opening" };
+
+/** The Platform area's console, when no single section can be named. */
+const SETTINGS_CONSOLE: AssistantLink = { href: "/settings?area=platform", label: "Open the settings" };
+
+/**
+ * The setting keys a settings answer or write is about.
+ *
+ * A searched read lists objects with their keys; a write reports the keys it saved.
+ * A refusal reports none, and no keys name no section, so a failed change needs no
+ * special case here — it lands on the console like a search that reached nothing.
+ */
+function settingKeys(result: unknown): string[] {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+  const record = result as Record<string, unknown>;
+  const list = record.settings ?? record.saved;
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((row) => (typeof row === "string" ? row : (row as { key?: unknown } | null)?.key))
+    .filter((key): key is string => typeof key === "string");
+}
+
+/**
+ * The settings console, opened on the section that holds what the answer named.
+ *
+ * `?q=` is the console's own box and reads the same columns the tool searched, so
+ * the words travel with the link only when one section holds every match: a search
+ * that reached across two sections would land on a box showing none of the rows the
+ * answer counted, which is a filter that lies. A write passes no words — the console
+ * submits a whole section at once, so narrowing the box to one key would hide the
+ * others that changed beside it.
+ */
+function settingsView(keys: string[], q: string | null): AssistantLink {
+  const one = settingsSection(keys);
+  if (!one) return SETTINGS_CONSOLE;
+  return {
+    href: `/settings${query([
+      ["area", "platform"],
+      ["section", one.id],
+      ["q", q],
+    ])}`,
+    label: `Open the ${one.title} settings`,
+  };
+}
 
 /**
  * Screens that open the exact record from the query string. Every other admin
@@ -352,7 +396,7 @@ export function linkForTool(
     case "save_model_routing":
       return modelsTab("routing");
     case "save_settings":
-      return { href: "/settings", label: "Open settings" };
+      return settingsView(settingKeys(result), null);
     case "dashboard_analytics":
       return { href: "/dashboard", label: "Open the dashboard" };
     /* Reads whose answer is a page's own table — show the table, not just the rows. */
@@ -437,7 +481,7 @@ export function linkForTool(
       // views of one page, and this page opens on routing.
       return modelsTab("catalogue", words(args.query));
     case "get_settings":
-      return { href: "/settings", label: "Open settings" };
+      return settingsView(settingKeys(result), words(args.query));
     case "get_master_data":
       return { href: "/settings?area=organisation", label: "Open the master data" };
     default:
