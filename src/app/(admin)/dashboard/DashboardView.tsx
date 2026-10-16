@@ -509,7 +509,21 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
 
   const thisWeek = analytics.applications_last_14_days.slice(7).reduce((s, d) => s + d.count, 0);
   const lastWeek = analytics.applications_last_14_days.slice(0, 7).reduce((s, d) => s + d.count, 0);
-  const weekDelta = lastWeek === 0 ? thisWeek : Math.round(((thisWeek - lastWeek) / lastWeek) * 100);
+  /**
+   * A share needs a denominator, and an empty prior week has none.
+   *
+   * Dividing by zero used to be dodged by handing back `thisWeek` instead — a
+   * count of arrivals printed inside a chip that says "% vs prior week", so the
+   * quiet start of a pipeline read as a 4% rise rather than as nothing to compare
+   * against. `null` means no ratio exists, and the tile prints no chip for it.
+   */
+  const weekDelta = lastWeek === 0 ? null : Math.round(((thisWeek - lastWeek) / lastWeek) * 100);
+  const arrivalsHint =
+    lastWeek > 0
+      ? `${thisWeek} in the last 7 days`
+      : thisWeek > 0
+        ? `${thisWeek} in the last 7 days, none in the 7 before`
+        : "Nothing arrived in either of the last two weeks";
 
   const trendMonths = analytics.time_to_hire_trend;
   const maxTrend = Math.max(...trendMonths.map((p) => p.avg_days), 1);
@@ -747,9 +761,9 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         <Tile
           label="Applications"
           value={analytics.total_applications.toLocaleString()}
-          hint={`${thisWeek} in the last 7 days`}
+          hint={arrivalsHint}
           icon={<Users className="h-5 w-5" aria-hidden />}
-          delta={{ value: weekDelta, label: "% vs prior week" }}
+          delta={weekDelta === null ? null : { value: weekDelta, label: "% vs prior week" }}
           detail="Every live record"
           onClick={() => drill({ type: "all" })}
         />

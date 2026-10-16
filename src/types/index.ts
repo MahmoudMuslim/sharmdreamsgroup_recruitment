@@ -369,11 +369,6 @@ export interface FitScoreBucket {
   count: number;
 }
 
-export interface DiversityMetric {
-  dimension: string;
-  distribution: { label: string; count: number; percentage: number }[];
-}
-
 export interface TimeToHirePoint {
   month: string;
   avg_days: number;
@@ -433,7 +428,6 @@ export interface DashboardAnalytics {
   pipeline: PipelineFunnelStep[];
   channels: ChannelEffectiveness[];
   fit_distribution: FitScoreBucket[];
-  diversity: DiversityMetric[];
   time_to_hire_trend: TimeToHirePoint[];
   candidates: DashboardCandidate[];
   /** Every opening the board knows about, busiest first. */

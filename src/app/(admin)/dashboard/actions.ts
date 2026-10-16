@@ -183,7 +183,9 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
       ? 0
       : Math.round(scores.reduce((total, s) => total + s, 0) / scores.length);
 
-  // --- Application velocity (last 14 days) -----------------------------------
+  // --- Applications arriving, per day (last 14 days) -------------------------
+  // Counts of `created_at`, so a day's bar is how many people started an
+  // application then — nothing here says how far any of them got.
   const applications_last_14_days: { date: string; count: number }[] = [];
   for (let offset = 13; offset >= 0; offset -= 1) {
     const day = new Date();
@@ -358,7 +360,6 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     fit_distribution: masked
       ? fit_distribution.map((bucket) => ({ ...bucket, count: 0 }))
       : fit_distribution,
-    diversity: [],
     time_to_hire_trend,
     candidates,
     roles,
