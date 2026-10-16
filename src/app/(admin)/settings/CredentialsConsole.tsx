@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -27,6 +28,7 @@ import {
   type CredentialView,
 } from "@/modules/settings/application/credential-actions";
 import { PROVIDER_GROUPS, type ProviderGroup } from "@/modules/settings/domain/providers";
+import { credentialsTab } from "@/modules/settings/domain/settingsNav";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
@@ -331,6 +333,9 @@ function CredentialCard({
  * the audit trail in its own render, so no card waits on a round trip after
  * hydration. `Refresh` re-reads through the same actions this console used to
  * fire on mount.
+ *
+ * The group tab is carried in `?tab=` like the other two tabbed consoles, so
+ * clicking one leaves an address that names what is on screen.
  */
 export function CredentialsConsole({
   encryptionConfigured,
@@ -343,8 +348,25 @@ export function CredentialsConsole({
   initialCredentials: CredentialView[];
   initialAudit: AuditEntryView[];
 }) {
+  const params = useSearchParams();
+  const pathname = usePathname();
   const [credentials, setCredentials] = useState<CredentialView[]>(initialCredentials);
-  const [tab, setTab] = useState<ProviderGroup | null>(null);
+  /**
+   * The provider group is read from `?tab=` and written back when a tab is
+   * clicked, so a link names the group whose keys it is talking about instead of
+   * whichever tab the console happens to open on. Unknown names drop the
+   * parameter's effect rather than opening an empty panel — `active` below still
+   * falls back to the first group that holds credentials. Nothing is typed here,
+   * but the same route reached again re-renders rather than remounts, so the last
+   * value taken from the address bar is tracked and applied the way the lists do.
+   */
+  const incomingTab = credentialsTab(params.get("tab"));
+  const [tab, setTab] = useState<ProviderGroup | null>(incomingTab);
+  const [lastAppliedTab, setLastAppliedTab] = useState<ProviderGroup | null>(incomingTab);
+  if (incomingTab !== lastAppliedTab) {
+    setLastAppliedTab(incomingTab);
+    setTab(incomingTab);
+  }
   const [audit, setAudit] = useState<AuditEntryView[]>(initialAudit);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -380,6 +402,13 @@ export function CredentialsConsole({
   })).filter((group) => group.items.length > 0);
 
   const active = tab && groups.some((group) => group.id === tab) ? tab : groups[0]?.id;
+
+  function openTab(next: ProviderGroup) {
+    setTab(next);
+    const search = new URLSearchParams(window.location.search);
+    search.set("tab", next);
+    window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+  }
 
   return (
     <div className="space-y-6">
@@ -431,7 +460,7 @@ export function CredentialsConsole({
                 id={`credentials-tab-${group.id}`}
                 aria-selected={active === group.id}
                 aria-controls={`credentials-panel-${group.id}`}
-                onClick={() => setTab(group.id)}
+                onClick={() => openTab(group.id)}
                 className={cn(
                   "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
                   active === group.id

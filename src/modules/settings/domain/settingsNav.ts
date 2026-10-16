@@ -1,4 +1,6 @@
+import { PROVIDER_GROUPS, type ProviderGroup } from "./providers";
 import { SETTINGS_SCHEMA } from "./schema";
+import type { NotificationChannel } from "./types";
 
 /**
  * The settings page's navigation tree.
@@ -208,4 +210,56 @@ export function modelConsoleTab(id: string | undefined | null): ModelConsoleTabI
   return MODEL_CONSOLE_TAB_IDS.includes(id as ModelConsoleTabId)
     ? (id as ModelConsoleTabId)
     : DEFAULT_MODEL_TAB;
+}
+
+/**
+ * The Notification templates console's channel tabs, one level below
+ * `section=templates`.
+ *
+ * Each tab names the channel whose rows it lists, so an answer that rewrote an
+ * email template can link straight to the Email tab instead of the WhatsApp one
+ * it would otherwise land on. The `portal` tab is the odd one: it is the console's
+ * name for `IN_APP` rows, which are edited as copy even though no flow reads one
+ * today, so the tab appears only when such a row exists — or when the address bar
+ * asks for it, which is how a link about a portal notice stays truthful.
+ */
+export type TemplatesTabId = "whatsapp" | "email" | "portal";
+
+export const TEMPLATES_CONSOLE_TABS: Record<
+  TemplatesTabId,
+  { label: string; channel: NotificationChannel }
+> = {
+  whatsapp: { label: "WhatsApp", channel: "WHATSAPP" },
+  email: { label: "Email", channel: "EMAIL" },
+  portal: { label: "Portal notices", channel: "IN_APP" },
+};
+
+export const DEFAULT_TEMPLATES_TAB: TemplatesTabId = "whatsapp";
+
+export const TEMPLATES_TAB_IDS = Object.keys(TEMPLATES_CONSOLE_TABS) as TemplatesTabId[];
+
+/** The tab that lists a channel's rows, or `null` for a channel with no tab. */
+export function templatesTabForChannel(channel: unknown): TemplatesTabId | null {
+  const found = TEMPLATES_TAB_IDS.find((id) => TEMPLATES_CONSOLE_TABS[id].channel === channel);
+  return found ?? null;
+}
+
+/** A tab named in a URL, falling back to the console's first view. */
+export function templatesTab(id: string | undefined | null): TemplatesTabId {
+  return TEMPLATES_TAB_IDS.includes(id as TemplatesTabId)
+    ? (id as TemplatesTabId)
+    : DEFAULT_TEMPLATES_TAB;
+}
+
+/**
+ * The API keys console's provider-group tabs, one level below `section=credentials`.
+ *
+ * The groups themselves are `providers`'s table, so a provider added to a group
+ * lands in a tab without a second list being kept here. This is only the reader
+ * for the `?tab=` parameter — the console shows a tab for a group when that group
+ * holds credentials, and a parameter naming an empty group falls back to the first
+ * one it has rather than opening a panel with nothing in it.
+ */
+export function credentialsTab(id: string | undefined | null): ProviderGroup | null {
+  return PROVIDER_GROUPS.find((group) => group.id === id)?.id ?? null;
 }

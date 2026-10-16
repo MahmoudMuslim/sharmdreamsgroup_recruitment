@@ -10,6 +10,22 @@
 /** Values a template may interpolate. Empty string means "known, no value". */
 export type TemplateVars = Record<string, string>;
 
+/**
+ * What a template write reports back.
+ *
+ * The row's channel and key travel out of the action because they are the only
+ * things that say where the change can be seen: the console files a row under its
+ * channel's tab, so a link that opens WhatsApp beside the email a recruiter just
+ * rewrote reads as though the save went somewhere else. A refusal carries neither
+ * — nothing was written, so there is no row to point at.
+ */
+export interface TemplateWriteResult {
+  ok: boolean;
+  error?: string;
+  channel?: string;
+  key?: string;
+}
+
 /** Older seeded copy used these names; both spellings render. */
 const PLACEHOLDER_ALIASES: Record<string, string> = {
   scheduled_at: "interview_when",

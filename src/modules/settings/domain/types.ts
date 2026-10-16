@@ -90,10 +90,20 @@ export interface StaffInvite {
   created_at: string;
 }
 
+/**
+ * The channels a notification template can belong to.
+ *
+ * Named because the templates console's tab strip, the actions that write a row
+ * and the links the assistant emits all have to agree on which channels exist —
+ * a fourth channel added here must show up as a tab and a link, not silently as
+ * a row nobody can reach.
+ */
+export type NotificationChannel = "EMAIL" | "WHATSAPP" | "IN_APP";
+
 export interface NotificationTemplate {
   id: string;
   key: string;
-  channel: "EMAIL" | "WHATSAPP" | "IN_APP";
+  channel: NotificationChannel;
   subject: string | null;
   body: string;
   is_active: boolean;

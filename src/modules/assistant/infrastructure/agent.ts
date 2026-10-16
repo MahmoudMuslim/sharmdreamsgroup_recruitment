@@ -27,6 +27,7 @@ import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
 import {
   MODEL_CONSOLE_TAB_IDS,
   SETTINGS_NAV,
+  TEMPLATES_TAB_IDS,
 } from "@/modules/settings/domain/settingsNav";
 import type { ChatCompletionMessage } from "@/types";
 
@@ -126,6 +127,9 @@ export const ASSISTANT_RULES: readonly string[] = [
   `   /settings takes ?area=${SETTINGS_NAV.map((area) => area.id).join("|")}&section=<one of that area's sections>,`,
   `   and on the AI models console ?tab=${MODEL_CONSOLE_TAB_IDS.join("|")} plus ?q= for its catalogue box — so`,
   "   [the gemini models](/settings?area=providers&section=models&tab=catalogue&q=gemini) is a real link.",
+  `   On the templates console ?tab=${TEMPLATES_TAB_IDS.join("|")} is the channel whose rows it lists — so`,
+  "   [the email letters](/settings?area=access&section=templates&tab=email) is a real link, and an empty tab",
+  "   says it holds no rows rather than opening a different channel;",
   "   Provider health only probes when a person opens that tab itself, so a link there shows nothing run;",
   "   /assessments takes ?q= for its own suite box, and /files takes ?q=,",
   `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,

@@ -6,6 +6,8 @@ import { bucketInfo, isStoredPath } from "@/app/(admin)/files/file-browser-types
 import {
   MODEL_CONSOLE_TABS,
   type ModelConsoleTabId,
+  TEMPLATES_CONSOLE_TABS,
+  templatesTabForChannel,
 } from "@/modules/settings/domain/settingsNav";
 import type { ToolArgs } from "./tools";
 
@@ -125,6 +127,31 @@ function modelsTab(tab: ModelConsoleTabId, q: string | null = null): AssistantLi
     ])}`,
     label: `Open the ${MODEL_CONSOLE_TABS[tab].toLowerCase()}`,
   };
+}
+
+/**
+ * The templates console, opened on the channel tab that holds the row.
+ *
+ * Templates are one page split into WhatsApp, Email and Portal notices, and it
+ * opens on WhatsApp — so a link about an email letter has to carry the tab or it
+ * lands on phone copy. The channel comes back from the action rather than from
+ * the model's arguments, because the tool has no channel parameter: the stored
+ * row is the only thing that knows which tab the change is visible on. A refusal
+ * reports no channel, and the link degrades to the console itself instead of
+ * naming a tab nobody touched.
+ */
+function templatesView(channel: unknown): AssistantLink {
+  const tab = templatesTabForChannel(channel);
+  return tab
+    ? {
+        href: `/settings${query([
+          ["area", "access"],
+          ["section", "templates"],
+          ["tab", tab],
+        ])}`,
+        label: `Open the ${TEMPLATES_CONSOLE_TABS[tab].label} tab`,
+      }
+    : { href: "/settings?area=access&section=templates", label: "Open the templates" };
 }
 
 /** The id an action created or changed, when the action reported one. */
@@ -295,10 +322,9 @@ export function linkForTool(
     case "save_notification_template":
     case "reset_notification_template":
     case "delete_notification_template":
-      return {
-        href: "/settings?area=access&section=templates",
-        label: "Open the templates",
-      };
+      return templatesView(
+        (result as { channel?: unknown } | undefined | null)?.channel
+      );
     case "save_master_record":
     case "delete_master_record": {
       const entity = fromArgs(args, "entity");

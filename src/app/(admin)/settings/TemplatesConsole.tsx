@@ -1,7 +1,17 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Inbox, Loader2, Mail, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
+import { usePathname, useSearchParams } from "next/navigation";
+import {
+  Check,
+  Inbox,
+  Loader2,
+  Mail,
+  MessageCircle,
+  RotateCcw,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
 import {
   deleteNotificationTemplate,
   resetNotificationTemplate,
@@ -17,7 +27,20 @@ import {
   shippedTemplate,
   templateIsWired,
 } from "@/modules/settings/domain/templates";
+import {
+  TEMPLATES_CONSOLE_TABS,
+  TEMPLATES_TAB_IDS,
+  templatesTab,
+  type TemplatesTabId,
+} from "@/modules/settings/domain/settingsNav";
 import type { NotificationTemplate } from "@/modules/settings/domain/types";
+
+/** Typed by the shared tab table, so a tab added there has to be given an icon here. */
+const TAB_ICONS: Record<TemplatesTabId, LucideIcon> = {
+  whatsapp: MessageCircle,
+  email: Mail,
+  portal: Inbox,
+};
 
 function Editor({
   template,
@@ -275,6 +298,11 @@ function Editor({
  * Notification template editor. Rows are read at send time by the dispatch
  * paths — `resolveTemplate` in whatsapp-dispatch.ts for WhatsApp and
  * `resolveEmailCopy` in candidate-notifications.ts for email.
+ *
+ * The channel tab strip is drawn from the shared table in `settingsNav`, so a tab
+ * is a view the assistant can link to and a link the assistant writes is a tab
+ * that exists — which matters because a row's channel is the only thing that says
+ * where to find it.
  */
 export function TemplatesConsole({
   templates,
@@ -283,27 +311,51 @@ export function TemplatesConsole({
   templates: NotificationTemplate[];
   editable: boolean;
 }) {
-  const [tab, setTab] = useState("whatsapp");
+  const params = useSearchParams();
+  const pathname = usePathname();
   const [deleted, setDeleted] = useState<string[]>([]);
+
+  /**
+   * The channel tab is read from `?tab=` and written back when a tab is clicked,
+   * so an answer about an email template links to the Email tab rather than to
+   * whichever tab the page happens to open on. Typing here is impossible, but the
+   * same route reached again re-renders rather than remounts, so the last value
+   * taken from the address bar is tracked and applied the way the list pages do.
+   */
+  const incomingTab = templatesTab(params.get("tab"));
+  const [tab, setTab] = useState<TemplatesTabId>(incomingTab);
+  const [lastAppliedTab, setLastAppliedTab] = useState(incomingTab);
+  if (incomingTab !== lastAppliedTab) {
+    setLastAppliedTab(incomingTab);
+    setTab(incomingTab);
+  }
 
   // The row is dropped locally as well as server-side, because a revalidated
   // payload can arrive a navigation later under partial prefetching — and a
   // template that is still on screen after "Deleted" reads like a lie.
   const rows = templates.filter((template) => !deleted.includes(template.id));
 
-  const whatsapp = rows.filter((template) => template.channel === "WHATSAPP");
-  const email = rows.filter((template) => template.channel === "EMAIL");
-  const portal = rows.filter((template) => template.channel === "IN_APP");
+  /**
+   * One tab per channel, in the shared table's order, each listing the rows whose
+   * channel matches. Portal notices are the exception: no flow reads an `IN_APP`
+   * row today, so an empty tab would advertise a channel nobody uses — it appears
+   * when such a row exists, or when the address bar asks for it, because a link
+   * about a portal notice that opened on the WhatsApp tab would be the lie in the
+   * other direction.
+   */
+  const tabs = TEMPLATES_TAB_IDS.map((key) => ({
+    key,
+    label: TEMPLATES_CONSOLE_TABS[key].label,
+    icon: TAB_ICONS[key],
+    rows: rows.filter((t) => t.channel === TEMPLATES_CONSOLE_TABS[key].channel),
+  })).filter((option) => option.key !== "portal" || option.rows.length > 0 || incomingTab === "portal");
 
-  const tabs = [
-    { key: "whatsapp", label: "WhatsApp", icon: MessageCircle, rows: whatsapp },
-    { key: "email", label: "Email", icon: Mail, rows: email },
-    // An IN_APP row is edited as written copy even though no flow reads one
-    // today, so a stray row never becomes invisible and uneditable.
-    ...(portal.length > 0
-      ? [{ key: "portal", label: "Portal notices", icon: Inbox, rows: portal }]
-      : []),
-  ];
+  function openTab(next: TemplatesTabId) {
+    setTab(next);
+    const search = new URLSearchParams(window.location.search);
+    search.set("tab", next);
+    window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+  }
 
   return (
     <Card className="p-5 sm:p-6">
@@ -351,7 +403,7 @@ export function TemplatesConsole({
             id={`templates-tab-${option.key}`}
             aria-selected={tab === option.key}
             aria-controls={`templates-panel-${option.key}`}
-            onClick={() => setTab(option.key)}
+            onClick={() => openTab(option.key)}
             className={cn(
               "inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition",
               tab === option.key

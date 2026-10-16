@@ -4,7 +4,7 @@ import { revalidatePath, updateTag } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
-import { shippedTemplate } from "@/modules/settings/domain/templates";
+import { shippedTemplate, type TemplateWriteResult } from "@/modules/settings/domain/templates";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { printableValue } from "@/modules/activity/domain/trail";
@@ -298,7 +298,7 @@ export async function saveNotificationTemplate(input: {
   subject: string | null;
   body: string;
   is_active: boolean;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<TemplateWriteResult> {
   const user = await requireStaff("/settings");
 
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
@@ -326,7 +326,9 @@ export async function saveNotificationTemplate(input: {
   // The form posts the whole row, so a save that moved nothing is recorded as
   // nothing: an audit row and a trail row for an unchanged template would make
   // the log unreadable without describing a change.
-  if (Object.keys(edits).length === 0) return { ok: true };
+  if (Object.keys(edits).length === 0) {
+    return { ok: true, channel: previous.channel, key: previous.key };
+  }
 
   const { error } = await supabase
     .from("notification_templates")
@@ -358,7 +360,7 @@ export async function saveNotificationTemplate(input: {
   });
 
   revalidatePath("/settings");
-  return { ok: true };
+  return { ok: true, channel: previous.channel, key: previous.key };
 }
 
 /**
@@ -371,7 +373,7 @@ export async function saveNotificationTemplate(input: {
  */
 export async function resetNotificationTemplate(input: {
   id: string;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<TemplateWriteResult> {
   const user = await requireStaff("/settings");
 
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
@@ -401,7 +403,9 @@ export async function resetNotificationTemplate(input: {
   };
 
   const edits = copyEdits(row, next);
-  if (Object.keys(edits).length === 0) return { ok: true };
+  if (Object.keys(edits).length === 0) {
+    return { ok: true, channel: row.channel, key: row.key };
+  }
 
   const { error } = await supabase
     .from("notification_templates")
@@ -432,7 +436,7 @@ export async function resetNotificationTemplate(input: {
   });
 
   revalidatePath("/settings");
-  return { ok: true };
+  return { ok: true, channel: row.channel, key: row.key };
 }
 
 /**
@@ -445,7 +449,7 @@ export async function resetNotificationTemplate(input: {
  */
 export async function deleteNotificationTemplate(input: {
   id: string;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<TemplateWriteResult> {
   const user = await requireStaff("/settings");
 
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
@@ -494,7 +498,10 @@ export async function deleteNotificationTemplate(input: {
   });
 
   revalidatePath("/settings");
-  return { ok: true };
+  // The channel travels back even though the row is gone, so the link the chat
+  // emits names the tab the row was filed under — and an empty portal tab stays
+  // visible when the address bar asks for it, which is how "deleted" can be read.
+  return { ok: true, channel: row.channel, key: row.key };
 }
 
 /** Recent settings activity, newest first. */
