@@ -37,7 +37,11 @@ import { cancelWhatsAppJob, getOutbox, queueWhatsAppMessage } from "@/app/(admin
 import {
   OUTBOX_BUCKETS,
   emailScopeNote,
+  emailSearchWords,
   outboxScopeNote,
+  queueSearchWords,
+  searchEmails,
+  searchQueue,
   type OutboxBucket,
 } from "@/app/(admin)/whatsapp/outbox-model";
 import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
@@ -69,6 +73,11 @@ import {
   getQuestionsForEditor,
   getTemplateDetail,
 } from "@/app/(admin)/assessments/actions";
+import {
+  searchSuites,
+  suiteReadNote,
+  suiteSearchWords,
+} from "@/modules/assessment/domain/suiteSearch";
 import {
   deleteTemplate,
   saveTemplate,
@@ -117,6 +126,11 @@ import {
   setGateQuestionActive,
 } from "@/app/(admin)/apply-questions/actions";
 import { deleteStoredFile, getFileBrowserData, openFolder } from "@/app/(admin)/files/actions";
+import {
+  fileSearchWords,
+  folderReadNote,
+  searchFiles,
+} from "@/app/(admin)/files/file-search";
 import { LIST_LIMIT } from "@/app/(admin)/files/storage-list";
 import { getInterviewAgenda } from "@/app/(admin)/interviews/actions";
 import {
@@ -292,6 +306,19 @@ const UNPLANNED_HIRE_ROWS = 20;
 const FOLDER_FILE_ROWS = 60;
 const ROOT_FILE_ROWS = 40;
 const GATE_JOB_ROWS = 40;
+
+/**
+ * The storage cap sitting behind a folder answer, said once for both listings.
+ *
+ * `folderReadNote` can only describe the rows the tool was handed; this is the
+ * fact one level out — the listing itself stopped counting, so every file number
+ * in the answer is a floor rather than the folder.
+ */
+function listingCapNote(truncated: boolean): string {
+  return truncated
+    ? ` The listing that filled this answer stops at ${LIST_LIMIT.toLocaleString()} entries, so the total it counted is itself a floor.`
+    : "";
+}
 
 /**
  * An optional argument that has to name one of a set.
@@ -896,21 +923,28 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_assessment_suites",
     label: "Reading assessment suites",
     description:
-      "Every assessment suite with its question count, total points, time limit, whether it is active, and how many attempts it has.",
-    args: {},
-    run: async () => {
+      "Every assessment suite with its question count, total points, time limit, whether it is active, and how many attempts it has. This read carries the whole catalogue rather than a window, so `suites_note` can say outright that a suite missing from the list has not been created — quote it whenever a suite is reported missing.",
+    args: {
+      query: `string — optional, the grid's own search box: ${suiteSearchWords()}, matched over every suite the catalogue holds`,
+    },
+    run: async (args) => {
+      const query = optionalStr(args, "query")?.trim() ?? "";
       const templates = await getTemplates();
-      return templates.map((template) => ({
-        id: template.id,
-        name: template.name,
-        role_family: template.role_family,
-        is_active: template.is_active,
-        question_count: template.question_count,
-        total_points: template.total_points,
-        time_limit_minutes: template.time_limit_minutes,
-        attempts: template.attempts,
-        completed: template.completed,
-      }));
+      const matched = searchSuites(templates, query);
+      return {
+        suites_note: suiteReadNote(templates.length, matched.length, query || null),
+        suites: matched.map((template) => ({
+          id: template.id,
+          name: template.name,
+          role_family: template.role_family,
+          is_active: template.is_active,
+          question_count: template.question_count,
+          total_points: template.total_points,
+          time_limit_minutes: template.time_limit_minutes,
+          attempts: template.attempts,
+          completed: template.completed,
+        })),
+      };
     },
   },
   {
@@ -983,12 +1017,18 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       bucket: `string — optional, one of ${OUTBOX_BUCKETS.join(", ")} — the queue column to read, ALL for every column`,
       failed:
         "boolean — optional, true for the delivery-log rows the channel refused, which is what the alerts count",
+      query: `string — optional, the queue's own search box: ${queueSearchWords()}, matched over the jobs this read carries`,
     },
     run: async (args) => {
       const bucket = optionalChoice(args, "bucket", OUTBOX_BUCKETS) as OutboxBucket | null;
       const failed = bool(args, "failed", false);
+      const query = optionalStr(args, "query")?.trim() ?? "";
       const outbox = await getOutbox({ bucket, failed });
-      const queued = outbox.jobs.slice(0, 40);
+      // The words narrow the queue the way the panel's box does, before the
+      // answer slices it: a search that ran after the slice would report "matched
+      // 3" while the box on screen finds five.
+      const matched = searchQueue(outbox.jobs, query);
+      const queued = matched.slice(0, 40);
       const deliveries = outbox.history.slice(0, 15);
       return {
         scope_note: outboxScopeNote({
@@ -1000,6 +1040,8 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           logLoaded: outbox.history.length,
           buckets: outbox.buckets,
           failedLogTotal: outbox.failedLogTotal,
+          search: query || null,
+          matched: matched.length,
         }),
         totals: {
           ...outbox.buckets,
@@ -1345,17 +1387,22 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_files",
     label: "Reading stored files",
     description:
-      "The storage buckets this portal writes, with file counts, and the folder listing inside one bucket. Without arguments it opens the CV bucket's root. `listing_note`/`root_note` name how many files the read actually carries — a folder's own `truncated` flag only describes the listing behind it, not this answer.",
+      "The storage buckets this portal writes, with file counts, and the folder listing inside one bucket. Without arguments it opens the CV bucket's root. `listing_note`/`root_note` name how many files the read actually carries — a folder's own `truncated` flag only describes the listing behind it, not this answer. `query` is the browser's own box and runs over the files the listing carries, so a search that names nothing says nothing about the bucket.",
     args: {
       bucket: `string — optional, one of candidate-cvs, resumes, candidate-audio`,
       prefix: "string — optional, a folder path ending in /",
+      query: `string — optional, the browser's own search box: ${fileSearchWords()}, matched over the files the listing carries`,
     },
     run: async (args) => {
       const bucket = optionalStr(args, "bucket");
+      const query = optionalStr(args, "query")?.trim() ?? "";
       if (bucket) {
         const view = await openFolder(bucket, optionalStr(args, "prefix") ?? "");
         if (!view.ok) return { ok: false, error: view.error };
-        const files = view.listing.files.slice(0, FOLDER_FILE_ROWS).map((file) => ({
+        // Words narrow the folder the way the box on screen does, before the
+        // answer slices it, so a search never reports fewer files than the page finds.
+        const matched = searchFiles(view.listing.files, query);
+        const files = matched.slice(0, FOLDER_FILE_ROWS).map((file) => ({
           path: file.path,
           name: file.name,
           bytes: file.bytes,
@@ -1367,15 +1414,13 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           // The page's `truncated` flag only describes the storage listing's own
           // cap, so a folder of exactly 200 files read as complete from here
           // after this answer had dropped 140 of them. Both cuts are named.
-          listing_note: `${reachNote(
-            "files in this folder",
-            view.listing.files.length,
-            files.length
-          )}${
-            view.listing.truncated
-              ? ` The listing that filled this answer stops at ${LIST_LIMIT.toLocaleString()} entries, so the total it counted is itself a floor.`
-              : ""
-          }`,
+          listing_note: `${folderReadNote({
+            loaded: view.listing.files.length,
+            matched: matched.length,
+            shown: files.length,
+            listingTruncated: view.listing.truncated,
+            search: query || null,
+          })}${listingCapNote(view.listing.truncated)}`,
           bucket: view.listing.bucketLabel,
           prefix: view.listing.prefix,
           folders: view.listing.folders.map((folder) => folder.prefix),
@@ -1385,8 +1430,9 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       }
 
       const { buckets, view } = await getFileBrowserData();
+      const rootMatched = view.ok ? searchFiles(view.listing.files, query) : [];
       const rootFiles = view.ok
-        ? view.listing.files.slice(0, ROOT_FILE_ROWS).map((file) => ({
+        ? rootMatched.slice(0, ROOT_FILE_ROWS).map((file) => ({
             path: file.path,
             name: file.name,
             bytes: file.bytes,
@@ -1397,7 +1443,13 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         // Leads for the same reason: the bucket tile counts every object, and a
         // root listing hands back a fraction of them.
         root_note: view.ok
-          ? reachNote("files in this bucket's root", view.listing.files.length, rootFiles?.length ?? 0)
+          ? `${folderReadNote({
+              loaded: view.listing.files.length,
+              matched: rootMatched.length,
+              shown: rootFiles?.length ?? 0,
+              listingTruncated: view.listing.truncated,
+              search: query || null,
+            })}${listingCapNote(view.listing.truncated)}`
           : "The root folder could not be listed, so no files are named.",
         buckets: buckets.map((each) => ({
           key: each.key,
@@ -1473,17 +1525,22 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       "The most recent emails the portal tried to send, with recipient, subject, delivered flag and the error when it failed. `failed` narrows the read to the mails the relay refused — the same rail `?failed=1` opens on the outbox page. `totals` counts every email and notice in the log, delivered or not, whether the rail is lit or not, so quote `scope_note` with it: it says which half of the log the rows are from and that portal notices are inbox rows, not mail.",
     args: {
       failed: "boolean — optional, true for the sends the relay refused",
+      query: `string — optional, the email panel's own search box: ${emailSearchWords()}, matched over the attempts this read carries`,
     },
     run: async (args) => {
       const failed = bool(args, "failed", false);
+      const query = optionalStr(args, "query")?.trim() ?? "";
       const outbox = await getEmailOutbox({ failed });
-      const listed = outbox.emails.slice(0, 30);
+      const matched = searchEmails(outbox.emails, query);
+      const listed = matched.slice(0, 30);
       return {
         scope_note: emailScopeNote({
           failed,
           shown: listed.length,
           loaded: outbox.emails.length,
           totals: outbox.totals,
+          search: query || null,
+          matched: matched.length,
         }),
         totals: outbox.totals,
         emails: listed.map((row) => ({

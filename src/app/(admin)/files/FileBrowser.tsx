@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { deleteStoredFile, openFolder } from "./actions";
 import { BUCKETS, bucketInfo, type BucketStat, type FolderListing, type StoredFile } from "./file-browser-types";
+import { fileSearchWords, searchFiles } from "./file-search";
 import { Button, Card, CardHeader, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
 import { formatBytes, formatDateTime, cn } from "@/lib/utils";
 
@@ -100,16 +101,10 @@ export function FileBrowser({
 
   const visible = useMemo(() => {
     if (!listing) return [] as StoredFile[];
-    const needle = query.trim().toLowerCase();
-    return listing.files.filter((file) => {
-      if (onlyUnlinked && file.owner) return false;
-      if (!needle) return true;
-      return (
-        file.name.toLowerCase().includes(needle) ||
-        file.path.toLowerCase().includes(needle) ||
-        (file.owner?.label.toLowerCase().includes(needle) ?? false)
-      );
-    });
+    // The words are the assistant's `query` predicate too, so a file named in the
+    // chat is one this box finds; "not linked to a record" stays a local switch.
+    const worded = searchFiles(listing.files, query);
+    return onlyUnlinked ? worded.filter((file) => !file.owner) : worded;
   }, [listing, query, onlyUnlinked]);
 
   const unlinked = listing?.files.filter((file) => !file.owner).length ?? 0;
@@ -215,7 +210,7 @@ export function FileBrowser({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search this folder"
+              placeholder={`Search by ${fileSearchWords()}`}
               className="w-full rounded-xl border border-brand-line bg-white py-2 pl-9 pr-3 text-sm outline-none placeholder:text-brand-ink/40 focus:border-brand-gold sm:w-64"
             />
           </label>

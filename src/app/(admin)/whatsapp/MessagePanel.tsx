@@ -19,7 +19,16 @@ import { Badge, Card, EmptyState, FilterRail, StatTile } from "@/modules/analyti
 import { FormMessage } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
 import { resendEmailMessage, type OutboxResult } from "./actions";
-import { LOG_PAGE_LIMIT, type EmailFlags, type EmailLogRow, type NoticeRow } from "./outbox-model";
+import {
+  LOG_PAGE_LIMIT,
+  emailSearchWords,
+  noticeSearchWords,
+  searchEmails,
+  searchNotices,
+  type EmailFlags,
+  type EmailLogRow,
+  type NoticeRow,
+} from "./outbox-model";
 
 const DATE_TIME = new Intl.DateTimeFormat([], { dateStyle: "medium", timeStyle: "short" });
 
@@ -70,35 +79,19 @@ export function MessagePanel({
   const emailTotal = totals.emailsDelivered + totals.emailsFailed;
   const noticeTotal = totals.noticesUnread + totals.noticesRead;
 
-  const needle = query.trim().toLowerCase();
-
-  const visibleEmails = useMemo(
-    () =>
-      emails.filter((row) => {
-        if (!needle) return true;
-        return (
-          row.recipient.toLowerCase().includes(needle) ||
-          row.candidate_name?.toLowerCase().includes(needle) ||
-          row.subject?.toLowerCase().includes(needle) ||
-          row.body.toLowerCase().includes(needle)
-        );
-      }),
-    [emails, needle]
-  );
+  // Both lists are filtered by the column lists in `outbox-model`, so the words a
+  // recruiter types here are the words `list_email_outbox` searches with — and
+  // each tab's placeholder can only name the columns its own table has.
+  const visibleEmails = useMemo(() => searchEmails(emails, query), [emails, query]);
 
   const visibleNotices = useMemo(
     () =>
-      notices.filter((row) => {
+      searchNotices(notices, query).filter((row) => {
         if (readState === "UNREAD" && row.read_at) return false;
         if (readState === "READ" && !row.read_at) return false;
-        if (!needle) return true;
-        return (
-          row.candidate_name?.toLowerCase().includes(needle) ||
-          row.subject?.toLowerCase().includes(needle) ||
-          row.body.toLowerCase().includes(needle)
-        );
+        return true;
       }),
-    [notices, readState, needle]
+    [notices, readState, query]
   );
 
   /** Refused only, or everything — the same switch the delivery log above uses. */
@@ -192,7 +185,9 @@ export function MessagePanel({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             aria-label={tab === "email" ? "Search emails" : "Search portal notices"}
-            placeholder="Search candidate, address or copy…"
+            placeholder={`Search by ${
+              tab === "email" ? emailSearchWords() : noticeSearchWords()
+            }…`}
             className="w-full rounded-xl border border-brand-line bg-brand-cream py-2 pl-9 pr-8 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
           />
           {query && (

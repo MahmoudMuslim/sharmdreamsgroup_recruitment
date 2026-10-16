@@ -5,6 +5,13 @@
  * without pulling a `"use server"` module into the browser bundle.
  */
 
+import {
+  describeFields,
+  searchByFields,
+  wordsClause,
+  type SearchField,
+} from "@/lib/textSearch";
+
 export type QueueStatus = "PENDING" | "SENT" | "FAILED";
 
 /** Which column of the queue a job sits in, from the admin's point of view. */
@@ -164,6 +171,72 @@ export function isFailedView(value: unknown): boolean {
 export const DELIVERED_LOG_CHANNELS = ["WHATSAPP", "EMAIL"] as const;
 
 /* -------------------------------------------------------------------------- */
+/* Search                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The columns the page's search boxes read.
+ *
+ * Each list is the source of its placeholder text as well as the predicate, so
+ * a box cannot promise four columns and match five. The queue's box has always
+ * matched the template key beside the name, number and copy, which the old
+ * hand-written placeholder never mentioned — a recruiter searching for
+ * `stage_advance` on screen got a row the sentence above the box said it did not
+ * search.
+ */
+export const QUEUE_SEARCH_FIELDS: readonly SearchField<OutboxJob>[] = [
+  { label: "candidate", read: (job) => job.candidate_name },
+  { label: "number", read: (job) => job.recipient_phone },
+  { label: "message text", read: (job) => job.text },
+  { label: "template", read: (job) => job.template },
+];
+
+export const EMAIL_SEARCH_FIELDS: readonly SearchField<EmailLogRow>[] = [
+  { label: "email address", read: (row) => row.recipient },
+  { label: "candidate", read: (row) => row.candidate_name },
+  { label: "subject", read: (row) => row.subject },
+  { label: "body", read: (row) => row.body },
+];
+
+/**
+ * Portal notices keep their own list, one column shorter than the emails'.
+ *
+ * The same box filters both tabs, but a notice row carries no recipient address —
+ * it was written into an inbox, not relayed — so the notices' placeholder says
+ * three columns and the emails' says four. One list per table is what stops the
+ * box from promising an address search that silently empties the notices.
+ */
+export const NOTICE_SEARCH_FIELDS: readonly SearchField<NoticeRow>[] = [
+  { label: "candidate", read: (row) => row.candidate_name },
+  { label: "subject", read: (row) => row.subject },
+  { label: "body", read: (row) => row.body },
+];
+
+export function queueSearchWords(): string {
+  return describeFields(QUEUE_SEARCH_FIELDS);
+}
+
+export function emailSearchWords(): string {
+  return describeFields(EMAIL_SEARCH_FIELDS);
+}
+
+export function noticeSearchWords(): string {
+  return describeFields(NOTICE_SEARCH_FIELDS);
+}
+
+export function searchQueue(rows: readonly OutboxJob[], query: string): OutboxJob[] {
+  return searchByFields(rows, query, QUEUE_SEARCH_FIELDS);
+}
+
+export function searchEmails(rows: readonly EmailLogRow[], query: string): EmailLogRow[] {
+  return searchByFields(rows, query, EMAIL_SEARCH_FIELDS);
+}
+
+export function searchNotices(rows: readonly NoticeRow[], query: string): NoticeRow[] {
+  return searchByFields(rows, query, NOTICE_SEARCH_FIELDS);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Scope notes                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -188,9 +261,25 @@ export function outboxScopeNote(input: {
   logLoaded: number;
   buckets: Record<OutboxBucket, number>;
   failedLogTotal: number;
+  /** The words a caller searched with, or null when the read is unfiltered. */
+  search?: string | null;
+  /** Of the rows the read carries, how many hold the words; the read itself when unfiltered. */
+  matched?: number | null;
 }): string {
-  const { bucket, failed, shown, loaded, logShown, logLoaded, buckets: counts, failedLogTotal } = input;
+  const {
+    bucket,
+    failed,
+    shown,
+    loaded,
+    logShown,
+    logLoaded,
+    buckets: counts,
+    failedLogTotal,
+    search,
+    matched,
+  } = input;
   const apps = (n: number) => n.toLocaleString();
+  const set = matched ?? loaded;
   const queue =
     bucket === "ALL"
       ? `The queue chips count ${apps(counts.ALL)} jobs in all, and this read carries ${apps(loaded)}.`
@@ -198,11 +287,19 @@ export function outboxScopeNote(input: {
           counts.ALL
         )} jobs the chips count, and this read carries ${apps(loaded)}. Those chip numbers stay whole on purpose so a lit column is still comparable with its neighbours.`;
   const window =
-    loaded === 0
-      ? "Nothing is in the set this read asks for, so this answer names none."
-      : shown === loaded
-        ? `This answer names every one of the ${apps(shown)}.`
-        : `This answer names ${apps(shown)} of the ${apps(loaded)} the read carries.`;
+    set === 0
+      ? search
+        ? `Nothing in the ${apps(loaded)} the read carries holds those words, so this answer names none.`
+        : "Nothing is in the set this read asks for, so this answer names none."
+      : shown === set
+        ? !search
+          ? `This answer names every one of the ${apps(set)}.`
+          : set === 1
+            ? "This answer names the only job that holds those words."
+            : `This answer names every one of the ${apps(set)} that hold those words.`
+        : `This answer names ${apps(shown)} of the ${apps(set)}${
+            search ? " that hold those words" : " the read carries"
+          }.`;
   const cap =
     loaded >= QUEUE_PAGE_LIMIT
       ? ` The queue read stops at the newest ${apps(QUEUE_PAGE_LIMIT)}, so a job older than that window is out of reach from here.`
@@ -223,7 +320,19 @@ export function outboxScopeNote(input: {
       )} outcomes the channel wrote down, refused or not, and ${apps(
         failedLogTotal
       )} rows in the whole log are undelivered.${logCap}`;
-  return `${queue} ${window}${cap} ${log}`;
+  // The words are the panel's own box, so the note says what they ran over —
+  // which is never the whole queue unless the read happened to hold it. It stays
+  // beside the queue's own arithmetic rather than landing after the delivery log,
+  // or the two tables read as one search.
+  const words = search
+    ? wordsClause(
+        search,
+        `the ${apps(loaded)} jobs this read carries`,
+        counts[bucket] === loaded,
+        "a job"
+      )
+    : "";
+  return `${queue} ${window}${cap}${words} ${log}`;
 }
 
 /**
@@ -240,9 +349,14 @@ export function emailScopeNote(input: {
   shown: number;
   loaded: number;
   totals: { emailsDelivered: number; emailsFailed: number; noticesUnread: number; noticesRead: number };
+  /** The words a caller searched with, or null when the read is unfiltered. */
+  search?: string | null;
+  /** Of the rows the read carries, how many hold the words; the read itself when unfiltered. */
+  matched?: number | null;
 }): string {
-  const { failed, shown, loaded, totals } = input;
+  const { failed, shown, loaded, totals, search, matched } = input;
   const apps = (n: number) => n.toLocaleString();
+  const set = matched ?? loaded;
   const attempts = totals.emailsDelivered + totals.emailsFailed;
   const held = `The email log holds ${apps(attempts)} send${
     attempts === 1 ? "" : "s"
@@ -253,17 +367,27 @@ export function emailScopeNote(input: {
   const listed =
     loaded === 0
       ? `Nothing is left once this read ${failed ? "keeps only refused sends" : "takes the newest attempts"}, so it names none.`
-      : shown < loaded
-        ? `This read ${
-            failed
-              ? `carries ${apps(loaded)} of the ${apps(totals.emailsFailed)} refused sends the log holds`
-              : newest
-          }; this answer names ${apps(shown)} of them.`
-        : `This read ${
-            failed
-              ? `carries every one of the ${apps(totals.emailsFailed)} refused sends the log holds`
-              : newest
-          }, and this answer names all ${apps(shown)}.`;
+      : set === 0
+        ? `Nothing in the ${apps(loaded)} this read carries holds those words, so it names none.`
+        : shown < set
+          ? `This read ${
+              failed
+                ? `carries ${apps(loaded)} of the ${apps(totals.emailsFailed)} refused sends the log holds`
+                : newest
+            }; this answer names ${apps(shown)}${
+              search ? ` of the ${apps(set)} that hold those words` : " of them"
+            }.`
+          : `This read ${
+              failed
+                ? `carries every one of the ${apps(totals.emailsFailed)} refused sends the log holds`
+                : newest
+            }, and this answer names ${
+              search
+                ? set === 1
+                  ? "the only attempt that holds those words"
+                  : `every one of the ${apps(set)} that hold those words`
+                : `all ${apps(set)}`
+            }.`;
   // What the read was asking for, so the window is measured against the right
   // half of the log: a refused-only read cannot be short of *every* attempt.
   const askedFor = failed ? totals.emailsFailed : attempts;
@@ -274,5 +398,16 @@ export function emailScopeNote(input: {
   const notices = ` The ${apps(totals.noticesUnread)} unread and ${apps(
     totals.noticesRead
   )} opened portal notices are inbox rows, not relayed sends, and are not listed here.`;
-  return `${held} ${listed}${hidden}${notices}`;
+  // Half the log, not the whole one: a refused-only search cannot claim to have
+  // looked at the sends that were accepted. It sits with the email arithmetic,
+  // before the notices sentence, so the last word is not about another table.
+  const words = search
+    ? wordsClause(
+        search,
+        `the ${apps(loaded)} attempts this read carries`,
+        askedFor === loaded,
+        "an attempt"
+      )
+    : "";
+  return `${held} ${listed}${hidden}${words}${notices}`;
 }

@@ -29,6 +29,7 @@ import {
   TextInput,
 } from "@/modules/analytics/presentation/Form";
 import { saveTemplate, assignTemplate, deleteTemplate, setTemplateActive } from "./assessment-actions";
+import { searchSuites, suiteSearchWords } from "@/modules/assessment/domain/suiteSearch";
 import type { TemplateSummary } from "./actions";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
@@ -738,14 +739,10 @@ export function AssessmentGrid({
   };
 
   const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return templates.filter((template) => {
-      if (
-        needle &&
-        !`${template.name} ${template.description}`.toLowerCase().includes(needle)
-      ) {
-        return false;
-      }
+    // The words run through the same predicate the assistant's `query` uses, so
+    // a suite the chat names is a suite this box finds. Family and status stay
+    // here — they are this grid's own picklists, not something a search promises.
+    return searchSuites(templates, query).filter((template) => {
       if (family !== "ALL" && template.role_family !== family) return false;
       if (status === "active" && !template.is_active) return false;
       if (status === "paused" && template.is_active) return false;
@@ -812,7 +809,7 @@ export function AssessmentGrid({
               <TextInput
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search suites…"
+                placeholder={`Search by ${suiteSearchWords()}…`}
                 aria-label="Search suites"
                 className="pl-9"
               />

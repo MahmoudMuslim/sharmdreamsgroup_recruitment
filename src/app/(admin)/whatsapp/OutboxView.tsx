@@ -51,7 +51,12 @@ import type {
   OutboxJob,
   RecipientOption,
 } from "./outbox-model";
-import { LOG_PAGE_LIMIT, QUEUE_PAGE_LIMIT } from "./outbox-model";
+import {
+  LOG_PAGE_LIMIT,
+  QUEUE_PAGE_LIMIT,
+  queueSearchWords,
+  searchQueue,
+} from "./outbox-model";
 
 const BUCKETS: { key: OutboxBucket; label: string; tone: "solid" | "muted" }[] = [
   { key: "ALL", label: "All", tone: "solid" },
@@ -188,16 +193,10 @@ export function OutboxView({
   const listed = useMemo(() => {
     const inBucket =
       bucket === "ALL" ? jobs : jobs.filter((job) => bucketOf(job, nowMs) === bucket);
-    const needle = query.trim().toLowerCase();
-    const rows = needle
-      ? inBucket.filter(
-          (job) =>
-            job.candidate_name?.toLowerCase().includes(needle) ||
-            job.recipient_phone.toLowerCase().includes(needle) ||
-            job.text.toLowerCase().includes(needle) ||
-            job.template?.toLowerCase().includes(needle)
-        )
-      : inBucket;
+    // The words run through the predicate the assistant's `query` uses too, so a
+    // job the chat names is a job this box finds — and the template key is in
+    // both, which the box's old hand-written placeholder never admitted.
+    const rows = searchQueue(inBucket, query);
     return {
       inBucket: inBucket.length,
       rows: rows.sort((a, b) => {
@@ -353,7 +352,7 @@ export function OutboxView({
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search candidate, number or message text…"
+                  placeholder={`Search by ${queueSearchWords()}…`}
                   aria-label="Search the outbound queue"
                   className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                 />
