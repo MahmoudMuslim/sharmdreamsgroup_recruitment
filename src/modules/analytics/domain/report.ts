@@ -170,6 +170,21 @@ export const prospectConverted = (row: ProspectRow): boolean =>
 export const messageRead = (row: LogRow): boolean =>
   row.channel === "IN_APP" && Boolean(row.read_at);
 
+/**
+ * A portal notice is written, not delivered.
+ *
+ * Every email and campaign also mirrors into the inbox, and that copy is always
+ * there — so counting it as a delivery would lift the figure while the relay is
+ * refusing messages. Only a transport can fail, so only a transport is measured.
+ */
+export const measuresDelivery = (channel: string): boolean => channel !== "IN_APP";
+
+export const messageDelivered = (row: LogRow): boolean =>
+  measuresDelivery(row.channel) && row.delivered;
+
+export const messageUndelivered = (row: LogRow): boolean =>
+  measuresDelivery(row.channel) && !row.delivered;
+
 export const interviewUpcoming = (row: InterviewRow, now: number): boolean =>
   row.status === "SCHEDULED" && row.scheduled_at !== null && Date.parse(row.scheduled_at) > now;
 
@@ -250,8 +265,9 @@ export interface AnalyticsReport {
     byChannel: {
       channel: string;
       sent: number;
-      delivered: number;
-      undelivered: number;
+      /** `null` for the inbox copy: a notice is written, never delivered. */
+      delivered: number | null;
+      undelivered: number | null;
       read: number;
     }[];
     trend: TrendBucket[];
@@ -522,8 +538,8 @@ export function buildAnalyticsReport(input: AnalyticsInput): AnalyticsReport {
     return {
       channel,
       sent: rows.length,
-      delivered: rows.filter((row) => row.delivered).length,
-      undelivered: rows.filter((row) => !row.delivered).length,
+      delivered: measuresDelivery(channel) ? rows.filter((row) => row.delivered).length : null,
+      undelivered: measuresDelivery(channel) ? rows.filter((row) => !row.delivered).length : null,
       // Only the portal notice has a read marker; a WhatsApp delivery receipt
       // is not stored here, so this column is left blank for other channels.
       read: rows.filter(messageRead).length,
@@ -609,8 +625,8 @@ export function buildAnalyticsReport(input: AnalyticsInput): AnalyticsReport {
     },
     messages: {
       scanned: input.logs.length,
-      delivered: input.logs.filter((log) => log.delivered).length,
-      undelivered: input.logs.filter((log) => !log.delivered).length,
+      delivered: input.logs.filter(messageDelivered).length,
+      undelivered: input.logs.filter(messageUndelivered).length,
       read: input.logs.filter(messageRead).length,
       byChannel,
       trend: buildTrend(

@@ -71,6 +71,7 @@ export const REPORTS: {
       "One row per message the portal sent: channel, recipient, subject, and whether it landed.",
     caveats: [
       "Delivered is the state the row holds now, not a record of every attempt; a message that failed twice then went through reads as delivered.",
+      "An email or campaign also writes a row for the copy it leaves in the candidate's inbox; that notice row is counted as logged, never as a delivery, because a notice is written rather than sent.",
       "Message bodies are not here — the Outbox page shows them.",
       "WhatsApp rows carry the reason Meta rejected the send when there is one.",
     ],
@@ -365,7 +366,11 @@ export function messageSheet(rows: MessageRow[], context: SheetContext): ExportS
       { header: "Subject", value: (row) => row.subject },
       { header: "Candidate", value: (row) => row.full_name },
       { header: "Opening", value: (row) => row.opening },
-      { header: "Delivered", value: (row) => (row.delivered ? "yes" : "no") },
+      {
+        header: "Delivered",
+        value: (row) =>
+          row.channel === "IN_APP" ? "written to inbox" : row.delivered ? "yes" : "no",
+      },
       { header: "Read", value: (row) => stamp(row.read_at, context.timeZone) },
       { header: "Error", value: (row) => row.error_message },
     ],
@@ -502,8 +507,16 @@ export function analyticsDocument(
 
   for (const row of report.messages.byChannel) {
     add("messages", `${row.channel}_sent`, row.sent);
-    add("messages", `${row.channel}_delivered`, row.delivered);
-    add("messages", `${row.channel}_undelivered`, row.undelivered);
+    add(
+      "messages",
+      `${row.channel}_delivered`,
+      row.delivered ?? "not measured — a notice is written, not delivered"
+    );
+    add(
+      "messages",
+      `${row.channel}_undelivered`,
+      row.undelivered ?? "not measured — a notice is written, not delivered"
+    );
     if (row.channel === "IN_APP") add("messages", "IN_APP_read", row.read);
   }
 

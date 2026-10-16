@@ -20,6 +20,7 @@ import { ChipRail, DrillDrawer, TrendStrip } from "./AnalyticsDrill";
 import type { AnalyticsDrillScope } from "@/modules/analytics/infrastructure/analyticsDrill";
 import {
   ANALYTICS_WINDOWS,
+  measuresDelivery,
   type AnalyticsReport,
   type AnalyticsWindow,
   type TrendBucket,
@@ -649,14 +650,14 @@ export function AnalyticsView({
                 <Figure
                   label="Delivered"
                   value={count(messages.delivered)}
-                  hint="The state the row holds now, not attempt history."
+                  hint="Email and WhatsApp only — a portal notice is written, not delivered."
                   scope={{ table: "messages", channel: ANY, state: "delivered" }}
                   onOpen={open}
                 />
                 <Figure
                   label="Not delivered"
                   value={count(messages.undelivered)}
-                  hint="Still waiting, or failed and never retried."
+                  hint="Refused by the relay, or still waiting in the WhatsApp queue."
                   scope={{ table: "messages", channel: ANY, state: "undelivered" }}
                   onOpen={open}
                 />
@@ -707,17 +708,29 @@ export function AnalyticsView({
                         scope={{ table: "messages", channel: row.channel, state: "sent" }}
                         onOpen={open}
                       />
-                      <Cell
-                        value={row.delivered}
-                        scope={{ table: "messages", channel: row.channel, state: "delivered" }}
-                        onOpen={open}
-                      />
-                      <Cell
-                        value={row.undelivered}
-                        danger
-                        scope={{ table: "messages", channel: row.channel, state: "undelivered" }}
-                        onOpen={open}
-                      />
+                      {measuresDelivery(row.channel) ? (
+                        <>
+                          <Cell
+                            value={row.delivered ?? 0}
+                            scope={{ table: "messages", channel: row.channel, state: "delivered" }}
+                            onOpen={open}
+                          />
+                          <Cell
+                            value={row.undelivered ?? 0}
+                            danger
+                            scope={{ table: "messages", channel: row.channel, state: "undelivered" }}
+                            onOpen={open}
+                          />
+                        </>
+                      ) : (
+                        <td
+                          colSpan={2}
+                          className="py-2 text-right text-brand-ink/35"
+                          title="A portal notice is written, not delivered — its own signal is the Read column"
+                        >
+                          —
+                        </td>
+                      )}
                       {row.channel === "IN_APP" ? (
                         <Cell
                           value={row.read}
@@ -743,9 +756,11 @@ export function AnalyticsView({
                 onPick={(bucket) => ranged({ table: "messages", channel: ANY, state: "sent" }, bucket)}
               />
               <p className="mt-3 text-[11px] leading-relaxed text-brand-ink/50">
-                Delivered is the state the log holds now, not a record of every attempt: a message that
-                failed twice and then went through reads as delivered. A dash under Read means that
-                channel reports no read signal at all — only the portal notice carries one.
+                Delivered is the state the log holds now, not a record of every attempt: an email that
+                failed twice and then went through reads as delivered. The inbox row a send also leaves
+                is not counted as a delivery — a notice is written, and its own signal is the Read
+                column, which is why those two cells print a dash. A dash under Read means that channel
+                reports no read signal at all.
               </p>
             </>
           )}

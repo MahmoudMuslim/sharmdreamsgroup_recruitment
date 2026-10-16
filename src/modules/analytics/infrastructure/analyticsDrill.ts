@@ -28,7 +28,9 @@ import {
   bandOf,
   interviewDecided,
   interviewUpcoming,
+  messageDelivered,
   messageRead,
+  messageUndelivered,
   prospectConverted,
   type AnalyticsWindow,
   type AttemptRow,
@@ -572,6 +574,16 @@ function messagesDrill(
     };
   }
 
+  // The mirror an email leaves in the inbox is a copy of the same send, so it
+  // cannot be "delivered" or "refused" — asking for that list would double-count.
+  if (scope.channel === "IN_APP" && scope.state !== "read" && scope.state !== "sent") {
+    return {
+      ok: false,
+      error:
+        "A portal notice is written, not delivered — its own signal is whether the candidate read it. Delivery is measured on email and WhatsApp, where something can actually refuse.",
+    };
+  }
+
   const inScope = rows.logs.filter((row) => inRange(row, scope.range, context.timeZone));
 
   const keep = (row: LogRow): boolean => {
@@ -580,9 +592,9 @@ function messagesDrill(
       case "sent":
         return true;
       case "delivered":
-        return row.delivered;
+        return messageDelivered(row);
       case "undelivered":
-        return !row.delivered;
+        return messageUndelivered(row);
       case "read":
         return messageRead(row);
     }
@@ -630,7 +642,7 @@ function messagesDrill(
       (scope.state === "read"
         ? "Only the portal notice stores a read marker, so a WhatsApp or email row can never appear in this list — that is why the card prints a dash for those channels."
         : scope.state === "delivered" || scope.state === "undelivered"
-          ? "Delivered is the state the row holds now, not a record of every attempt: a message that failed twice then went through reads as delivered."
+          ? "Delivered is the state the row holds now, not a record of every attempt: a message that failed twice then went through reads as delivered. The inbox copy a send also leaves is not listed here — a notice is written, not delivered."
           : null),
     read_at: context.generatedAt,
   };
