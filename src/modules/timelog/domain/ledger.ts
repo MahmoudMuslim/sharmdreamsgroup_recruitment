@@ -358,6 +358,8 @@ export function dayKeys(days: number, nowMs: number, keyOf: (iso: string) => str
  */
 export const LEDGER_NOTES = {
   label: "Time ledger",
+  blurb:
+    "The hours the team says it worked — one row per logged span, with what it was spent on, how long it ran and which candidate or opening it belonged to.",
   caveats: [
     "Time is logged by the person who worked it. Nothing here is measured automatically: a stage move, an interview or a grade leaves no entry unless someone starts a timer or adds the span by hand.",
     "A span counts on the day it started, so work carried past midnight is not split across two days.",

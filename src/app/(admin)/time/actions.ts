@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
-import { dayKeyInZone, formatInZone, fromZoneInputValue } from "@/lib/timezone";
+import { fromZoneInputValue } from "@/lib/timezone";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -11,10 +11,8 @@ import { changePhrase, changedFields } from "@/modules/activity/domain/trail";
 import {
   formatSpan,
   isTimeCategory,
-  isTimeScope,
   normaliseDraft,
   elapsedSeconds,
-  timeWindow,
   TRACK_DENIED,
   type TimeCategory,
   type TimeDraft,
@@ -25,6 +23,7 @@ import {
 import {
   deleteEntry,
   insertEntry,
+  ledgerCut,
   readEntry,
   readLedger,
   stopEntry,
@@ -186,42 +185,23 @@ export async function getLedger(raw: {
 
   const [timeZone, options] = await Promise.all([getOrganisationTimeZone(), readOptions()]);
 
-  const window = timeWindow(raw.window).key;
-  const scope: TimeScope = isTimeScope(raw.scope) ? raw.scope : "mine";
-  const days = timeWindow(window).days;
-
   const now = new Date();
-  // A window counts whole days on the office wall, so it opens at the first
-  // midnight of the span rather than `days` ago from this instant.
-  const firstDay = dayKeyInZone(
-    new Date(now.getTime() - (days - 1) * 86_400_000).toISOString(),
-    timeZone
-  );
-  const since = fromZoneInputValue(`${firstDay}T00:00`, timeZone) ?? firstDay;
+  const cut = ledgerCut({ window: raw.window, scope: raw.scope }, timeZone, now);
 
   const read = await readLedger({
-    since,
-    staffId: scope === "mine" ? user.profileId : null,
+    since: cut.since,
+    staffId: cut.scope === "mine" ? user.profileId : null,
     callerStaffId: user.profileId,
   });
   if (read.error) return { ok: false, error: read.error };
-
-  const from =
-    days === 1
-      ? "today"
-      : `since ${formatInZone(since, timeZone, { day: "numeric", month: "short" })}`;
-  const scopeNote =
-    scope === "mine"
-      ? `Your hours ${from}, on the ${timeZone} clock.`
-      : `Every colleague's hours ${from}, on the ${timeZone} clock.`;
 
   return {
     ok: true,
     view: {
       entries: read.entries,
-      window,
-      scope,
-      scopeNote,
+      window: cut.window,
+      scope: cut.scope,
+      scopeNote: cut.scopeNote,
       timeZone,
       now: now.toISOString(),
       callerStaffId: user.profileId,

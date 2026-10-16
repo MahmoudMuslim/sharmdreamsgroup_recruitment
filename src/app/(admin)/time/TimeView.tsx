@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   CircleSlash,
   Clock3,
+  Download,
   Info,
   Loader2,
   Pencil,
@@ -776,7 +777,16 @@ function SliceList({
   );
 }
 
-export function TimeView({ initial, caveats }: { initial: LedgerView; caveats: string[] }) {
+export function TimeView({
+  initial,
+  caveats,
+  exportFormats,
+}: {
+  initial: LedgerView;
+  caveats: string[];
+  /** Passed as plain data: the export module itself is server-only. */
+  exportFormats: { key: string; label: string; hint: string }[];
+}) {
   const [view, setView] = useState<LedgerView>(initial);
   const [focus, setFocus] = useState<Focus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -913,6 +923,13 @@ export function TimeView({ initial, caveats }: { initial: LedgerView; caveats: s
   const toggle = (next: Focus) =>
     setFocus(focus?.kind === next.kind && focus.key === next.key ? null : next);
 
+  /* The window and scope travel to the route, which re-reads the ledger from the
+   * database on click — a download is the same cut this screen shows, never a
+   * copy of whatever rows happened to be loaded here. */
+  const exportQuery = new URLSearchParams({ window: view.window, scope: view.scope });
+  const exportHref = (format: string) =>
+    `/api/time/export?${exportQuery.toString()}&format=${format}`;
+
   return (
     <div className="mt-6 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -937,6 +954,29 @@ export function TimeView({ initial, caveats }: { initial: LedgerView; caveats: s
             {option === "mine" ? "My hours" : "The company"}
           </Pill>
         ))}
+        {/*
+          The file is built server-side from the same read as this screen, so it
+          carries the window and whose hours are on show — but not the bar someone
+          clicked, which is a screen-only narrowing. Saying so here is what keeps a
+          download from arriving shorter than the person expected.
+        */}
+        <div
+          className="ml-auto flex items-center gap-1.5"
+          role="group"
+          aria-label="Download this cut of the ledger"
+        >
+          {exportFormats.map((format) => (
+            <a
+              key={format.key}
+              href={exportHref(format.key)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-white px-2.5 py-2 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
+              title={`${format.label}: ${format.hint}. Covers ${view.scopeNote} A filter clicked on screen narrows the page, not the file.`}
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden />
+              {format.label}
+            </a>
+          ))}
+        </div>
         {(pending || busy) && (
           <span className="inline-flex items-center gap-1.5 text-[11px] text-brand-ink/50">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />

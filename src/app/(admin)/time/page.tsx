@@ -5,6 +5,7 @@ import { TimeView } from "./TimeView";
 import { requireStaff } from "@/lib/auth/session";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
+import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { LEDGER_NOTES, timeWindow, TRACK_DENIED } from "@/modules/timelog/domain/ledger";
 
@@ -66,7 +67,11 @@ export default async function TimePage() {
           />
         </Card>
       ) : (
-        <TimeView initial={view} caveats={LEDGER_NOTES.caveats} />
+        <TimeView
+          initial={view}
+          caveats={LEDGER_NOTES.caveats}
+          exportFormats={EXPORT_FORMATS}
+        />
       )}
     </AdminShell>
   );

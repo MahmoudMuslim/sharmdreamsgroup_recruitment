@@ -15,10 +15,59 @@ import "server-only";
  */
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { isTimeCategory, type TimeCategory, type TimeEntry } from "@/modules/timelog/domain/ledger";
+import { dayKeyInZone, formatInZone, fromZoneInputValue } from "@/lib/timezone";
+import {
+  isTimeScope,
+  timeWindow,
+  isTimeCategory,
+  type TimeCategory,
+  type TimeEntry,
+  type TimeScope,
+  type TimeWindowKey,
+} from "@/modules/timelog/domain/ledger";
 
 /** The ceiling on one read, so no window can pull the whole table into memory. */
-const MAX_ROWS = 1_000;
+export const LEDGER_ROW_LIMIT = 1_000;
+const MAX_ROWS = LEDGER_ROW_LIMIT;
+
+/**
+ * The window and the cut, resolved the same way on screen and in a download.
+ *
+ * Shared because the one way a file can lie about a ledger is to cover a
+ * different span than the page above it: a window here counts whole days on the
+ * office wall, which is a piece of arithmetic nobody should get to write twice.
+ */
+export function ledgerCut(
+  raw: { window?: unknown; scope?: unknown },
+  timeZone: string,
+  now: Date
+): {
+  window: TimeWindowKey;
+  scope: TimeScope;
+  since: string;
+  scopeNote: string;
+} {
+  const window = timeWindow(raw.window).key;
+  const scope: TimeScope = isTimeScope(raw.scope) ? raw.scope : "mine";
+  const days = timeWindow(window).days;
+
+  const firstDay = dayKeyInZone(
+    new Date(now.getTime() - (days - 1) * 86_400_000).toISOString(),
+    timeZone
+  );
+  const since = fromZoneInputValue(`${firstDay}T00:00`, timeZone) ?? firstDay;
+
+  const from =
+    days === 1
+      ? "today"
+      : `since ${formatInZone(since, timeZone, { day: "numeric", month: "short" })}`;
+  const scopeNote =
+    scope === "mine"
+      ? `Your hours ${from}, on the ${timeZone} clock.`
+      : `Every colleague's hours ${from}, on the ${timeZone} clock.`;
+
+  return { window, scope, since, scopeNote };
+}
 
 const EMBEDDED =
   "id, company_id, staff_id, category, task, job_id, application_id, note, " +
