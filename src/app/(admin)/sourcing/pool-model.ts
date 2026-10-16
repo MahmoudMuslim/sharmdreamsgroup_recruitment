@@ -49,6 +49,19 @@ export function stageWord(stage: string): string {
   return STAGE_WORDS[stage as ProspectStage] ?? stage;
 }
 
+/**
+ * A `?stage=` parameter, or nothing.
+ *
+ * The rails filter the *query*, so the value arrives from the browser and has to
+ * be refused rather than trusted: a parameter naming no stage narrows nothing
+ * instead of silently emptying the board.
+ */
+export function isProspectStage(value: unknown): ProspectStage | null {
+  return typeof value === "string" && (PROSPECT_STAGES as readonly string[]).includes(value)
+    ? (value as ProspectStage)
+    : null;
+}
+
 /** Counts the database gave, so they describe the pool rather than a slice. */
 export type PoolCounts = Record<ProspectStage, number>;
 

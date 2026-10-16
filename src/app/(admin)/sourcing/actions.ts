@@ -164,25 +164,29 @@ interface ProspectFields {
 /**
  * The pool: this render's window into it, and what the whole table holds.
  *
- * The list ships the newest `POOL_LIMIT` rows because that is what a board can
- * carry, but the pool is exactly the table that grows by bulk paste — one import
- * of a few hundred links moves it further from a fixed page size than anything
- * else in the portal. So the numbers the rails and tiles show are counted by the
- * database, not tallied from the slice they happened to arrive on.
+ * `stage` is the rail's own filter and goes into the query, so the rows under a
+ * chip come from the database rather than from whatever happened to load — the
+ * same reason the candidates list answers its rails server-side. The counts stay
+ * whole-pool either way: the other chips would otherwise shrink to describe one
+ * stage, and a rail that counts nine hundred prospects has to be a rail the page
+ * can walk, not a promise it quietly breaks.
  */
-export async function getProspectPool(): Promise<{
+export async function getProspectPool(input: {
+  stage?: ProspectStage | null;
+} = {}): Promise<{
   prospects: ProspectRow[];
   totals: ProspectPoolTotals;
 }> {
   await requireStaff("/sourcing");
 
   const supabase = await createSupabaseServerClient();
+  const rowsQuery = supabase
+    .from("sourced_prospects")
+    .select(PROSPECT_SELECT)
+    .order("created_at", { ascending: false })
+    .limit(POOL_LIMIT);
   const [rows, total, ...stageCounts] = await Promise.all([
-    supabase
-      .from("sourced_prospects")
-      .select(PROSPECT_SELECT)
-      .order("created_at", { ascending: false })
-      .limit(POOL_LIMIT),
+    input.stage ? rowsQuery.eq("stage", input.stage) : rowsQuery,
     supabase.from("sourced_prospects").select("id", { count: "exact", head: true }),
     ...PROSPECT_STAGES.map((stage) =>
       supabase

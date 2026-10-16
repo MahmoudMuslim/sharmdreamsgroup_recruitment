@@ -146,6 +146,7 @@ function reachDoor(
 export function SourcingBoard({
   prospects,
   totals,
+  stage,
   jobs,
   copy,
   canWrite,
@@ -154,6 +155,7 @@ export function SourcingBoard({
 }: {
   prospects: ProspectRow[];
   totals: ProspectPoolTotals;
+  stage: ProspectStage | null;
   jobs: JobOption[];
   copy: Record<OutreachChannel, { subject: string; body: string }>;
   canWrite: boolean;
@@ -165,7 +167,6 @@ export function SourcingBoard({
   const [pending, startTransition] = useTransition();
 
   const [query, setQuery] = useState("");
-  const [stageFilter, setStageFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
   // Which record the editor holds, and the contact field a reach door sent the
@@ -192,30 +193,46 @@ export function SourcingBoard({
     ? prospects.filter((p) => composerIds.includes(p.id))
     : [];
 
+  /**
+   * Move a rail and let the server answer for the rows.
+   *
+   * The stage goes in the URL, not in local state, so the chip, the table and the
+   * count above it all describe the same query — and a rail with nine hundred
+   * prospects is a rail the page can walk rather than one it quietly truncates.
+   * `?prospect=` is dropped: a rail is a question about the pool, not about one
+   * record, and the selection goes with it, because the rows under the next chip
+   * are not the rows that were ticked.
+   */
+  function openRail(next: ProspectStage | null) {
+    setSelected(new Set());
+    setProfileId(null);
+    setLastAppliedProspect(null);
+    router.push(next ? `/sourcing?stage=${next}` : "/sourcing");
+  }
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return prospects.filter((p) => {
-      if (stageFilter && p.stage !== stageFilter) return false;
-      if (!q) return true;
-      return [p.full_name, p.email, p.phone, p.company, p.headline, p.location, p.linkedin_url]
+    if (!q) return prospects;
+    return prospects.filter((p) =>
+      [p.full_name, p.email, p.phone, p.company, p.headline, p.location, p.linkedin_url]
         .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(q));
-    });
-  }, [prospects, query, stageFilter]);
+        .some((value) => String(value).toLowerCase().includes(q))
+    );
+  }, [prospects, query]);
 
   /**
-   * What the pool holds, against what this render can filter.
+   * What this page was asked for, against what it can carry.
    *
-   * Every figure on the board is counted by the database, so a tile or a rail
-   * describes the whole pool even when the list below carries only the newest
-   * `POOL_LIMIT` rows. A rail click can only narrow the rows that arrived, and
-   * that gap is what the disclosure under the rails says out loud. A search
-   * narrows the same rows by text, so its count belongs to no rail alone.
+   * Every figure on the board is counted by the database, so a tile or a chip
+   * describes the whole pool while the list below holds the newest `POOL_LIMIT`
+   * rows of the scope it was queried for — the stage under a rail, or everything.
+   * A search narrows those rows further by text, so its count belongs to no chip
+   * alone. The gap between the scope's count and the loaded rows is what the
+   * sentence under the rails says out loud.
    */
-  const stageCount = (stage: string) => totals.byStage[stage as ProspectStage] ?? 0;
-  const rowsNotLoaded = Math.max(0, totals.total - prospects.length);
-  const railHidden =
-    stageFilter && !query.trim() ? Math.max(0, stageCount(stageFilter) - filtered.length) : 0;
+  const stageCount = (s: string) => totals.byStage[s as ProspectStage] ?? 0;
+  const scopeTotal = stage ? stageCount(stage) : totals.total;
+  const rowsNotLoaded = Math.max(0, scopeTotal - prospects.length);
 
   const clearNotice = () => setNotice(null);
 
@@ -349,39 +366,34 @@ export function SourcingBoard({
           <FilterRail
             label="All"
             count={totals.total}
-            active={stageFilter === ""}
-            onClick={() => setStageFilter("")}
+            active={stage === null}
+            onClick={() => openRail(null)}
           />
-          {PROSPECT_STAGES.map((stage) => (
+          {PROSPECT_STAGES.map((s) => (
             <FilterRail
-              key={stage}
-              label={stageWord(stage)}
-              count={stageCount(stage)}
-              active={stageFilter === stage}
-              onClick={() => setStageFilter(stageFilter === stage ? "" : stage)}
+              key={s}
+              label={stageWord(s)}
+              count={stageCount(s)}
+              active={stage === s}
+              onClick={() => openRail(stage === s ? null : s)}
             />
           ))}
         </div>
       </div>
 
-      {(rowsNotLoaded > 0 || railHidden > 0) && (
-        <div className="mb-4 max-w-3xl space-y-1 text-[11px] leading-relaxed text-brand-ink/60">
-          {rowsNotLoaded > 0 && (
-            <p>
-              This page lists the newest {prospects.length.toLocaleString()} of the{" "}
-              {totals.total.toLocaleString()} prospects in the pool — one render carries{" "}
-              {POOL_LIMIT.toLocaleString()} rows, so {rowsNotLoaded.toLocaleString()} are counted above
-              but not shown below.
-            </p>
-          )}
-          {railHidden > 0 && stageFilter && (
-            <p>
-              The {stageWord(stageFilter)} rail counts {stageCount(stageFilter).toLocaleString()}. A rail
-              can only narrow the rows this page loaded, so {railHidden}{" "}
-              {railHidden === 1 ? "is" : "are"} counted but not listed.
-            </p>
-          )}
-        </div>
+      {/* A chip counts the whole stage; this table lists the newest rows the query
+          returns — the stage is filtered in the database now, so the rows a rail
+          promises are the rows it loads, up to one render's bound. When the two
+          numbers still differ, the page says which one it is showing rather than
+          letting a recruiter count rows against a chip that promised more. */}
+      {rowsNotLoaded > 0 && (
+        <p className="mb-4 max-w-3xl text-[11px] leading-relaxed text-brand-ink/60">
+          This table lists the newest {prospects.length.toLocaleString()} of the{" "}
+          {scopeTotal.toLocaleString()} prospects{" "}
+          {stage ? `the ${stageWord(stage)} rail counts` : "in the pool"} — one render carries{" "}
+          {POOL_LIMIT.toLocaleString()} rows, so {rowsNotLoaded.toLocaleString()}{" "}
+          {rowsNotLoaded === 1 ? "prospect is" : "prospects are"} counted above but not shown below.
+        </p>
       )}
 
       {notice && (
@@ -395,9 +407,15 @@ export function SourcingBoard({
           <EmptyState
             title="Nothing matches that"
             description={
-              query.trim() || stageFilter
-                ? "Clear the search or pick another stage to see the rest of what this page lists."
-                : "No prospect rows arrived in this render, though the pool counts them above."
+              query.trim()
+                ? "Clear the search to see the rows this page lists again."
+                : stage
+                  ? scopeTotal === 0
+                    ? `No prospect sits at the ${stageWord(stage)} stage. Open “All” to leave the rail.`
+                    : `This render asked the database for the ${stageWord(
+                        stage
+                      )} rows and none came back, though the chip counts ${scopeTotal.toLocaleString()}. Reload the page, or open “All” to leave the rail.`
+                  : "No prospect rows arrived in this render, though the pool counts them above."
             }
           />
         ) : (
