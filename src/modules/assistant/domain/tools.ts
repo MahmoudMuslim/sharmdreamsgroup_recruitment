@@ -47,11 +47,20 @@ import {
 import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import {
+  deleteCredential,
   getModelCatalogue,
+  listCredentials,
   listModelRouting,
+  saveCredential,
   saveModelRouting,
+  verifyCredential,
 } from "@/modules/settings/application/credential-actions";
-import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
+import {
+  AI_CAPABILITIES,
+  PROVIDER_GROUPS,
+  providerById,
+} from "@/modules/settings/domain/providers";
+import { credentialsTab } from "@/modules/settings/domain/settingsNav";
 import {
   modelReadNote,
   modelSearchWords,
@@ -1246,6 +1255,243 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     run: async (args) => {
       const limit = args.limit === undefined ? 15 : Math.min(num(args, "limit"), 50);
       return loadAuditLog(limit);
+    },
+  },
+
+  /* -------------------------- Provider credentials ------------------------ */
+  {
+    name: "list_credentials",
+    label: "Reading provider credentials",
+    description:
+      `Every provider the API keys console lists, and where its key actually comes from: "stored" is a key encrypted in this database, which overrides the deployment's variable; "environment" means nothing is stored and the variable named in \`env_var\` serves every call through it; "unset" means neither, so anything routed that way fails. Only a masked hint is ever returned — no surface in this portal reads a key back, this tool included. \`group\` is the console's own tab: ${PROVIDER_GROUPS.map((group) => group.id).join("|")}. Read this before save_credential or delete_credential: both change a stored row, and most deployments have none.`,
+    args: {
+      group: `string — optional, one of ${PROVIDER_GROUPS.map((group) => group.id).join("|")}, to list only the providers under that tab`,
+    },
+    run: async (args) => {
+      const asked = optionalStr(args, "group");
+      const tab = asked === undefined ? null : credentialsTab(asked);
+      if (asked !== undefined && tab === null) {
+        throw new ToolArgumentError(
+          `"group" must be one of ${PROVIDER_GROUPS.map((group) => group.id).join(
+            ", "
+          )} — the console's tabs, exactly as it names them.`
+        );
+      }
+      const cards = await listCredentials();
+      const rows = tab ? cards.filter((card) => card.group === tab) : cards;
+      const shown = rows.slice(0, ANSWER_ROWS);
+      const labels = new Map(PROVIDER_GROUPS.map((group) => [group.id, group.label]));
+      const count = (source: string) => rows.filter((row) => row.source === source).length;
+      const stored = count("stored");
+      const fromEnv = count("environment");
+      const unset = count("unset");
+      const parts = [
+        `${rows.length.toLocaleString()} provider ${rows.length === 1 ? "card" : "cards"} the console can show${
+          tab ? ` under ${labels.get(tab) ?? tab}` : ""
+        }: ${stored} with ${stored === 1 ? "a stored key" : "stored keys"}, ${fromEnv} served from the environment, ${unset} with nothing configured.`,
+      ];
+      if (stored === 0) {
+        parts.push(
+          "No key is stored in this database, so every credential the portal runs on comes from its own environment variables — there is no row for save_credential or delete_credential to change."
+        );
+      }
+      if (fromEnv > 0) {
+        parts.push(
+          "An environment-served provider has no row to write to, so a Test outcome for one lands only in the console's audit list: a null last_verified here does not mean it was never tested."
+        );
+      }
+      if (unset > 0) {
+        parts.push("A provider with neither is dead until one is configured.");
+      }
+      if (rows.length > shown.length) {
+        parts.push(`The answer lists the first ${shown.length.toLocaleString()} of them.`);
+      }
+      parts.push("Only the last characters of a key are ever shown, to anyone.");
+      return {
+        credentials_note: parts.join(" "),
+        credentials: shown.map((card) => ({
+          provider: card.provider,
+          name: card.displayName,
+          group: card.group,
+          group_label: labels.get(card.group) ?? card.group,
+          env_var: card.envVar,
+          source: card.source,
+          hint: card.hint || null,
+          is_active: card.isActive,
+          priority: card.priority,
+          can_be_tested: card.verify,
+          config: card.config,
+          secret_fields_set: card.secretFieldsSet,
+          fields: card.fields.map((field) => ({
+            key: field.key,
+            label: field.label,
+            kind: field.kind,
+            secret: field.secret === true,
+          })),
+          last_verified_at: card.lastVerifiedAt,
+          last_verified_status: card.lastVerifiedStatus,
+          last_verified_detail: card.lastVerifiedDetail,
+        })),
+      };
+    },
+  },
+  {
+    name: "verify_credential",
+    label: "Testing a provider credential",
+    description:
+      "Run the console's Test button for one provider: a live call that asks the provider whether the key the portal would actually use answers. It works for a key served from the environment as well as a stored one. Held for the recruiter's approval, because it spends a provider call and records the outcome against the provider.",
+    args: { provider: "string — the provider id exactly as list_credentials returns it" },
+    run: async (args) => {
+      const definition = providerById(str(args, "provider"));
+      if (!definition) {
+        throw new ToolArgumentError(
+          "That is not a provider the API keys console lists — read list_credentials first."
+        );
+      }
+      const result = await verifyCredential(definition.id);
+      return {
+        ok: result.ok,
+        provider: definition.id,
+        name: definition.displayName,
+        group: definition.group,
+        status: result.status,
+        outcome: result.message,
+        ...(result.status === "unverifiable"
+          ? { note: "This provider has no automatic check, so the console cannot test it either." }
+          : {}),
+      };
+    },
+  },
+  {
+    name: "save_credential",
+    label: "Changing a stored credential",
+    description:
+      "Change the non-secret parts of one stored key row: its settings fields that are not keys (base URLs, account or project ids), and whether the row is active. A key value is never accepted here on purpose — anything typed into this chat is sent to the model that answers it, so a new or rotated key is typed into the console's own field, which encrypts it and never returns it. Refused when nothing is stored for that provider, which is where an environment-served key sits. Priority is not renumbered: it chooses which of the provider's stored rows is meant.",
+    args: {
+      provider: "string — the provider id exactly as list_credentials returns it",
+      priority: "number — optional, which stored row of that provider, 1 being the one used first",
+      fields: 'object — optional, non-secret field key to new value, e.g. {"account_id": "abc123"}',
+      is_active: "boolean — optional, switch this row off without deleting it",
+    },
+    run: async (args) => {
+      const definition = providerById(str(args, "provider"));
+      if (!definition) {
+        throw new ToolArgumentError(
+          "That is not a provider the API keys console lists — read list_credentials first."
+        );
+      }
+
+      const submitted = args.fields;
+      if (submitted !== undefined && submitted !== null) {
+        if (typeof submitted !== "object" || Array.isArray(submitted)) {
+          throw new ToolArgumentError('"fields" must be an object of field names to values.');
+        }
+      }
+      const values = Object.entries((submitted ?? {}) as Record<string, unknown>).map(
+        (entry): [string, string] => {
+          if (typeof entry[1] !== "string") {
+            throw new ToolArgumentError(
+              `"fields.${entry[0]}" must be a string — every field this console edits takes text.`
+            );
+          }
+          return [entry[0], entry[1]];
+        }
+      );
+      const keys = definition.fields.map((field) => field.key);
+      const secretKeys = values
+        .map(([key]) => key)
+        .filter((key) => definition.fields.find((field) => field.key === key)?.secret);
+      if (secretKeys.length > 0) {
+        throw new ToolArgumentError(
+          `${secretKeys.map((key) => `"${key}"`).join(", ")} ` +
+            `${secretKeys.length === 1 ? "is a key field" : "are key fields"}, and a key typed into chat is sent to ` +
+            `the model answering it. ${definition.displayName}'s ` +
+            `${secretKeys.length === 1 ? "key belongs" : "keys belong"} in that screen's own field, which encrypts it. ` +
+            `This tool changes only ${
+              keys.filter((key) => !definition.fields.find((field) => field.key === key)?.secret).join(", ") ||
+              "the row's active flag"
+            }.`
+        );
+      }
+      const unknown = values.map(([key]) => key).filter((key) => !keys.includes(key));
+      if (unknown.length > 0) {
+        throw new ToolArgumentError(
+          `"${unknown.join(", ")}" is not a field ${definition.displayName} has. Its fields are ${
+            keys.join(", ") || "none"
+          } — exactly as list_credentials returned them.`
+        );
+      }
+
+      const cards = await listCredentials();
+      const stored = cards.filter(
+        (card) => card.provider === definition.id && card.source === "stored"
+      );
+      if (stored.length === 0) {
+        return {
+          ok: false,
+          error: `Nothing is stored for ${definition.displayName}, so there is no row to change — the portal reads ${definition.envVar}. A new key is typed into the console's own field, never into chat.`,
+        };
+      }
+      const wanted = args.priority === undefined ? null : num(args, "priority");
+      const row = wanted === null ? stored[0] : stored.find((card) => card.priority === wanted);
+      if (!row) {
+        return {
+          ok: false,
+          error: `${definition.displayName} has no stored key at priority ${wanted}. Its rows are at ${stored
+            .map((card) => card.priority)
+            .join(", ")}.`,
+        };
+      }
+      const isActive = bool(args, "is_active", row.isActive);
+      const changed = values.filter(([key, value]) => row.config[key] !== value);
+      if (changed.length === 0 && isActive === row.isActive) {
+        return {
+          ok: false,
+          error: `Nothing here differs from what is stored for ${definition.displayName} at priority ${row.priority}, so there is nothing to save.`,
+        };
+      }
+      const result = await saveCredential({
+        provider: definition.id,
+        priority: row.priority,
+        config: Object.fromEntries(changed),
+        isActive,
+      });
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        provider: definition.id,
+        name: definition.displayName,
+        group: definition.group,
+        priority: row.priority,
+        changed_fields: changed.map(([key]) => key),
+        is_active: isActive,
+        note: "No key value was read or written by this change.",
+      };
+    },
+  },
+  {
+    name: "delete_credential",
+    label: "Removing a stored credential",
+    description:
+      "Remove every stored key row for one provider, so the portal reads that provider's environment variable again — the same thing the console's Remove button does. Refused when nothing is stored, because then there is nothing to remove. The key goes with the row; only the environment variable can serve the provider afterwards.",
+    args: { provider: "string — the provider id exactly as list_credentials returns it" },
+    destructive: true,
+    run: async (args) => {
+      const definition = providerById(str(args, "provider"));
+      if (!definition) {
+        throw new ToolArgumentError(
+          "That is not a provider the API keys console lists — read list_credentials first."
+        );
+      }
+      const result = await deleteCredential(definition.id);
+      if (!result.ok) return result;
+      return {
+        ok: true,
+        provider: definition.id,
+        name: definition.displayName,
+        group: definition.group,
+        key_rows_removed: result.removed ?? null,
+      };
     },
   },
   {
@@ -2795,6 +3041,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "get_master_data",
   "list_model_routing",
   "get_audit_log",
+  "list_credentials",
   "get_candidate_dossier",
   "get_assessment_suite",
   "get_attempt_grades",

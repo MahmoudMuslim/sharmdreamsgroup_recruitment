@@ -31,6 +31,7 @@ import {
   SETTINGS_NAV,
   TEMPLATES_TAB_IDS,
 } from "@/modules/settings/domain/settingsNav";
+import { PROVIDER_GROUPS, PROVIDERS } from "@/modules/settings/domain/providers";
 import type { ChatCompletionMessage } from "@/types";
 
 /**
@@ -135,6 +136,13 @@ export const ASSISTANT_RULES: readonly string[] = [
   `   The Platform area's sections are ${SETTINGS_SCHEMA.map((section) => section.id).join("|")}, and its console box`,
   `   searches them by ${settingSearchWords()}, so [the password rule](/settings?area=platform&section=security&q=password)`,
   "   is a real link — words belong in it only when one section holds every setting the answer names;",
+  `   On the API keys console ?tab=${PROVIDER_GROUPS.map((group) => group.id).join("|")} is the group whose providers it lists, so`,
+  `   [the messaging keys](/settings?area=providers&section=credentials&tab=communication) is a real link. It covers all`,
+  `   ${PROVIDERS.length} providers the portal knows, and says where each key comes from. A key is shown only as its`,
+  "   last characters, and no tool of yours can store one: save_credential refuses a key field outright, because",
+  "   anything typed into this chat is sent to the model answering it. A new or rotated key is typed into that",
+  "   screen's own field, which encrypts it. A provider served from the environment has no stored row, so",
+  "   save_credential and delete_credential refuse for it and say so; verify_credential tests either kind.",
   "   Provider health only probes when a person opens that tab itself, so a link there shows nothing run;",
   "   /assessments takes ?q= for its own suite box, and /files takes ?q=,",
   `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,

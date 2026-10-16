@@ -190,6 +190,8 @@ export async function listCredentials(): Promise<CredentialKeyView[]> {
 export interface SaveCredentialResult {
   ok: boolean;
   error?: string;
+  /** How many key rows a delete actually removed — a provider can hold several. */
+  removed?: number;
 }
 
 export async function saveCredential(input: {
@@ -378,13 +380,24 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
     ? await session.from("user_profiles").select("id").eq("auth_user_id", sessionData.user.id).maybeSingle()
     : { data: null };
 
-  // Read the row first: a delete is the last moment its shape can be named, and
-  // removing nothing should not be reported as a change.
-  const { data: stored } = await admin
+  // Read the rows first: a delete is the last moment their shape can be named,
+  // and removing nothing must not be reported as a change. The console hides the
+  // Remove button unless a row is stored; this action is also reached from the
+  // assistant, which has no such gate, so the refusal belongs here.
+  const { data: stored, error: readError } = await admin
     .from("provider_credentials")
-    .select("id, display_name, is_active, priority, updated_at")
+    .select("priority, is_active")
     .eq("provider", definition.id)
-    .maybeSingle();
+    .order("priority", { ascending: true });
+  if (readError) return { ok: false, error: readError.message };
+
+  const rows = (stored ?? []) as { priority: number; is_active: boolean }[];
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      error: `Nothing is stored for ${definition.displayName}, so there is no key to remove — the portal already reads ${definition.envVar}.`,
+    };
+  }
 
   const { error } = await admin.from("provider_credentials").delete().eq("provider", definition.id);
   if (error) return { ok: false, error: error.message };
@@ -396,25 +409,26 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
     detail: "Reverted to environment variable",
   });
 
-  if (stored) {
-    await recordActivity({
-      area: "settings",
-      action: "credential_delete",
-      entity: "credential",
-      entityId: definition.id,
-      summary: `Removed the stored ${definition.displayName} credential, so the portal reads ${definition.envVar} again`,
-      detail: {
-        provider: definition.id,
-        was_active: (stored as { is_active?: boolean } | null)?.is_active ?? null,
-        priority: (stored as { priority?: number } | null)?.priority ?? null,
-        note: "The key was deleted with the row; only the environment variable can serve it now.",
-      },
-    });
-  }
+  await recordActivity({
+    area: "settings",
+    action: "credential_delete",
+    entity: "credential",
+    entityId: definition.id,
+    summary: `Removed ${rows.length} stored ${definition.displayName} key row${
+      rows.length === 1 ? "" : "s"
+    }, so the portal reads ${definition.envVar} again`,
+    detail: {
+      provider: definition.id,
+      rows_removed: rows.length,
+      priorities: rows.map((row) => row.priority).join(", "),
+      was_active: rows.map((row) => row.is_active).join(", "),
+      note: "The key was deleted with the row; only the environment variable can serve it now.",
+    },
+  });
 
   dropCatalogueCache();
   revalidatePath("/settings");
-  return { ok: true };
+  return { ok: true, removed: rows.length };
 }
 
 export interface VerifyResult {

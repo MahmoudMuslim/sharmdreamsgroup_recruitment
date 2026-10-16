@@ -4,11 +4,13 @@ import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
 import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
 import { bucketInfo, isStoredPath } from "@/app/(admin)/files/file-browser-types";
 import {
+  credentialsTab,
   MODEL_CONSOLE_TABS,
   type ModelConsoleTabId,
   TEMPLATES_CONSOLE_TABS,
   templatesTabForChannel,
 } from "@/modules/settings/domain/settingsNav";
+import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
 import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import type { ToolArgs } from "./tools";
 
@@ -171,6 +173,12 @@ const JOB_VIEW: AssistantLink = { href: "/jobs", label: "View the opening" };
 /** The Platform area's console, when no single section can be named. */
 const SETTINGS_CONSOLE: AssistantLink = { href: "/settings?area=platform", label: "Open the settings" };
 
+/** The keys console, when no single provider group can be named. */
+const CREDENTIALS_CONSOLE: AssistantLink = {
+  href: "/settings?area=providers&section=credentials",
+  label: "Open the API keys",
+};
+
 /**
  * The setting keys a settings answer or write is about.
  *
@@ -209,6 +217,48 @@ function settingsView(keys: string[], q: string | null): AssistantLink {
     ])}`,
     label: `Open the ${one.title} settings`,
   };
+}
+
+/**
+ * The API keys console, opened on the tab that holds what the answer named.
+ *
+ * Providers are three tabs of one page and it opens on the AI group, so a link
+ * about the WhatsApp number sits behind a tab the plain console would not show.
+ * One tab is named only when every provider in the answer sits under it — a read
+ * that spanned groups would land on a strip listing some of the rows it counted.
+ * A held or refused write reports no group, and then the console alone is honest.
+ */
+function credentialsView(groups: (string | null)[]): AssistantLink {
+  const distinct = [...new Set(groups.filter((group): group is string => typeof group === "string"))];
+  const tab = distinct.length === 1 ? credentialsTab(distinct[0]) : null;
+  if (!tab) return CREDENTIALS_CONSOLE;
+  return {
+    href: `/settings${query([
+      ["area", "providers"],
+      ["section", "credentials"],
+      ["tab", tab],
+    ])}`,
+    label: `Open the ${PROVIDER_GROUPS.find((group) => group.id === tab)?.label ?? tab} tab`,
+  };
+}
+
+/**
+ * The group(s) a credential answer is about.
+ *
+ * A read lists cards under their provider's own group; a write names the one row
+ * it touched. A refusal names neither, and `report()` has already stripped it to
+ * `{ok:false, error}`, so a failed change needs no special case here.
+ */
+function credentialGroups(result: unknown): (string | null)[] {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+  const record = result as Record<string, unknown>;
+  const cards = record.credentials;
+  if (Array.isArray(cards)) {
+    return cards.map(
+      (card) => ((card as { group?: unknown } | null)?.group ?? null) as string | null
+    );
+  }
+  return [typeof record.group === "string" ? record.group : null];
 }
 
 /**
@@ -395,6 +445,10 @@ export function linkForTool(
       return { href: "/whatsapp?failed=1", label: "Open the refused messages" };
     case "save_model_routing":
       return modelsTab("routing");
+    case "save_credential":
+    case "delete_credential":
+    case "verify_credential":
+      return credentialsView(credentialGroups(result));
     case "save_settings":
       return settingsView(settingKeys(result), null);
     case "dashboard_analytics":
@@ -480,6 +534,10 @@ export function linkForTool(
       // the same tiles it counted. Routing rows and the catalogue are different
       // views of one page, and this page opens on routing.
       return modelsTab("catalogue", words(args.query));
+    case "list_credentials":
+      // Three provider groups share one page and it opens on the AI tab, so a
+      // read that only listed messaging channels has to carry its group.
+      return credentialsView(credentialGroups(result));
     case "get_settings":
       return settingsView(settingKeys(result), words(args.query));
     case "get_master_data":
