@@ -144,9 +144,9 @@ function peakOf(rows: AssistantChartRow[]): number {
 /**
  * Stage populations, not a flow.
  *
- * `pipeline` carries a `conversion_rate` measured against the previous stage,
- * which invites the reading that this many people moved on. The counts are who
- * is sitting at each stage right now, so the chart compares them against the
+ * `pipeline` carries `vs_previous_stage`, a ratio of two current populations
+ * that invites the reading that this many people moved on. The counts are who is
+ * sitting at each stage right now, so the chart compares them against the
  * pipeline instead, and says so.
  */
 function pipelineChart(result: Record<string, unknown>): ChartBuild {

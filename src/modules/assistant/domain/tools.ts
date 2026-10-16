@@ -546,7 +546,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "dashboard_analytics",
     label: "Reading hiring metrics",
     description:
-      "Group-wide hiring analytics: totals, the stage funnel with conversion rates, channel effectiveness, AI fit-score distribution, 14-day application volume and time-to-hire trend. Quote `candidates_note` whenever the ten candidates are named: they are the board's ranking of the rows it loads, not the pipeline. Pass `chart` when the answer is a shape — the chart is drawn from these figures on the recruiter's screen, not from anything you write, so say what it shows instead of reciting every row.",
+      "Group-wide hiring analytics: totals, the pipeline as stage-by-stage populations with each stage's share of live applications, channel effectiveness, AI fit-score distribution, 14-day application volume and time-to-hire trend. Read `pipeline_note` and `candidates_note` before describing either: the stage figures are who sits somewhere now, not who moved. Pass `chart` when the answer is a shape — the chart is drawn from these figures on the recruiter's screen, not from anything you write, so say what it shows instead of reciting every row.",
     args: {
       chart: `string — optional, draw one of ${CHART_VIEWS.join(", ")} as a chart under your answer`,
     },
@@ -563,6 +563,9 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         scores_masked: analytics.scores_masked,
         avg_time_to_hire_days: analytics.avg_time_to_hire_days,
         pipeline: analytics.pipeline,
+        // A stage count read as a transition is the oldest lie on this board, so
+        // the read says what the figures are before the model can guess.
+        pipeline_note: `${analytics.total_applications} live applications, each sitting at exactly one stage. These are current populations, not moves: vs_previous_stage compares two counts taken now, and Rejected carries none because it closes applications at every stage. Never describe any of these as a conversion rate.`,
         channels: analytics.channels,
         fit_distribution: analytics.fit_distribution,
         time_to_hire_trend: analytics.time_to_hire_trend,

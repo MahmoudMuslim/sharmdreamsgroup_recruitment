@@ -659,7 +659,15 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         return {
           eyebrow: "Pipeline stage",
           title: `At ${prettyStage(scope.stage)}`,
-          subtitle: `${step?.count ?? 0} here when this page was read · ${step?.conversion_rate ?? 0}% of the stage before it`,
+          subtitle: `${step?.count ?? 0} here when this page was read · ${
+            step?.share_of_pipeline ?? 0
+          }% of the ${analytics.total_applications.toLocaleString()} live applications${
+            step?.vs_previous_stage
+              ? ` · ${step.vs_previous_stage.percent}% measured against the ${
+                  step.vs_previous_stage.count
+                } sitting at ${prettyStage(step.vs_previous_stage.stage)}, not a count of moves`
+              : ""
+          }`,
         };
       }
       case "source": {
@@ -887,7 +895,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
       {/* ---- Pipeline funnel (clickable) ---- */}
       <Card>
         <CardHeader
-          title="Pipeline conversion"
+          title="Where applications sit"
           meta={
             stage
               ? `Board filtered to ${prettyStage(stage)}`
@@ -930,7 +938,15 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                     <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-brand-ink/50">
                       {prettyStage(step.stage)}
                     </p>
-                    <p className="text-[10px] text-brand-ink/40">{step.conversion_rate}% conv.</p>
+                    <p className="text-[10px] text-brand-ink/40">
+                      {step.share_of_pipeline}% of all live
+                    </p>
+                    {step.vs_previous_stage ? (
+                      <p className="text-[10px] text-brand-ink/40">
+                        {step.vs_previous_stage.percent}% of the {step.vs_previous_stage.count} at{" "}
+                        {prettyStage(step.vs_previous_stage.stage)}
+                      </p>
+                    ) : null}
                     <p className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-brand-ink/30 transition group-hover:text-brand-gold-dark">
                       See who
                       <ArrowUpRight className="h-3 w-3" aria-hidden />

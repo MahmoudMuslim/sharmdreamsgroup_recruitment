@@ -344,7 +344,17 @@ export interface AttemptDraft {
 export interface PipelineFunnelStep {
   stage: ApplicationStage;
   count: number;
-  conversion_rate: number;
+  /** Share of every live application sitting here. Each one counts at one stage only. */
+  share_of_pipeline: number;
+  /**
+   * This count measured against the population of the stage listed before it.
+   * Both figures are who is sitting somewhere *now*, not a record of who moved,
+   * so the denominator travels with it. Null where the comparison would describe
+   * nothing: New has no stage before it, and Rejected's is Hired — rejections
+   * happen at every stage, so rejected ÷ hired is neither a pass rate nor a
+   * drop-out rate.
+   */
+  vs_previous_stage: { stage: ApplicationStage; count: number; percent: number } | null;
 }
 
 export interface ChannelEffectiveness {

@@ -123,17 +123,29 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   }
 
   const pipeline: PipelineFunnelStep[] = [];
-  let previous = stageCounts.get("NEW") ?? 0;
+  let previous: { stage: ApplicationStage; count: number } | null = null;
   for (const stage of STAGES) {
     const count = stageCounts.get(stage) ?? 0;
     const isRejected = stage === "REJECTED";
+    // Rejected closes applications at every stage, so the row listed before it
+    // (Hired) is not a population it converted from — a ratio against it would
+    // print 800% for five hires and forty rejections. It carries only its share.
+    const against = isRejected ? null : previous;
     pipeline.push({
       stage,
       count,
-      conversion_rate:
-        stage === "NEW" ? 100 : previous === 0 ? 0 : Math.round((count / previous) * 100),
+      share_of_pipeline:
+        applications.length === 0 ? 0 : Math.round((count / applications.length) * 100),
+      vs_previous_stage:
+        against && against.count > 0
+          ? {
+              stage: against.stage,
+              count: against.count,
+              percent: Math.round((count / against.count) * 100),
+            }
+          : null,
     });
-    if (!isRejected) previous = count;
+    if (!isRejected) previous = { stage, count };
   }
 
   // --- Channel effectiveness -------------------------------------------------
