@@ -1,5 +1,5 @@
 import { getDashboardAnalytics } from "@/app/(admin)/dashboard/actions";
-import { getCandidateList } from "@/app/(admin)/candidates/actions";
+import { getCandidateList, getCandidateTally } from "@/app/(admin)/candidates/actions";
 import {
   draftCandidateFeedback,
   screenApplication,
@@ -26,7 +26,11 @@ import {
   saveProspect,
   setProspectStage,
 } from "@/app/(admin)/sourcing/actions";
-import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
+import {
+  PROSPECT_STAGES,
+  poolScopeNote,
+  type ProspectStage,
+} from "@/app/(admin)/sourcing/pool-model";
 import { cancelWhatsAppJob, getOutbox, queueWhatsAppMessage } from "@/app/(admin)/whatsapp/actions";
 import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
@@ -36,8 +40,17 @@ import {
 } from "@/modules/settings/application/credential-actions";
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
 import { SECTORS } from "@/modules/settings/domain/vocabularies";
-import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
-import { getJobOpening, listJobOpenings } from "@/modules/assistant/infrastructure/reads";
+import { JOB_STATUSES, openingReadNote } from "@/modules/jobs/domain/hireable";
+import {
+  APPLICATION_SOURCES,
+  PIPELINE_STAGES,
+  candidateScopeNote,
+} from "@/modules/candidates/domain/listFilters";
+import {
+  getJobOpening,
+  listJobOpenings,
+  type JobReadFilter,
+} from "@/modules/assistant/infrastructure/reads";
 import {
   getQuestionsForEditor,
   getTemplateDetail,
@@ -214,8 +227,40 @@ function report<T extends { ok: boolean; error?: string }>(
   return result.ok ? result : { ok: false, error: result.error ?? "Refused." };
 }
 
-const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
-const APPLICATION_SOURCES = ["LINKEDIN", "WHATSAPP", "JOB_BOARD", "CAREER_SITE", "REFERRAL", "ATS_IMPORT"];
+/**
+ * Rows one answer lists.
+ *
+ * A tool result is clipped to 6000 characters on the way back to the model, and
+ * a JSON blob cut mid-row reads to the model as a shorter list, not a broken
+ * one. Every list tool bounds its own answer with this and says so in its scope
+ * note, so the number named is the number the recruiter is told about.
+ */
+const ANSWER_ROWS = 50;
+
+/**
+ * An optional argument that has to name one of a set.
+ *
+ * Refused rather than ignored: the pages let a bad `?stage=` narrow nothing so a
+ * recruiter never loses rows by accident, but a model that typed the wrong word
+ * needs the list back, not an empty answer it will report as "none".
+ */
+function optionalChoice(args: ToolArgs, key: string, words: readonly string[]): string | null {
+  const value = optionalStr(args, key);
+  if (value === undefined) return null;
+  const upper = value.toUpperCase();
+  if (!words.includes(upper)) {
+    throw new ToolArgumentError(`"${key}" must be one of: ${words.join(", ")}.`);
+  }
+  return upper;
+}
+
+/** The set an openings read counted, in the words its scope note quotes back. */
+function openingScopeWords(filter: JobReadFilter): string {
+  if (!filter) return "openings";
+  return filter === "HIREABLE"
+    ? "openings you can still hire for"
+    : `openings marked ${filter}`;
+}
 
 /** Everything `create_job` / `update_job` write, so both paths stay identical. */
 function jobDraft(args: ToolArgs): JobDraft {
@@ -602,21 +647,35 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_jobs",
     label: "Reading job openings",
     description:
-      "Every job opening with its status, department, location, salary band and applicant count.",
-    args: {},
-    run: async () => {
-      const jobs = await listJobOpenings();
-      return jobs.map((job) => ({
-        id: job.id,
-        title: job.title,
-        status: job.status,
-        department: job.department,
-        location: job.location,
-        employment_type: job.employment_type,
-        sector: job.sector,
-        salary: `${job.min_salary_usd ?? "?"}–${job.max_salary_usd ?? "?"} ${job.salary_currency ?? ""}`.trim(),
-        applicants: job.applicants,
-      }));
+      "Job openings newest first, with their status, department, location, salary band and applicant count. Quote `scope_note` whenever openings are counted — the read is a window into the set, and the note is the set.",
+    args: {
+      status: `string — optional, one of ${JOB_STATUSES.join(
+        ", "
+      )}, or HIREABLE for every role a person may still be filed under. Omit for all four.`,
+    },
+    run: async (args) => {
+      const word = optionalStr(args, "status")?.toUpperCase() ?? null;
+      if (word && word !== "HIREABLE" && !(JOB_STATUSES as readonly string[]).includes(word)) {
+        throw new ToolArgumentError(
+          `"status" must be one of: ${JOB_STATUSES.join(", ")}, or HIREABLE.`
+        );
+      }
+      const filter = (word ?? null) as JobReadFilter;
+      const { jobs, total } = await listJobOpenings(filter);
+      return {
+        scope_note: openingReadNote(total, jobs.length, openingScopeWords(filter)),
+        openings: jobs.map((job) => ({
+          id: job.id,
+          title: job.title,
+          status: job.status,
+          department: job.department,
+          location: job.location,
+          employment_type: job.employment_type,
+          sector: job.sector,
+          salary: `${job.min_salary_usd ?? "?"}–${job.max_salary_usd ?? "?"} ${job.salary_currency ?? ""}`.trim(),
+          applicants: job.applicants,
+        })),
+      };
     },
   },
   {
@@ -635,14 +694,34 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_candidates",
     label: "Reading candidates",
     description:
-      "The 50 most recent applications with their pipeline stage, AI match score, job, assessment attempt and tracking code.",
-    args: {},
-    run: async () => {
-      const rows = await getCandidateList();
+      "The most recent applications with their pipeline stage, AI match score, job, assessment attempt and tracking code, filtered the way the candidates page's own rails filter. Quote `scope_note` whenever the pipeline is counted: the rows listed are a window, the note holds the counts.",
+    args: {
+      stage: `string — optional, one of ${PIPELINE_STAGES.join(", ")} — the stage rail`,
+      source: `string — optional, one of ${APPLICATION_SOURCES.join(", ")} — the channel rail`,
+      archived:
+        "boolean — optional, true for the archive the delete door files into instead of the live pipeline",
+    },
+    run: async (args) => {
+      const stage = optionalChoice(args, "stage", PIPELINE_STAGES);
+      const source = optionalChoice(args, "source", APPLICATION_SOURCES);
+      const archived = bool(args, "archived", false);
+      const [rows, tally] = await Promise.all([
+        getCandidateList(archived, stage, source),
+        getCandidateTally(archived),
+      ]);
+      const shown = rows.slice(0, ANSWER_ROWS);
       return {
+        scope_note: candidateScopeNote({
+          archived,
+          stage,
+          source,
+          shown: shown.length,
+          loaded: rows.length,
+          tally,
+        }),
         // So a hidden score is never described to the recruiter as "not screened".
         scores_masked: rows[0]?.scores_masked ?? false,
-        candidates: rows.map((row) => ({
+        candidates: shown.map((row) => ({
           id: row.id,
           tracking_code: row.tracking_code,
           full_name: row.full_name,
@@ -710,13 +789,16 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_prospects",
     label: "Reading sourcing pool",
     description:
-      "The sourced-prospect pool with each prospect's stage, origin and linked opening. Quote `pool_note` whenever the size of the pool is stated: the rows listed are a window, the counts in the note are the pool.",
-    args: {},
-    run: async () => {
-      const { prospects, totals } = await getProspectPool();
-      const shown = prospects.slice(0, 100);
+      "The sourced-prospect pool with each prospect's stage, origin and linked opening, filtered the way the board's own rails filter. Quote `pool_note` whenever the size of the pool is stated: the rows listed are a window, the counts in the note are the pool.",
+    args: {
+      stage: `string — optional, one of ${PROSPECT_STAGES.join(", ")} — the rail to read`,
+    },
+    run: async (args) => {
+      const stage = optionalChoice(args, "stage", PROSPECT_STAGES) as ProspectStage | null;
+      const { prospects, totals } = await getProspectPool({ stage });
+      const shown = prospects.slice(0, ANSWER_ROWS);
       return {
-        pool_note: `${totals.total.toLocaleString()} prospects are in the pool. This answer names ${shown.length} of them, taken from the ${totals.loaded.toLocaleString()} newest rows one read carries (${totals.limit.toLocaleString()} at most).`,
+        pool_note: poolScopeNote(totals, stage, shown.length),
         by_stage: totals.byStage,
         prospects: shown.map((prospect) => ({
           id: prospect.id,
@@ -1291,13 +1373,13 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       "Move an application to another pipeline stage. Rejecting needs a reason of at least four characters. The candidate is notified on the channels Settings allows.",
     args: {
       application_id: "string",
-      stage: `string — one of ${STAGES.join(", ")}`,
+      stage: `string — one of ${PIPELINE_STAGES.join(", ")}`,
       reason: "string — required when stage is REJECTED",
     },
     run: async (args) => {
       const stage = str(args, "stage").toUpperCase() as PipelineStage;
-      if (!STAGES.includes(stage)) {
-        throw new ToolArgumentError(`"stage" must be one of: ${STAGES.join(", ")}.`);
+      if (!(PIPELINE_STAGES as readonly string[]).includes(stage)) {
+        throw new ToolArgumentError(`"stage" must be one of: ${PIPELINE_STAGES.join(", ")}.`);
       }
       return updateApplicationStage({
         applicationId: str(args, "application_id"),
@@ -1889,7 +1971,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "message_prospects",
     label: "Messaging prospects",
     description:
-      "Send outreach copy to a set of prospects by email or WhatsApp and log each attempt on their record. At most 200 at a time.",
+      "Send outreach copy to a set of prospects by email or WhatsApp and log each attempt on their record. At most 200 at a time. A non-empty `closed_roles` still means the send went through — quote those opening names and tell the recruiter to reopen the role, edit the copy or refile the prospects.",
     args: {
       ids: "string[] — prospect ids",
       channel: "string — EMAIL or WHATSAPP",

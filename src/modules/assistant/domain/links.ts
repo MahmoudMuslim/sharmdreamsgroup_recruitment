@@ -1,3 +1,5 @@
+import { PIPELINE_STAGES, APPLICATION_SOURCES } from "@/modules/candidates/domain/listFilters";
+import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -34,6 +36,26 @@ function firstFromArgs(args: ToolArgs, key: string): string | null {
   const list = args[key];
   if (!Array.isArray(list)) return null;
   return token(list[0]);
+}
+
+/**
+ * A filter value the page will accept.
+ *
+ * The rails read their own query parameters, so a click-through can land on the
+ * same set the answer described — but only with a value the page's validator
+ * keeps. Anything else is dropped here rather than sent, because a parameter a
+ * page ignores makes the link look filtered while the table shows everything.
+ */
+function named(value: unknown, words: readonly string[]): string | null {
+  if (typeof value !== "string") return null;
+  const upper = value.trim().toUpperCase();
+  return words.includes(upper) ? upper : null;
+}
+
+/** The query for whichever of these pairs survived. */
+function query(pairs: [string, string | null][]): string {
+  const kept = pairs.filter((pair): pair is [string, string] => pair[1] !== null);
+  return kept.length === 0 ? "" : `?${new URLSearchParams(kept).toString()}`;
 }
 
 /** The id an action created or changed, when the action reported one. */
@@ -220,11 +242,24 @@ export function linkForTool(
     case "delete_job":
       return { href: "/jobs", label: "Open the openings" };
     case "list_candidates":
-      return { href: "/candidates", label: "Open the candidate pipeline" };
+      // The rails are query parameters, so the click-through can open the same
+      // set the answer just described rather than the whole pipeline.
+      return {
+        href: `/candidates${query([
+          ["stage", named(args.stage, PIPELINE_STAGES)],
+          ["source", named(args.source, APPLICATION_SOURCES)],
+          ["archived", args.archived === true || args.archived === "true" ? "1" : null],
+        ])}`,
+        label: "Open the candidate pipeline",
+      };
     case "list_assessment_suites":
     case "get_assessment_suite":
       return { href: "/assessments", label: "Open the assessment suites" };
     case "list_prospects":
+      return {
+        href: `/sourcing${query([["stage", named(args.stage, PROSPECT_STAGES)]])}`,
+        label: "Open the sourcing board",
+      };
     case "delete_prospect":
       return { href: "/sourcing", label: "Open the sourcing board" };
     case "list_outbox":

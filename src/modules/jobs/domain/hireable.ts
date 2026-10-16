@@ -25,6 +25,16 @@ export const HIREABLE_STATUSES: readonly JobStatus[] = ["DRAFT", "PUBLISHED", "P
 /** How many openings one picker ships. A window into the hireable set, not the set. */
 export const PICKER_LIMIT = 200;
 
+/**
+ * How many openings one read answers with.
+ *
+ * Smaller than a picker on purpose: a list of openings goes into the assistant's
+ * context, where a result that outgrows its clip returns broken JSON the model
+ * cannot tell apart from a short answer. This is the number an answer is allowed
+ * to claim it named, so the read and the sentence about it come from here.
+ */
+export const OPENING_READ_LIMIT = 50;
+
 export function isHireable(status: string): boolean {
   return (HIREABLE_STATUSES as readonly string[]).includes(status);
 }
@@ -68,4 +78,21 @@ export function pickerWindowNote(total: number, loaded: number): string | null {
   } you can still hire for — one picker carries ${PICKER_LIMIT.toLocaleString()}, so ${dropped.toLocaleString()} older ${
     dropped === 1 ? "role is" : "roles are"
   } missing from the dropdown.`;
+}
+
+/**
+ * What an openings read is allowed to claim about its own scope.
+ *
+ * `scope` is the noun phrase the query asked for — "openings", "openings in
+ * DRAFT", "openings you can still hire for" — so the sentence names the set it
+ * counted rather than leaving a bare number to be read as "everything".
+ */
+export function openingReadNote(total: number, loaded: number, scope: string): string {
+  if (total <= loaded) {
+    return `All ${scope} are named here (${total.toLocaleString()}).`;
+  }
+  const dropped = total - loaded;
+  return `This answer names the newest ${loaded.toLocaleString()} of the ${total.toLocaleString()} ${scope} — one read carries ${OPENING_READ_LIMIT.toLocaleString()}, so ${dropped.toLocaleString()} older ${
+    dropped === 1 ? "role is" : "roles are"
+  } not in it. /jobs lists them all.`;
 }

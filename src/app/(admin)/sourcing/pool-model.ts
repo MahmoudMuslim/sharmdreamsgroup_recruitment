@@ -73,3 +73,33 @@ export interface ProspectPoolTotals {
   loaded: number;
   limit: number;
 }
+
+/**
+ * What a list of prospects is allowed to claim about its own scope.
+ *
+ * Whoever quotes it is describing a window: the pool's head counts come from
+ * the database, the rows from one capped read, and a rail filters the *query*,
+ * so the pool's total keeps its meaning while the rail's may outrun the read.
+ * The assistant's answers are the caller — a board caption cannot carry three
+ * numbers in one line, but a spoken answer can, and it must not improvise them.
+ */
+export function poolScopeNote(
+  totals: ProspectPoolTotals,
+  stage: ProspectStage | null,
+  shown: number
+): string {
+  const { total, loaded, limit } = totals;
+  const window = `taken from the ${loaded.toLocaleString()} row${
+    loaded === 1 ? "" : "s"
+  } the read carries (${limit.toLocaleString()} at most)`;
+
+  if (!stage) {
+    return `${total.toLocaleString()} prospects are in the pool. This answer names ${shown.toLocaleString()} of them, ${window}.`;
+  }
+
+  const rail = totals.byStage[stage] ?? 0;
+  const beyond = rail > loaded ? ` That rail holds ${rail - loaded} more than one read carries.` : "";
+  return `${rail.toLocaleString()} ${rail === 1 ? "prospect sits" : "prospects sit"} in the ${stageWord(
+    stage
+  )} rail, out of ${total.toLocaleString()} in the pool. This answer names ${shown.toLocaleString()} of that rail, ${window}.${beyond}`;
+}

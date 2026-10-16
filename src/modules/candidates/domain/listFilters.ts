@@ -121,6 +121,57 @@ export function tallyCandidates(rows: CountableCandidate[]): CandidateTally {
   };
 }
 
+/**
+ * What a list of applications is allowed to claim about its own scope.
+ *
+ * Three numbers can be confused here: how many applications the view holds, how
+ * many rows one read carries, and how many an answer actually names. The rails
+ * count the first, the read is bound by the second, and the assistant clips to
+ * the third — so whoever lists rows says which of the three it is standing on.
+ * A single rail has a count to quote; a stage *and* a channel together is a set
+ * nothing counts, and the note admits that instead of inventing a number.
+ */
+export function candidateScopeNote(input: {
+  archived: boolean;
+  stage: string | null;
+  source: string | null;
+  shown: number;
+  loaded: number;
+  tally: CandidateTally;
+}): string {
+  const { archived, stage, source, shown, loaded, tally } = input;
+  const view = archived ? "archive" : "live pipeline";
+  const apps = (n: number) => `${n.toLocaleString()} application${n === 1 ? "" : "s"}`;
+  const scan = tally.truncated
+    ? ` Counts are drawn from the newest ${CANDIDATE_COUNT_SCAN_LIMIT.toLocaleString()} applications, so they are a floor.`
+    : "";
+  const asked = stage && source ? `stage ${stage} and channel ${source}` : stage ?? source;
+  if (loaded === 0) {
+    return asked
+      ? `Nothing in the ${view} matches ${asked}, so this answer names none. It holds ${apps(tally.total)}.${scan}`
+      : `The ${view} holds ${apps(tally.total)}, but the read came back empty, so this answer names none.${scan}`;
+  }
+  const carried = `${loaded.toLocaleString()} row${loaded === 1 ? "" : "s"} the read carries (${CANDIDATE_ROW_LIMIT.toLocaleString()} at most)`;
+  const window =
+    shown >= loaded
+      ? `This answer names every one of the ${carried}.`
+      : `This answer names ${shown.toLocaleString()} of the ${carried}.`;
+  const rail =
+    stage && !source
+      ? tally.stages[stage]
+      : !stage && source
+        ? tally.sources[source]
+        : undefined;
+
+  if (stage && source) {
+    return `Filtered to stage ${stage} and channel ${source}, which no rail counts as a pair. ${window} The ${view} holds ${apps(tally.total)}.${scan}`;
+  }
+  if (rail !== undefined) {
+    return `${(stage ?? source) as string} — ${apps(rail)}, out of ${apps(tally.total)} in the ${view}. This answer names ${shown.toLocaleString()} of that rail, taken from the ${carried}.${scan}`;
+  }
+  return `The ${view} holds ${apps(tally.total)}. ${window}${scan}`;
+}
+
 export const CANDIDATE_SORTS: { key: CandidateSort; label: string }[] = [
   { key: "recent", label: "newest first" },
   { key: "fit", label: "highest AI fit first" },

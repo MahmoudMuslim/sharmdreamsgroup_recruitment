@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseConfig } from "@/lib/config";
+import { loginSearch } from "@/lib/auth/login-target";
 import { coerceNumber } from "@/modules/settings/infrastructure/settingsReader";
 
 /*
@@ -102,12 +103,14 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
+  /** Where to come back to: the page and the view it was showing. */
+  const wanted = pathname + search;
 
   if (isProtected(pathname) && !user) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
-    loginUrl.search = `?next=${encodeURIComponent(pathname)}`;
+    loginUrl.search = loginSearch(wanted);
     return NextResponse.redirect(loginUrl);
   }
 
@@ -141,7 +144,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     ) {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
-      loginUrl.search = `?next=${encodeURIComponent(pathname)}&reason=idle`;
+      loginUrl.search = loginSearch(wanted, "idle");
       const signedOut = NextResponse.redirect(loginUrl);
 
       // Clearing the cookies is a local sign-out: this browser loses the session

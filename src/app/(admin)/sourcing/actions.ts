@@ -27,7 +27,12 @@ import {
   renderProfileText,
   type ProspectProfile,
 } from "@/modules/sourcing/domain/prospect-profile";
-import { HIREABLE_STATUSES, PICKER_LIMIT } from "@/modules/jobs/domain/hireable";
+import {
+  HIREABLE_STATUSES,
+  PICKER_LIMIT,
+  isHireable,
+  openingOptionLabel,
+} from "@/modules/jobs/domain/hireable";
 import { requireHireableOpening } from "@/modules/jobs/infrastructure/hireableOpening";
 import {
   DEDUPE_WINDOW,
@@ -65,6 +70,8 @@ export interface ProspectRow {
   stage: ProspectStage;
   job_id: string | null;
   job_title: string | null;
+  /** The linked opening's `job_status`, so a closed role can be named as closed. */
+  job_status: string | null;
   application_id: string | null;
   last_contacted_at: string | null;
   created_at: string;
@@ -103,14 +110,19 @@ interface ProspectWriteResult {
 const PROSPECT_SELECT = `
   id, full_name, headline, company, location, email, phone, linkedin_url, notes,
   origin, stage, job_id, application_id, last_contacted_at, created_at,
-  job_openings ( title ),
+  job_openings ( title, status ),
   communication_logs ( channel )
 `;
 
 const STAGES = new Set<string>(PROSPECT_STAGES);
 
 function toRow(row: Record<string, unknown>): ProspectRow {
-  const job = row.job_openings as { title?: string } | { title?: string }[] | null;
+  // A prospect outlives the role it was linked to, and the outreach letter
+  // quotes that role by name, so the row carries its status.
+  const job = row.job_openings as
+    | { title?: string; status?: string }
+    | { title?: string; status?: string }[]
+    | null;
   const logs = row.communication_logs as unknown[] | undefined;
   const embedded = Array.isArray(job) ? job[0] : job;
   return {
@@ -127,6 +139,7 @@ function toRow(row: Record<string, unknown>): ProspectRow {
     stage: (row.stage as ProspectStage) ?? "NEW",
     job_id: (row.job_id as string | null) ?? null,
     job_title: embedded?.title ?? null,
+    job_status: embedded?.status ?? null,
     application_id: (row.application_id as string | null) ?? null,
     last_contacted_at: (row.last_contacted_at as string | null) ?? null,
     created_at: String(row.created_at ?? ""),
@@ -690,6 +703,15 @@ export interface OutreachResult extends ProspectWriteResult {
   sent?: number;
   failed?: number;
   skipped?: number;
+  /**
+   * Openings the letters quoted by name that the group stopped hiring for.
+   *
+   * The send is not refused over it — a message is not a filing, and a recruiter
+   * may legitimately reopen the role or rewrite the copy. The board's composer
+   * warns before the send from the rows it already holds; this is the same warning
+   * on the chat side, where the model only sees what the action returns.
+   */
+  closed_roles?: string[];
 }
 
 async function outreachVars(
@@ -772,7 +794,7 @@ export async function sendProspectOutreach(input: {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("sourced_prospects")
-    .select("id, full_name, email, phone, stage, job_openings ( title )")
+    .select("id, full_name, email, phone, stage, job_openings ( title, status )")
     .in("id", ids);
 
   if (error) return { ok: false, error: error.message };
@@ -790,9 +812,16 @@ export async function sendProspectOutreach(input: {
   let firstError: string | undefined;
   /** The people a message actually reached — the rows the board moves on. */
   const touched: ProspectRow[] = [];
+  /** Openings these letters quoted by name that nobody is hiring for. */
+  const closedRoles = new Set<string>();
 
   for (const row of rows) {
     const prospect = toRow(row);
+    if (prospect.job_id && prospect.job_status && !isHireable(prospect.job_status)) {
+      closedRoles.add(
+        openingOptionLabel(prospect.job_title ?? "an unnamed opening", prospect.job_status)
+      );
+    }
     const vars = await outreachVars(prospect, companyName);
     const text = renderTemplate(body, vars).trim();
     const letter = subject ? renderTemplate(subject, vars).trim() : null;
@@ -888,7 +917,7 @@ export async function sendProspectOutreach(input: {
     return { ok: false, error: firstError ?? "The channel refused every message.", failed, skipped };
   }
 
-  return { ok: true, sent, failed, skipped };
+  return { ok: true, sent, failed, skipped, closed_roles: [...closedRoles] };
 }
 
 /* -------------------------------------------------------------------------- */

@@ -38,7 +38,7 @@ import {
   StatTile,
 } from "@/modules/analytics/presentation/ui";
 import { renderTemplate } from "@/modules/settings/domain/templates";
-import { openingOptionLabel, pickerWindowNote } from "@/modules/jobs/domain/hireable";
+import { isHireable, openingOptionLabel, pickerWindowNote } from "@/modules/jobs/domain/hireable";
 import { parseProspectImport } from "@/modules/sourcing/domain/prospect-import";
 import {
   profileSections,
@@ -1675,6 +1675,20 @@ function ComposerDrawer({
 
   const reachable = rows.filter((row) => (channel === "EMAIL" ? row.email : row.phone)).length;
 
+  // A prospect can be linked to an opening that closed after the link was made,
+  // and the letter quotes that opening by name. Nothing here can refile the
+  // person — that is the edit drawer's job — so the composer says what it knows.
+  const closedRoles = Array.from(
+    new Set(
+      rows
+        .filter((row) => row.job_id && row.job_status && !isHireable(row.job_status))
+        .map((row) => openingOptionLabel(row.job_title ?? "an unnamed opening", row.job_status ?? ""))
+    )
+  );
+  const closedCount = rows.filter(
+    (row) => row.job_id && row.job_status && !isHireable(row.job_status)
+  ).length;
+
   function pickChannel(next: OutreachChannel) {
     setChannel(next);
     setBody(next === "EMAIL" ? copy.EMAIL.body : copy.WHATSAPP.body);
@@ -1741,6 +1755,22 @@ function ComposerDrawer({
           </button>
         ))}
       </div>
+
+      {closedCount > 0 && (
+        <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
+          {closedCount} of {rows.length} {rows.length === 1 ? "prospect" : "prospects"} here{" "}
+          {closedCount === 1 ? "is" : "are"} linked to a role the group stopped hiring for:{" "}
+          {closedRoles.map((role, index) => (
+            <span key={role}>
+              {index > 0 && ", "}“{role}”
+            </span>
+          ))}
+          . The copy below still quotes {closedRoles.length === 1 ? "it" : "them"} by name, so
+          reopen {closedRoles.length === 1 ? "that opening" : "those openings"} from Jobs, change
+          the letter, or move these prospects off {closedRoles.length === 1 ? "it" : "them"} before
+          sending.
+        </p>
+      )}
 
       {channel === "EMAIL" && (
         <Field label="Subject" htmlFor="composer-subject" className="mt-4">

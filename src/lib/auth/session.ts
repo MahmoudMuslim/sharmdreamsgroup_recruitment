@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { loginSearch } from "@/lib/auth/login-target";
 import type { UserRole } from "@/types";
 
 export interface SessionUser {
@@ -74,11 +75,16 @@ export function isStaff(role: UserRole | undefined): boolean {
 /**
  * Page-level guard: bounces anonymous visitors to the sign-in screen and
  * keeps candidates out of the recruiter portal.
+ *
+ * `nextPath` is where to come back to, and a caller that knows the view it is
+ * rendering can pass its query with the path. The proxy usually answers that
+ * first — it sees the request's own URL — so this fires for the session that a
+ * page-level read rejects, such as a profile row that no longer exists.
  */
 export async function requireStaff(nextPath: string): Promise<SessionUser> {
   const user = await getSessionUser();
 
-  if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+  if (!user) redirect(`/login${loginSearch(nextPath)}`);
   if (!isStaff(user.role)) redirect("/portal?denied=staff-only");
 
   return user;

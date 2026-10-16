@@ -1,5 +1,10 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import {
+  HIREABLE_STATUSES,
+  OPENING_READ_LIMIT,
+  type JobStatus,
+} from "@/modules/jobs/domain/hireable";
 
 /**
  * Read queries the assistant needs that no screen action already exposes.
@@ -74,20 +79,59 @@ function toJob(row: RawJobRow): AssistantJobRow {
   };
 }
 
-/** Every opening, newest first, with its applicant count. */
-export async function listJobOpenings(): Promise<AssistantJobRow[]> {
+/**
+ * The half of the openings set a read is asked for: one `job_status`, `HIREABLE`
+ * for everything a person may still be filed under, or `null` for all four.
+ * `HIREABLE` is a word the console uses rather than an enum value, which is why
+ * it is spelled here instead of being added to `JOB_STATUSES`.
+ */
+export type JobReadFilter = JobStatus | "HIREABLE" | null;
+
+export interface AssistantJobRead {
+  jobs: AssistantJobRow[];
+  /** Openings matching the filter, whether or not this read could carry them. */
+  total: number;
+}
+
+/** Openings newest first, with their live applicant count and the set's size. */
+export async function listJobOpenings(
+  filter: JobReadFilter = null
+): Promise<AssistantJobRead> {
   await requireStaff("/jobs");
   const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("job_openings")
-    .select(JOB_SELECT)
-    .is("applications.archived_at", null)
-    .order("created_at", { ascending: false })
-    .limit(100);
+  const rowsQuery = supabase.from("job_openings").select(JOB_SELECT);
+  const countQuery = supabase.from("job_openings").select("id", { count: "exact", head: true });
+  const scoped =
+    filter === "HIREABLE"
+      ? {
+          rows: rowsQuery.in("status", [...HIREABLE_STATUSES]),
+          count: countQuery.in("status", [...HIREABLE_STATUSES]),
+        }
+      : { rows: rowsQuery.eq("status", filter), count: countQuery.eq("status", filter) };
 
-  if (error) throw new Error(`Job openings could not be read: ${error.message}`);
-  return ((data ?? []) as unknown as RawJobRow[]).map(toJob);
+  const [rows, count] = await Promise.all([
+    scoped.rows
+      .is("applications.archived_at", null)
+      .order("created_at", { ascending: false })
+      .limit(OPENING_READ_LIMIT),
+    // The same parent predicate, counted. A head count cannot carry the nested
+    // filter above: probed on the live pool, `applications.archived_at` on a
+    // `count()` embed returns no number at all. That embed only trims each row's
+    // applicant tally, so it moves no opening in or out of the set.
+    scoped.count,
+  ]);
+
+  if (rows.error) throw new Error(`Job openings could not be read: ${rows.error.message}`);
+  if (count.error) {
+    console.error("[assistant] opening head count failed:", count.error.message);
+  }
+
+  return {
+    jobs: ((rows.data ?? []) as unknown as RawJobRow[]).map(toJob),
+    // A failed head count leaves nothing truer than the rows in hand.
+    total: count.count ?? (rows.data ?? []).length,
+  };
 }
 
 /** One opening in full — what `update_job` needs before it changes a field. */
