@@ -2,6 +2,7 @@ import { getSupabaseAnonClient } from "@/lib/supabase/anon";
 import {
   CV_MAX_BYTES,
   CV_TYPE_ERROR,
+  cvContentError,
   cvSizeError,
   isAcceptedCvType,
 } from "@/modules/careers/cv-rules";
@@ -42,6 +43,15 @@ export async function POST(request: Request): Promise<Response> {
   // Re-validated server-side: a client MIME type proves nothing.
   if (!isAcceptedCvType(fileEntry.type)) {
     return Response.json({ error: CV_TYPE_ERROR }, { status: 415 });
+  }
+
+  // The declared type only follows the file's name, so the bytes are asked as
+  // well — three live applications hold the same web page saved as `CV.pdf`,
+  // stored because nothing checked what the file actually contained.
+  const head = new Uint8Array(await fileEntry.slice(0, 8).arrayBuffer());
+  const contentError = cvContentError(head, fileEntry.type);
+  if (contentError) {
+    return Response.json({ error: contentError }, { status: 415 });
   }
 
   if (fileEntry.size > CV_MAX_BYTES) {

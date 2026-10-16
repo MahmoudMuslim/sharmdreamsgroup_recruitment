@@ -2,6 +2,7 @@ import { getSupabaseAnonClient } from "@/lib/supabase/anon";
 import {
   CV_MAX_BYTES,
   CV_TYPE_ERROR,
+  cvContentError,
   cvSizeError,
   isAcceptedCvType,
 } from "@/modules/careers/cv-rules";
@@ -54,6 +55,14 @@ export async function POST(request: Request): Promise<Response> {
 
   if (!isAcceptedCvType(fileEntry.type)) {
     return Response.json({ error: CV_TYPE_ERROR }, { status: 415 });
+  }
+
+  // Asked of the bytes, as on the upload route: a page saved as `CV.pdf` has a
+  // valid declared type and no CV in it, and reading it would cost a model call.
+  const head = new Uint8Array(await fileEntry.slice(0, 8).arrayBuffer());
+  const contentError = cvContentError(head, fileEntry.type);
+  if (contentError) {
+    return Response.json({ error: contentError }, { status: 415 });
   }
 
   if (fileEntry.size > CV_MAX_BYTES) {

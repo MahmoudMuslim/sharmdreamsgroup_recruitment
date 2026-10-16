@@ -11,6 +11,7 @@ import {
   describeExtractionFailure,
   extractCvText,
 } from "@/modules/screening/infrastructure/cvParser";
+import { cvContentError } from "@/modules/careers/cv-rules";
 
 export interface CvReadResult {
   ok: boolean;
@@ -59,23 +60,13 @@ function withCommas(value: number): string {
 
 /**
  * A stored object is only worth parsing if it is still the document its name
- * claims. Three live applicant rows hold a 9 KB Google sign-in page saved under
- * a `.pdf` name, and pdf.js answers that with "Invalid PDF structure" — a
- * recruiter-facing sentence about a broken tool when the truth is that no CV
- * was ever uploaded.
+ * claims. Three live records hold a 9 KB web page saved under a `.pdf` name, and
+ * pdf.js answers that with "Invalid PDF structure" — a sentence about a broken
+ * tool when the truth is that no CV was ever uploaded. The same rule the public
+ * upload applies is asked here, so the two doors cannot disagree.
  */
-function notADocument(buffer: Buffer, mime: string): string | null {
-  if (mime === "text/plain") {
-    // Bytes are already text, so there is nothing to mislabel.
-    return null;
-  }
-  const head = buffer.subarray(0, 4).toString("latin1");
-  if (mime === "application/pdf") {
-    return head.startsWith("%PDF") ? null : "The stored file is not a PDF — its bytes came from a web page, so no CV was ever uploaded.";
-  }
-  return head.startsWith("PK")
-    ? null
-    : "The stored file is not a Word document — its bytes came from something else.";
+function mislabelledFile(buffer: Buffer, mime: string): string | null {
+  return cvContentError(buffer.subarray(0, 8), mime);
 }
 
 /**
@@ -244,7 +235,7 @@ async function storeCvText(
 
   let text: string;
   const buffer = Buffer.from(await object.arrayBuffer());
-  const mislabelled = notADocument(buffer, mime);
+  const mislabelled = mislabelledFile(buffer, mime);
   if (mislabelled) {
     return { ok: false, error: mislabelled };
   }
