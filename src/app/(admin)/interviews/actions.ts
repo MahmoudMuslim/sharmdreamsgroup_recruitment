@@ -14,6 +14,8 @@ export interface AgendaInterview {
   duration_minutes: number;
   meeting_link: string | null;
   status: string;
+  /** The id as well as the name, so the agenda's editor can pre-select the panel. */
+  interviewer_profile_id: string | null;
 }
 
 const AGENDA_SELECT = `
@@ -22,6 +24,7 @@ const AGENDA_SELECT = `
   duration_minutes,
   status,
   meeting_link,
+  interviewer_profile_id,
   applications (
     id,
     full_name,
@@ -87,6 +90,7 @@ export async function getInterviewAgenda(
         duration_minutes: Number(row.duration_minutes),
         meeting_link: (row.meeting_link as string | null) ?? null,
         status: String(row.status ?? "SCHEDULED"),
+        interviewer_profile_id: (row.interviewer_profile_id as string | null) ?? null,
       };
     })
     .filter((row) => row.application_id !== "");

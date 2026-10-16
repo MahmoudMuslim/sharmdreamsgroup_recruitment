@@ -6,6 +6,8 @@ import { CalendarClock, CalendarPlus, Loader2, ScrollText, X } from "lucide-reac
 import { Badge, Button, EmptyState } from "@/modules/analytics/presentation/ui";
 import { formatInZone, fromZoneInputValue, toZoneInputValue } from "@/lib/timezone";
 import { Field, FormMessage, Select, TextInput } from "@/modules/analytics/presentation/Form";
+import { channelSummary } from "@/modules/omnichannel/presentation/candidateNotice";
+import { durationOptions } from "./interviews-model";
 import {
   generateInterviewGuide,
   listInterviewers,
@@ -17,36 +19,6 @@ import {
   type InterviewMutation,
   type InterviewRecord,
 } from "./interview-actions";
-
-const DURATIONS = [30, 45, 60, 90];
-
-type ChannelReport = NonNullable<InterviewMutation["channels"]>;
-
-/**
- * What the candidate actually received, in the recruiter's words.
- *
- * Says refused rather than sent when the relay rejected the email: the row is in
- * the outbox with the relay's answer, and the portal notice still reached them.
- */
-function channelSummary(channels: ChannelReport | undefined, notified: boolean | undefined) {
-  if (!channels) {
-    return notified
-      ? "The candidate was notified on the channels that are switched on."
-      : "(no channel delivered a note — WhatsApp is off or the candidate has no number.)";
-  }
-
-  const parts: string[] = [];
-  if (channels.whatsapp === "queued") parts.push("a queued WhatsApp note");
-  if (channels.email === "sent") parts.push("an email");
-  if (channels.email === "failed") parts.push("an email the relay refused (see Outbox)");
-  if (channels.inApp === "sent") parts.push("a portal notice");
-
-  if (parts.length === 0) {
-    return "(nothing reached the candidate — every channel is off, or the email and number are missing.)";
-  }
-  const last = parts.pop() as string;
-  return `The candidate was sent ${parts.length ? `${parts.join(", ")} and ${last}` : last}.`;
-}
 
 function statusTone(status: string) {
   if (status === "COMPLETED") return "success" as const;
@@ -141,11 +113,15 @@ export function InterviewPanel({
       setWhen(toZoneInputValue(existing.scheduled_at, timeZone));
       setDuration(String(existing.duration_minutes));
       setMeetingLink(existing.meeting_link ?? "");
+      // Left stale, the select still held whoever was picked for the last panel
+      // opened, so moving one interview reassigned another.
+      setInterviewerId(existing.interviewer_profile_id ?? "");
     } else {
       setEditingId(null);
       setWhen("");
       setDuration("45");
       setMeetingLink("");
+      setInterviewerId("");
     }
     setShowForm(true);
     void loadInterviewers();
@@ -352,7 +328,7 @@ export function InterviewPanel({
                       value={duration}
                       onChange={(event) => setDuration(event.target.value)}
                     >
-                      {DURATIONS.map((minutes) => (
+                      {durationOptions(Number(duration)).map((minutes) => (
                         <option key={minutes} value={String(minutes)}>
                           {minutes} minutes
                         </option>

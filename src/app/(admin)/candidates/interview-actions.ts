@@ -212,6 +212,7 @@ export async function scheduleInterview(input: {
   if (channels.whatsapp === "queued") after(() => processDueWhatsAppJobs(5).then(() => undefined));
 
   revalidatePath("/candidates");
+  revalidatePath("/interviews");
   return {
     ok: true,
     interviews: await interviewsFor(supabase, input.applicationId),
@@ -220,7 +221,13 @@ export async function scheduleInterview(input: {
   };
 }
 
-/** Moves an upcoming interview. The candidate is told it moved, not re-invited. */
+/**
+ * Moves an upcoming interview. The candidate is told it moved, not re-invited.
+ *
+ * `interviewerProfileId` is only written when the caller names one: an omitted
+ * field means "same panel, new time", while an explicit null or empty string
+ * clears the assignment.
+ */
 export async function rescheduleInterview(input: {
   interviewId: string;
   scheduledAt: string;
@@ -249,8 +256,15 @@ export async function rescheduleInterview(input: {
   }
   const owner = candidateOf(existing);
 
+  /*
+   * An omitted interviewer means "move the slot, leave the panel alone". Treating
+   * it as "clear it" would un-assign whoever is booked — and because the record
+   * the drawer edits used to carry only the interviewer's name, every reschedule
+   * silently dropped the assignment it was showing.
+   */
+  const changingInterviewer = input.interviewerProfileId !== undefined;
   const interviewerId = input.interviewerProfileId?.trim() || null;
-  if (interviewerId) {
+  if (changingInterviewer && interviewerId) {
     const { data: interviewer } = await supabase
       .from("user_profiles")
       .select("id")
@@ -260,17 +274,21 @@ export async function rescheduleInterview(input: {
     if (!interviewer) return { ok: false, error: "That interviewer is not a staff member." };
   }
 
+  const patch: Record<string, unknown> = {
+    scheduled_at: slot.iso,
+    duration_minutes: slot.duration,
+    meeting_link: slot.link,
+  };
+  if (changingInterviewer) patch.interviewer_profile_id = interviewerId;
+
   const { error } = await supabase
     .from("interview_schedules")
-    .update({
-      scheduled_at: slot.iso,
-      duration_minutes: slot.duration,
-      meeting_link: slot.link,
-      interviewer_profile_id: interviewerId,
-    })
+    .update(patch)
     .eq("id", input.interviewId);
 
   if (error) return { ok: false, error: error.message };
+
+  const assigned = changingInterviewer ? interviewerId : (existing.interviewer_profile_id ?? null);
 
   await recordActivity({
     area: "interviews",
@@ -285,7 +303,7 @@ export async function rescheduleInterview(input: {
       previous_duration_minutes: existing.duration_minutes,
       duration_minutes: slot.duration,
       previous_interviewer_profile_id: existing.interviewer_profile_id ?? null,
-      interviewer_profile_id: interviewerId,
+      interviewer_profile_id: assigned,
       meeting_link_changed: (existing.meeting_link ?? "") !== (slot.link ?? ""),
     },
   });
@@ -301,6 +319,7 @@ export async function rescheduleInterview(input: {
   if (channels.whatsapp === "queued") after(() => processDueWhatsAppJobs(5).then(() => undefined));
 
   revalidatePath("/candidates");
+  revalidatePath("/interviews");
   return {
     ok: true,
     interviews: await interviewsFor(supabase, owner.applicationId),
@@ -384,6 +403,7 @@ export async function setInterviewStatus(input: {
   }
 
   revalidatePath("/candidates");
+  revalidatePath("/interviews");
   return {
     ok: true,
     interviews: await interviewsFor(supabase, existing.application_id),

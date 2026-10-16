@@ -13,12 +13,30 @@ export interface InterviewRecord {
   duration_minutes: number;
   meeting_link: string | null;
   status: string;
+  /** The id, not only the name: an editor has to pre-select who is on the panel. */
+  interviewer_profile_id: string | null;
   interviewer_name: string | null;
 }
 
 /** Columns every interview query selects, including the joined interviewer. */
 export const INTERVIEW_SELECT =
-  "id, application_id, scheduled_at, duration_minutes, meeting_link, status, user_profiles ( full_name )";
+  "id, application_id, scheduled_at, duration_minutes, meeting_link, status, interviewer_profile_id, user_profiles ( full_name )";
+
+/** The lengths the pickers offer, matching what the booking form suggests. */
+export const DURATIONS = [30, 45, 60, 90] as const;
+
+/**
+ * The offered lengths, plus the one this row already holds.
+ *
+ * A `<select>` with no matching option shows its first entry while the row says
+ * otherwise, so editing a two-hour panel would quietly resave it as half an hour
+ * — a change nobody made and a trail row that claims someone did.
+ */
+export function durationOptions(current: number): number[] {
+  const list: number[] = [...DURATIONS];
+  if (!list.includes(current)) list.push(current);
+  return list.sort((a, b) => a - b);
+}
 
 /**
  * Flattens PostgREST's joined row.
@@ -37,6 +55,7 @@ export function toInterviewRecord(row: Record<string, unknown>): InterviewRecord
     duration_minutes: Number(row.duration_minutes),
     meeting_link: (row.meeting_link as string | null) ?? null,
     status: String(row.status ?? "SCHEDULED"),
+    interviewer_profile_id: (row.interviewer_profile_id as string | null) ?? null,
     interviewer_name: profile?.full_name ?? null,
   };
 }
