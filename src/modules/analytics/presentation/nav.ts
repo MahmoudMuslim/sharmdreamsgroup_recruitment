@@ -41,7 +41,7 @@ export type NavSection = "Overview" | "Hiring" | "Records" | "Portal";
  */
 export const NAV: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics", section: "Overview" },
-  { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "Assessment, sourcing & panel reports", section: "Overview" },
+  { href: "/analytics", label: "Analytics", icon: BarChart3, hint: "Assessment, sourcing, messaging & interview trends", section: "Overview" },
   { href: "/reports", label: "Reports", icon: FileSpreadsheet, hint: "Row-level lists, CSV / Excel / PDF", section: "Overview" },
   { href: "/time", label: "Time Tracker", icon: Timer, hint: "Hours logged, by person and by candidate", section: "Overview" },
   { href: "/activity", label: "Activity", icon: History, hint: "Who — or what — changed what, and when", section: "Overview" },
