@@ -211,6 +211,17 @@ export const PROSPECT_OUTREACH_DEFAULTS: Record<
   },
 };
 
+/**
+ * The subject line the personalized feedback letter goes out under.
+ *
+ * Deliberately not a template row. Its body is `applications.ai_feedback` — a
+ * letter the screening engine wrote for one candidate and a recruiter rewrites
+ * by drafting again — so a copy editor in Settings could not change what the
+ * candidate receives without changing what the profile shows. The draft is sent
+ * as written, and only the subject line is shipped here.
+ */
+export const CANDIDATE_FEEDBACK_SUBJECT = "Feedback on your application — {{job_title}}";
+
 /** INTERVIEW -> "interview", AI_SCREENING -> "AI screening". */
 export function humanizeStage(stage: string): string {
   const words = stage.toLowerCase().split("_").join(" ");

@@ -95,6 +95,7 @@ import {
   createCandidate,
   sendBulkEmail,
   sendBulkWhatsApp,
+  sendCandidateFeedback,
   setCandidateArchive,
   updateCandidateContact,
 } from "@/app/(admin)/candidates/candidate-actions";
@@ -1474,6 +1475,24 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     description: "Write or refresh the personalised feedback draft for one application.",
     args: { application_id: "string" },
     run: async (args) => draftCandidateFeedback(str(args, "application_id")),
+  },
+  {
+    name: "send_candidate_feedback",
+    label: "Emailing the drafted feedback",
+    description:
+      "Email a candidate the personalised feedback letter already stored on their record, word for word as the profile shows it. Refuses when no draft exists, when the candidate has no email address, or when email is switched off in Settings. Not sent on WhatsApp.",
+    args: { application_id: "string" },
+    run: async (args) => {
+      const sent = await sendCandidateFeedback(str(args, "application_id"));
+      return sent.ok
+        ? {
+            ...sent,
+            note: `Emailed to ${sent.recipient} exactly as the profile displays it${
+              sent.inApp === "sent" ? ", and copied into the candidate's portal inbox" : ""
+            }.`,
+          }
+        : sent;
+    },
   },
   {
     name: "set_candidate_stage",

@@ -13,6 +13,7 @@ import {
 } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import {
   ASSESSMENT_INVITE_TEMPLATE,
+  CANDIDATE_FEEDBACK_SUBJECT,
   EMAIL_INTERVIEW_TEMPLATES,
   EMAIL_STAGE_TEMPLATES,
   EMAIL_SUBJECT_DEFAULTS,
@@ -402,4 +403,123 @@ export async function notifyAssessmentInvite(input: {
   }
 
   return report;
+}
+
+export interface FeedbackLetterResult {
+  ok: boolean;
+  error?: string;
+  /** Echoed back so the click reports the address the letter actually went to. */
+  recipient?: string;
+  characters?: number;
+  /** Whether the same text also landed in the candidate's portal inbox. */
+  inApp?: "sent" | "off";
+}
+
+/**
+ * Posts the feedback letter the screening engine already wrote.
+ *
+ * `generateFeedbackForApplication` stores the letter on the candidate record and
+ * its own trail row says it is "waiting on a recruiter to send it". That was the
+ * end of the road: nothing sent it, so the promise of personalized feedback for
+ * applicants stopped as a draft on a staff screen — the drawer showed a letter
+ * nobody could deliver.
+ *
+ * It goes out exactly as drafted. The drawer renders this same stored text, so
+ * what the recruiter reads is what the candidate receives, and rewording stays
+ * the Draft feedback action's job rather than a template row that would make the
+ * preview a lie.
+ *
+ * WhatsApp is deliberately not offered: this is a multi-paragraph letter, and the
+ * same text clipped to a chat bubble is a different document than the one shown
+ * on screen.
+ */
+export async function sendCandidateFeedbackLetter(
+  applicationId: string
+): Promise<FeedbackLetterResult> {
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from("applications")
+    .select("id, full_name, email, stage, ai_feedback, job_openings(title)")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  const row = data as
+    | {
+        id: string;
+        full_name: string;
+        email: string | null;
+        stage: string;
+        ai_feedback: string | null;
+        job_openings?: { title?: string } | { title?: string }[] | null;
+      }
+    | null;
+
+  if (!row) return { ok: false, error: "No candidate record matches that id." };
+
+  const letter = row.ai_feedback?.trim() ?? "";
+  if (!letter) {
+    return {
+      ok: false,
+      error:
+        "There is nothing to send yet — the feedback letter is written from the screening result, so run Draft feedback first.",
+    };
+  }
+
+  if (!row.email?.trim()) {
+    return {
+      ok: false,
+      error: `${row.full_name} has no email address on the record, so there is nowhere to send the letter.`,
+    };
+  }
+
+  const job = Array.isArray(row.job_openings) ? row.job_openings[0] : row.job_openings;
+  const candidate: Candidate = {
+    id: row.id,
+    full_name: row.full_name,
+    email: row.email,
+    job_title: job?.title ?? "the role",
+  };
+
+  const emailEnabled = await getBoolSetting("notifications.email_enabled", true);
+  const vars = await buildVars(candidate, humanizeStage(row.stage));
+  const subject = renderTemplate(CANDIDATE_FEEDBACK_SUBJECT, vars).trim();
+
+  const sent = await deliverEmail({
+    applicationId,
+    candidate,
+    subject,
+    body: letter,
+    emailEnabled,
+  });
+
+  if (sent.email !== "sent") {
+    return {
+      ok: false,
+      recipient: candidate.email ?? undefined,
+      error:
+        sent.error ??
+        (sent.email === "off"
+          ? "Email is switched off in Settings → Access & comms, so the letter stayed on the profile."
+          : "The letter was not sent."),
+    };
+  }
+
+  const inAppEnabled = await getBoolSetting("notifications.in_app_enabled", true);
+  if (inAppEnabled) {
+    await record({
+      applicationId,
+      channel: "IN_APP",
+      recipient: candidate.email ?? "portal",
+      subject,
+      body: letter,
+      delivered: true,
+    });
+  }
+
+  return {
+    ok: true,
+    recipient: candidate.email ?? undefined,
+    characters: letter.length,
+    inApp: inAppEnabled ? "sent" : "off",
+  };
 }

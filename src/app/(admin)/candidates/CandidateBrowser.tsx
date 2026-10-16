@@ -46,6 +46,7 @@ import {
   screenApplication,
   sendBulkEmail,
   sendBulkWhatsApp,
+  sendCandidateFeedback,
   setCandidateArchive,
   updateApplicationStage,
   updateCandidateContact,
@@ -1048,6 +1049,7 @@ function ProfileDrawer({
   const [rejectReason, setRejectReason] = useState("");
   const [screenPending, setScreenPending] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState(false);
+  const [sendPending, setSendPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   /** Bumped by a contact edit so the record on the Application tab re-reads the row. */
@@ -1173,6 +1175,31 @@ function ProfileDrawer({
       setError("Something went wrong drafting the feedback.");
     } finally {
       setFeedbackPending(false);
+    }
+  }
+
+  async function sendFeedback() {
+    if (!candidate) return;
+    setSendPending(true);
+    setError(null);
+    setDone(null);
+    try {
+      const result = await sendCandidateFeedback(candidate.id);
+      if (result.ok) {
+        setDone(
+          `Sent to ${result.recipient} — ${result.characters} characters, exactly the text above.` +
+            (result.inApp === "sent"
+              ? " Copied into the candidate's portal inbox."
+              : " In-app notices are switched off, so only the email went out.")
+        );
+        router.refresh();
+      } else {
+        setError(result.error ?? "Could not send the feedback.");
+      }
+    } catch {
+      setError("Something went wrong sending the feedback.");
+    } finally {
+      setSendPending(false);
     }
   }
 
@@ -1513,6 +1540,28 @@ function ProfileDrawer({
               <section>
                 <h3 className="mb-1.5 font-display text-sm font-bold">Candidate feedback</h3>
                 <p className="text-sm leading-relaxed text-brand-ink/65">{candidate.ai_feedback}</p>
+                {canWrite && (
+                  <div className="mt-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void sendFeedback()}
+                      disabled={sendPending || feedbackPending}
+                    >
+                      {sendPending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <Send className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      Email this to the candidate
+                    </Button>
+                    <p className="mt-1.5 text-xs text-brand-ink/45">
+                      {candidate.email
+                        ? `Goes to ${candidate.email} as written above, under the subject “Feedback on your application — ${candidate.job_title ?? "the role"}”. WhatsApp is not used for this letter.`
+                        : "This candidate has no email address on the record, so there is nowhere to send it."}
+                    </p>
+                  </div>
+                )}
               </section>
             )}
           </section>

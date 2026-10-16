@@ -127,6 +127,7 @@ export function linkForTool(
     }
     case "screen_candidate":
     case "draft_candidate_feedback":
+    case "send_candidate_feedback":
     case "set_candidate_stage":
     case "get_application":
     case "get_candidate_dossier":

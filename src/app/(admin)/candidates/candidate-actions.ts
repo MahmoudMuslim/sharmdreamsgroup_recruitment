@@ -21,7 +21,7 @@ import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsa
 import { isApplicationSource } from "@/modules/candidates/domain/listFilters";
 import { HIREABLE_STATUSES, PICKER_LIMIT } from "@/modules/jobs/domain/hireable";
 import { requireHireableOpening } from "@/modules/jobs/infrastructure/hireableOpening";
-import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
+import { notifyStageChange, sendCandidateFeedbackLetter } from "@/modules/omnichannel/application/candidate-notifications";
 import {
   generateFeedbackForApplication,
   screenApplicationById,
@@ -513,6 +513,64 @@ export async function draftCandidateFeedback(applicationId: string): Promise<Scr
   }
 
   return generateFeedbackForApplication(applicationId);
+}
+
+export interface SendFeedbackResult {
+  ok: boolean;
+  error?: string;
+  recipient?: string;
+  characters?: number;
+  inApp?: "sent" | "off";
+}
+
+/**
+ * Emails the stored feedback draft to the candidate, as written.
+ *
+ * Drafting and sending are two actions on purpose. The letter is generated from
+ * the screening score, so a recruiter who fires off every draft the model wrote
+ * would be sending machine prose to real people without reading it; the drawer
+ * shows the same text this sends, so reading it is the step before the click.
+ *
+ * A failure is reported, never swallowed: "the letter was not sent" has to be
+ * distinguishable from "the candidate was told", because the record now carries a
+ * `communication_logs` row either way.
+ */
+export async function sendCandidateFeedback(
+  applicationId: string
+): Promise<SendFeedbackResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("messages.send"))) {
+    return { ok: false, error: "You need the Send messages permission." };
+  }
+
+  const result = await sendCandidateFeedbackLetter(applicationId);
+
+  await recordActivity({
+    area: "messaging",
+    action: "feedback_sent",
+    entity: "application",
+    entityId: applicationId,
+    summary: result.ok
+      ? `Emailed the drafted feedback to ${result.recipient ?? "the candidate"} — ${result.characters} characters${
+          result.inApp === "sent" ? ", copied into the portal inbox" : ", no portal copy because in-app notices are switched off"
+        }`
+      : `Feedback send refused — ${result.error ?? "the letter could not be delivered"}`,
+    detail: {
+      delivered: result.ok,
+      recipient: result.recipient ?? null,
+      characters: result.characters ?? 0,
+      portal_copy: result.inApp === "sent",
+      body: "[withheld]",
+    },
+  });
+
+  // The outbox reads `communication_logs`, so the row this just wrote belongs on
+  // it without a reload; /candidates refreshes the drawer's own state.
+  revalidatePath("/candidates");
+  revalidatePath("/whatsapp");
+
+  return result;
 }
 
 /* -------------------------------------------------------------------------- */
