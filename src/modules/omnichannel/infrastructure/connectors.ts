@@ -82,27 +82,33 @@ export class WhatsAppConnector {
 
   /**
    * Send a batch of messages to candidates. Each recipient is attempted
-   * independently so one failure never blocks the rest of the batch.
+   * independently so one failure never blocks the rest of the batch — and each
+   * recipient is reported on its own, because a campaign has to be written to
+   * the send record the outbox and the candidate's inbox both read.
    */
   static async sendBulk(
     messages: WhatsAppOutboundMessage[]
-  ): Promise<{ success: number; failed: number }> {
-    const results = await Promise.allSettled(
+  ): Promise<{
+    success: number;
+    failed: number;
+    results: { to: string; success: boolean; error?: string }[];
+  }> {
+    const settled = await Promise.allSettled(
       messages.map((msg) => this.sendMessage(msg.to, { template: msg.template, text: msg.text }))
     );
 
-    let success = 0;
-    let failed = 0;
+    const results = settled.map((result, index) => {
+      const outcome =
+        result.status === "fulfilled"
+          ? result.value
+          : { success: false, error: "The WhatsApp request did not settle" };
+      return { to: messages[index].to, success: outcome.success, error: outcome.error };
+    });
 
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (result.status === "fulfilled" && result.value.success) {
-        success++;
-      } else {
-        failed++;
-      }
-    }
-
-    return { success, failed };
+    return {
+      success: results.filter((each) => each.success).length,
+      failed: results.filter((each) => !each.success).length,
+      results,
+    };
   }
 }

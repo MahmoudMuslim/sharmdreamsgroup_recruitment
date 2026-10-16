@@ -41,7 +41,8 @@ export interface BulkWhatsAppResult {
  * Placeholders in double braces are substituted per recipient so each message
  * names the right person and role. Candidates with no phone number are counted
  * as skipped rather than silently dropped, and a failure on one recipient never
- * blocks the rest of the batch.
+ * blocks the rest of the batch. Every attempt is written to `communication_logs`
+ * so the campaign appears on the outbox beside the automatic alerts.
  */
 export async function sendBulkWhatsApp(input: {
   applicationIds: string[];
@@ -80,10 +81,12 @@ export async function sendBulkWhatsApp(input: {
   }
 
   const messages: WhatsAppOutboundMessage[] = [];
+  const copies = new Map<string, { applicationId: string; body: string }>();
   let skipped = 0;
 
   for (const row of data ?? []) {
     const application = row as {
+      id: string;
       full_name: string;
       phone: string | null;
       stage: string;
@@ -117,6 +120,7 @@ export async function sendBulkWhatsApp(input: {
       to: application.phone,
       text,
     });
+    copies.set(application.phone, { applicationId: application.id, body: text });
   }
 
   if (messages.length === 0) {
@@ -128,17 +132,48 @@ export async function sendBulkWhatsApp(input: {
 
   const outcome = await WhatsAppConnector.sendBulk(messages);
 
+  // A campaign that leaves no history row is invisible twice over: the outbox
+  // cannot show or retry it, and the candidate's portal inbox never saw it. The
+  // notice is written whether or not Meta accepted the message — the inbox copy
+  // is what survives a refused send.
+  const inAppEnabled = await getBoolSetting("notifications.in_app_enabled", true);
+
+  const { error: logError } = await supabase.from("communication_logs").insert(
+    outcome.results.flatMap((result) => {
+      const copy = copies.get(result.to);
+      const row = {
+        application_id: copy?.applicationId ?? null,
+        channel: "WHATSAPP",
+        direction: "OUTBOUND",
+        recipient: result.to,
+        subject: null,
+        body: copy?.body ?? "",
+        delivered: result.success,
+        error_message: result.error ?? null,
+      };
+      if (!inAppEnabled || !copy) return [row];
+      return [row, { ...row, channel: "IN_APP", delivered: true, error_message: null }];
+    })
+  );
+
+  if (logError) {
+    console.error("[candidates] WhatsApp campaign could not be written to the send record:", logError.message);
+  }
+
   await recordActivity({
     area: "messaging",
     action: "bulk_whatsapp",
     entity: "message",
-    summary: `WhatsApp campaign to ${messages.length} candidate${messages.length === 1 ? "" : "s"} — ${outcome.success} accepted, ${outcome.failed} rejected${skipped ? `, ${skipped} without a number` : ""}`,
+    summary: `WhatsApp campaign to ${messages.length} candidate${messages.length === 1 ? "" : "s"} — ${outcome.success} accepted, ${outcome.failed} rejected${skipped ? `, ${skipped} without a number` : ""}${
+      inAppEnabled ? `, ${messages.length} copied into the portal inbox` : ", no portal copy because in-app notices are switched off"
+    }`,
     detail: {
       template_key: input.templateKey,
       recipients: messages.length,
       accepted: outcome.success,
       rejected: outcome.failed,
       skipped_no_phone: skipped,
+      portal_copies: inAppEnabled ? messages.length : 0,
       body: "[withheld]",
     },
   });
@@ -208,7 +243,7 @@ export async function sendBulkEmail(input: {
   const companyName = await getStringSetting("organisation.name", "Sharm Dreams Group");
   const siteUrl = appConfig.url;
   const messages: EmailOutboundMessage[] = [];
-  const applicationFor = new Map<string, string>();
+  const copies = new Map<string, { applicationId: string; subject: string; body: string }>();
   let skipped = 0;
 
   for (const row of data ?? []) {
@@ -247,12 +282,15 @@ export async function sendBulkEmail(input: {
       interview_link: "",
     } satisfies TemplateVars;
 
-    messages.push({
-      to,
-      subject: renderTemplate(subject, vars).trim(),
-      text: renderTemplate(body, vars).trim(),
+    const renderedSubject = renderTemplate(subject, vars).trim();
+    const renderedBody = renderTemplate(body, vars).trim();
+
+    messages.push({ to, subject: renderedSubject, text: renderedBody });
+    copies.set(to.toLowerCase(), {
+      applicationId: application.id,
+      subject: renderedSubject,
+      body: renderedBody,
     });
-    applicationFor.set(to.toLowerCase(), application.id);
   }
 
   if (messages.length === 0) {
@@ -264,30 +302,47 @@ export async function sendBulkEmail(input: {
 
   const outcome = await EmailConnector.sendBulk(messages);
 
-  await supabase.from("communication_logs").insert(
-    outcome.results.map((result) => ({
-      application_id: applicationFor.get(result.to.toLowerCase()) ?? null,
-      channel: "EMAIL",
-      direction: "OUTBOUND",
-      recipient: result.to,
-      subject,
-      body: messages.find((message) => message.to === result.to)?.text ?? "",
-      delivered: result.success,
-      error_message: result.error ?? null,
-    }))
+  // The row must carry the copy that was actually sent, not the template the
+  // recruiter typed — the outbox re-sends from this body, and the portal notice
+  // is the copy the candidate keeps when the relay refuses the email.
+  const inAppEnabled = await getBoolSetting("notifications.in_app_enabled", true);
+
+  const { error: logError } = await supabase.from("communication_logs").insert(
+    outcome.results.flatMap((result) => {
+      const copy = copies.get(result.to.toLowerCase());
+      const row = {
+        application_id: copy?.applicationId ?? null,
+        channel: "EMAIL",
+        direction: "OUTBOUND",
+        recipient: result.to,
+        subject: copy?.subject ?? subject,
+        body: copy?.body ?? "",
+        delivered: result.success,
+        error_message: result.error ?? null,
+      };
+      if (!inAppEnabled || !copy) return [row];
+      return [row, { ...row, channel: "IN_APP", delivered: true, error_message: null }];
+    })
   );
+
+  if (logError) {
+    console.error("[candidates] Email campaign could not be written to the send record:", logError.message);
+  }
 
   await recordActivity({
     area: "messaging",
     action: "bulk_email",
     entity: "message",
-    summary: `Emailed ${messages.length} candidate${messages.length === 1 ? "" : "s"} — “${subject}” — ${outcome.success} delivered, ${outcome.failed} refused${skipped ? `, ${skipped} without an address` : ""}`,
+    summary: `Emailed ${messages.length} candidate${messages.length === 1 ? "" : "s"} — “${subject}” — ${outcome.success} delivered, ${outcome.failed} refused${skipped ? `, ${skipped} without an address` : ""}${
+      inAppEnabled ? `, ${messages.length} copied into the portal inbox` : ", no portal copy because in-app notices are switched off"
+    }`,
     detail: {
       subject,
       recipients: messages.length,
       delivered: outcome.success,
       refused: outcome.failed,
       skipped_no_email: skipped,
+      portal_copies: inAppEnabled ? messages.length : 0,
       body: "[withheld]",
     },
   });

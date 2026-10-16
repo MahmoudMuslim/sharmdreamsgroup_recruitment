@@ -331,7 +331,9 @@ export function MessagePanel({
             title={notices.length === 0 ? "No portal notices yet" : "No notice matches this view"}
             description={
               notices.length === 0
-                ? "Every alert also lands in the candidate's portal inbox, so a filtered email is never the only copy."
+                ? flags.inAppEnabled
+                  ? "A stage move, an interview change, a test invite and both campaigns all copy themselves into the candidate's inbox as they are sent, so a refused email is never the only version. A WhatsApp you queue by hand on this page is the one thing that stays out of the inbox."
+                  : "Portal notices are switched off in Settings → Notifications, so nothing reaches the candidate's inbox and a refused email is the only version there is."
                 : "Try another status or clear the search."
             }
           />
