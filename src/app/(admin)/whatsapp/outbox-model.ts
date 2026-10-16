@@ -10,6 +10,15 @@ export type QueueStatus = "PENDING" | "SENT" | "FAILED";
 /** Which column of the queue a job sits in, from the admin's point of view. */
 export type OutboxBucket = "ALL" | "DUE" | "WAITING" | "SENT" | "FAILED";
 
+/**
+ * Every queue row the outbox reads, and every delivery-log or email row.
+ *
+ * A cap is only honest if the page says it exists, so the readers return the
+ * all-time counts alongside the capped rows and the view compares them.
+ */
+export const QUEUE_PAGE_LIMIT = 200;
+export const LOG_PAGE_LIMIT = 60;
+
 export interface OutboxJob {
   id: string;
   application_id: string | null;
@@ -99,3 +108,50 @@ export function firstOf<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
+
+/* -------------------------------------------------------------------------- */
+/* URL state                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The queue's own columns, in the order the rail shows them.
+ *
+ * `DUE` and `WAITING` are both `PENDING` rows, split by whether their send time
+ * has arrived, so a server-side filter can only ever narrow to `PENDING` — the
+ * view then puts each row in the column it belongs to.
+ */
+export const OUTBOX_BUCKETS = ["ALL", "DUE", "WAITING", "SENT", "FAILED"] as const;
+
+/** The `status` a bucket narrows the queue read to, or `null` for "read it all". */
+export const QUEUE_STATUS_BY_BUCKET: Record<OutboxBucket, QueueStatus | null> = {
+  ALL: null,
+  DUE: "PENDING",
+  WAITING: "PENDING",
+  SENT: "SENT",
+  FAILED: "FAILED",
+};
+
+export function isOutboxBucket(value: unknown): OutboxBucket | null {
+  return typeof value === "string" && (OUTBOX_BUCKETS as readonly string[]).includes(value)
+    ? (value as OutboxBucket)
+    : null;
+}
+
+/**
+ * `?failed=1` — the delivery log and the email panel read undelivered rows only.
+ *
+ * Anything other than "1" leaves the view unfiltered, so a hand-typed `?failed`
+ * cannot silently empty the page.
+ */
+export function isFailedView(value: unknown): boolean {
+  return value === "1";
+}
+
+/**
+ * The two channels whose rows the attention feed counts as "did not reach".
+ *
+ * `IN_APP` is deliberately absent: a portal notice is written to an inbox rather
+ * than relayed, so its rows always carry `delivered: true` and counting them here
+ * would repeat the mistake `src/modules/analytics/domain/report.ts` documents.
+ */
+export const DELIVERED_LOG_CHANNELS = ["WHATSAPP", "EMAIL"] as const;

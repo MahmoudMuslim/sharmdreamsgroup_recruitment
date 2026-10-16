@@ -8,6 +8,7 @@ import { cronConfig } from "@/lib/config.server";
 import { MAX_ATTEMPTS } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import { OutboxView } from "./OutboxView";
 import { MessagePanel } from "./MessagePanel";
+import { isFailedView, isOutboxBucket } from "./outbox-model";
 import { getEmailOutbox, getOutbox } from "./actions";
 
 export const metadata = {
@@ -18,14 +19,22 @@ export const metadata = {
 /** Auth-gated route: content is fully session/RLS dependent. */
 export const instant = false;
 
-export default async function WhatsAppOutboxPage() {
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+export default async function WhatsAppOutboxPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
   const user = await requireStaff("/whatsapp");
+  const params = await searchParams;
+  // The two rails the attention feed can point at. Read server-side, so what the
+  // feed counts is what this render actually queries — not a client-side slice of
+  // a capped list that may have already dropped the row.
+  const bucket = isOutboxBucket(params.bucket);
+  const failedOnly = isFailedView(params.failed);
 
   const [canManage, outbox, messages, whatsappEnabled] = await Promise.all([
     hasPermissionForUser("messages.send"),
-    getOutbox(),
-    getEmailOutbox(),
+    getOutbox({ bucket, failed: failedOnly }),
+    getEmailOutbox({ failed: failedOnly }),
     getBoolSetting("notifications.whatsapp_enabled", false),
   ]);
 
@@ -38,9 +47,14 @@ export default async function WhatsAppOutboxPage() {
       />
 
       <OutboxView
+        key={`${bucket ?? "ALL"}|${failedOnly ? "failed" : "all"}`}
         jobs={outbox.jobs}
         history={outbox.history}
         recipients={outbox.recipients}
+        buckets={outbox.buckets}
+        failedLogTotal={outbox.failedLogTotal}
+        bucket={bucket ?? "ALL"}
+        failedOnly={failedOnly}
         canManage={canManage}
         flags={{
           whatsappEnabled,
@@ -56,6 +70,8 @@ export default async function WhatsAppOutboxPage() {
         <MessagePanel
           emails={messages.emails}
           notices={messages.notices}
+          totals={messages.totals}
+          failedOnly={failedOnly}
           flags={messages.flags}
           canManage={canManage}
         />

@@ -8,6 +8,16 @@ import {
   UNGRADED_ATTEMPT_FILTER,
   UNSCORED_ATTEMPT_STATUS,
 } from "@/modules/candidates/domain/listFilters";
+import {
+  agendaWindow,
+  AGENDA_APPLICATION_EMBED,
+  AGENDA_FUTURE_DAYS,
+  PENDING_INTERVIEW_STATUS,
+} from "@/app/(admin)/interviews/agenda-model";
+import {
+  DELIVERED_LOG_CHANNELS,
+  type QueueStatus,
+} from "@/app/(admin)/whatsapp/outbox-model";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -49,9 +59,6 @@ export interface StaffAlertsResult {
 /** Rows per record type — enough to scan, small enough to stay a dropdown. */
 const HIT_LIMIT = 5;
 
-/** How far back the attention feed counts activity as still "needs you". */
-const RECENT_WINDOW_DAYS = 7;
-
 /**
  * Strips the characters PostgREST reads as filter syntax.
  *
@@ -66,10 +73,6 @@ function filterTerm(raw: string): string {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 60);
-}
-
-function recentCutoff(): string {
-  return new Date(Date.now() - RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
 /**
@@ -227,8 +230,9 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
   if ("error" in actor) return { ok: false, error: actor.error, alerts: [] };
 
   const supabase = await createSupabaseServerClient();
-  const since = recentCutoff();
-  const now = new Date().toISOString();
+  // One instant for the interview row and the page it links to: the agenda slices
+  // the same window this count is measured against.
+  const agenda = agendaWindow();
 
   const [newApplications, ungraded, upcoming, failedSends, parkedJobs] =
     await Promise.all([
@@ -252,22 +256,33 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
         .select(`id, ${UNGRADED_ATTEMPT_EMBED}`, { count: "exact", head: true })
         .is("archived_at", null)
         .eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS),
+      // `SCHEDULED` inside [now, now + the agenda's horizon] — exactly the slice
+      // the landing view shows once the alert's own `?range=upcoming&status=`
+      // rails are applied. Before this the count had no horizon and the widest
+      // range on the page stopped at 30 days, so a panel booked for next quarter
+      // was counted here and unshowable there. The `!inner` embed matches the one
+      // requirement the agenda applies before it lists a row: a candidate this
+      // recruiter can open.
       supabase
         .from("interview_schedules")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "SCHEDULED")
-        .gte("scheduled_at", now),
+        .select(`id, ${AGENDA_APPLICATION_EMBED}`, { count: "exact", head: true })
+        .eq("status", PENDING_INTERVIEW_STATUS)
+        .gte("scheduled_at", agenda.now)
+        .lte("scheduled_at", agenda.future),
+      // Every send the channel refused, over the whole log rather than a 7-day
+      // slice: a message that never reached a candidate is still a message that
+      // never reached them a month later. `?failed=1` reads this exact predicate
+      // per channel, so the number here is the number of rows on screen.
       supabase
         .from("communication_logs")
         .select("id", { count: "exact", head: true })
         .eq("direction", "OUTBOUND")
         .eq("delivered", false)
-        .in("channel", ["WHATSAPP", "EMAIL"])
-        .gte("created_at", since),
+        .in("channel", [...DELIVERED_LOG_CHANNELS]),
       supabase
         .from("scheduled_whatsapp_jobs")
         .select("id", { count: "exact", head: true })
-        .eq("status", "FAILED"),
+        .eq("status", "FAILED" satisfies QueueStatus),
     ]);
 
   const results = [newApplications, ungraded, upcoming, failedSends, parkedJobs];
@@ -328,25 +343,36 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
     {
       id: "upcoming-interviews",
       label: "Interviews still on the calendar",
-      detail: "Scheduled from now onwards",
+      // Names the window the number is bounded by, so a recruiter who expects the
+      // whole diary is not surprised by the agenda's shorter reach.
+      detail: `Awaiting an outcome in the next ${AGENDA_FUTURE_DAYS} days — the agenda reads no further`,
       count: upcomingCount,
-      href: "/interviews",
+      href: "/interviews?range=upcoming&status=SCHEDULED",
       tone: "info",
     },
     {
       id: "failed-sends",
       label: "Messages that did not reach the candidate",
-      detail: `Outbound WhatsApp and email undelivered for ${RECENT_WINDOW_DAYS} days`,
+      // Channel-scoped and no longer windowed: an `IN_APP` notice is written to an
+      // inbox rather than relayed, so it can never belong here, and a refusal from
+      // last month is still a refusal. `?failed=1` opens the delivery log and the
+      // email panel on exactly these rows.
+      detail:
+        "WhatsApp and email the channel refused — a parked alert appears here too, as its final failure",
       count: failedCount,
-      href: "/whatsapp",
+      href: "/whatsapp?failed=1",
       tone: "danger",
     },
     {
       id: "parked-jobs",
       label: "Queued alerts parked after retries",
-      detail: "The dispatcher gave up on these",
+      // A different table and a different verb: these still have a queue row a
+      // person can re-arm, which is why the same incident also sits in the count
+      // above. The outbox says so on both lists, so the feed is never read as
+      // twice the work it is.
+      detail: "The dispatcher gave up on these — retrying re-arms the same job",
       count: parkedCount,
-      href: "/whatsapp",
+      href: "/whatsapp?bucket=FAILED",
       tone: "warn",
     },
   ];

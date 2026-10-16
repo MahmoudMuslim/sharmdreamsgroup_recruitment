@@ -51,6 +51,7 @@ import type {
   OutboxJob,
   RecipientOption,
 } from "./outbox-model";
+import { LOG_PAGE_LIMIT, QUEUE_PAGE_LIMIT } from "./outbox-model";
 
 const BUCKETS: { key: OutboxBucket; label: string; tone: "solid" | "muted" }[] = [
   { key: "ALL", label: "All", tone: "solid" },
@@ -133,6 +134,10 @@ export function OutboxView({
   jobs,
   history,
   recipients,
+  buckets,
+  failedLogTotal,
+  bucket,
+  failedOnly,
   canManage,
   flags,
   now,
@@ -140,6 +145,13 @@ export function OutboxView({
   jobs: OutboxJob[];
   history: DeliveryRow[];
   recipients: RecipientOption[];
+  /** Every bucket's own all-time count, measured by the server, not this list. */
+  buckets: Record<OutboxBucket, number>;
+  /** Undelivered WhatsApp rows in the whole log, whether or not this page lists them. */
+  failedLogTotal: number;
+  /** The rail the URL asked for, which is also the filter the rows were read with. */
+  bucket: OutboxBucket;
+  failedOnly: boolean;
   canManage: boolean;
   flags: OutboxFlags;
   now: string;
@@ -147,8 +159,7 @@ export function OutboxView({
   const router = useRouter();
   const nowMs = new Date(now).getTime();
 
-  const [tab, setTab] = useState<"queue" | "log">("queue");
-  const [bucket, setBucket] = useState<OutboxBucket>("ALL");
+  const [tab, setTab] = useState<"queue" | "log">(failedOnly ? "log" : "queue");
   const [sort, setSort] = useState<(typeof SORTS)[number]["key"]>("queued");
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -157,30 +168,53 @@ export function OutboxView({
   const [composing, setComposing] = useState(false);
   const [editing, setEditing] = useState<OutboxJob | null>(null);
 
-  const counts = useMemo(() => {
-    const map: Record<OutboxBucket, number> = { ALL: jobs.length, DUE: 0, WAITING: 0, SENT: 0, FAILED: 0 };
-    for (const job of jobs) map[bucketOf(job, nowMs)] += 1;
-    return map;
-  }, [jobs, nowMs]);
+  /**
+   * Move a rail and let the server answer for the rows.
+   *
+   * The bucket goes in the URL rather than into local state, so the chip, the
+   * list, the delivery log and the attention feed's count all read one query: a
+   * parked alert older than the newest 200 is reachable by clicking "Parked"
+   * instead of being counted here and hidden there. `?failed=1` is carried
+   * through so the two rails can be combined, which is how the feed links here.
+   */
+  function openRail(next: OutboxBucket, nextFailed = failedOnly) {
+    const search = new URLSearchParams();
+    if (next !== "ALL") search.set("bucket", next);
+    if (nextFailed) search.set("failed", "1");
+    const qs = search.toString();
+    router.push(`/whatsapp${qs ? `?${qs}` : ""}`);
+  }
 
-  const visible = useMemo(() => {
+  const listed = useMemo(() => {
+    const inBucket =
+      bucket === "ALL" ? jobs : jobs.filter((job) => bucketOf(job, nowMs) === bucket);
     const needle = query.trim().toLowerCase();
-    const rows = jobs.filter((job) => {
-      if (bucket !== "ALL" && bucketOf(job, nowMs) !== bucket) return false;
-      if (!needle) return true;
-      return (
-        job.candidate_name?.toLowerCase().includes(needle) ||
-        job.recipient_phone.toLowerCase().includes(needle) ||
-        job.text.toLowerCase().includes(needle) ||
-        job.template?.toLowerCase().includes(needle)
-      );
-    });
-    return rows.sort((a, b) => {
-      if (sort === "attempts") return b.attempts - a.attempts;
-      if (sort === "send") return a.scheduled_for.localeCompare(b.scheduled_for);
-      return b.created_at.localeCompare(a.created_at);
-    });
+    const rows = needle
+      ? inBucket.filter(
+          (job) =>
+            job.candidate_name?.toLowerCase().includes(needle) ||
+            job.recipient_phone.toLowerCase().includes(needle) ||
+            job.text.toLowerCase().includes(needle) ||
+            job.template?.toLowerCase().includes(needle)
+        )
+      : inBucket;
+    return {
+      inBucket: inBucket.length,
+      rows: rows.sort((a, b) => {
+        if (sort === "attempts") return b.attempts - a.attempts;
+        if (sort === "send") return a.scheduled_for.localeCompare(b.scheduled_for);
+        return b.created_at.localeCompare(a.created_at);
+      }),
+    };
   }, [jobs, bucket, nowMs, query, sort]);
+  const visible = listed.rows;
+
+  // The list is capped, the counts are not, so the page says which rows it left
+  // out instead of letting a chip and its rows disagree in silence. The search
+  // box is excluded from that arithmetic: narrowing what is on screen is not the
+  // same as the database holding fewer rows.
+  const hiddenForBucket = Math.max(0, buckets[bucket] - listed.inBucket);
+  const hiddenLogRows = Math.max(0, failedLogTotal - history.length);
 
   async function run(
     label: string,
@@ -225,25 +259,25 @@ export function OutboxView({
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatTile
           label="Due now"
-          value={counts.DUE}
+          value={buckets.DUE}
           hint={flags.cronArmed ? "Waiting for the next cron pass" : "Cron secret not set"}
           icon={<Clock className="h-5 w-5" aria-hidden />}
         />
         <StatTile
           label="Scheduled"
-          value={counts.WAITING}
+          value={buckets.WAITING}
           hint="Held for a future send time"
           icon={<Bell className="h-5 w-5" aria-hidden />}
         />
         <StatTile
           label="Delivered"
-          value={counts.SENT}
+          value={buckets.SENT}
           hint="Accepted by Meta for this queue"
           icon={<Check className="h-5 w-5" aria-hidden />}
         />
         <StatTile
           label="Parked"
-          value={counts.FAILED}
+          value={buckets.FAILED}
           hint={`After ${flags.maxAttempts} failed attempts`}
           icon={<AlertTriangle className="h-5 w-5" aria-hidden />}
         />
@@ -299,13 +333,21 @@ export function OutboxView({
                 <FilterRail
                   key={option.key}
                   label={option.label}
-                  count={counts[option.key]}
+                  count={buckets[option.key]}
                   tone={option.tone}
                   active={bucket === option.key}
-                  onClick={() => setBucket(bucket === option.key ? "ALL" : option.key)}
+                  onClick={() => openRail(bucket === option.key ? "ALL" : option.key)}
                 />
               ))}
             </div>
+            {hiddenForBucket > 0 && (
+              <p className="rounded-xl border border-brand-line bg-brand-cream px-3.5 py-2.5 text-xs leading-relaxed text-brand-ink/65">
+                The {BUCKETS.find((option) => option.key === bucket)?.label.toLowerCase()} bucket holds{" "}
+                {buckets[bucket]} messages and this list reads the newest {QUEUE_PAGE_LIMIT}, so{" "}
+                {hiddenForBucket} {hiddenForBucket === 1 ? "is" : "are"} older than what appears here. The
+                numbers above count them.
+              </p>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               <div className="relative min-w-[220px] flex-1">
                 <input
@@ -342,9 +384,8 @@ export function OutboxView({
                 </Select>
               </label>
               <span className="text-xs text-brand-ink/45">
-                {visible.length === jobs.length
-                  ? `${jobs.length} message${jobs.length === 1 ? "" : "s"}`
-                  : `${visible.length} of ${jobs.length}`}
+                {visible.length} shown · {BUCKETS.find((option) => option.key === bucket)?.label.toLowerCase()}
+                {bucket === "ALL" ? "" : `: ${buckets[bucket]} in the queue`}
               </span>
             </div>
           </Card>
@@ -353,11 +394,21 @@ export function OutboxView({
             <Card>
               <EmptyState
                 icon={<Inbox className="h-8 w-8" aria-hidden />}
-                title={jobs.length === 0 ? "Nothing in the outbox" : "No messages match this view"}
+                title={
+                  jobs.length === 0
+                    ? bucket === "ALL"
+                      ? "Nothing in the outbox"
+                      : `Nothing in the ${BUCKETS.find((option) => option.key === bucket)?.label.toLowerCase()} column`
+                    : "No message matches this search"
+                }
                 description={
                   jobs.length === 0
-                    ? "Stage changes and interview notices queue candidate alerts here automatically, and you can queue one by hand."
-                    : "Try another status or clear the search."
+                    ? bucket === "ALL"
+                      ? "Stage changes and interview notices queue candidate alerts here automatically, and you can queue one by hand."
+                      : `The queue holds ${buckets.ALL} message${
+                          buckets.ALL === 1 ? "" : "s"
+                        } and none of them is parked, delivered or waiting in that column. Pick another chip above, or open the delivery log for what the channel actually did with them.`
+                    : "The rows here are the ones this bucket was read with; try another chip or clear the search."
                 }
               />
             </Card>
@@ -486,11 +537,52 @@ export function OutboxView({
         </>
       ) : (
         <Card className="divide-y divide-brand-line">
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
+            <p className="text-xs leading-relaxed text-brand-ink/60">
+              {failedOnly
+                ? `Undelivered sends only — ${history.length} of the ${failedLogTotal} WhatsApp messages Meta refused${
+                    hiddenLogRows > 0 ? `, newest ${LOG_PAGE_LIMIT} listed` : ""
+                  }.`
+                : `Every send attempt, newest ${LOG_PAGE_LIMIT} of ${failedLogTotal} refused message${
+                    failedLogTotal === 1 ? "" : "s"
+                  } counted by the attention feed.`}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto"
+              onClick={() => openRail(bucket, !failedOnly)}
+            >
+              {failedOnly ? (
+                <>
+                  <Send className="h-4 w-4" aria-hidden />
+                  Show every send
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-4 w-4" aria-hidden />
+                  Undelivered only
+                </>
+              )}
+            </Button>
+          </div>
           {history.length === 0 ? (
             <EmptyState
               icon={<MessageCircle className="h-8 w-8" aria-hidden />}
-              title="No delivery attempts yet"
-              description="Every message the dispatcher sends — or finally fails to send — is written here once, with the outcome."
+              title={
+                failedOnly
+                  ? hiddenLogRows > 0
+                    ? "These failures are older than this list"
+                    : "Nothing was refused"
+                  : "No delivery attempts yet"
+              }
+              description={
+                failedOnly
+                  ? hiddenLogRows > 0
+                    ? `${hiddenLogRows} undelivered ${hiddenLogRows === 1 ? "message is" : "messages are"} still counted above but sit past the newest ${LOG_PAGE_LIMIT} rows this page reads.`
+                    : "Meta accepted every WhatsApp this queue sent, so the delivery log holds no refused row. Email refusals are in the panel under the queue."
+                  : "Every message the dispatcher sends — or finally fails to send — is written here once, with the outcome."
+              }
             />
           ) : (
             history.map((row) => (
@@ -556,6 +648,15 @@ export function OutboxView({
             <span>
               Retry here re-arms a parked job for the next pass; it never sends a message itself, so a
               delivered alert can never be doubled by an admin click.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <Dot on />
+            <span>
+              When the dispatcher gives up it does two things at once: the job is parked here, and one
+              undelivered row is written to the delivery log above. So the two attention-feed rows overlap —
+              a parked alert is also one of the {failedLogTotal} refused WhatsApp message
+              {failedLogTotal === 1 ? "" : "s"} — and the pair is not twice the work.
             </span>
           </li>
         </ul>

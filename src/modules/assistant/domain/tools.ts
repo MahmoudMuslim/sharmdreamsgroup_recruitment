@@ -753,11 +753,15 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_outbox",
     label: "Reading message outbox",
     description:
-      "The WhatsApp outbox: queued and sent jobs with their status and attempts, plus the most recent delivery log.",
+      "The WhatsApp outbox: queued and sent jobs with their status and attempts, plus the most recent delivery log. `totals` counts every job in the queue and every undelivered row in the log — the same numbers the outbox chips and the attention feed show, so quote those rather than counting the rows returned here.",
     args: {},
     run: async () => {
       const outbox = await getOutbox();
       return {
+        totals: {
+          ...outbox.buckets,
+          undelivered_log_rows: outbox.failedLogTotal,
+        },
         queued: outbox.jobs.slice(0, 40).map((job) => ({
           id: job.id,
           candidate_name: job.candidate_name,
@@ -1178,11 +1182,12 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_email_outbox",
     label: "Reading the email outbox",
     description:
-      "The most recent emails the portal tried to send, with recipient, subject, delivered flag and the error when it failed.",
+      "The most recent emails the portal tried to send, with recipient, subject, delivered flag and the error when it failed. `totals` counts every email and notice in the log, delivered or not, which is what the panel's tiles and the attention feed report.",
     args: {},
     run: async () => {
       const outbox = await getEmailOutbox();
       return {
+        totals: outbox.totals,
         sent: outbox.emails.slice(0, 30).map((row) => ({
           id: row.id,
           recipient: row.recipient,

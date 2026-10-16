@@ -19,7 +19,7 @@ import { Badge, Card, EmptyState, FilterRail, StatTile } from "@/modules/analyti
 import { FormMessage } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
 import { resendEmailMessage, type OutboxResult } from "./actions";
-import type { EmailFlags, EmailLogRow, NoticeRow } from "./outbox-model";
+import { LOG_PAGE_LIMIT, type EmailFlags, type EmailLogRow, type NoticeRow } from "./outbox-model";
 
 const DATE_TIME = new Intl.DateTimeFormat([], { dateStyle: "medium", timeStyle: "short" });
 
@@ -29,7 +29,6 @@ function stamp(iso: string | null) {
   return Number.isNaN(date.getTime()) ? "—" : DATE_TIME.format(date);
 }
 
-type StatusFilter = "ALL" | "DELIVERED" | "FAILED";
 type UnreadFilter = "ALL" | "UNREAD" | "READ";
 
 /**
@@ -39,38 +38,43 @@ type UnreadFilter = "ALL" | "UNREAD" | "READ";
  * inside the action that changed the candidate's stage, and a notice is written
  * to the candidate's inbox. So this panel is a history with one recovery move —
  * re-send an email the relay refused.
+ *
+ * The refused-only view is URL state (`?failed=1`), because that is the set the
+ * attention feed counts, and a chip that filtered only the newest 60 rows this
+ * page had loaded would leave the count unreachable again.
  */
 export function MessagePanel({
   emails,
   notices,
+  totals,
+  failedOnly,
   flags,
   canManage,
 }: {
   emails: EmailLogRow[];
   notices: NoticeRow[];
+  /** Measured over the whole log, so a tile cannot describe the loaded page. */
+  totals: { emailsDelivered: number; emailsFailed: number; noticesUnread: number; noticesRead: number };
+  failedOnly: boolean;
   flags: EmailFlags;
   canManage: boolean;
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<"email" | "notice">("email");
-  const [status, setStatus] = useState<StatusFilter>("ALL");
   const [readState, setReadState] = useState<UnreadFilter>("ALL");
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
 
-  const deliveredCount = emails.filter((row) => row.delivered).length;
-  const failedCount = emails.length - deliveredCount;
-  const unreadCount = notices.filter((row) => !row.read_at).length;
+  const emailTotal = totals.emailsDelivered + totals.emailsFailed;
+  const noticeTotal = totals.noticesUnread + totals.noticesRead;
 
   const needle = query.trim().toLowerCase();
 
   const visibleEmails = useMemo(
     () =>
       emails.filter((row) => {
-        if (status === "DELIVERED" && !row.delivered) return false;
-        if (status === "FAILED" && row.delivered) return false;
         if (!needle) return true;
         return (
           row.recipient.toLowerCase().includes(needle) ||
@@ -79,7 +83,7 @@ export function MessagePanel({
           row.body.toLowerCase().includes(needle)
         );
       }),
-    [emails, status, needle]
+    [emails, needle]
   );
 
   const visibleNotices = useMemo(
@@ -96,6 +100,14 @@ export function MessagePanel({
       }),
     [notices, readState, needle]
   );
+
+  /** Refused only, or everything — the same switch the delivery log above uses. */
+  function openFailedView(next: boolean) {
+    const search = new URLSearchParams();
+    if (next) search.set("failed", "1");
+    const qs = search.toString();
+    router.push(`/whatsapp${qs ? `?${qs}` : ""}`);
+  }
 
   function retry(row: EmailLogRow) {
     setPending(row.id);
@@ -121,25 +133,25 @@ export function MessagePanel({
       <div className="grid grid-cols-2 gap-4 border-b border-brand-line bg-brand-cream/60 p-4 sm:p-5 lg:grid-cols-4">
         <StatTile
           label="Emails delivered"
-          value={deliveredCount}
+          value={totals.emailsDelivered}
           hint={flags.emailEnabled ? "Accepted by the relay" : "Email channel is off"}
           icon={<Send className="h-5 w-5" aria-hidden />}
         />
         <StatTile
           label="Emails failed"
-          value={failedCount}
+          value={totals.emailsFailed}
           hint="Refused by the relay — retry below"
           icon={<AlertTriangle className="h-5 w-5" aria-hidden />}
         />
         <StatTile
           label="Portal notices"
-          value={notices.length}
+          value={noticeTotal}
           hint="Written to the candidate portal"
           icon={<Inbox className="h-5 w-5" aria-hidden />}
         />
         <StatTile
           label="Still unread"
-          value={unreadCount}
+          value={totals.noticesUnread}
           hint="No candidate has opened them"
           icon={<Mail className="h-5 w-5" aria-hidden />}
         />
@@ -198,41 +210,61 @@ export function MessagePanel({
 
       <div className="flex flex-wrap items-center gap-2 px-4 pt-3 sm:px-5">
         {tab === "email" ? (
-          (
-            [
-              { key: "ALL", label: "All", count: emails.length },
-              { key: "DELIVERED", label: "Delivered", count: deliveredCount },
-              { key: "FAILED", label: "Failed", count: failedCount },
-            ] as const
-          ).map((option) => (
+          <>
             <FilterRail
-              key={option.key}
-              label={option.label}
-              count={option.count}
-              tone={option.key === "FAILED" ? "muted" : "solid"}
-              active={status === option.key}
-              onClick={() => setStatus(status === option.key ? "ALL" : option.key)}
+              label="Every send"
+              count={emailTotal}
+              tone="solid"
+              active={!failedOnly}
+              onClick={() => openFailedView(false)}
             />
-          ))
+            <FilterRail
+              label="Refused only"
+              count={totals.emailsFailed}
+              tone="muted"
+              active={failedOnly}
+              onClick={() => openFailedView(true)}
+            />
+            <p className="ml-auto text-xs text-brand-ink/50">
+              {failedOnly
+                ? `The newest ${emails.length} refused email${emails.length === 1 ? "" : "s"} of ${totals.emailsFailed}.`
+                : `The newest ${emails.length} of ${emailTotal} emails this panel reads.`}
+            </p>
+          </>
         ) : (
-          (
-            [
-              { key: "ALL", label: "All", count: notices.length },
-              { key: "UNREAD", label: "Unread", count: unreadCount },
-              { key: "READ", label: "Read", count: notices.length - unreadCount },
-            ] as const
-          ).map((option) => (
-            <FilterRail
-              key={option.key}
-              label={option.label}
-              count={option.count}
-              tone={option.key === "UNREAD" ? "muted" : "solid"}
-              active={readState === option.key}
-              onClick={() => setReadState(readState === option.key ? "ALL" : option.key)}
-            />
-          ))
+          <>
+            {(
+              [
+                { key: "ALL", label: "All", count: noticeTotal },
+                { key: "UNREAD", label: "Unread", count: totals.noticesUnread },
+                { key: "READ", label: "Read", count: totals.noticesRead },
+              ] as const
+            ).map((option) => (
+              <FilterRail
+                key={option.key}
+                label={option.label}
+                count={option.count}
+                tone={option.key === "UNREAD" ? "muted" : "solid"}
+                active={readState === option.key}
+                onClick={() => setReadState(readState === option.key ? "ALL" : option.key)}
+              />
+            ))}
+            <p className="ml-auto text-xs text-brand-ink/50">
+              The newest {notices.length} notice{notices.length === 1 ? "" : "s"} of {noticeTotal} — the chips
+              count them all.
+            </p>
+          </>
         )}
       </div>
+
+      {tab === "email" && failedOnly && emails.length < totals.emailsFailed && (
+        <p className="px-4 pt-3 text-xs leading-relaxed text-brand-ink/60 sm:px-5">
+          {totals.emailsFailed - emails.length} refused email
+          {totals.emailsFailed - emails.length === 1 ? " is" : "s are"} older than the{" "}
+          {LOG_PAGE_LIMIT} rows this panel lists. The tile above counts every one, and the attention feed links
+          here for the same set.
+        </p>
+      )}
 
       {notice && (
         <div className="px-4 pt-3 sm:px-5">
@@ -248,11 +280,23 @@ export function MessagePanel({
           visibleEmails.length === 0 ? (
             <EmptyState
               icon={<Mail className="h-8 w-8" aria-hidden />}
-              title={emails.length === 0 ? "No emails sent yet" : "No email matches this view"}
+              title={
+                emails.length === 0
+                  ? failedOnly
+                    ? totals.emailsFailed === 0
+                      ? "No email has been refused"
+                      : "These refusals are older than this panel"
+                    : "No emails sent yet"
+                  : "No email matches this search"
+              }
               description={
                 emails.length === 0
-                  ? "Stage changes and interview bookings mail the candidate the copy under Settings → Access & comms → Email, and every attempt lands here."
-                  : "Try another status or clear the search."
+                  ? failedOnly
+                    ? totals.emailsFailed === 0
+                      ? "Every email the relay took is marked Delivered, so there is nothing here to retry. Switch back to Every send to read them."
+                      : `${totals.emailsFailed} email${totals.emailsFailed === 1 ? " was" : "s were"} refused by the relay, all of them older than the ${LOG_PAGE_LIMIT} newest rows this panel lists.`
+                    : "Stage changes and interview bookings mail the candidate the copy under Settings → Access & comms → Email, and every attempt lands here."
+                  : "Clear the search to see the rows this view was read with."
               }
             />
           ) : (
@@ -334,7 +378,7 @@ export function MessagePanel({
                 ? flags.inAppEnabled
                   ? "A stage move, an interview change, a test invite and both campaigns all copy themselves into the candidate's inbox as they are sent, so a refused email is never the only version. A WhatsApp you queue by hand on this page is the one thing that stays out of the inbox."
                   : "Portal notices are switched off in Settings → Notifications, so nothing reaches the candidate's inbox and a refused email is the only version there is."
-                : "Try another status or clear the search."
+                : "Try Unread or Read above, or clear the search."
             }
           />
         ) : (

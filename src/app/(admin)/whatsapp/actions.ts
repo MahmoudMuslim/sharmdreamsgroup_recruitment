@@ -13,12 +13,16 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase } from "@/modules/activity/domain/trail";
 import { formatInZone } from "@/lib/timezone";
 import {
+  LOG_PAGE_LIMIT,
+  QUEUE_PAGE_LIMIT,
+  QUEUE_STATUS_BY_BUCKET,
   QUEUE_SELECT,
   firstOf,
   type DeliveryRow,
   type EmailFlags,
   type EmailLogRow,
   type NoticeRow,
+  type OutboxBucket,
   type OutboxJob,
   type RecipientOption,
 } from "./outbox-model";
@@ -96,39 +100,84 @@ function toJob(row: Record<string, unknown>): OutboxJob {
   };
 }
 
-/** The queue, the delivery log, and everyone the outbox can address. */
-export async function getOutbox(): Promise<{
+/**
+ * The queue, the delivery log, and everyone the outbox can address.
+ *
+ * `bucket` and `failed` are the two rails this page can be opened on, and each
+ * narrows the *read*, not only the view, so a row the page claims to list can
+ * never sit below the cap. The counts beside them are all-time and per bucket:
+ * a chip has to describe its own set even while the list is showing another one.
+ */
+export async function getOutbox(input: {
+  bucket?: OutboxBucket | null;
+  failed?: boolean;
+} = {}): Promise<{
   jobs: OutboxJob[];
   history: DeliveryRow[];
   recipients: RecipientOption[];
+  buckets: Record<OutboxBucket, number>;
+  /** Undelivered WhatsApp rows in the whole log, newest-first under `?failed=1`. */
+  failedLogTotal: number;
 }> {
+  await requireStaff("/whatsapp");
   const supabase = await createSupabaseServerClient();
+  const now = new Date().toISOString();
+  const status = input.bucket ? QUEUE_STATUS_BY_BUCKET[input.bucket] : null;
 
-  const [queue, log, roster] = await Promise.all([
-    supabase
+  const queueBase = supabase.from("scheduled_whatsapp_jobs").select(QUEUE_SELECT);
+  const logBase = supabase
+    .from("communication_logs")
+    .select("id, recipient, body, delivered, error_message, created_at, applications(full_name)")
+    .eq("channel", "WHATSAPP")
+    .eq("direction", "OUTBOUND");
+  const parkedBase = supabase
+    .from("communication_logs")
+    .select("id", { count: "exact", head: true })
+    .eq("channel", "WHATSAPP")
+    .eq("direction", "OUTBOUND")
+    .eq("delivered", false);
+
+  // `DUE` and `WAITING` are one `PENDING` status split by whether the send time
+  // has arrived, which is the same line `bucketOf()` draws in the view.
+  const countBucket = (bucket: OutboxBucket) => {
+    const base = supabase
       .from("scheduled_whatsapp_jobs")
-      .select(QUEUE_SELECT)
-      .order("created_at", { ascending: false })
-      .limit(200),
-    supabase
-      .from("communication_logs")
-      .select("id, recipient, body, delivered, error_message, created_at, applications(full_name)")
-      .eq("channel", "WHATSAPP")
-      .eq("direction", "OUTBOUND")
-      .order("created_at", { ascending: false })
-      .limit(60),
-    supabase
-      .from("applications")
-      .select("id, full_name, phone, job_openings(title)")
-      .not("phone", "is", null)
-      .is("archived_at", null)
-      .order("created_at", { ascending: false })
-      .limit(300),
-  ]);
+      .select("id", { count: "exact", head: true });
+    if (bucket === "ALL") return base;
+    if (bucket === "SENT" || bucket === "FAILED") return base.eq("status", bucket);
+    const pending = base.eq("status", "PENDING");
+    return bucket === "DUE" ? pending.lte("scheduled_for", now) : pending.gt("scheduled_for", now);
+  };
+
+  const [queue, log, roster, failedLog, allCount, due, waiting, sentCount, parked] =
+    await Promise.all([
+      (status ? queueBase.eq("status", status) : queueBase)
+        .order("created_at", { ascending: false })
+        .limit(QUEUE_PAGE_LIMIT),
+      (input.failed ? logBase.eq("delivered", false) : logBase)
+        .order("created_at", { ascending: false })
+        .limit(LOG_PAGE_LIMIT),
+      supabase
+        .from("applications")
+        .select("id, full_name, phone, job_openings(title)")
+        .not("phone", "is", null)
+        .is("archived_at", null)
+        .order("created_at", { ascending: false })
+        .limit(300),
+      parkedBase,
+      countBucket("ALL"),
+      countBucket("DUE"),
+      countBucket("WAITING"),
+      countBucket("SENT"),
+      countBucket("FAILED"),
+    ]);
 
   if (queue.error) console.error("[outbox] queue query failed:", queue.error.message);
   if (log.error) console.error("[outbox] delivery log query failed:", log.error.message);
   if (roster.error) console.error("[outbox] recipient query failed:", roster.error.message);
+  for (const edge of [failedLog, allCount, due, waiting, sentCount, parked]) {
+    if (edge.error) console.error("[outbox] outbox count failed:", edge.error.message);
+  }
 
   const jobs = ((queue.data ?? []) as unknown as Record<string, unknown>[]).map(toJob);
 
@@ -149,7 +198,19 @@ export async function getOutbox(): Promise<{
     job_title: firstOf(row.job_openings as { title?: string } | null)?.title ?? null,
   }));
 
-  return { jobs, history, recipients };
+  return {
+    jobs,
+    history,
+    recipients,
+    buckets: {
+      ALL: allCount.count ?? 0,
+      DUE: due.count ?? 0,
+      WAITING: waiting.count ?? 0,
+      SENT: sentCount.count ?? 0,
+      FAILED: parked.count ?? 0,
+    },
+    failedLogTotal: failedLog.count ?? 0,
+  };
 }
 
 function normalizeText(raw: string): { text?: string; error?: string } {
@@ -482,36 +543,66 @@ function toMessageRow(row: MessageRow) {
  * These channels send inline, so there is no queue to show — what the admin
  * needs is what went out, what the relay refused, and whether the candidate has
  * read their notice yet.
+ *
+ * `failed` narrows the *email read* to refused rows, which is the set the
+ * attention feed counts; `totals` are always measured over the whole log, so a
+ * stat tile cannot report "0 delivered" while the relay delivered eleven.
  */
-export async function getEmailOutbox(): Promise<{
+export async function getEmailOutbox(input: { failed?: boolean } = {}): Promise<{
   emails: EmailLogRow[];
   notices: NoticeRow[];
   flags: EmailFlags;
+  totals: { emailsDelivered: number; emailsFailed: number; noticesUnread: number; noticesRead: number };
 }> {
+  await requireStaff("/whatsapp");
   const supabase = await createSupabaseServerClient();
 
-  const [emailResult, noticeResult, missing, emailEnabled, inAppEnabled] = await Promise.all([
+  const emailBase = supabase
+    .from("communication_logs")
+    .select(MESSAGE_SELECT)
+    .eq("channel", "EMAIL")
+    .eq("direction", "OUTBOUND");
+  const noticeBase = supabase
+    .from("communication_logs")
+    .select(MESSAGE_SELECT)
+    .eq("channel", "IN_APP")
+    .eq("direction", "OUTBOUND");
+  const countEmails = (delivered: boolean) =>
     supabase
       .from("communication_logs")
-      .select(MESSAGE_SELECT)
+      .select("id", { count: "exact", head: true })
       .eq("channel", "EMAIL")
       .eq("direction", "OUTBOUND")
-      .order("created_at", { ascending: false })
-      .limit(60),
-    supabase
+      .eq("delivered", delivered);
+  const countNotices = (read: boolean) => {
+    const base = supabase
       .from("communication_logs")
-      .select(MESSAGE_SELECT)
+      .select("id", { count: "exact", head: true })
       .eq("channel", "IN_APP")
-      .eq("direction", "OUTBOUND")
-      .order("created_at", { ascending: false })
-      .limit(60),
-    missingSmtpFields(),
-    getBoolSetting("notifications.email_enabled", true),
-    getBoolSetting("notifications.in_app_enabled", true),
-  ]);
+      .eq("direction", "OUTBOUND");
+    return read ? base.not("read_at", "is", null) : base.is("read_at", null);
+  };
+
+  const [emailResult, noticeResult, missing, emailEnabled, inAppEnabled, delivered, refused, unread, opened] =
+    await Promise.all([
+      (input.failed ? emailBase.eq("delivered", false) : emailBase)
+        .order("created_at", { ascending: false })
+        .limit(LOG_PAGE_LIMIT),
+      noticeBase.order("created_at", { ascending: false }).limit(LOG_PAGE_LIMIT),
+      missingSmtpFields(),
+      getBoolSetting("notifications.email_enabled", true),
+      getBoolSetting("notifications.in_app_enabled", true),
+      countEmails(true),
+      countEmails(false),
+      countNotices(false),
+      countNotices(true),
+    ]);
 
   if (emailResult.error) console.error("[outbox] email log query failed:", emailResult.error.message);
   if (noticeResult.error) console.error("[outbox] notice query failed:", noticeResult.error.message);
+  for (const edge of [delivered, refused, unread, opened]) {
+    if (edge.error) console.error("[outbox] message count failed:", edge.error.message);
+  }
 
   const emails: EmailLogRow[] = ((emailResult.data ?? []) as unknown as MessageRow[]).map(toMessageRow);
   const notices: NoticeRow[] = ((noticeResult.data ?? []) as unknown as MessageRow[]).map(toMessageRow);
@@ -524,6 +615,12 @@ export async function getEmailOutbox(): Promise<{
       inAppEnabled,
       smtpConfigured: missing === null,
       smtpMissing: missing ?? [],
+    },
+    totals: {
+      emailsDelivered: delivered.count ?? 0,
+      emailsFailed: refused.count ?? 0,
+      noticesUnread: unread.count ?? 0,
+      noticesRead: opened.count ?? 0,
     },
   };
 }

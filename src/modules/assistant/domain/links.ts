@@ -148,7 +148,10 @@ export function linkForTool(
     case "list_interviews":
     case "reschedule_interview":
     case "set_interview_status":
-      return { href: "/interviews", label: "Open the interview agenda" };
+      // The widest forward range, not the default week: a panel moved to a slot
+      // three weeks out is exactly what the recruiter clicks through to check, and
+      // a landing view that hides it reads as a failed move.
+      return { href: "/interviews?range=upcoming", label: "Open the interview agenda" };
     case "list_onboarding_plans":
     case "generate_onboarding_plan":
     case "save_onboarding_task":
@@ -197,8 +200,12 @@ export function linkForTool(
     case "cancel_outbox_message":
     case "retry_outbox_message":
     case "edit_outbox_message":
-    case "resend_email":
       return { href: "/whatsapp", label: "Open the outbox" };
+    case "resend_email":
+      // Only a refused row can be re-sent, and `?failed=1` is the view that lists
+      // refused rows — a plain link here would drop the reader in a mixed log where
+      // the message they just mailed is one badge among many.
+      return { href: "/whatsapp?failed=1", label: "Open the refused messages" };
     case "save_model_routing":
       return {
         href: "/settings?area=providers&section=models",
