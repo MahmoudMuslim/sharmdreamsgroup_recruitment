@@ -4,6 +4,7 @@ import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { readAttachmentAsCv } from "@/app/(admin)/candidates/cv-actions";
+import { cvContentError } from "@/modules/careers/cv-rules";
 import {
   ATTACHMENT_RULES,
   attachmentPath,
@@ -64,6 +65,15 @@ export async function POST(request: NextRequest) {
       { error: `That bucket accepts only ${rule.hint.replace(/\.$/, "")}.` },
       { status: 415 }
     );
+  }
+  if (rule.bucket === "resumes") {
+    // The same bytes are asked here as on the public upload, or a recruiter could
+    // file the identical fake CV that the career site now refuses.
+    const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+    const contentError = cvContentError(head, file.type);
+    if (contentError) {
+      return NextResponse.json({ error: contentError }, { status: 415 });
+    }
   }
   if (file.size > rule.maxBytes) {
     return NextResponse.json(
