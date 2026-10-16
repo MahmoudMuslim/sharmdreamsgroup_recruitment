@@ -2481,4 +2481,51 @@ export function toolByName(name: string): AssistantTool | undefined {
   return ASSISTANT_TOOLS.find((tool) => tool.name === name);
 }
 
+/**
+ * The tools that change nothing, so a turn can run them without a click.
+ *
+ * This is an exception list, not a description of the registry: a tool that is
+ * not named here is treated as a write and waits for approval. That is the
+ * fail-safe direction, because the risk nobody notices is the new tool someone
+ * adds next month and forgets to classify — a read accidentally listed as a
+ * write only costs recruiter a click, while a write accidentally listed as a
+ * read is a change nobody approved.
+ *
+ * Three names here are worth explaining, because they look like writes:
+ * - `ask_question` ends the turn on a button the recruiter has to press, so it
+ *   is already the confirmation;
+ * - `draft_interview_guide` generates text and stores nothing (`stored: false`);
+ * - `read_candidate_cv` sounds like a read and is NOT listed, because it writes
+ *   the parsed text onto the candidate row.
+ */
+export const READ_ONLY_TOOLS: readonly string[] = [
+  "ask_question",
+  "dashboard_analytics",
+  "get_report",
+  "get_analytics_report",
+  "list_jobs",
+  "get_job",
+  "list_candidates",
+  "get_job_applicants",
+  "get_application",
+  "list_assessment_suites",
+  "list_prospects",
+  "get_prospect_profile",
+  "list_outbox",
+  "get_settings",
+  "get_master_data",
+  "list_model_routing",
+  "get_audit_log",
+  "get_candidate_dossier",
+  "get_assessment_suite",
+  "get_attempt_grades",
+  "list_interviews",
+  "list_onboarding_plans",
+  "list_files",
+  "list_gate_questions",
+  "list_team",
+  "list_email_outbox",
+  "draft_interview_guide",
+];
+
 export { ToolArgumentError };

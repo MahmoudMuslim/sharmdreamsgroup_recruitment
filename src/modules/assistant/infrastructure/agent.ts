@@ -10,8 +10,16 @@ import {
   questionAsReply,
   toolByName,
   type AssistantQuestion,
+  type AssistantTool,
   type ToolArgs,
 } from "@/modules/assistant/domain/tools";
+import {
+  approvalAsReply,
+  approvalToolResult,
+  mintApproval,
+  requiresApproval,
+  type AssistantApproval,
+} from "@/modules/assistant/domain/approvals";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
 import type { ChatCompletionMessage } from "@/types";
 
@@ -36,6 +44,11 @@ export interface AssistantStep {
   link?: AssistantLink;
   /** Set when the step is a question: the choices are rendered as buttons. */
   ask?: AssistantQuestion;
+  /**
+   * Set when the step is a write held back for a click. The chat renders it as
+   * an approval card; the arguments themselves stay on the server.
+   */
+  approval?: AssistantApproval;
 }
 
 /** Which engine actually served the turn, shown in the chat footer. */
@@ -117,6 +130,10 @@ export const ASSISTANT_RULES: readonly string[] = [
   "    file keys from list_files.",
   "14. Dates and times carry their own UTC offset (…T10:30:00+03:00, or Z). A time the recruiter gave in",
   "    words is read against the organisation timezone from get_settings, then converted before you send it.",
+  "15. Nothing that changes data is done when you ask for it. Every write is held on the recruiter's screen",
+  "    as an approval card and runs only if they click Approve. Reads answer immediately. So after a write",
+  "    say what is waiting for approval and stop — never report it as applied, and never chain another",
+  "    change on top of it, because the one you asked for has not happened.",
 ];
 
 function toolCatalogue(allowDestructive: boolean): string {
@@ -125,7 +142,14 @@ function toolCatalogue(allowDestructive: boolean): string {
       const args = Object.entries(tool.args)
         .map(([name, spec]) => `${name}: ${spec}`)
         .join("; ");
-      return `- ${tool.name}${tool.destructive ? " (destructive)" : ""}: ${tool.description}${
+      // The catalogue names the gate the call will hit, because a model that
+      // cannot tell a read from a held write promises a change out loud.
+      const gate = tool.destructive
+        ? " (destructive — waits for your approval)"
+        : requiresApproval(tool.name)
+          ? " (waits for the recruiter's approval)"
+          : "";
+      return `- ${tool.name}${gate}: ${tool.description}${
         args ? `\n  args → ${args}` : "\n  args → none"
       }`;
     })
@@ -134,7 +158,7 @@ function toolCatalogue(allowDestructive: boolean): string {
 
 function destructiveNote(allowDestructive: boolean): string {
   return allowDestructive
-    ? "DESTRUCTIVE TOOLS ARE ENABLED for this session. Delete only what the user explicitly named, and say what was deleted."
+    ? "DESTRUCTIVE TOOLS ARE ENABLED for this session. Delete only what the user explicitly named, and say what was deleted — the switch opens the door, but the delete still waits for them to click Approve."
     : "DESTRUCTIVE TOOLS ARE DISABLED for this session. If the user asks you to delete something, reply that they need to switch on “Allow deletions” in the assistant panel first.";
 }
 
@@ -212,7 +236,9 @@ function detailFor(value: unknown): string {
 async function runTool(
   name: string,
   args: ToolArgs,
-  allowDestructive: boolean
+  allowDestructive: boolean,
+  /** The recruiter this write is held for, so only their click can release it. */
+  profileId: string
 ): Promise<{ step: AssistantStep; result: string }> {
   const tool = toolByName(name);
 
@@ -233,6 +259,32 @@ async function runTool(
     };
   }
 
+  // The human decides, not the model. Held before `tool.run`, so the arguments
+  // the recruiter approves are the arguments this turn asked with — nothing that
+  // happens afterwards can rewrite them.
+  if (requiresApproval(tool.name)) {
+    const approval = mintApproval(tool, args, profileId);
+    return {
+      step: {
+        tool: tool.name,
+        label: tool.label,
+        ok: false,
+        detail: `Waiting for your approval — ${approval.summary}`,
+        link: linkForTool(tool.name, args, null) ?? undefined,
+        approval,
+      },
+      result: approvalToolResult(approval),
+    };
+  }
+
+  return executeTool(tool, args);
+}
+
+/** Runs one registry tool and shapes its answer for the chip and the model. */
+async function executeTool(
+  tool: AssistantTool,
+  args: ToolArgs
+): Promise<{ step: AssistantStep; result: string }> {
   try {
     const value = await tool.run(args);
     const detail = detailFor(value);
@@ -257,12 +309,36 @@ async function runTool(
 }
 
 /**
+ * The click-through of an approval: the held write, run.
+ *
+ * Nothing here re-reads the arguments — they are the ones `mintApproval` stored —
+ * so what lands in the database is what the card described. The step comes back
+ * in the same shape the refused call was shown in, so the chip the recruiter
+ * watched turn amber turns green on the row it names.
+ */
+export async function runApprovedChange(
+  toolName: string,
+  args: ToolArgs
+): Promise<{ step: AssistantStep; result: string }> {
+  const tool = toolByName(toolName);
+  if (!tool) {
+    return {
+      step: { tool: toolName, label: "Unknown tool", ok: false, detail: `No tool is called "${toolName}".` },
+      result: `{"ok":false,"error":"No such tool."}`,
+    };
+  }
+  return executeTool(tool, args);
+}
+
+/**
  * Runs one user turn: as many model calls and tool executions as the answer
  * needs, up to `MAX_TOOL_ROUNDS`, then the model's final reply.
  */
 export async function runAssistantTurn(
   history: ChatCompletionMessage[],
   allowDestructive: boolean,
+  /** `user_profiles.id` of the signed-in recruiter, who must approve any write. */
+  profileId: string,
   /** A model the recruiter chose for this conversation, or nothing to route as usual. */
   modelOverride?: string | null
 ): Promise<AssistantTurn> {
@@ -307,7 +383,7 @@ export async function runAssistantTurn(
       };
     }
 
-    const { step, result } = await runTool(answer.name, answer.args, allowDestructive);
+    const { step, result } = await runTool(answer.name, answer.args, allowDestructive, profileId);
     steps.push(step);
 
     // A question is an answer as far as this turn is concerned: the choices go on
@@ -316,6 +392,13 @@ export async function runAssistantTurn(
     // its own question.
     if (step.ask) {
       return { reply: questionAsReply(step.ask), steps, model, provider };
+    }
+
+    // An approval is the same shape of turn-end for the same reason: the card is
+    // on screen, the click is a separate request, and a model that kept going
+    // would chain the next change onto one that has not happened.
+    if (step.approval) {
+      return { reply: approvalAsReply(step.approval), steps, model, provider };
     }
 
     // The call and its result are appended as a normal exchange: the protocol

@@ -20,6 +20,13 @@ import {
   type ToolArgs,
 } from "@/modules/assistant/domain/tools";
 import {
+  approvalAsReply,
+  approvalToolResult,
+  mintApproval,
+  requiresApproval,
+  type AssistantApproval,
+} from "@/modules/assistant/domain/approvals";
+import {
   ASSISTANT_RULES,
   type AssistantProvider,
   type AssistantStep,
@@ -103,6 +110,20 @@ function asText(value: unknown): string {
 }
 
 /**
+ * What a turn ends on, in the order it was raised: a question the recruiter has
+ * to answer, or a change they have to approve. The agent can raise either and
+ * carry on talking, so the last one is the live card on the screen.
+ */
+type TurnEnder =
+  | { kind: "ask"; question: AssistantQuestion }
+  | { kind: "approval"; approval: AssistantApproval };
+
+/** The transcript text for the turn's last card, fed back on the next turn. */
+function enderAsReply(ender: TurnEnder): string {
+  return ender.kind === "ask" ? questionAsReply(ender.question) : approvalAsReply(ender.approval);
+}
+
+/**
  * The tool is bound to the request's async context at construction time. Qoder
  * invokes the handler when its worker reports the call, which is outside the
  * async chain that `sendAssistantMessage` started, and `cookies()` resolves the
@@ -113,14 +134,35 @@ function definitionFor(
   sdk: typeof import("@qoder-ai/qoder-agent-sdk"),
   tool: AssistantTool,
   steps: AssistantStep[],
-  asks: AssistantQuestion[]
+  enders: TurnEnder[],
+  /** The recruiter this write is held for, so only their click can release it. */
+  profileId: string
 ): SdkMcpToolDefinition {
   const handler = AsyncResource.bind(async (args: ToolArgs): Promise<CallToolResult> => {
     const input = (args ?? {}) as ToolArgs;
+
+    // The human decides, not the model: a write stops here and comes back as a
+    // card. The arguments are held server-side, so what the recruiter approves is
+    // exactly what this call asked with.
+    if (requiresApproval(tool.name)) {
+      const approval = mintApproval(tool, input, profileId);
+      enders.push({ kind: "approval", approval });
+      const detail = approvalToolResult(approval);
+      steps.push({
+        tool: tool.name,
+        label: tool.label,
+        ok: false,
+        detail: `Waiting for your approval — ${approval.summary}`.slice(0, 220),
+        link: linkForTool(tool.name, input, null) ?? undefined,
+        approval,
+      });
+      return { content: [{ type: "text", text: detail }], isError: false };
+    }
+
     try {
       const value = await tool.run(input);
       const ask = tool.name === "ask_question" ? asQuestion(value) : null;
-      if (ask) asks.push(ask);
+      if (ask) enders.push({ kind: "ask", question: ask });
       const detail = ask
         ? `{"ok":true,"shown_to_user":true,"question":${JSON.stringify(
             ask.question
@@ -150,7 +192,11 @@ function definitionFor(
 
   return sdk.tool(
     tool.name,
-    tool.description,
+    // Named here for the same reason the gateway names it in its catalogue: a model
+    // that cannot tell a read from a held write promises the change out loud.
+    requiresApproval(tool.name)
+      ? `${tool.description} This does not run when you call it: it raises an approval card for the recruiter and nothing changes unless they click Approve.`
+      : tool.description,
     shapeFor(tool),
     handler,
     {
@@ -160,7 +206,10 @@ function definitionFor(
       alwaysLoad: true,
       permissionPolicy: "always_allow",
       annotations: {
-        readOnlyHint: !tool.destructive,
+        // The runtime's own hint about what a call may do: only the tools on the
+        // exception list change nothing. `destructiveHint` stays the delete switch,
+        // which is a second gate on top of approval, not a replacement for it.
+        readOnlyHint: !requiresApproval(tool.name),
         destructiveHint: tool.destructive === true,
       },
     }
@@ -190,7 +239,7 @@ function systemPromptFor(allowDestructive: boolean): string {
     ...ASSISTANT_RULES,
     "",
     allowDestructive
-      ? "Deleting tools are available. Delete only what the user explicitly named, and say what was deleted."
+      ? "Deleting tools are available. Delete only what the user explicitly named, and say what was deleted — the switch opens the door, but the delete still waits for them to click Approve."
       : "Deleting is not available in this session. If the user asks you to delete something, reply that they need to switch on “Allow deletions” in the assistant panel first.",
     "",
     "You have no file, shell or web tools. Your only way to act is the portal tools.",
@@ -227,7 +276,9 @@ export async function qoderEngineStatus(): Promise<{
 
 export async function runQoderAssistantTurn(
   history: ChatCompletionMessage[],
-  allowDestructive: boolean
+  allowDestructive: boolean,
+  /** `user_profiles.id` of the signed-in recruiter, who must approve any write. */
+  profileId: string
 ): Promise<AssistantTurn> {
   const token = await resolveSecret("qoder");
   if (!token) {
@@ -249,8 +300,8 @@ export async function runQoderAssistantTurn(
 
   const tools = ASSISTANT_TOOLS.filter((tool) => allowDestructive || !tool.destructive);
   const steps: AssistantStep[] = [];
-  const asks: AssistantQuestion[] = [];
-  const definitions = tools.map((tool) => definitionFor(sdk, tool, steps, asks));
+  const enders: TurnEnder[] = [];
+  const definitions = tools.map((tool) => definitionFor(sdk, tool, steps, enders, profileId));
   const server = sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, tools: definitions });
 
   const allowed = tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool.name}`);
@@ -327,16 +378,17 @@ export async function runQoderAssistantTurn(
     fs.rmSync(cwd, { recursive: true, force: true });
   }
 
-  // A question is a whole answer here: the choices are on screen, so an agent
-  // that asked and then fell silent is not an agent that failed to reply.
-  const asked = asks[asks.length - 1];
-  if (!reply.trim() && !asked) {
+  // A card the recruiter has to click is a whole answer here, whether it asks a
+  // question or holds a change: an agent that raised one and then fell silent is
+  // not an agent that failed to reply.
+  const ending = enders[enders.length - 1];
+  if (!reply.trim() && !ending) {
     throw new QoderAssistantError("Qoder answered without any text.");
   }
 
   const provider: AssistantProvider = "qoder";
   return {
-    reply: reply.trim() || questionAsReply(asked!),
+    reply: reply.trim() || (ending ? enderAsReply(ending) : ""),
     steps,
     model: model || "qoder",
     provider,

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Check,
+  Clock,
   CornerUpLeft,
   ExternalLink,
   FileText,
@@ -13,6 +14,7 @@ import {
   Paperclip,
   Plus,
   Send,
+  ShieldCheck,
   Sparkles,
   Wrench,
   X,
@@ -21,9 +23,11 @@ import { cn } from "@/lib/utils";
 import { RichReply } from "@/modules/assistant/presentation/RichReply";
 import type { AssistantLink } from "@/modules/assistant/domain/links";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
+import type { AssistantApproval } from "@/modules/assistant/domain/approvals";
 import type { AssistantStep } from "@/modules/assistant/infrastructure/agent";
 import type { AssistantQuestion } from "@/modules/assistant/domain/tools";
 import {
+  approveAssistantChange,
   extractAssistantAttachmentText,
   getAssistantCapabilities,
   getAssistantModelChoices,
@@ -215,6 +219,9 @@ function ErrorNote({ message }: { message: string }) {
 function StepChip({ step }: { step: AssistantStep }) {
   const router = useRouter();
   const link: AssistantLink | null = step.link ?? null;
+  // A held write is not a failed one. Rendering it in rose would tell the
+  // recruiter the action went wrong, when the truth is that it has not run yet.
+  const tone = step.approval ? "waiting" : step.ok ? "done" : "failed";
 
   return (
     <li className="flex items-center gap-1">
@@ -222,13 +229,15 @@ function StepChip({ step }: { step: AssistantStep }) {
         title={step.detail}
         className={cn(
           "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-          step.ok
-            ? "border-brand-line bg-white text-brand-ink/60"
-            : "border-rose-200 bg-rose-50 text-rose-700"
+          tone === "done" && "border-brand-line bg-white text-brand-ink/60",
+          tone === "waiting" && "border-amber-200 bg-amber-50 text-amber-700",
+          tone === "failed" && "border-rose-200 bg-rose-50 text-rose-700"
         )}
       >
-        {step.ok ? (
+        {tone === "done" ? (
           <Check className="h-3 w-3" aria-hidden />
+        ) : tone === "waiting" ? (
+          <Clock className="h-3 w-3" aria-hidden />
         ) : (
           <AlertTriangle className="h-3 w-3" aria-hidden />
         )}
@@ -332,13 +341,91 @@ function askBubble(ask: AssistantQuestion): string {
   return ask.context ? `${ask.context}\n\n${ask.question}` : ask.question;
 }
 
-/** The last question in a turn, when the turn ended by asking one. */
-function askOf(steps: AssistantStep[] | undefined): AssistantQuestion | null {
+/**
+ * What a turn ended on, when it ended on a card rather than on an answer: a
+ * question for the recruiter to choose from, or a change for them to approve.
+ * Walked backwards because an agent can raise both, and the last one is what is
+ * still live on the screen.
+ */
+function endingOf(steps: AssistantStep[] | undefined): AssistantStep | null {
   if (!steps) return null;
   for (let index = steps.length - 1; index >= 0; index -= 1) {
-    if (steps[index].ask) return steps[index].ask as AssistantQuestion;
+    const step = steps[index];
+    if (step.ask || step.approval) return step;
   }
   return null;
+}
+
+/**
+ * The change the assistant wants to make, held until a person agrees to it.
+ *
+ * Nothing runs on the model's say-so: this card is the only way a chat write
+ * reaches the database. The values on it are the ones the server holds for this
+ * id, so what is described is exactly what the click applies — and ignoring it
+ * is a real option, which is why the card says what ignoring does.
+ */
+function ApprovalCard({
+  approval,
+  live,
+  busy,
+  onApprove,
+}: {
+  approval: AssistantApproval;
+  live: boolean;
+  busy: boolean;
+  onApprove: (approval: AssistantApproval) => void;
+}) {
+  return (
+    <div
+      className={cn(
+        "mt-1.5 rounded-xl border p-2.5",
+        approval.destructive ? "border-rose-200 bg-rose-50/70" : "border-brand-gold bg-brand-gold/10"
+      )}
+    >
+      <p
+        className={cn(
+          "text-[10px] font-bold uppercase tracking-wide",
+          approval.destructive ? "text-rose-700" : "text-brand-gold-dark"
+        )}
+      >
+        {approval.destructive ? "Delete waiting for you" : "Change waiting for you"}
+      </p>
+      <p className="mt-1 text-sm font-semibold leading-snug text-brand-ink">{approval.label}</p>
+      <p className="mt-0.5 break-words text-[11px] leading-relaxed text-brand-ink/65">
+        {approval.summary}
+      </p>
+      {live ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onApprove(approval)}
+            disabled={busy}
+            className={cn(
+              "mt-2 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-bold transition",
+              "disabled:cursor-not-allowed disabled:opacity-50",
+              approval.destructive
+                ? "bg-rose-600 text-white hover:bg-rose-700"
+                : "bg-brand-gold text-brand-ink hover:bg-brand-gold/70"
+            )}
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <ShieldCheck className="h-3.5 w-3.5" aria-hidden />}
+            {busy ? "Applying…" : approval.destructive ? "Approve the delete" : "Approve & run"}
+          </button>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-brand-ink/45">
+            {`Ignoring this leaves the record exactly as it is. The offer expires at ${new Date(
+              approval.expiresAt
+            ).toLocaleString("en-GB")}.`}
+          </p>
+        </>
+      ) : (
+        <p className="mt-1.5 text-[10px] font-semibold leading-relaxed text-brand-ink/40">
+          {
+            "No longer clickable — either you answered it below, or the conversation has moved past it."
+          }
+        </p>
+      )}
+    </div>
+  );
 }
 
 function Capabilities({ onClose }: { onClose: () => void }) {
@@ -368,7 +455,8 @@ function Capabilities({ onClose }: { onClose: () => void }) {
           <h3 className="font-display text-sm font-bold">What I can do</h3>
           <p className="mt-0.5 text-xs text-brand-ink/55">
             Every entry runs the same server action as the button on its screen, so your role
-            permissions apply unchanged.
+            permissions apply unchanged. Reads answer straight away; anything that changes a record
+            is held here as a card and runs only if you approve it.
           </p>
         </div>
         <button
@@ -403,9 +491,16 @@ function Capabilities({ onClose }: { onClose: () => void }) {
               <p className="flex items-center gap-1.5 font-display text-xs font-bold">
                 <Wrench className="h-3 w-3 text-brand-gold-dark" aria-hidden />
                 {tool.label}
-                {tool.destructive && (
-                  <span className="ml-auto rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700">
-                    needs “Allow deletions”
+                {tool.needsApproval && (
+                  <span
+                    className={cn(
+                      "ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                      tool.destructive ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"
+                    )}
+                  >
+                    {tool.destructive
+                      ? "needs “Allow deletions”, then your approval"
+                      : "waits for your approval"}
                   </span>
                 )}
               </p>
@@ -441,6 +536,8 @@ export function AssistantChat({
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [allowDestructive, setAllowDestructive] = useState(false);
+  /** The approval card being applied, so its button cannot fire twice. */
+  const [approving, setApproving] = useState<string | null>(null);
   const [showCapabilities, setShowCapabilities] = useState(false);
   // The stored preference is applied in the restore effect below: reading it here
   // would make the first client render disagree with the server's, because the
@@ -732,6 +829,45 @@ export function AssistantChat({
     }
   }
 
+  /**
+   * Run the one change an approval card was holding.
+   *
+   * Only the id travels. The server keeps the arguments it minted the card with,
+   * so this click cannot be steered at another record, and the outcome is
+   * appended as its own turn — which is what makes the card stop being clickable.
+   */
+  async function approve(approval: AssistantApproval) {
+    if (approving || pending) return;
+    setApproving(approval.id);
+    setError(null);
+
+    try {
+      const result = await approveAssistantChange({
+        approvalId: approval.id,
+        sessionId: sessionId ?? null,
+      });
+      if (!result.reply) {
+        setError(result.error ?? "The approval could not be applied. Nothing has changed.");
+        return;
+      }
+      const outcome = result.reply;
+      if (result.saveError) setSaveError(result.saveError);
+      setMessages((current) => [
+        ...current,
+        {
+          id: nextId(),
+          role: "assistant",
+          text: outcome,
+          steps: result.steps,
+        },
+      ]);
+    } catch {
+      setError("The approval could not be applied. Nothing has changed.");
+    } finally {
+      setApproving(null);
+    }
+  }
+
   const wide = variant === "page";
 
   return (
@@ -868,13 +1004,16 @@ export function AssistantChat({
                 );
               }
 
-              // A turn that ended by asking a question shows the question and its
-              // choices; the numbered list the model was fed stays out of the bubble.
-              const ask = askOf(message.steps);
+              // A turn that ended on a card shows the card — a question with its
+              // choices, or a change with its Approve button. The numbered list the
+              // model was fed for a question stays out of the bubble.
+              const ending = endingOf(message.steps);
+              const ask = ending?.ask ?? null;
+              const approval = ending?.approval ?? null;
               const answered = ask
                 ? (messages.slice(index + 1).find((entry) => entry.role === "user")?.text ?? null)
                 : null;
-              const live = Boolean(ask) && !pending && index === messages.length - 1;
+              const live = !pending && index === messages.length - 1;
 
               return (
                 <div key={message.id} className="max-w-[92%]">
@@ -889,6 +1028,14 @@ export function AssistantChat({
                       answered={answered}
                       pending={pending}
                       onChoose={(option) => void send(option)}
+                    />
+                  )}
+                  {approval && (
+                    <ApprovalCard
+                      approval={approval}
+                      live={live}
+                      busy={approving === approval.id}
+                      onApprove={(entry) => void approve(entry)}
                     />
                   )}
                   {message.note && (
@@ -997,8 +1144,9 @@ export function AssistantChat({
                 className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark"
               />
               <span>
-                Allow deletions — lets me delete an opening, a prospect or a queued message when you
-                name it. It is never remembered between conversations.
+                Allow deletions — lets me offer an opening, a prospect or a queued message for you to
+                approve when you name it. Every delete still waits for your click. It is never
+                remembered between conversations.
               </span>
             </label>
 

@@ -178,6 +178,56 @@ export async function saveAssistantTurn(input: {
   return { ok: true, sessionId };
 }
 
+/**
+ * Records what an approval click actually did, as its own turn in the thread.
+ *
+ * The chat cannot be the only place this exists. An approved change that lived
+ * only in component state would come back tomorrow as a conversation ending on
+ * "waiting for your approval" — and a recruiter who then asks the assistant about
+ * that candidate would be answered from a transcript that says the change never
+ * happened.
+ */
+export async function appendApprovalOutcome(input: {
+  sessionId: string;
+  reply: string;
+  steps: AssistantStep[];
+}): Promise<SaveTurnResult> {
+  const ownerId = await currentProfileId();
+  if (!ownerId) return { ok: false, error: "No staff profile is attached to this session." };
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: existing } = await supabase
+    .from("assistant_sessions")
+    .select("id")
+    .eq("id", input.sessionId)
+    .maybeSingle();
+  if (!existing) return { ok: false, error: "That conversation no longer exists." };
+
+  const { error } = await supabase.from("assistant_messages").insert({
+    session_id: input.sessionId,
+    owner_id: ownerId,
+    role: "assistant",
+    content: input.reply,
+    steps: input.steps,
+    model: null,
+    provider: null,
+    note: null,
+    attachment_name: null,
+    attachment_text: null,
+    created_at: new Date().toISOString(),
+  });
+
+  if (error) return { ok: false, error: error.message };
+
+  await supabase
+    .from("assistant_sessions")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", input.sessionId);
+
+  return { ok: true, sessionId: input.sessionId };
+}
+
 /** The recruiter's conversations, most recently spoken in first. */
 export async function listAssistantSessions(limit = 60): Promise<AssistantSessionSummary[]> {
   const supabase = await createSupabaseServerClient();

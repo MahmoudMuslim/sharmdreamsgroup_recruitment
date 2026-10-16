@@ -3,6 +3,7 @@
 import { requireStaff } from "@/lib/auth/session";
 import { withActivityContext } from "@/modules/activity/application/record";
 import {
+  runApprovedChange,
   runAssistantTurn,
   type AssistantStep,
   type AssistantTurn,
@@ -12,6 +13,7 @@ import {
   runQoderAssistantTurn,
 } from "@/modules/assistant/infrastructure/qoderAgent";
 import {
+  appendApprovalOutcome,
   deleteAssistantSession,
   listAssistantSessions,
   readAssistantSession,
@@ -22,6 +24,7 @@ import {
 } from "@/modules/assistant/infrastructure/transcriptStore";
 import { isAssistantEngine, type AssistantEngine } from "@/modules/assistant/domain/engine";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
+import { requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
 import { resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { getModelCatalogue } from "@/modules/settings/application/credential-actions";
 import {
@@ -71,6 +74,8 @@ export interface AssistantCapability {
   label: string;
   description: string;
   destructive: boolean;
+  /** True for every entry that changes data: it waits for a click before it runs. */
+  needsApproval: boolean;
 }
 
 export interface OpenedAssistantSession {
@@ -101,6 +106,8 @@ const MAX_MODEL_ID_CHARS = 160;
  * request somewhere else (a space, a `?`, a slash-dot) is allowed through.
  */
 const MODEL_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
+/** An approval id is a `randomUUID`, so anything else was never issued by this server. */
+const APPROVAL_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** An attached document is read, not stored; this is the part the model sees. */
 const MAX_ATTACHMENT_CHARS = 12_000;
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -223,7 +230,7 @@ export async function sendAssistantMessage(input: {
   /** The saved conversation to append to; a first turn with none starts one. */
   sessionId?: string | null;
 }): Promise<AssistantReply> {
-  await requireStaff("/dashboard");
+  const staff = await requireStaff("/dashboard");
 
   const prompt = typeof input?.prompt === "string" ? input.prompt.trim() : "";
   if (!prompt) return { ok: false, error: "Ask me something first." };
@@ -281,7 +288,7 @@ export async function sendAssistantMessage(input: {
       } else {
         try {
           turn = await withActivityContext({ via: "assistant" }, () =>
-            runQoderAssistantTurn(history, allowDestructive)
+            runQoderAssistantTurn(history, allowDestructive, staff.profileId)
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
@@ -296,7 +303,7 @@ export async function sendAssistantMessage(input: {
     if (!turn) {
       try {
         turn = await withActivityContext({ via: "assistant" }, () =>
-          runAssistantTurn(history, allowDestructive, model)
+          runAssistantTurn(history, allowDestructive, staff.profileId, model)
         );
       } catch (error) {
         // The gateway's own message already names the models it tried and why each
@@ -337,6 +344,62 @@ export async function sendAssistantMessage(input: {
       error: error instanceof Error ? error.message : "The assistant could not be reached.",
     };
   }
+}
+
+/**
+ * The recruiter's click on an approval card: run the one change it held.
+ *
+ * Nothing the browser can edit selects what happens. The id looks up arguments
+ * this process kept when the card was raised, so a tampered or replayed click
+ * cannot ask for a different record, and a used id has nothing left to run.
+ *
+ * A click that finds no approval says so out loud rather than doing nothing
+ * quietly: an applied-looking card whose change never landed is the exact false
+ * claim this gate exists to prevent, and it is what happens on a host that starts
+ * a fresh isolate per request.
+ */
+export async function approveAssistantChange(input: {
+  approvalId: string;
+  sessionId?: string | null;
+}): Promise<AssistantReply> {
+  const staff = await requireStaff("/dashboard");
+
+  const id = typeof input?.approvalId === "string" ? input.approvalId.trim() : "";
+  if (!APPROVAL_ID_SHAPE.test(id)) {
+    return { ok: false, error: "That is not an approval this assistant issued." };
+  }
+
+  const held = takeApproval(id, staff.profileId);
+  if (!held) {
+    return {
+      ok: false,
+      error:
+        "That approval is no longer on the server — it was already used, it expired, or this answer is " +
+        "being served by a different process than the one that wrote it. Nothing has changed. Ask me " +
+        "again and I will put the card up once more.",
+    };
+  }
+
+  const { step } = await withActivityContext({ via: "assistant" }, () =>
+    runApprovedChange(held.tool, held.args)
+  );
+
+  const reply = step.ok
+    ? `**Approved — ${held.label} ran.**\n\n${held.summary}\n\nThe same action the button on that screen ran, recorded in the activity trail as the assistant's change you approved.`
+    : `**Not applied — ${held.label} refused.**\n\n${held.summary}\n\n${step.detail}`;
+
+  const sessionId = typeof input.sessionId === "string" ? input.sessionId : null;
+  const saved = sessionId
+    ? await appendApprovalOutcome({ sessionId, reply, steps: [step] })
+    : null;
+
+  return {
+    ok: step.ok,
+    reply,
+    steps: [step],
+    sessionId: sessionId ?? undefined,
+    saveError: saved && !saved.ok ? saved.error : undefined,
+  };
 }
 
 /** The recruiter's own saved conversations, newest first. */
@@ -395,6 +458,7 @@ export async function getAssistantCapabilities(): Promise<AssistantCapability[]>
     label: tool.label,
     description: tool.description,
     destructive: tool.destructive === true,
+    needsApproval: requiresApproval(tool.name),
   }));
 }
 
