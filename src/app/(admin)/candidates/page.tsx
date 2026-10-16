@@ -1,5 +1,11 @@
 import { CalendarDays, Sparkles, Upload } from "lucide-react";
-import { getCandidateByRef, getCandidateList, getCvCoverage, type CvCoverage } from "./actions";
+import {
+  getCandidateByRef,
+  getCandidateList,
+  getCvCoverage,
+  getUngradedAssessmentQueue,
+  type CvCoverage,
+} from "./actions";
 import { CandidateBrowser } from "./CandidateBrowser";
 import { NewCandidateDrawer } from "./NewCandidateDrawer";
 import { requireStaff } from "@/lib/auth/session";
@@ -96,7 +102,8 @@ async function readAlertSwitches(): Promise<AlertSwitches> {
 /**
  * Deep links arrive from the job opening's applicant list (`?c=SDG-…`), the
  * interview agenda (`?c=…`) and the assistant (`?application=<id>`).
- * `?archived=1` opens the archive the filing door emptied.
+ * `?archived=1` opens the archive the filing door emptied, and `?ungraded=1`
+ * opens the grading queue the Bell counts — see `getUngradedAssessmentQueue`.
  */
 type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
@@ -120,10 +127,13 @@ export default async function CandidatesPage({
   // archive instead of landing the recruiter on a live list with no such row.
   const focused = hasRef ? await getCandidateByRef(ref) : null;
   const showArchived = params.archived === "1" || Boolean(focused?.archived_at);
+  // The queue the attention feed counts and links here. The archive outranks it
+  // when both arrive: a filed-away record is not work waiting on a person.
+  const gradingView = !showArchived && params.ungraded === "1";
 
   const [candidates, canWrite, canExport, timeZone, canGenerateQuestions, coverage, switches] =
     await Promise.all([
-      getCandidateList(showArchived),
+      gradingView ? getUngradedAssessmentQueue() : getCandidateList(showArchived),
       hasPermissionForUser("candidates.write"),
       hasPermissionForUser("analytics.export"),
       getOrganisationTimeZone(),
@@ -132,7 +142,7 @@ export default async function CandidatesPage({
       readAlertSwitches(),
     ]);
 
-  // The table only loads the newest 50 applications; a link to anyone older is
+  // The pipeline loads only the newest rows it holds; a link to anyone older is
   // fetched on its own so the profile can still open.
   const rows =
     focused && !candidates.some((c) => c.id === focused.id)
@@ -142,15 +152,20 @@ export default async function CandidatesPage({
   return (
     <AdminShell user={user}>
       <PageHeader
-        eyebrow="Talent database"
+        eyebrow={gradingView ? "Grading queue" : "Talent database"}
         title="Candidates"
-        description="Every application across the group, with bias-reduced AI screening scores and assessment status — and the filtered list as a CSV, Excel or PDF download."
+        description={
+          gradingView
+            ? "Only the candidates whose assessment is still sitting in Submitted — the state the grading engine leaves an attempt in when it never finished scoring it. Open a profile to ask the AI again or award the marks yourself."
+            : "Every application across the group, with bias-reduced AI screening scores and assessment status — and the filtered list as a CSV, Excel or PDF download."
+        }
         actions={canWrite ? <NewCandidateDrawer /> : undefined}
       />
 
       <CandidateBrowser
         candidates={rows}
         archivedView={showArchived}
+        gradingView={gradingView}
         canWrite={canWrite}
         canExport={canExport}
         exportFormats={EXPORT_FORMATS}

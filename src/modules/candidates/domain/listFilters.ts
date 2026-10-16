@@ -31,6 +31,35 @@ export const APPLICATION_SOURCES = [
 
 export type CandidateSort = "recent" | "fit" | "name";
 
+/**
+ * The one attempt status that still owes somebody a decision.
+ *
+ * `GRADED` has its marks and `EXPIRED` means the link closed before an answer was
+ * filed, so neither is waiting on anyone. `SUBMITTED` is what the grading engine
+ * leaves an attempt in when it never finished scoring it — and nothing schedules
+ * a second pass, so it waits for a person. The attention feed counts exactly
+ * these, the candidates page lists them under `?ungraded=1`, and the download
+ * carries the same filter, so the three share the words rather than restating
+ * them.
+ */
+export const UNSCORED_ATTEMPT_STATUS = "SUBMITTED";
+
+/** Embed + filter column that restrict *candidate* rows to ungraded attempts. */
+export const UNGRADED_ATTEMPT_EMBED =
+  "candidate_attempts!inner(access_token, status, total_score)";
+export const UNGRADED_ATTEMPT_FILTER = "candidate_attempts.status";
+
+/**
+ * How many ungraded assessments the grading queue will list.
+ *
+ * A queue past this is not busy, it is broken — the engine grades on submit and
+ * nothing re-runs it — so the page says which end of the list it is showing
+ * instead of pretending a Bell count and a table are the same size. Shared
+ * because the read that fills the queue and the view that explains its ceiling
+ * are on opposite sides of the server/client line.
+ */
+export const GRADING_QUEUE_LIMIT = 200;
+
 export const CANDIDATE_SORTS: { key: CandidateSort; label: string }[] = [
   { key: "recent", label: "newest first" },
   { key: "fit", label: "highest AI fit first" },

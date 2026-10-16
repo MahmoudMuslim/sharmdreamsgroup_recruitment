@@ -2,6 +2,12 @@
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
+import {
+  GRADING_QUEUE_LIMIT,
+  UNSCORED_ATTEMPT_STATUS,
+  UNGRADED_ATTEMPT_EMBED,
+  UNGRADED_ATTEMPT_FILTER,
+} from "@/modules/candidates/domain/listFilters";
 import { INTERVIEW_SELECT, toInterviewRecord, type InterviewRecord } from "./interviews-model";
 import type { Application } from "@/types";
 
@@ -76,6 +82,46 @@ export async function getCandidateList(archived = false): Promise<CandidateRow[]
     .limit(50);
 
   if (error) console.error("[candidates] list query failed:", error.message);
+
+  return (data ?? []).map((row) => flattenCandidate(row as CandidateJoin, masked));
+}
+
+/**
+ * Live applications carrying an ungraded attempt.
+ *
+ * The embed is `!inner` so the status filter restricts the *candidate* rows
+ * rather than only the array attached to them — which is what lets the attention
+ * feed count the same set this page lists. A filed-away candidate is left out:
+ * the queue is work waiting on a person, and an archived record is not.
+ */
+const UNGRADED_SELECT = `*, job_openings(title), ${UNGRADED_ATTEMPT_EMBED}, interview_schedules(${INTERVIEW_SELECT})`;
+
+/**
+ * The grading queue: every candidate whose assessment is still sitting in
+ * Submitted — the state the grading engine leaves an attempt in when it never
+ * finished scoring it.
+ *
+ * The Bell counts this set and links here, so the number a recruiter clicks is
+ * the number of rows they land on — not a nearby pipeline stage. Newest first
+ * like the pipeline, and bounded, because a queue this long means grading is
+ * down rather than busy.
+ */
+export async function getUngradedAssessmentQueue(
+  limit = GRADING_QUEUE_LIMIT
+): Promise<CandidateRow[]> {
+  const [supabase, masked] = await Promise.all([
+    createSupabaseServerClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
+  const { data, error } = await supabase
+    .from("applications")
+    .select(UNGRADED_SELECT)
+    .is("archived_at", null)
+    .eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) console.error("[candidates] grading queue read failed:", error.message);
 
   return (data ?? []).map((row) => flattenCandidate(row as CandidateJoin, masked));
 }

@@ -60,19 +60,19 @@ function safeFormat(value: string | null): ExportFormat | null {
  *
  * Stage and source are whitelisted enums and an unknown value is dropped rather
  * than passed on; the free text is only ever compared in JavaScript, so its
- * length is capped and no SQL operator can be spelled with it.
+ * length is capped and no SQL operator can be spelled with it. The two view
+ * switches are flags a page sets on this same href, so they are read here as the
+ * booleans the reader already sees.
  */
-function candidateFilters(
-  params: URLSearchParams,
-  archived: boolean
-): CandidateExportFilters {
+function candidateFilters(params: URLSearchParams): CandidateExportFilters {
   const sort: CandidateSort = isCandidateSort(params.get("sort"));
   return {
     stage: isPipelineStage(params.get("stage")),
     source: isApplicationSource(params.get("source")),
     query: params.get("q")?.trim().slice(0, 120) || null,
     sort,
-    archived,
+    archived: params.get("archived") === "1",
+    ungraded: params.get("ungraded") === "1",
   };
 }
 
@@ -96,7 +96,7 @@ export async function GET(request: Request): Promise<Response> {
     /* The candidates list is cut by its filters, not by a window: there is no
      * window on that screen to carry into a file. */
     built = await buildCandidateExport(
-      candidateFilters(params, params.get("archived") === "1"),
+      candidateFilters(params),
       user.fullName
     );
   } else {

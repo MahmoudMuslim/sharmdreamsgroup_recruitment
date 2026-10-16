@@ -14,6 +14,7 @@ import {
   Send,
   Sparkles,
   User,
+  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -28,6 +29,7 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { Badge, Button, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import {
+  GRADING_QUEUE_LIMIT,
   PIPELINE_STAGES as STAGES,
   filterCandidates,
   sortCandidates,
@@ -184,10 +186,15 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
  * `focusId` is the application a deep link named, resolved to a row on the
  * server, so the profile opens by itself instead of landing on an unfiltered
  * table. `unresolvedRef` is that same link when nothing matched it.
+ *
+ * `gradingView` means the server loaded only the candidates whose assessment came
+ * back from the grading engine without marks — the set the Bell counts. Search and
+ * the two rails then filter inside that queue, and the download carries it too.
  */
 export function CandidateBrowser({
   candidates,
   archivedView,
+  gradingView,
   canWrite,
   canExport,
   exportFormats,
@@ -199,6 +206,8 @@ export function CandidateBrowser({
   candidates: CandidateRow[];
   /** True when this is the archive, not the live pipeline. */
   archivedView: boolean;
+  /** True when the server loaded only the ungraded-assessment queue. */
+  gradingView: boolean;
   canWrite: boolean;
   /** `analytics.export` — the same grant the download route re-checks. */
   canExport: boolean;
@@ -329,6 +338,7 @@ export function CandidateBrowser({
   if (sourceFilter) exportQuery.set("source", sourceFilter);
   if (query.trim()) exportQuery.set("q", query.trim());
   if (archivedView) exportQuery.set("archived", "1");
+  if (gradingView) exportQuery.set("ungraded", "1");
   const exportHref = (format: string) =>
     `/api/reports/export?${exportQuery.toString()}&format=${format}`;
 
@@ -350,17 +360,25 @@ export function CandidateBrowser({
     return (
       <Card>
         <EmptyState
-          title={archivedView ? "Nothing is filed away" : "No applications yet"}
+          title={
+            gradingView
+              ? "Nothing is waiting to be graded"
+              : archivedView
+                ? "Nothing is filed away"
+                : "No applications yet"
+          }
           description={
-            archivedView
-              ? "Filing a candidate takes them out of the pipeline without erasing their answers, scores or the notices they were sent. Anything filed shows up here."
-              : "New submissions appear here as soon as they arrive, newest first."
+            gradingView
+              ? "Every assessment a candidate submitted has its marks. A queue appears here the moment the grading engine leaves an answer unscored — and it stays until a person or a retry closes it."
+              : archivedView
+                ? "Filing a candidate takes them out of the pipeline without erasing their answers, scores or the notices they were sent. Anything filed shows up here."
+                : "New submissions appear here as soon as they arrive, newest first."
           }
         />
-        {archivedView && (
+        {(archivedView || gradingView) && (
           <div className="flex justify-center pb-6">
             <Button variant="outline" size="sm" onClick={() => openView(false)}>
-              Back to the live pipeline
+              {gradingView ? "Show the whole pipeline" : "Back to the live pipeline"}
             </Button>
           </div>
         )}
@@ -383,6 +401,33 @@ export function CandidateBrowser({
           className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900"
         >
           {archiveNote}
+        </div>
+      )}
+
+      {gradingView && (
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-brand-gold/45 bg-brand-gold/10 px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm leading-relaxed text-brand-ink/70">
+            <span className="font-semibold text-brand-ink">Grading queue.</span> Only the
+            candidates whose assessment is still sitting in Submitted — the state an attempt is
+            left in when the grading engine never finished scoring it, whatever pipeline stage
+            the candidate has reached since. Open a profile&rsquo;s Integrity report to see which
+            answers are open and what you can do about them.
+            {candidates.length >= GRADING_QUEUE_LIMIT && (
+              <>
+                {" "}
+                This queue holds more than {GRADING_QUEUE_LIMIT} candidates, so these are the
+                newest — a download of the same filters reads every one of them.
+              </>
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={() => openView(false)}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-brand-line bg-white px-3 py-2 text-xs font-semibold text-brand-ink/65 transition hover:bg-brand-sand"
+          >
+            <Users className="h-3.5 w-3.5" aria-hidden />
+            Show the whole pipeline
+          </button>
         </div>
       )}
 

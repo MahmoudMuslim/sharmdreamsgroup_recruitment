@@ -45,6 +45,8 @@ import {
   candidateSortLabel,
   filterCandidates,
   sortCandidates,
+  UNGRADED_ATTEMPT_FILTER,
+  UNSCORED_ATTEMPT_STATUS,
   type CandidateListFilters,
 } from "@/modules/candidates/domain/listFilters";
 import {
@@ -566,21 +568,38 @@ export async function buildReportDocument(
 
 /* ------------------------------------------------------ candidate export -- */
 
-/** The console's filters, plus which of its two views is open. */
+/** The console's filters, plus which of its views is open. */
 export interface CandidateExportFilters extends CandidateListFilters {
   archived: boolean;
+  /** The grading queue: only candidates whose attempt is still unscored. */
+  ungraded: boolean;
 }
 
 /** Every application the console is filtered to, not the 50 rows it loaded. */
-const CANDIDATE_EXPORT_SELECT =
+const CANDIDATE_EXPORT_SELECT = (ungraded: boolean) =>
   "full_name, email, phone, tracking_code, stage, source, ai_match_score, created_at, updated_at, hired_at, rejection_reason, archived_at, " +
-  "job_openings ( title ), candidate_attempts ( status, total_score, max_score, created_at ), interview_schedules ( scheduled_at, status )";
+  "job_openings ( title ), " +
+  // `!inner` is what makes the attempt status filter the *candidate* rows rather
+  // than only the array hanging off them. Same `!inner` + status + live-rows
+  // predicate the page and the Bell read, so a download from the grading queue
+  // holds the queue — the columns differ because this file also quotes the marks
+  // ceiling and when the attempt was opened.
+  (ungraded
+    ? "candidate_attempts!inner ( status, total_score, max_score, created_at )"
+    : "candidate_attempts ( status, total_score, max_score, created_at )") +
+  ", interview_schedules ( scheduled_at, status )";
 
 const lower = (value: string): string => value.replace(/_/g, " ").toLowerCase();
 
 /** The sentence that tells a reader which applications their file holds. */
 function candidateScope(filters: CandidateExportFilters): string {
-  const parts = [filters.archived ? "Filed-away applications" : "Live pipeline applications"];
+  const parts = [
+    filters.ungraded
+      ? "Applications whose assessment is submitted and still ungraded"
+      : filters.archived
+        ? "Filed-away applications"
+        : "Live pipeline applications",
+  ];
   if (filters.stage) parts.push(`stage ${lower(filters.stage)}`);
   if (filters.source) parts.push(`source ${lower(filters.source)}`);
   const q = (filters.query ?? "").trim();
@@ -644,11 +663,11 @@ function toCandidateRow(row: Raw, scoresHidden: boolean): CandidateListRow {
 /**
  * The candidates console as a file.
  *
- * Stage, source and the archive view go into SQL because they are exact enum
- * matches. The free text does not: `ILIKE` reads the `_` and `%` in a real name
- * as wildcards, so the search runs through the same predicate the table uses —
- * which is how a download answers the question on the screen instead of a near
- * copy of it.
+ * Stage, source, the archive view and the grading queue go into SQL because they
+ * are exact matches. The free text does not: `ILIKE` reads the `_` and `%` in a
+ * real name as wildcards, so the search runs through the same predicate the table
+ * uses — which is how a download answers the question on the screen instead of a
+ * near copy of it.
  */
 export async function buildCandidateExport(
   filters: CandidateExportFilters,
@@ -660,12 +679,17 @@ export async function buildCandidateExport(
   ]);
   const supabase = await createSupabaseServerClient();
 
-  let query = supabase.from("applications").select(CANDIDATE_EXPORT_SELECT);
+  let query = supabase.from("applications").select(CANDIDATE_EXPORT_SELECT(filters.ungraded));
   if (filters.stage) query = query.eq("stage", filters.stage);
   if (filters.source) query = query.eq("source", filters.source);
-  query = filters.archived
-    ? query.not("archived_at", "is", null)
-    : query.is("archived_at", null);
+  if (filters.ungraded) query = query.eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS);
+  // The queue is by definition live records — a filed-away candidate is not work
+  // waiting on a person — so asking for both views cannot quietly cancel the
+  // filter the screen is showing.
+  query =
+    filters.archived && !filters.ungraded
+      ? query.not("archived_at", "is", null)
+      : query.is("archived_at", null);
 
   const result = await read<Raw>(
     query.order("created_at", { ascending: false }).limit(LIMITS.applications),
@@ -688,6 +712,7 @@ export async function buildCandidateExport(
   }
 
   const generatedAt = new Date().toISOString();
+  const view = filters.ungraded ? "grading-queue" : filters.archived ? "archive" : "pipeline";
   return {
     document: rowReportDocument(
       CANDIDATE_LIST,
@@ -698,7 +723,7 @@ export async function buildCandidateExport(
         generatedAt,
         scoresHidden,
         exportedBy,
-        baseName: `sharm-dreams-candidates-${filters.archived ? "archive" : "pipeline"}-${generatedAt.slice(0, 10)}`,
+        baseName: `sharm-dreams-candidates-${view}-${generatedAt.slice(0, 10)}`,
       },
       limitations
     ),

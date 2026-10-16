@@ -3,6 +3,11 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasAiProvider } from "@/lib/config.server";
+import {
+  UNGRADED_ATTEMPT_EMBED,
+  UNGRADED_ATTEMPT_FILTER,
+  UNSCORED_ATTEMPT_STATUS,
+} from "@/modules/candidates/domain/listFilters";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -233,10 +238,16 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
         .eq("stage", "NEW")
         .is("archived_at", null)
         .gte("created_at", since),
+      // Counted over `applications` with the same `!inner` embed the candidates
+      // page reads for `?ungraded=1`, so the number on this row is the number of
+      // rows the recruiter lands on. Counting `candidate_attempts` directly — the
+      // old query — measured attempts on filed-away records too, and the page it
+      // linked to was filtered by pipeline stage, which is a different set again.
       supabase
-        .from("candidate_attempts")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "SUBMITTED"),
+        .from("applications")
+        .select(`id, ${UNGRADED_ATTEMPT_EMBED}`, { count: "exact", head: true })
+        .is("archived_at", null)
+        .eq(UNGRADED_ATTEMPT_FILTER, UNSCORED_ATTEMPT_STATUS),
       supabase
         .from("interview_schedules")
         .select("id", { count: "exact", head: true })
@@ -296,15 +307,15 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
     {
       id: "ungraded",
       label: "Assessments submitted, not graded",
-      // The engine grades on submit and no scheduler re-runs it, so a queue here
-      // means grading never finished. What a recruiter can do about it depends on
-      // them, not the queue, so the row lists only the doors this reader would
-      // actually find open on the report.
+      // One row per candidate counted here: the count and this link are the same
+      // query, the candidates page read through its `!inner` attempt filter. What
+      // a recruiter can do about it depends on them, not the queue, so the hint
+      // lists only the doors this reader would actually find open on the report.
       detail: gradingHint.length
-        ? `From each candidate’s Integrity report, ${gradingHint.join(" or ")}`
-        : "AI grades it on submit — a queue here means grading never finished",
+        ? `Each is a candidate still sitting in Submitted. From their Integrity report, ${gradingHint.join(" or ")}`
+        : "Each is a candidate still sitting in Submitted. The AI grades on submit, so a queue here means grading never finished",
       count: ungradedCount,
-      href: "/candidates?stage=ASSESSMENT",
+      href: "/candidates?ungraded=1",
       tone: "info",
     },
     {
