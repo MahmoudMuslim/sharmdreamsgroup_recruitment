@@ -2,6 +2,7 @@ import { PIPELINE_STAGES, APPLICATION_SOURCES } from "@/modules/candidates/domai
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
 import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
 import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
+import { bucketInfo, isStoredPath } from "@/app/(admin)/files/file-browser-types";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -13,6 +14,12 @@ import type { ToolArgs } from "./tools";
  * sourcing, dashboard and settings open a specific record from the query
  * string; everywhere else the link is the plain page, because that is the page
  * that will actually show the change.
+ *
+ * Words are different from a record: a page whose search box reads `?q=` can
+ * show the same rows the answer named without opening anything. Where a box
+ * does that, the words travel with the link — and only the parameters the page
+ * genuinely reads are sent, because a parameter a page ignores makes the link
+ * look filtered while the table shows everything.
  *
  * Read tools get a link too when the answer is a single record — "show me" is
  * the natural next question after the assistant reports one.
@@ -63,14 +70,35 @@ function query(pairs: [string, string | null][]): string {
 /**
  * Search words, kept as the page would type them.
  *
- * Both tables seed their search box from `?q=`, so a click-through can land on
- * the rows the answer just named — but only when there are words to carry, and
- * an argument that is only whitespace must drop out rather than send `?q=`.
+ * Every box that seeds itself from the address bar (`?q=`, and the email panel's
+ * `?email_q=` on the page that hosts two differently searched lists) reads these
+ * back, so a click-through can land on the rows the answer just named — but only
+ * when there are words to carry, and an argument that is only whitespace must
+ * drop out rather than send `?q=`.
  */
 function words(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * The storage folder the file manager opens on.
+ *
+ * Sent in the form `readFolder` expects (one trailing slash) and only when
+ * storage would accept the path, because a prefix the listing cannot open would
+ * land on an empty folder that looks like a bucket with nothing in it.
+ */
+function folder(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(/\/+$/, "");
+  return trimmed === "" || !isStoredPath(trimmed) ? null : `${trimmed}/`;
+}
+
+/** One of the buckets the file manager lists, out of whatever was typed. */
+function bucketKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return bucketInfo(value)?.key ?? null;
 }
 
 /** The id an action created or changed, when the action reported one. */
@@ -196,9 +224,34 @@ export function linkForTool(
     case "complete_onboarding_task":
     case "delete_onboarding_task":
       return { href: "/onboarding", label: "Open the onboarding board" };
-    case "list_files":
-    case "delete_stored_file":
+    case "list_files": {
+      // The manager takes its bucket, folder and search words from the address
+      // bar, so the click-through opens the folder the answer just listed instead
+      // of the CV root the page always starts from. An unknown bucket is dropped,
+      // not guessed at — a parameter the page would ignore reads as a folder.
+      const bucket = bucketKey(args.bucket);
+      return {
+        href: `/files${query([
+          ["bucket", bucket],
+          ["prefix", folder(args.prefix)],
+          ["q", words(args.query)],
+        ])}`,
+        label: "Open the file manager",
+      };
+    }
+    case "delete_stored_file": {
+      // The object is gone, so the link opens the bucket it was removed from and
+      // no folder: the folder could name a place that now holds nothing, which
+      // would read as an empty bucket rather than a delete.
+      const bucket = bucketKey(args.bucket);
+      return {
+        href: `/files${query([["bucket", bucket]])}`,
+        label: "Open the file manager",
+      };
+    }
     case "delete_attachment":
+      // The argument is an attachment row id, which the file manager does not
+      // open, so this is the plain page.
       return { href: "/files", label: "Open the file manager" };
     case "list_gate_questions":
     case "save_gate_question":
@@ -285,7 +338,15 @@ export function linkForTool(
         label: "Open the candidate pipeline",
       };
     case "list_assessment_suites":
+      // The grid seeds its own box from `?q=` and runs the same predicate this
+      // read does, so the click-through shows the suites the answer found. The
+      // family and status picklists stay out of the URL: this tool takes neither.
+      return {
+        href: `/assessments${query([["q", words(args.query)]])}`,
+        label: "Open the assessment suites",
+      };
     case "get_assessment_suite":
+      // One suite by id, and the grid opens no suite from the address bar.
       return { href: "/assessments", label: "Open the assessment suites" };
     case "list_prospects":
       return {
@@ -304,13 +365,19 @@ export function linkForTool(
       // unlit view and earns no parameter — a link carrying `?bucket=ALL` would
       // look scoped while the queue shows every column. `list_email_outbox` takes
       // no bucket, so its link narrows the refused rows and leaves the columns.
+      // The page hosts two searched lists, so the words go to the box that owns
+      // the read: `?q=` is the WhatsApp queue, `?email_q=` the email panel.
       const bucket = named(args.bucket, OUTBOX_BUCKETS);
+      const search = words(args.query);
+      const emails = name === "list_email_outbox";
       return {
         href: `/whatsapp${query([
           ["bucket", bucket && bucket !== "ALL" ? bucket : null],
           ["failed", args.failed === true || args.failed === "true" ? "1" : null],
+          ["q", emails ? null : search],
+          ["email_q", emails ? search : null],
         ])}`,
-        label: "Open the outbox",
+        label: emails ? "Open the email log" : "Open the outbox",
       };
     }
     case "list_model_routing":

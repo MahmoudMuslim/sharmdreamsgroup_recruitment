@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen,
   CheckCircle2,
@@ -713,12 +713,25 @@ export function AssessmentGrid({
   canEdit: boolean;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<TemplateSummary | null>(null);
   const [assigning, setAssigning] = useState<TemplateSummary | null>(null);
   const [questionEditing, setQuestionEditing] = useState<TemplateSummary | null>(null);
 
-  const [query, setQuery] = useState("");
+  // `?q=` seeds the box so an assistant answer that searched the suites lands on
+  // the suites it named, not on a grid holding the whole catalogue. Typing stays
+  // local until the URL itself changes: arriving on this route again re-renders
+  // rather than remounts, so the last value taken from the address bar is tracked
+  // and applied here too.
+  const [query, setQuery] = useState(params.get("q") ?? "");
+  const incomingQuery = params.get("q");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setQuery(incomingQuery ?? "");
+  }
+
   const [family, setFamily] = useState("ALL");
   const [status, setStatus] = useState<"all" | "active" | "paused">("all");
 

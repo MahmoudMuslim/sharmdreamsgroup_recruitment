@@ -137,6 +137,7 @@ import {
   folderReadNote,
   searchFiles,
 } from "@/app/(admin)/files/file-search";
+import { BUCKETS } from "@/app/(admin)/files/file-browser-types";
 import { LIST_LIMIT } from "@/app/(admin)/files/storage-list";
 import { getInterviewAgenda } from "@/app/(admin)/interviews/actions";
 import {
@@ -1460,7 +1461,11 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     description:
       "The storage buckets this portal writes, with file counts, and the folder listing inside one bucket. Without arguments it opens the CV bucket's root. `listing_note`/`root_note` name how many files the read actually carries — a folder's own `truncated` flag only describes the listing behind it, not this answer. `query` is the browser's own box and runs over the files the listing carries, so a search that names nothing says nothing about the bucket.",
     args: {
-      bucket: `string — optional, one of candidate-cvs, resumes, candidate-audio`,
+      // Derived from the bucket table the File Manager renders, so a bucket a
+      // recruiter can click into is never one the chat has never heard of — the
+      // hand-written list this replaces had three of the four and silently kept
+      // the video pitches out of reach.
+      bucket: `string — optional, one of ${BUCKETS.map((bucket) => bucket.key).join(", ")} — the bucket to read; omitted reads the CV bucket's root`,
       prefix: "string — optional, a folder path ending in /",
       query: `string — optional, the browser's own search box: ${fileSearchWords()}, matched over the files the listing carries`,
     },

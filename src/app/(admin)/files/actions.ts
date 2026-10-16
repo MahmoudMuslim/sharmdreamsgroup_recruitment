@@ -32,7 +32,32 @@ const WALK_MAX_DEPTH = 4;
 
 const READ_DENIED = "Browsing stored files needs the View candidates permission.";
 
-export async function getFileBrowserData(): Promise<{
+/**
+ * The folder the address bar asks the page to open.
+ *
+ * A bucket this portal does not store in, or a prefix storage would refuse, is
+ * ignored rather than half-honoured: the page then lists the CV root it could
+ * always list, instead of showing an empty folder and reading as "no files here"
+ * when the words in the URL simply named a place that is not there.
+ */
+function folderFromParams(
+  bucket: string | null | undefined,
+  prefix: string | null | undefined
+): { bucket: BucketKey; prefix: string } {
+  const info = bucketInfo(bucket);
+  const trimmed = (prefix ?? "").trim().replace(/\/+$/, "");
+  if (!info || (trimmed !== "" && !isStoredPath(trimmed))) {
+    return { bucket: "candidate-cvs", prefix: "" };
+  }
+  // `readFolder` joins the prefix to each object name, so a folder travels with
+  // its trailing slash and the root travels without one.
+  return { bucket: info.key, prefix: trimmed === "" ? "" : `${trimmed}/` };
+}
+
+export async function getFileBrowserData(
+  bucket?: string | null,
+  prefix?: string | null
+): Promise<{
   buckets: BucketStat[];
   view: ViewResult;
 }> {
@@ -42,10 +67,11 @@ export async function getFileBrowserData(): Promise<{
     return { buckets: [], view: { ok: false, error: READ_DENIED } };
   }
 
+  const target = folderFromParams(bucket, prefix);
   const supabase = await createSupabaseServerClient();
   const [buckets, view] = await Promise.all([
     describeBuckets(supabase),
-    readFolder(supabase, "candidate-cvs", ""),
+    readFolder(supabase, target.bucket, target.prefix),
   ]);
 
   return { buckets, view };

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Check,
@@ -69,9 +69,20 @@ export function MessagePanel({
   canManage: boolean;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
   const [tab, setTab] = useState<"email" | "notice">("email");
   const [readState, setReadState] = useState<UnreadFilter>("ALL");
-  const [query, setQuery] = useState("");
+  // `?email_q=` seeds this panel's box. The page already owns `?q=` for the
+  // WhatsApp queue above, and the two lists search different columns, so one
+  // parameter cannot describe both — a link that set the wrong box would land on
+  // rows the answer never named.
+  const [query, setQuery] = useState(params.get("email_q") ?? "");
+  const incomingQuery = params.get("email_q");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setQuery(incomingQuery ?? "");
+  }
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "error" | "ok"; text: string } | null>(null);

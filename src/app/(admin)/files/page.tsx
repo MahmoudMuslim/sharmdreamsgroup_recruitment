@@ -16,15 +16,25 @@ export const metadata = {
 /** Auth-gated route: every listing is a storage RLS read for this session. */
 export const instant = false;
 
-export default async function FilesPage() {
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+export default async function FilesPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
   const user = await requireStaff("/files");
+  // Which folder to open on arrival is read here, not in the browser, so the
+  // listing the page hands over is the one the address bar names — the same
+  // folder an assistant answer read when it searched for a file.
+  const params = await searchParams;
+  // A repeated parameter (`?bucket=a&bucket=b`) arrives as an array, which is not
+  // a folder anyone asked for, so only a single value travels into the read.
+  const bucket = typeof params.bucket === "string" ? params.bucket : null;
+  const prefix = typeof params.prefix === "string" ? params.prefix : null;
 
   const canRead = await hasPermissionForUser("candidates.read");
 
   const [canDelete, data] = await Promise.all([
     hasPermissionForUser("settings.manage_platform"),
-    canRead ? getFileBrowserData() : Promise.resolve(null),
+    canRead ? getFileBrowserData(bucket, prefix) : Promise.resolve(null),
   ]);
 
   const view = data?.view ?? null;

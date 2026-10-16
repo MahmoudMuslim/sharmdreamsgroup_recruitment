@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Bell,
@@ -162,11 +162,22 @@ export function OutboxView({
   now: string;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
   const nowMs = new Date(now).getTime();
 
   const [tab, setTab] = useState<"queue" | "log">(failedOnly ? "log" : "queue");
   const [sort, setSort] = useState<(typeof SORTS)[number]["key"]>("queued");
-  const [query, setQuery] = useState("");
+  // `?q=` seeds the queue's own box so an assistant answer that searched the
+  // outbox lands on the jobs it named. A rail click rewrites the URL without it,
+  // which empties the box along with the navigation — the same way the openings
+  // and candidates grids treat their search words.
+  const [query, setQuery] = useState(params.get("q") ?? "");
+  const incomingQuery = params.get("q");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setQuery(incomingQuery ?? "");
+  }
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "error" | "ok"; text: string } | null>(null);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   Download,
@@ -44,11 +44,22 @@ export function FileBrowser({
   canDelete: boolean;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
   const [listing, setListing] = useState<FolderListing | null>(initialListing);
   const [error, setError] = useState<string | null>(initialError);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  // `?q=` seeds the box so an assistant answer that searched stored files lands
+  // on the files it named, inside the folder the answer read (`?bucket=&prefix=`).
+  // Walking into another folder is a local navigation that clears the words, so
+  // the address bar only ever describes how the page was opened.
+  const [query, setQuery] = useState(params.get("q") ?? "");
+  const incomingQuery = params.get("q");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setQuery(incomingQuery ?? "");
+  }
   const [onlyUnlinked, setOnlyUnlinked] = useState(false);
 
   async function goTo(bucket: string, prefix: string) {
