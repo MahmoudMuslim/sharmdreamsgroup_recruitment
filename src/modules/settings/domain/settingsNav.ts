@@ -169,3 +169,43 @@ export function sectionFor(area: SettingsNavArea, id: string | undefined | null)
 export function settingsHref(areaId: SettingsAreaId, sectionId: string): string {
   return `/settings?area=${encodeURIComponent(areaId)}&section=${encodeURIComponent(sectionId)}`;
 }
+
+/**
+ * The AI models console's own tabs — one level below `section=models`.
+ *
+ * Declared beside the areas for the same reason: the tab strip, the panels it
+ * shows or hides, and the links the assistant writes must agree on which views
+ * exist. A tab only the console knows about cannot be linked to; a tab only the
+ * links know about lands on a hidden panel.
+ *
+ * The tab the console opens on comes from the URL, and switching it writes the
+ * new one back with `history.replaceState`, so the address bar always names the
+ * view on screen. A router push is avoided on purpose: all three views are already
+ * loaded, so a push would refetch the whole settings page to change a `hidden`
+ * class.
+ */
+export type ModelConsoleTabId = "routing" | "catalogue" | "providers";
+
+/** Key order is the order the tabs appear in the console's strip. */
+export const MODEL_CONSOLE_TABS: Record<ModelConsoleTabId, string> = {
+  routing: "Task routing",
+  catalogue: "Model catalogue",
+  providers: "Provider health",
+};
+
+export const DEFAULT_MODEL_TAB: ModelConsoleTabId = "routing";
+
+export const MODEL_CONSOLE_TAB_IDS = Object.keys(MODEL_CONSOLE_TABS) as ModelConsoleTabId[];
+
+/**
+ * The tab named in a URL.
+ *
+ * An unknown name falls back to the default instead of dropping the parameter: a
+ * stale bookmark should open the console, and a panel that ignores a tab it never
+ * had is indistinguishable from one that lost the reader's.
+ */
+export function modelConsoleTab(id: string | undefined | null): ModelConsoleTabId {
+  return MODEL_CONSOLE_TAB_IDS.includes(id as ModelConsoleTabId)
+    ? (id as ModelConsoleTabId)
+    : DEFAULT_MODEL_TAB;
+}

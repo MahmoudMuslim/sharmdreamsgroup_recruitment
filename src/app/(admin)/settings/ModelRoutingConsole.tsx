@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useEffect, useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Activity,
   CheckCircle2,
@@ -40,6 +41,12 @@ import {
   getCostTier,
 } from "@/modules/settings/domain/providers";
 import { modelSearchWords, searchModels } from "@/modules/settings/domain/modelSearch";
+import {
+  MODEL_CONSOLE_TAB_IDS,
+  MODEL_CONSOLE_TABS,
+  modelConsoleTab,
+  type ModelConsoleTabId,
+} from "@/modules/settings/domain/settingsNav";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, Select, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
@@ -51,6 +58,13 @@ interface ModelRow extends AiModelRow {
   probe?: ChainTestResult;
   probing?: boolean;
 }
+
+/** Typed by the shared tab ids, so a tab added to the table has to be given an icon here. */
+const TAB_ICONS: Record<ModelConsoleTabId, LucideIcon> = {
+  routing: Route,
+  catalogue: Sparkles,
+  providers: Activity,
+};
 
 function ProbeBadge({ result }: { result: ChainTestResult }) {
   return (
@@ -274,7 +288,9 @@ function QuickAssign({
  *
  * Three tabs, because the three things this console does (decide which model
  * serves a task, browse what is available, check that a provider answers) have
- * nothing in common on screen and used to be one endless scroll.
+ * nothing in common on screen and used to be one endless scroll. The tab strip is
+ * drawn from the shared table in `settingsNav`, so a tab is a view the assistant
+ * can link to and a link the assistant writes is a tab that exists.
  */
 export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   const [rows, setRows] = useState<ModelRow[]>([]);
@@ -291,10 +307,41 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   /** Separate from `error`: a failed model list must not read as a failed page. */
   const [catalogueError, setCatalogueError] = useState<string | null>(null);
 
-  const [tab, setTab] = useState("routing");
+  const params = useSearchParams();
+  const pathname = usePathname();
 
-  // Global model search across the entire catalog
-  const [globalSearch, setGlobalSearch] = useState("");
+  /**
+   * The tab and the catalogue box both seed from the address bar, so an assistant
+   * answer that searched the models lands on the tiles it counted instead of on
+   * the routing tab it said nothing about. Typing stays local until the URL
+   * itself changes: arriving on this route again re-renders rather than remounts,
+   * so the last value read from the address bar is tracked and applied here too.
+   *
+   * Arriving opens a view and spends nothing. Provider health is the one tab
+   * whose first paint would post a real completion to every configured key, so
+   * that still waits for a click — see `selectTab`.
+   */
+  const incomingTab = modelConsoleTab(params.get("tab"));
+  const [tab, setTab] = useState<ModelConsoleTabId>(incomingTab);
+  const [lastAppliedTab, setLastAppliedTab] = useState(incomingTab);
+  if (incomingTab !== lastAppliedTab) {
+    setLastAppliedTab(incomingTab);
+    setTab(incomingTab);
+  }
+
+  /**
+   * The catalogue box seeds from `?q=` and is tracked the same way: typing wins
+   * until the address bar itself changes, which is what a chat link clicked while
+   * this console is already open does. `openTab` below keeps those words and the
+   * catalogue tab together in the address bar.
+   */
+  const incomingQuery = params.get("q");
+  const [globalSearch, setGlobalSearch] = useState(incomingQuery ?? "");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setGlobalSearch(incomingQuery ?? "");
+  }
 
   /**
    * Price tier stays a dropdown because it filters; the provider is a tab strip
@@ -559,15 +606,41 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
   }, []);
 
   /**
-   * Opening the health tab runs the probes; nothing else does.
+   * Show one tab and put it in the address bar.
+   *
+   * `history.replaceState` rather than a router push, for the reason the openings
+   * grid gives: this Next build patches those calls into the router, so
+   * `useSearchParams` re-renders with the new query while the rows, models and
+   * probe results already held do the rest. A push would refetch the whole
+   * settings page to change a `hidden` class, and replacing the entry keeps Back
+   * leaving the page instead of replaying tabs.
+   *
+   * The catalogue's words travel with it and nothing else's do: an address bar
+   * that searches a hidden panel would read as a routing table nobody filtered.
+   */
+  function openTab(next: ModelConsoleTabId) {
+    setTab(next);
+    const search = new URLSearchParams(window.location.search);
+    search.set("tab", next);
+    if (next === "catalogue" && globalSearch.trim() !== "") search.set("q", globalSearch);
+    else search.delete("q");
+    window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+  }
+
+  /**
+   * Opening the health tab by clicking it runs the probes; nothing else does.
    *
    * A probe posts a real completion to each provider, so it is the slowest call
    * in this console by a wide margin. Running it on mount made every visit to
    * the routing page wait on keys the visitor may not even be checking, and it
    * competed with the model list for the same server.
+   *
+   * The same rule is why `?tab=providers` is deliberately not wired to probe: an
+   * address bar is not a person asking for a live check, and this is the one view
+   * in the portal whose paint costs the organisation money.
    */
-  function selectTab(next: string) {
-    setTab(next);
+  function selectTab(next: ModelConsoleTabId) {
+    openTab(next);
     if (next === "providers" && !probesStarted) {
       setProbesStarted(true);
       void probeProviders();
@@ -699,20 +772,22 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
    * Counted only once the data behind the count exists. A `(0)` on a list that
    * is still being read, or on probes that have not run yet, would advertise an
    * empty section rather than a pending one.
+   *
+   * Painted from the shared tab table, so a view the console has is a view the
+   * assistant can link to, and a link the assistant writes names a view that
+   * exists.
    */
-  const tabs: { key: string; label: string; icon: LucideIcon }[] = [
-    { key: "routing", label: `Task routing (${rows.length})`, icon: Route },
-    {
-      key: "catalogue",
-      label: `Model catalogue${catalogue ? ` (${catalogueCount})` : ""}`,
-      icon: Sparkles,
-    },
-    {
-      key: "providers",
-      label: `Provider health${totalProviders ? ` (${totalProviders})` : ""}`,
-      icon: Activity,
-    },
-  ];
+  const tabs = MODEL_CONSOLE_TAB_IDS.map((id) => ({
+    key: id,
+    label: `${MODEL_CONSOLE_TABS[id]}${tabCount(id)}`,
+    icon: TAB_ICONS[id],
+  }));
+
+  function tabCount(id: ModelConsoleTabId): string {
+    if (id === "routing") return ` (${rows.length})`;
+    if (id === "catalogue") return catalogue ? ` (${catalogueCount})` : "";
+    return totalProviders ? ` (${totalProviders})` : "";
+  }
 
   if (loading) {
     return (
@@ -762,7 +837,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               size="sm"
               variant="outline"
               onClick={() => {
-                setTab("catalogue");
+                openTab("catalogue");
                 void loadCatalogue(true);
               }}
               disabled={catalogueLoading}
@@ -778,7 +853,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               size="sm"
               variant="outline"
               onClick={() => {
-                setTab("providers");
+                openTab("providers");
                 setProbesStarted(true);
                 void probeProviders();
               }}
@@ -836,8 +911,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
               Active providers
             </h3>
             <p className="mt-1 text-sm text-brand-ink/55">
-              Live credential health — each configured key is probed with a real API call when this
-              tab opens, and never in the background.
+              Live credential health — a probe posts a real completion to each configured key, so
+              the checks start when you open this tab yourself or press Run checks below. Arriving
+              here on a link runs nothing until you ask.
             </p>
           </div>
           {providers.length > 0 && (
@@ -1403,7 +1479,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => setTab("catalogue")}
+                    onClick={() => selectTab("catalogue")}
                     title="Open the model catalogue to choose one"
                   >
                     <Sparkles className="h-3.5 w-3.5" aria-hidden />

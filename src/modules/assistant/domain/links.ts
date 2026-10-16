@@ -3,6 +3,10 @@ import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
 import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
 import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
 import { bucketInfo, isStoredPath } from "@/app/(admin)/files/file-browser-types";
+import {
+  MODEL_CONSOLE_TABS,
+  type ModelConsoleTabId,
+} from "@/modules/settings/domain/settingsNav";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -99,6 +103,28 @@ function folder(value: unknown): string | null {
 function bucketKey(value: unknown): string | null {
   if (typeof value !== "string") return null;
   return bucketInfo(value)?.key ?? null;
+}
+
+/**
+ * The AI models console, opened on the tab that holds the answer.
+ *
+ * Routing rows and the model catalogue are two views of one page, and the page
+ * opens on routing — so a link that counts models has to carry the tab or it
+ * lands on a table of capabilities. The tab id is typed against the console's own
+ * table and the label is read back out of it, so neither half can name a view the
+ * console does not have. Words travel only with the catalogue, because that is
+ * the box `list_models` searches.
+ */
+function modelsTab(tab: ModelConsoleTabId, q: string | null = null): AssistantLink {
+  return {
+    href: `/settings${query([
+      ["area", "providers"],
+      ["section", "models"],
+      ["tab", tab],
+      ["q", q],
+    ])}`,
+    label: `Open the ${MODEL_CONSOLE_TABS[tab].toLowerCase()}`,
+  };
 }
 
 /** The id an action created or changed, when the action reported one. */
@@ -270,7 +296,7 @@ export function linkForTool(
     case "reset_notification_template":
     case "delete_notification_template":
       return {
-        href: "/settings?area=notifications&section=templates",
+        href: "/settings?area=access&section=templates",
         label: "Open the templates",
       };
     case "save_master_record":
@@ -298,10 +324,7 @@ export function linkForTool(
       // the message they just mailed is one badge among many.
       return { href: "/whatsapp?failed=1", label: "Open the refused messages" };
     case "save_model_routing":
-      return {
-        href: "/settings?area=providers&section=models",
-        label: "Open model routing",
-      };
+      return modelsTab("routing");
     case "save_settings":
       return { href: "/settings", label: "Open settings" };
     case "dashboard_analytics":
@@ -381,15 +404,12 @@ export function linkForTool(
       };
     }
     case "list_model_routing":
+      return modelsTab("routing");
     case "list_models":
-      // One page, two reads. The label names the console rather than a tab:
-      // routing rows and the catalogue search live on different tabs of it, and
-      // the page opens on routing, so a link that promised the catalogue tiles
-      // would land somewhere else.
-      return {
-        href: "/settings?area=providers&section=models",
-        label: "Open the AI models console",
-      };
+      // The catalogue tab and the words the answer searched, so the click shows
+      // the same tiles it counted. Routing rows and the catalogue are different
+      // views of one page, and this page opens on routing.
+      return modelsTab("catalogue", words(args.query));
     case "get_settings":
       return { href: "/settings", label: "Open settings" };
     case "get_master_data":

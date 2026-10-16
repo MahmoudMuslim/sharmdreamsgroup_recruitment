@@ -22,6 +22,12 @@ import {
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
+import { BUCKETS } from "@/app/(admin)/files/file-browser-types";
+import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
+import {
+  MODEL_CONSOLE_TAB_IDS,
+  SETTINGS_NAV,
+} from "@/modules/settings/domain/settingsNav";
 import type { ChatCompletionMessage } from "@/types";
 
 /**
@@ -106,7 +112,7 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   [the prospect](/sourcing?prospect=<id>), [the outbox](/whatsapp),",
   "   [the model routing](/settings?area=providers&section=models), [the suites](/assessments),",
   "   [the interview agenda](/interviews), [the checklists](/onboarding), [the file manager](/files),",
-  "   [the gate questions](/apply-questions), [the templates](/settings?area=notifications&section=templates),",
+  "   [the gate questions](/apply-questions), [the templates](/settings?area=access&section=templates),",
   "   [the team](/settings?area=access&section=team), [the activity trail](/activity).",
   "   A filtered board is the same idea: [interview stage](/dashboard?stage=INTERVIEW) —",
   "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q=, ?stage=,",
@@ -117,13 +123,20 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   [what is still live](/jobs?status=HIREABLE) are real links; on either grid ?company=<id> lights that",
   "   company's rail, so only an id get_master_data returned belongs in it;",
   "   /sourcing takes ?prospect=;",
-  "   /settings takes ?area= and ?section=; /interviews takes ?range=today|week|month|upcoming|past",
+  `   /settings takes ?area=${SETTINGS_NAV.map((area) => area.id).join("|")}&section=<one of that area's sections>,`,
+  `   and on the AI models console ?tab=${MODEL_CONSOLE_TAB_IDS.join("|")} plus ?q= for its catalogue box — so`,
+  "   [the gemini models](/settings?area=providers&section=models&tab=catalogue&q=gemini) is a real link.",
+  "   Provider health only probes when a person opens that tab itself, so a link there shows nothing run;",
+  "   /assessments takes ?q= for its own suite box, and /files takes ?q=,",
+  `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,
+  "   /interviews takes ?range=today|week|month|upcoming|past",
   "   and ?status=SCHEDULED|COMPLETED|NO_SHOW|CANCELLED, so [awaiting an outcome](/interviews?range=upcoming&status=SCHEDULED)",
-  "   is a real link; /whatsapp takes ?bucket=ALL|DUE|WAITING|SENT|FAILED and ?failed=1, so",
+  `   is a real link; /whatsapp takes ?bucket=${OUTBOX_BUCKETS.join("|")}, ?failed=1 and ?q= for the WhatsApp`,
+  "   queue, and ?email_q= for the email log beside it, so",
   "   [the parked alerts](/whatsapp?bucket=FAILED) and [what the channels refused](/whatsapp?failed=1)",
   "   are real links too.",
-  "   Only those seven screens read a query string, so never dress another one with a parameter",
-  "   it would ignore — link to the plain page and name the record in the words beside it.",
+  "   Those are the screens that read a query string; every other page ignores one, so never dress it",
+  "   with a parameter it would drop — link to the plain page and name the record in the words beside it.",
   "10. Only put an id in a link that a tool actually returned this conversation.",
   "11. ask_question ends your turn. Ask once with 2 to 6 choices, then wait for the answer — never",
   "    ask a question in prose and answer it yourself in the same turn.",
