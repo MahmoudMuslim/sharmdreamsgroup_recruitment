@@ -12,6 +12,7 @@ import type {
   DrillPanel as DrillPanelRow,
   DrillProspect,
 } from "@/modules/analytics/infrastructure/analyticsDrill";
+import { measuresDelivery } from "@/modules/analytics/domain/report";
 import type { AnalyticsWindow, TrendBucket, TrendGrain } from "@/modules/analytics/domain/report";
 import { Badge, EmptyState } from "@/modules/analytics/presentation/ui";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
@@ -320,14 +321,20 @@ function MessageRow({ row, timeZone }: { row: DrillMessage; timeZone: string }) 
       right={
         <>
           <Badge tone={statusTone(row.channel)}>{pretty(row.channel)}</Badge>
-          <p
-            className={cn(
-              "mt-1.5 text-[11px] font-bold",
-              row.delivered ? "text-emerald-700" : "text-rose-700"
-            )}
-          >
-            {row.delivered ? "delivered" : "not delivered"}
-          </p>
+          {measuresDelivery(row.channel) ? (
+            <p
+              className={cn(
+                "mt-1.5 text-[11px] font-bold",
+                row.delivered ? "text-emerald-700" : "text-rose-700"
+              )}
+            >
+              {row.delivered ? "delivered" : "not delivered"}
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[11px] font-bold text-brand-ink/45">
+              {row.read_at ? "read in the inbox" : "in the inbox"}
+            </p>
+          )}
           {row.error_message && (
             <p className="mt-0.5 max-w-[16rem] text-[10px] leading-relaxed text-rose-700">
               {row.error_message}

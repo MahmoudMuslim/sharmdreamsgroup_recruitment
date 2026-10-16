@@ -717,7 +717,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "get_candidate_dossier",
     label: "Reading a candidate dossier",
     description:
-      "Everything on one application: what they submitted, their viability-gate answers, every assessment attempt with its status and deadline, every message sent to them, attached files, onboarding progress, and their other applications. This is where attempt, attachment and alert ids come from.",
+      "Everything on one application: what they submitted, their viability-gate answers, every assessment attempt with its status and deadline, every alert on the record with its status (delivered or failed for email and WhatsApp, queued for a WhatsApp still waiting, written for a portal notice — a notice is an inbox entry, nothing sent it through a relay), attached files, onboarding progress, and their other applications. This is where attempt, attachment and alert ids come from.",
     args: { application_id: "string — the application's id" },
     run: async (args) => {
       const applicationId = str(args, "application_id");

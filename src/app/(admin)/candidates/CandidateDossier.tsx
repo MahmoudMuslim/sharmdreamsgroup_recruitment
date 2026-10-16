@@ -49,6 +49,8 @@ const ALERT_PRESENTATION = {
   delivered: { label: "Delivered", tone: "success" as const },
   failed: { label: "Failed", tone: "danger" as const },
   queued: { label: "Queued", tone: "gold" as const },
+  /** A portal notice is written into the inbox, not sent through a relay. */
+  written: { label: "In the inbox", tone: "info" as const },
 };
 
 function Section({
@@ -606,8 +608,14 @@ export function CandidateDossier({
                     <span className="text-[11px] font-bold uppercase tracking-wider text-brand-ink/50">
                       {CHANNEL_LABELS[alert.channel] ?? humanizeStage(alert.channel)}
                     </span>
-                    {alert.read_at && (
-                      <span className="text-[11px] text-emerald-700">Read by candidate</span>
+                    {alert.channel === "IN_APP" && (
+                      <span
+                        className={
+                          alert.read_at ? "text-[11px] text-emerald-700" : "text-[11px] text-brand-ink/40"
+                        }
+                      >
+                        {alert.read_at ? "Read by candidate" : "Not opened yet"}
+                      </span>
                     )}
                     <span className="ml-auto text-[11px] text-brand-ink/40">
                       {formatDateTime(alert.occurred_at)}

@@ -73,6 +73,10 @@ export interface DossierAttempt {
  * Merged from `communication_logs` (email, portal notices, WhatsApp once it
  * leaves the queue) and `scheduled_whatsapp_jobs` (WhatsApp still waiting), so a
  * queued notice is not shown as if it had been delivered.
+ *
+ * `status` is `written` for a portal notice: the row is an inbox entry the send
+ * also leaves behind, so nothing went through a relay that could accept or
+ * refuse it. Delivery is only a fact about email and WhatsApp.
  */
 export interface DossierAlert {
   id: string;
@@ -81,7 +85,7 @@ export interface DossierAlert {
   recipient: string;
   subject: string | null;
   body: string;
-  status: "delivered" | "failed" | "queued";
+  status: "delivered" | "failed" | "queued" | "written";
   error: string | null;
   occurred_at: string;
   read_at: string | null;
@@ -202,6 +206,7 @@ function gateAnswers(value: unknown): GateAnswer[] {
 
 function alertStatus(row: Record<string, unknown>): DossierAlert["status"] {
   if (row.status === "PENDING") return "queued";
+  if (asString(row.channel) === "IN_APP") return "written";
   return row.delivered === true || row.status === "SENT" ? "delivered" : "failed";
 }
 
