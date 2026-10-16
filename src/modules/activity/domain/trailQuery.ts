@@ -1,5 +1,3 @@
-import "server-only";
-
 /**
  * Turns the filter bag a console (or a download link) sends into a read the
  * database will accept.
@@ -8,6 +6,13 @@ import "server-only";
  * CSV cannot be cut by a filter the screen would have refused. That is the whole
  * reason the coercion does not live in the page: two parsers drift, and one of
  * them starts trusting a query string.
+ *
+ * Pure, and deliberately in `domain/` rather than `application/`: the screen
+ * builds its own download URLs from the cut it is holding, so it imports
+ * `queryToParams`, and a client component cannot import a module that declares
+ * `server-only`. Nothing here touches the database or the session — the server
+ * re-coerces every query string on the way to the read regardless of what the
+ * client computed.
  */
 
 import {
@@ -61,7 +66,16 @@ export interface ResolvedTrailQuery {
   applied: AppliedFilters;
 }
 
-export function resolveTrailQuery(raw: TrailQuery, limit: number): ResolvedTrailQuery {
+/**
+ * @param now the moment the window is measured back from, supplied by the server
+ *   route that owns the read. This module stays free of the clock so a page
+ *   render cannot quietly become non-dynamic by calling it.
+ */
+export function resolveTrailQuery(
+  raw: TrailQuery,
+  limit: number,
+  now: Date
+): ResolvedTrailQuery {
   const area = isActivityArea(raw.area) ? raw.area : null;
   const actorKind = isActorKind(raw.actorKind) ? raw.actorKind : null;
   const surface = isActivitySurface(raw.surface) ? raw.surface : null;
@@ -89,7 +103,7 @@ export function resolveTrailQuery(raw: TrailQuery, limit: number): ResolvedTrail
       since:
         bounds.hours === null
           ? null
-          : new Date(Date.now() - bounds.hours * 3_600_000).toISOString(),
+          : new Date(now.getTime() - bounds.hours * 3_600_000).toISOString(),
     },
   };
 }

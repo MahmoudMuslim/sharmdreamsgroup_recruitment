@@ -21,7 +21,7 @@ import {
   paramsToQuery,
   resolveTrailQuery,
   scopeFor,
-} from "@/modules/activity/application/trailQuery";
+} from "@/modules/activity/domain/trailQuery";
 import { trailDocument } from "@/modules/activity/domain/document";
 import { trailWindow } from "@/modules/activity/domain/trail";
 import { dayKeyInZone } from "@/lib/timezone";
@@ -55,7 +55,11 @@ export async function GET(request: Request): Promise<Response> {
   const format = safeFormat(params.get("format"));
   if (!format) return json("A format is required: csv, xlsx or pdf.", 400);
 
-  const { filters, applied } = resolveTrailQuery(paramsToQuery(params), EXPORT_ROWS);
+  const { filters, applied } = resolveTrailQuery(
+    paramsToQuery(params),
+    EXPORT_ROWS,
+    new Date()
+  );
   const [read, timeZone] = await Promise.all([
     readActivityTrail(filters),
     getOrganisationTimeZone(),

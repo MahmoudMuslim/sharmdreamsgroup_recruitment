@@ -14,10 +14,10 @@ import {
   SCREEN_ROWS,
   type AppliedFilters,
   type TrailQuery,
-} from "@/modules/activity/application/trailQuery";
+} from "@/modules/activity/domain/trailQuery";
 import type { ActivityRow, ActorKind } from "@/modules/activity/domain/trail";
 
-export type { AppliedFilters, TrailQuery } from "@/modules/activity/application/trailQuery";
+export type { AppliedFilters, TrailQuery } from "@/modules/activity/domain/trailQuery";
 
 const AUDIT_DENIED =
   "Reading the change trail needs the Manage platform settings permission.";
@@ -53,7 +53,7 @@ export async function getTrail(raw: TrailQuery = {}): Promise<TrailPreview> {
     return { ok: false, error: AUDIT_DENIED };
   }
 
-  const { filters, applied } = resolveTrailQuery(raw, SCREEN_ROWS);
+  const { filters, applied } = resolveTrailQuery(raw, SCREEN_ROWS, new Date());
 
   const [read, tally, timeZone]: [TrailReadResult, Record<ActorKind, number>, string] =
     await Promise.all([

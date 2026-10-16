@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { getTrail, type TrailQuery, type TrailView } from "./actions";
-import { queryToParams } from "@/modules/activity/application/trailQuery";
+import { queryToParams } from "@/modules/activity/domain/trailQuery";
 import {
   ACTIVITY_AREAS,
   ACTIVITY_SURFACES,
