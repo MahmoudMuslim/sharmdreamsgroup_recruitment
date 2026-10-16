@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ArrowLeft, CheckCircle2, MapPin } from "lucide-react";
 import { getPublicJob, getPublicJobs } from "../actions";
+import { employmentLabel, sectorLabel } from "@/modules/careers/job-board";
 import { formatSalaryRange } from "@/lib/currency";
 import { ApplyForm } from "../ApplyForm";
 import { Badge } from "@/modules/analytics/presentation/ui";
@@ -14,20 +15,6 @@ import { Badge } from "@/modules/analytics/presentation/ui";
  * `status = 'PUBLISHED'` and returns null, which renders a 404 rather than
  * revealing that the role exists.
  */
-
-const SECTOR_LABELS: Record<string, string> = {
-  HOSPITALITY: "Hospitality",
-  REAL_ESTATE: "Real estate",
-  DEVELOPMENT: "Development",
-  CORPORATE: "Corporate services",
-};
-
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  FULL_TIME: "Full time",
-  PART_TIME: "Part time",
-  CONTRACT: "Contract",
-  INTERNSHIP: "Internship",
-};
 
 export async function generateMetadata({
   params,
@@ -103,9 +90,7 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
               <MapPin className="h-4 w-4" aria-hidden />
               {job.location}
             </span>
-            {EMPLOYMENT_LABELS[job.employment_type] && (
-              <span>{EMPLOYMENT_LABELS[job.employment_type]}</span>
-            )}
+            {job.employment_type && <span>{employmentLabel(job.employment_type)}</span>}
             {salary && <span className="font-mono">{salary}</span>}
           </p>
 
@@ -113,9 +98,7 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
             {job.department && (
               <Badge tone="gold">{job.department}</Badge>
             )}
-            {SECTOR_LABELS[job.sector] && (
-              <Badge tone="neutral">{SECTOR_LABELS[job.sector]}</Badge>
-            )}
+            {job.sector && <Badge tone="neutral">{sectorLabel(job.sector)}</Badge>}
           </div>
 
           <section className="mt-8">

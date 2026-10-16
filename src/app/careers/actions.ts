@@ -18,6 +18,7 @@ import {
   parseGateRows,
   type GateQuestion,
 } from "@/modules/careers/gate-questions";
+import type { PublicJob } from "@/modules/careers/job-board";
 
 /**
  * Public careers site.
@@ -29,21 +30,6 @@ import {
  *
  * Nothing here may return another applicant's data.
  */
-
-export interface PublicJob {
-  id: string;
-  title: string;
-  department: string;
-  sector: string;
-  location: string;
-  employment_type: string;
-  description: string;
-  requirements: string[];
-  min_salary_usd: number | null;
-  max_salary_usd: number | null;
-  salary_currency: string;
-  company_name: string | null;
-}
 
 const JOB_COLUMNS =
   "id, title, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, tenants_and_companies(name)";
