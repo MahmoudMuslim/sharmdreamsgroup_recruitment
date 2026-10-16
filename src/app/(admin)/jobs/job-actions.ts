@@ -7,6 +7,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
 import { SECTORS, isSector } from "@/modules/settings/domain/vocabularies";
+import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
 
 export interface JobDraft {
   title: string;
@@ -31,7 +32,7 @@ export interface JobResult {
 }
 
 const EMPLOYMENT_TYPES = new Set(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERNSHIP"]);
-const STATUSES = new Set(["DRAFT", "PUBLISHED", "PAUSED", "CLOSED"]);
+const STATUSES = new Set<string>(JOB_STATUSES);
 
 /**
  * Validates a job draft and turns it into the columns `job_openings` stores.

@@ -38,6 +38,7 @@ import {
   StatTile,
 } from "@/modules/analytics/presentation/ui";
 import { renderTemplate } from "@/modules/settings/domain/templates";
+import { openingOptionLabel, pickerWindowNote } from "@/modules/jobs/domain/hireable";
 import { parseProspectImport } from "@/modules/sourcing/domain/prospect-import";
 import {
   profileSections,
@@ -148,6 +149,7 @@ export function SourcingBoard({
   totals,
   stage,
   jobs,
+  jobsTotal,
   copy,
   canWrite,
   canDelete,
@@ -157,6 +159,7 @@ export function SourcingBoard({
   totals: ProspectPoolTotals;
   stage: ProspectStage | null;
   jobs: JobOption[];
+  jobsTotal: number;
   copy: Record<OutreachChannel, { subject: string; body: string }>;
   canWrite: boolean;
   canDelete: boolean;
@@ -293,6 +296,7 @@ export function SourcingBoard({
         <ImportDrawer
           open={importOpen}
           jobs={jobs}
+          jobsTotal={jobsTotal}
           onClose={() => setImportOpen(false)}
           onDone={(summary) => {
             setImportOpen(false);
@@ -610,6 +614,7 @@ export function SourcingBoard({
       <ImportDrawer
         open={importOpen}
         jobs={jobs}
+        jobsTotal={jobsTotal}
         onClose={() => setImportOpen(false)}
         onDone={(summary) => {
           setImportOpen(false);
@@ -623,6 +628,7 @@ export function SourcingBoard({
           prospect={editing.prospect === "new" ? null : editing.prospect}
           focus={editing.focus}
           jobs={jobs}
+          jobsTotal={jobsTotal}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -635,6 +641,7 @@ export function SourcingBoard({
         <ProfileDrawer
           prospect={liveProfile}
           jobs={jobs}
+          jobsTotal={jobsTotal}
           copy={copy}
           canWrite={canWrite}
           canSend={canSend}
@@ -674,11 +681,13 @@ export function SourcingBoard({
 function ImportDrawer({
   open,
   jobs,
+  jobsTotal,
   onClose,
   onDone,
 }: {
   open: boolean;
   jobs: JobOption[];
+  jobsTotal: number;
   onClose: () => void;
   onDone: (summary: string) => void;
 }) {
@@ -691,6 +700,13 @@ function ImportDrawer({
   // Parsed live in the browser with the same pure function the server uses, so
   // the count shown before importing is the count that will be written.
   const preview = useMemo(() => (raw.trim() ? parseProspectImport(raw) : null), [raw]);
+
+  // The picker is a window into the hireable openings, so when the window ran
+  // out of room the field says which roles it left off rather than looking whole.
+  const shortBy = pickerWindowNote(jobsTotal, jobs.length);
+  const jobHint = `Optional. Names the role in the outreach copy instead of “one of our roles”.${
+    shortBy ? ` ${shortBy}` : ""
+  }`;
 
   function submit() {
     if (!raw.trim()) {
@@ -749,14 +765,14 @@ function ImportDrawer({
       <Field
         label="Link to an opening"
         htmlFor="prospect-job"
-        hint="Optional. Names the role in the outreach copy instead of “one of our roles”."
+        hint={jobHint}
         className="mt-4"
       >
         <Select id="prospect-job" value={jobId} onChange={(event) => setJobId(event.target.value)}>
           <option value="">No opening yet</option>
           {jobs.map((job) => (
             <option key={job.id} value={job.id}>
-              {job.title}
+              {openingOptionLabel(job.title, job.status)}
             </option>
           ))}
         </Select>
@@ -807,6 +823,7 @@ function ProspectFormDrawer({
   prospect,
   focus,
   jobs,
+  jobsTotal,
   onClose,
   onSaved,
 }: {
@@ -814,6 +831,7 @@ function ProspectFormDrawer({
   /** Set when a reach door sent the recruiter here for one missing address. */
   focus?: ContactField | null;
   jobs: JobOption[];
+  jobsTotal: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -842,6 +860,15 @@ function ProspectFormDrawer({
 
   const set = (key: keyof typeof form) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm((prev) => ({ ...prev, [key]: event.target.value }));
+
+  // The picker lists only openings the group still hires for, so a record filed
+  // under a role that has since closed holds a link nothing on the list matches.
+  // Keeping it visible is what stops a save from unlinking the prospect while the
+  // recruiter was only here to add a phone number.
+  const staleLink =
+    prospect?.job_id && !jobs.some((job) => job.id === prospect.job_id)
+      ? { id: prospect.job_id, label: `${prospect.job_title ?? "The linked opening"} — no longer hiring` }
+      : null;
 
   function submit() {
     setError(null);
@@ -914,12 +941,17 @@ function ProspectFormDrawer({
             placeholder="linkedin.com/in/…"
           />
         </Field>
-        <Field label="Linked opening" htmlFor="field-job">
+        <Field
+          label="Linked opening"
+          htmlFor="field-job"
+          hint={pickerWindowNote(jobsTotal, jobs.length) ?? undefined}
+        >
           <Select id="field-job" value={form.job_id} onChange={set("job_id")}>
             <option value="">None</option>
+            {staleLink && <option value={staleLink.id}>{staleLink.label}</option>}
             {jobs.map((job) => (
               <option key={job.id} value={job.id}>
-                {job.title}
+                {openingOptionLabel(job.title, job.status)}
               </option>
             ))}
           </Select>
@@ -939,6 +971,7 @@ function ProspectFormDrawer({
 function ProfileDrawer({
   prospect,
   jobs,
+  jobsTotal,
   copy,
   canWrite,
   canSend,
@@ -949,6 +982,7 @@ function ProfileDrawer({
 }: {
   prospect: ProspectRow;
   jobs: JobOption[];
+  jobsTotal: number;
   copy: Record<OutreachChannel, { subject: string; body: string }>;
   canWrite: boolean;
   canSend: boolean;
@@ -959,7 +993,12 @@ function ProfileDrawer({
   onEdit: (field?: ContactField) => void;
 }) {
   const [history, setHistory] = useState<ProspectHistoryRow[] | null>(null);
-  const [jobId, setJobId] = useState(prospect.job_id ?? "");
+  // Pre-select the role this prospect is already linked to, but only when that
+  // opening is on the list: a link to a closed role is not a conversion target,
+  // and pre-filling one would leave the field blank beside a live Convert button.
+  const [jobId, setJobId] = useState(
+    prospect.job_id && jobs.some((job) => job.id === prospect.job_id) ? prospect.job_id : ""
+  );
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -1095,12 +1134,17 @@ function ProfileDrawer({
 
       {canWrite && (
         <div className="mt-5 flex flex-wrap items-end gap-3 border-t border-brand-line pt-4">
-          <Field label="Convert to an application" htmlFor="convert-job" className="min-w-[200px] flex-1">
+          <Field
+            label="Convert to an application"
+            htmlFor="convert-job"
+            className="min-w-[200px] flex-1"
+            hint={pickerWindowNote(jobsTotal, jobs.length) ?? undefined}
+          >
             <Select id="convert-job" value={jobId} onChange={(event) => setJobId(event.target.value)}>
               <option value="">Choose an opening…</option>
               {jobs.map((job) => (
                 <option key={job.id} value={job.id}>
-                  {job.title}
+                  {openingOptionLabel(job.title, job.status)}
                 </option>
               ))}
             </Select>

@@ -12,6 +12,7 @@ import {
   TextInput,
 } from "@/modules/analytics/presentation/Form";
 import { sourceLabel, stageLabel } from "@/lib/utils";
+import { pickerWindowNote } from "@/modules/jobs/domain/hireable";
 import { APPLICATION_SOURCES } from "@/modules/candidates/domain/listFilters";
 import {
   createCandidate,
@@ -35,6 +36,7 @@ export function NewCandidateDrawer() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [openings, setOpenings] = useState<ManualOpeningOption[] | null>(null);
+  const [openingsTotal, setOpeningsTotal] = useState(0);
   const [jobId, setJobId] = useState("");
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -55,6 +57,7 @@ export function NewCandidateDrawer() {
     if (openings !== null) return;
     void listManualOpenings().then((result) => {
       setOpenings(result.openings);
+      setOpeningsTotal(result.total);
       // A failed query must not look like a group with no openings, and an
       // empty list must not look like a failure.
       if (!result.ok) setError("The openings list did not load. Close this panel and try again.");
@@ -70,6 +73,10 @@ export function NewCandidateDrawer() {
     setError(null);
     setCreated(null);
   }
+
+  // A picker ships a window of the hireable openings, so when the window ran out
+  // of room the field says which roles it left off instead of looking complete.
+  const shortBy = openings ? pickerWindowNote(openingsTotal, openings.length) : null;
 
   async function submit() {
     if (created) {
@@ -150,7 +157,9 @@ export function NewCandidateDrawer() {
             label="Job opening"
             htmlFor="new-candidate-job"
             required
-            hint="Only openings your company's scope reaches."
+            hint={`Openings your scope reaches that are not closed — a role the group stopped hiring for cannot take a new applicant.${
+              shortBy ? ` ${shortBy}` : ""
+            }`}
           >
             <Select
               id="new-candidate-job"

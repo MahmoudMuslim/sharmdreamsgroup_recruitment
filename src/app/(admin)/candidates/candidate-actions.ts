@@ -19,6 +19,8 @@ import {
 } from "@/modules/settings/domain/templates";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import { isApplicationSource } from "@/modules/candidates/domain/listFilters";
+import { HIREABLE_STATUSES, PICKER_LIMIT } from "@/modules/jobs/domain/hireable";
+import { requireHireableOpening } from "@/modules/jobs/infrastructure/hireableOpening";
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import {
   generateFeedbackForApplication,
@@ -528,6 +530,8 @@ export interface ManualOpeningsResult {
   ok: boolean;
   error?: string;
   openings: ManualOpeningOption[];
+  /** Openings the group can still hire for, counted by the database. */
+  total: number;
 }
 
 /**
@@ -539,20 +543,34 @@ export interface ManualOpeningsResult {
  *
  * The failure is reported rather than folded into an empty list — a recruiter
  * who saw no options would otherwise conclude the group has no openings.
+ *
+ * Closed roles are filtered out by the query, the same rule the sourcing
+ * pickers apply: filing a person under a role the group stopped hiring for puts
+ * them in a pipeline with no end, and every closed row on the list spends room
+ * the hiring ones need. `total` is that filtered set's own count, so a dropdown
+ * that ran out of room can say how many roles it dropped.
  */
 export async function listManualOpenings(): Promise<ManualOpeningsResult> {
   await requireStaff("/candidates");
   const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("job_openings")
-    .select("id, title, department, status")
-    .order("created_at", { ascending: false })
-    .limit(200);
+  const [rows, count] = await Promise.all([
+    supabase
+      .from("job_openings")
+      .select("id, title, department, status")
+      .in("status", [...HIREABLE_STATUSES])
+      .order("created_at", { ascending: false })
+      .limit(PICKER_LIMIT),
+    supabase
+      .from("job_openings")
+      .select("id", { count: "exact", head: true })
+      .in("status", [...HIREABLE_STATUSES]),
+  ]);
+  const { data, error } = rows;
 
   if (error) {
     console.error("[candidates] manual entry openings failed:", error.message);
-    return { ok: false, error: error.message, openings: [] };
+    return { ok: false, error: error.message, openings: [], total: 0 };
   }
 
   return {
@@ -563,6 +581,7 @@ export async function listManualOpenings(): Promise<ManualOpeningsResult> {
       department: String(row.department ?? ""),
       status: String(row.status ?? "DRAFT"),
     })),
+    total: count.count ?? 0,
   };
 }
 
@@ -619,20 +638,15 @@ export async function createCandidate(input: {
 
   const supabase = await createSupabaseServerClient();
 
-  // The opening is read through RLS before anything is written, so a recruiter
-  // can only file someone under a role their own scope reaches.
-  const { data: opening, error: openingError } = await supabase
-    .from("job_openings")
-    .select("id, title")
-    .eq("id", input.jobId)
-    .maybeSingle();
-
-  if (openingError?.code === "22P02" || !opening) {
-    return { ok: false, error: "Pick the opening this applicant is being recorded against." };
-  }
+  // The opening is read through RLS before anything is written, so a recruiter can
+  // only file someone under a role their own scope reaches — and a closed role is
+  // refused here rather than merely left off the dropdown, because the assistant
+  // records a candidate with no dropdown behind it at all.
+  const opening = await requireHireableOpening(supabase, input.jobId);
+  if (!opening.ok) return { ok: false, error: opening.error };
 
   const { error } = await supabase.from("applications").insert({
-    job_id: opening.id,
+    job_id: input.jobId,
     full_name: fullName,
     email,
     phone: phone || null,
@@ -658,7 +672,7 @@ export async function createCandidate(input: {
   const { data: created } = await supabase
     .from("applications")
     .select("id, full_name, email, tracking_code")
-    .eq("job_id", opening.id)
+    .eq("job_id", input.jobId)
     .eq("email", email)
     .is("archived_at", null)
     .order("created_at", { ascending: false })
@@ -687,7 +701,7 @@ export async function createCandidate(input: {
     entityId: candidate.id,
     summary: `Recorded ${candidate.full_name} by hand for ${opening.title} (${source.replace(/_/g, " ").toLowerCase()})`,
     detail: {
-      job_id: opening.id,
+      job_id: input.jobId,
       email: candidate.email,
       phone: phone || null,
       source,

@@ -36,7 +36,7 @@ export default async function SourcingPage({
   const params = await searchParams;
   const stage = isProspectStage(params.stage);
 
-  const [canWrite, canDelete, canSend, pool, jobs, copy] = await Promise.all([
+  const [canWrite, canDelete, canSend, pool, openings, copy] = await Promise.all([
     hasPermissionForUser("candidates.write"),
     hasPermissionForUser("candidates.delete"),
     hasPermissionForUser("messages.send"),
@@ -57,7 +57,8 @@ export default async function SourcingPage({
         prospects={pool.prospects}
         totals={pool.totals}
         stage={stage}
-        jobs={jobs}
+        jobs={openings.jobs}
+        jobsTotal={openings.total}
         copy={copy}
         canWrite={canWrite}
         canDelete={canDelete}

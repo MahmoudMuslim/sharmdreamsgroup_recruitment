@@ -15,6 +15,7 @@ import type {
   Skill,
 } from "@/modules/settings/domain/types";
 import { isSector, SECTORS } from "@/modules/settings/domain/vocabularies";
+import { HIREABLE_STATUSES } from "@/modules/jobs/domain/hireable";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits, type ActivityEntity } from "@/modules/activity/domain/trail";
 
@@ -533,7 +534,7 @@ async function masterUsage(
     query = query.eq(entity === "departments" ? "department" : "location", name);
   }
 
-  const { data } = await query.in("status", ["DRAFT", "PUBLISHED", "PAUSED"]);
+  const { data } = await query.in("status", [...HIREABLE_STATUSES]);
 
   const count = (data ?? []).length;
   if (count === 0) return null;

@@ -27,6 +27,8 @@ import {
   renderProfileText,
   type ProspectProfile,
 } from "@/modules/sourcing/domain/prospect-profile";
+import { HIREABLE_STATUSES, PICKER_LIMIT } from "@/modules/jobs/domain/hireable";
+import { requireHireableOpening } from "@/modules/jobs/infrastructure/hireableOpening";
 import {
   DEDUPE_WINDOW,
   POOL_LIMIT,
@@ -85,6 +87,12 @@ export interface JobOption {
   id: string;
   title: string;
   status: string;
+}
+
+/** The openings a picker may offer, and how many hireable ones the table holds. */
+export interface JobPicker {
+  jobs: JobOption[];
+  total: number;
 }
 
 interface ProspectWriteResult {
@@ -215,18 +223,40 @@ export async function getProspectPool(input: {
   };
 }
 
-/** Openings a prospect can be linked to or converted against. */
-export async function getProspectJobs(): Promise<JobOption[]> {
+/**
+ * Openings a prospect can be linked to or converted against.
+ *
+ * Closed roles are left out by the query, not hidden by the picker: a dropdown
+ * that offers one is an invitation to file a person into a pipeline that leads
+ * nowhere, and every closed row on it spends room the still-hiring roles need.
+ * `total` is the hireable set's own head count, so a list that ran out of room
+ * can say how many roles it dropped rather than looking complete.
+ */
+export async function getProspectJobs(): Promise<JobPicker> {
   await requireStaff("/sourcing");
 
   const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
-    .from("job_openings")
-    .select("id, title, status")
-    .order("created_at", { ascending: false })
-    .limit(200);
+  const [rows, count] = await Promise.all([
+    supabase
+      .from("job_openings")
+      .select("id, title, status")
+      .in("status", [...HIREABLE_STATUSES])
+      .order("created_at", { ascending: false })
+      .limit(PICKER_LIMIT),
+    supabase
+      .from("job_openings")
+      .select("id", { count: "exact", head: true })
+      .in("status", [...HIREABLE_STATUSES]),
+  ]);
 
-  return (data ?? []) as JobOption[];
+  if (rows.error || count.error) {
+    console.error(
+      "[sourcing] opening picker failed:",
+      (rows.error ?? count.error)?.message,
+    );
+  }
+
+  return { jobs: (rows.data ?? []) as JobOption[], total: count.count ?? 0 };
 }
 
 export async function getProspectHistory(id: string): Promise<ProspectHistoryRow[]> {
@@ -315,6 +345,15 @@ export async function importProspects(input: {
     return { ok: false, error: "That paste is too large. Import it in batches of a few hundred." };
   }
 
+  const supabase = await createSupabaseServerClient();
+
+  // The chosen opening is quoted in every row's outreach copy, so a role nobody
+  // is hiring for is refused before any row exists to advertise it.
+  if (input.job_id) {
+    const opening = await requireHireableOpening(supabase, input.job_id);
+    if (!opening.ok) return { ok: false, error: opening.error };
+  }
+
   const parsed = parseProspectImport(input.raw);
   if (parsed.drafts.length === 0) {
     return {
@@ -325,8 +364,6 @@ export async function importProspects(input: {
       problems: parsed.problems,
     };
   }
-
-  const supabase = await createSupabaseServerClient();
 
   // Newest first, because a list re-imported days after the first paste is a
   // duplicate of rows near the top of the table, not of an arbitrary slice of it.
@@ -481,6 +518,18 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
     const before = found as unknown as Record<string, unknown>;
     const patch = prospectPayload(cleaned.fields);
 
+    // The role a prospect is linked to is quoted in the letter they are sent, so
+    // *moving* someone onto it means the role has to be one still hiring. An
+    // unchanged link is not a move: a recruiter who only came to add a phone
+    // number must not be refused because the opening this row was filed under
+    // closed after the fact.
+    const wanted = cleaned.fields.job_id ?? null;
+    const current = (before.job_id as string | null) ?? null;
+    if (wanted && wanted !== current) {
+      const opening = await requireHireableOpening(supabase, wanted);
+      if (!opening.ok) return { ok: false, error: opening.error };
+    }
+
     const { error } = await supabase.from("sourced_prospects").update(patch).eq("id", input.id);
     if (error) return { ok: false, error: error.message };
 
@@ -498,6 +547,13 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
       });
     }
     return { ok: true, id: input.id };
+  }
+
+  // A hand-recorded prospect is a filing decision made now, so its role is
+  // checked before the row exists rather than left to the picker's list.
+  if (cleaned.fields.job_id) {
+    const opening = await requireHireableOpening(supabase, cleaned.fields.job_id);
+    if (!opening.ok) return { ok: false, error: opening.error };
   }
 
   const createdBy = await staffProfileId(supabase, user.authUserId);
@@ -893,11 +949,8 @@ export async function convertProspect(input: {
   const profile = prospect.profile ? normalizeProspectProfile(prospect.profile) : null;
   const cvText = profile && !profileIsEmpty(profile) ? renderProfileText(profile) : null;
 
-  const { data: opening } = await supabase
-    .from("job_openings")
-    .select("title")
-    .eq("id", input.job_id)
-    .maybeSingle();
+  const opening = await requireHireableOpening(supabase, input.job_id);
+  if (!opening.ok) return { ok: false, error: opening.error };
 
   const { data: created, error } = await supabase
     .from("applications")
@@ -941,9 +994,7 @@ export async function convertProspect(input: {
     action: "prospect_convert",
     entity: "application",
     entityId: applicationId,
-    summary: `Converted ${prospect.full_name} out of the sourcing pool into an application for ${
-      opening?.title ? `“${opening.title}”` : "an opening"
-    }${cvText ? ", with their saved profile in place of a CV" : ""}`,
+    summary: `Converted ${prospect.full_name} out of the sourcing pool into an application for “${opening.title}”${cvText ? ", with their saved profile in place of a CV" : ""}`,
     detail: {
       prospect_id: prospect.id,
       job_id: input.job_id,

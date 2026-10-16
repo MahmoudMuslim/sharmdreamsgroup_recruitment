@@ -36,6 +36,7 @@ import {
 } from "@/modules/settings/application/credential-actions";
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
 import { SECTORS } from "@/modules/settings/domain/vocabularies";
+import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
 import { getJobOpening, listJobOpenings } from "@/modules/assistant/infrastructure/reads";
 import {
   getQuestionsForEditor,
@@ -214,7 +215,6 @@ function report<T extends { ok: boolean; error?: string }>(
 }
 
 const STAGES = ["NEW", "AI_SCREENING", "ASSESSMENT", "INTERVIEW", "OFFER", "HIRED", "REJECTED"];
-const JOB_STATUSES = ["DRAFT", "PUBLISHED", "PAUSED", "CLOSED"];
 const APPLICATION_SOURCES = ["LINKEDIN", "WHATSAPP", "JOB_BOARD", "CAREER_SITE", "REFERRAL", "ATS_IMPORT"];
 
 /** Everything `create_job` / `update_job` write, so both paths stay identical. */
