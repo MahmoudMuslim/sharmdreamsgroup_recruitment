@@ -107,6 +107,10 @@ function toJob(row: Record<string, unknown>): OutboxJob {
  * narrows the *read*, not only the view, so a row the page claims to list can
  * never sit below the cap. The counts beside them are all-time and per bucket:
  * a chip has to describe its own set even while the list is showing another one.
+ *
+ * They are not interchangeable filters: `bucket` narrows the queue and `failed`
+ * the delivery log, which is why the view's scope note and `outboxScopeNote`
+ * both say which of the two tables a read trimmed.
  */
 export async function getOutbox(input: {
   bucket?: OutboxBucket | null;
@@ -137,6 +141,15 @@ export async function getOutbox(input: {
     .eq("direction", "OUTBOUND")
     .eq("delivered", false);
 
+  const queueRead = status ? queueBase.eq("status", status) : queueBase;
+  // `DUE` and `WAITING` are one PENDING status, so the send-time line the chips
+  // count by has to travel into the read too. Without it a request for the due
+  // column handed back the scheduled alerts as well, and a chat answer or the
+  // page's own list would name rows that are not in the column it claims — which
+  // is the same line `countBucket` draws below and `bucketOf` draws in the view.
+  if (input.bucket === "DUE") queueRead.lte("scheduled_for", now);
+  else if (input.bucket === "WAITING") queueRead.gt("scheduled_for", now);
+
   // `DUE` and `WAITING` are one `PENDING` status split by whether the send time
   // has arrived, which is the same line `bucketOf()` draws in the view.
   const countBucket = (bucket: OutboxBucket) => {
@@ -151,9 +164,7 @@ export async function getOutbox(input: {
 
   const [queue, log, roster, failedLog, allCount, due, waiting, sentCount, parked] =
     await Promise.all([
-      (status ? queueBase.eq("status", status) : queueBase)
-        .order("created_at", { ascending: false })
-        .limit(QUEUE_PAGE_LIMIT),
+      queueRead.order("created_at", { ascending: false }).limit(QUEUE_PAGE_LIMIT),
       (input.failed ? logBase.eq("delivered", false) : logBase)
         .order("created_at", { ascending: false })
         .limit(LOG_PAGE_LIMIT),

@@ -34,6 +34,12 @@ import {
   type ProspectStage,
 } from "@/app/(admin)/sourcing/pool-model";
 import { cancelWhatsAppJob, getOutbox, queueWhatsAppMessage } from "@/app/(admin)/whatsapp/actions";
+import {
+  OUTBOX_BUCKETS,
+  emailScopeNote,
+  outboxScopeNote,
+  type OutboxBucket,
+} from "@/app/(admin)/whatsapp/outbox-model";
 import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import {
@@ -922,16 +928,34 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_outbox",
     label: "Reading message outbox",
     description:
-      "The WhatsApp outbox: queued and sent jobs with their status and attempts, plus the most recent delivery log. `totals` counts every job in the queue and every undelivered row in the log — the same numbers the outbox chips and the attention feed show, so quote those rather than counting the rows returned here.",
-    args: {},
-    run: async () => {
-      const outbox = await getOutbox();
+      "The WhatsApp outbox: queued and sent jobs with their status and attempts, plus the most recent delivery log. `bucket` is the queue's own column rail and is answered by the database; `failed` narrows the delivery log to the rows the channel refused. They are the two rails /whatsapp reads off its address bar, so pass them and the click-through shows the same set. `totals` counts every job and every undelivered log row whether a rail is lit or not, and the two rails narrow two different tables — so quote `scope_note` rather than counting the rows returned here.",
+    args: {
+      bucket: `string — optional, one of ${OUTBOX_BUCKETS.join(", ")} — the queue column to read, ALL for every column`,
+      failed:
+        "boolean — optional, true for the delivery-log rows the channel refused, which is what the alerts count",
+    },
+    run: async (args) => {
+      const bucket = optionalChoice(args, "bucket", OUTBOX_BUCKETS) as OutboxBucket | null;
+      const failed = bool(args, "failed", false);
+      const outbox = await getOutbox({ bucket, failed });
+      const queued = outbox.jobs.slice(0, 40);
+      const deliveries = outbox.history.slice(0, 15);
       return {
+        scope_note: outboxScopeNote({
+          bucket: bucket ?? "ALL",
+          failed,
+          shown: queued.length,
+          loaded: outbox.jobs.length,
+          logShown: deliveries.length,
+          logLoaded: outbox.history.length,
+          buckets: outbox.buckets,
+          failedLogTotal: outbox.failedLogTotal,
+        }),
         totals: {
           ...outbox.buckets,
           undelivered_log_rows: outbox.failedLogTotal,
         },
-        queued: outbox.jobs.slice(0, 40).map((job) => ({
+        queued: queued.map((job) => ({
           id: job.id,
           candidate_name: job.candidate_name,
           recipient_phone: job.recipient_phone,
@@ -942,7 +966,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           error_log: job.error_log,
           text: clip(job.text, 300),
         })),
-        recent_deliveries: outbox.history.slice(0, 15).map((row) => ({
+        recent_deliveries: deliveries.map((row) => ({
           recipient: row.recipient,
           candidate_name: row.candidate_name,
           delivered: row.delivered,
@@ -1351,13 +1375,23 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_email_outbox",
     label: "Reading the email outbox",
     description:
-      "The most recent emails the portal tried to send, with recipient, subject, delivered flag and the error when it failed. `totals` counts every email and notice in the log, delivered or not, which is what the panel's tiles and the attention feed report.",
-    args: {},
-    run: async () => {
-      const outbox = await getEmailOutbox();
+      "The most recent emails the portal tried to send, with recipient, subject, delivered flag and the error when it failed. `failed` narrows the read to the mails the relay refused — the same rail `?failed=1` opens on the outbox page. `totals` counts every email and notice in the log, delivered or not, whether the rail is lit or not, so quote `scope_note` with it: it says which half of the log the rows are from and that portal notices are inbox rows, not mail.",
+    args: {
+      failed: "boolean — optional, true for the sends the relay refused",
+    },
+    run: async (args) => {
+      const failed = bool(args, "failed", false);
+      const outbox = await getEmailOutbox({ failed });
+      const listed = outbox.emails.slice(0, 30);
       return {
+        scope_note: emailScopeNote({
+          failed,
+          shown: listed.length,
+          loaded: outbox.emails.length,
+          totals: outbox.totals,
+        }),
         totals: outbox.totals,
-        sent: outbox.emails.slice(0, 30).map((row) => ({
+        emails: listed.map((row) => ({
           id: row.id,
           recipient: row.recipient,
           candidate_name: row.candidate_name,

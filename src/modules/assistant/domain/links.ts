@@ -1,6 +1,7 @@
 import { PIPELINE_STAGES, APPLICATION_SOURCES } from "@/modules/candidates/domain/listFilters";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
 import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
+import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -296,8 +297,21 @@ export function linkForTool(
     case "delete_prospect":
       return { href: "/sourcing", label: "Open the sourcing board" };
     case "list_outbox":
-    case "list_email_outbox":
-      return { href: "/whatsapp", label: "Open the outbox" };
+    case "list_email_outbox": {
+      // Both rails are query parameters on this page, so the click-through opens
+      // the set the answer just counted rather than the whole outbox. `ALL` is the
+      // unlit view and earns no parameter — a link carrying `?bucket=ALL` would
+      // look scoped while the queue shows every column. `list_email_outbox` takes
+      // no bucket, so its link narrows the refused rows and leaves the columns.
+      const bucket = named(args.bucket, OUTBOX_BUCKETS);
+      return {
+        href: `/whatsapp${query([
+          ["bucket", bucket && bucket !== "ALL" ? bucket : null],
+          ["failed", args.failed === true || args.failed === "true" ? "1" : null],
+        ])}`,
+        label: "Open the outbox",
+      };
+    }
     case "list_model_routing":
       return {
         href: "/settings?area=providers&section=models",

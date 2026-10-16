@@ -116,13 +116,20 @@ export function firstOf<T>(value: T | T[] | null | undefined): T | null {
 /**
  * The queue's own columns, in the order the rail shows them.
  *
- * `DUE` and `WAITING` are both `PENDING` rows, split by whether their send time
- * has arrived, so a server-side filter can only ever narrow to `PENDING` — the
- * view then puts each row in the column it belongs to.
+ * `DUE` and `WAITING` are both `PENDING` rows, split by whether the send time has
+ * arrived. Status alone cannot tell them apart, so `getOutbox` carries the
+ * `scheduled_for` line into the read too and `bucketOf` draws the same line per
+ * row for its badge: an answer that asked for the due column and got the
+ * scheduled alerts with it would name rows that are not in the column it claims.
  */
 export const OUTBOX_BUCKETS = ["ALL", "DUE", "WAITING", "SENT", "FAILED"] as const;
 
-/** The `status` a bucket narrows the queue read to, or `null` for "read it all". */
+/**
+ * The `status` a bucket narrows the queue read to, or `null` for "read it all".
+ *
+ * `DUE` and `WAITING` share the one status, so their read adds the send-time
+ * filter beside this — see `getOutbox`.
+ */
 export const QUEUE_STATUS_BY_BUCKET: Record<OutboxBucket, QueueStatus | null> = {
   ALL: null,
   DUE: "PENDING",
@@ -155,3 +162,117 @@ export function isFailedView(value: unknown): boolean {
  * would repeat the mistake `src/modules/analytics/domain/report.ts` documents.
  */
 export const DELIVERED_LOG_CHANNELS = ["WHATSAPP", "EMAIL"] as const;
+
+/* -------------------------------------------------------------------------- */
+/* Scope notes                                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What an outbox read is standing on, in the words the answer quotes back.
+ *
+ * The queue and the delivery log are two tables with two different notions of
+ * "failed": a `FAILED` job is one the relay gave up on, a refused log row is a
+ * send the channel wrote down as undelivered, and the same trouble usually makes
+ * both. So a read that narrows one of them has to say it narrowed only one —
+ * otherwise `failed` reads as if it trimmed the queue as well as the log. The
+ * chips keep counting the whole queue on purpose, the way the candidates' rails
+ * do: a lit column that re-counted its neighbours' sets could not be compared
+ * with them, which is the only reason to click one.
+ */
+export function outboxScopeNote(input: {
+  bucket: OutboxBucket;
+  failed: boolean;
+  shown: number;
+  loaded: number;
+  logShown: number;
+  logLoaded: number;
+  buckets: Record<OutboxBucket, number>;
+  failedLogTotal: number;
+}): string {
+  const { bucket, failed, shown, loaded, logShown, logLoaded, buckets: counts, failedLogTotal } = input;
+  const apps = (n: number) => n.toLocaleString();
+  const queue =
+    bucket === "ALL"
+      ? `The queue chips count ${apps(counts.ALL)} jobs in all, and this read carries ${apps(loaded)}.`
+      : `The ${bucket} column holds ${apps(counts[bucket])} of the ${apps(
+          counts.ALL
+        )} jobs the chips count, and this read carries ${apps(loaded)}. Those chip numbers stay whole on purpose so a lit column is still comparable with its neighbours.`;
+  const window =
+    loaded === 0
+      ? "Nothing is in the set this read asks for, so this answer names none."
+      : shown === loaded
+        ? `This answer names every one of the ${apps(shown)}.`
+        : `This answer names ${apps(shown)} of the ${apps(loaded)} the read carries.`;
+  const cap =
+    loaded >= QUEUE_PAGE_LIMIT
+      ? ` The queue read stops at the newest ${apps(QUEUE_PAGE_LIMIT)}, so a job older than that window is out of reach from here.`
+      : "";
+  // Only say a row is outside the window when the read actually filled it — the
+  // live log holds fewer rows than the cap, and a note that claimed a window
+  // nobody reached would be the sort of hedge this console is meant to stop.
+  const logCap =
+    logLoaded >= LOG_PAGE_LIMIT
+      ? ` The log read stops at the newest ${apps(LOG_PAGE_LIMIT)}, so an older outcome is out of reach from here.`
+      : "";
+  const log = failed
+    ? `The ${apps(logShown)} delivery rows below are refused sends only: the whole log holds ${apps(
+        failedLogTotal
+      )} undelivered rows and this read carried ${apps(logLoaded)} of them.${logCap} A refused log row and a FAILED job are two counts of the same trouble, not twice the work.`
+    : `The ${apps(logShown)} delivery rows below are the newest of the ${apps(
+        logLoaded
+      )} outcomes the channel wrote down, refused or not, and ${apps(
+        failedLogTotal
+      )} rows in the whole log are undelivered.${logCap}`;
+  return `${queue} ${window}${cap} ${log}`;
+}
+
+/**
+ * What an email log read is standing on.
+ *
+ * Same trap, different table: the panel's tiles count every attempt on the
+ * channel, while the rows are a capped window and `failed` narrows only the
+ * emails. Portal notices are inbox rows, not relayed sends, so they are never in
+ * this answer at all — the note names them rather than letting a notice count
+ * look like a mail the relay refused.
+ */
+export function emailScopeNote(input: {
+  failed: boolean;
+  shown: number;
+  loaded: number;
+  totals: { emailsDelivered: number; emailsFailed: number; noticesUnread: number; noticesRead: number };
+}): string {
+  const { failed, shown, loaded, totals } = input;
+  const apps = (n: number) => n.toLocaleString();
+  const attempts = totals.emailsDelivered + totals.emailsFailed;
+  const held = `The email log holds ${apps(attempts)} send${
+    attempts === 1 ? "" : "s"
+  }: ${apps(totals.emailsDelivered)} accepted, ${apps(totals.emailsFailed)} refused.`;
+  // One sentence per case: a note that states the same number twice reads as two
+  // different counts, and "1 of the 1" is not a sentence anybody can quote back.
+  const newest = `carries the newest ${apps(loaded)} attempt${loaded === 1 ? "" : "s"}, delivered or not`;
+  const listed =
+    loaded === 0
+      ? `Nothing is left once this read ${failed ? "keeps only refused sends" : "takes the newest attempts"}, so it names none.`
+      : shown < loaded
+        ? `This read ${
+            failed
+              ? `carries ${apps(loaded)} of the ${apps(totals.emailsFailed)} refused sends the log holds`
+              : newest
+          }; this answer names ${apps(shown)} of them.`
+        : `This read ${
+            failed
+              ? `carries every one of the ${apps(totals.emailsFailed)} refused sends the log holds`
+              : newest
+          }, and this answer names all ${apps(shown)}.`;
+  // What the read was asking for, so the window is measured against the right
+  // half of the log: a refused-only read cannot be short of *every* attempt.
+  const askedFor = failed ? totals.emailsFailed : attempts;
+  const hidden =
+    askedFor > loaded
+      ? ` The other ${apps(askedFor - loaded)} are older than what this read carries and cannot be named from here.`
+      : "";
+  const notices = ` The ${apps(totals.noticesUnread)} unread and ${apps(
+    totals.noticesRead
+  )} opened portal notices are inbox rows, not relayed sends, and are not listed here.`;
+  return `${held} ${listed}${hidden}${notices}`;
+}
