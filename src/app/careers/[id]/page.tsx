@@ -41,6 +41,13 @@ export async function generateMetadata({
   };
 }
 
+/**
+ * Which role is on screen comes from the URL, and a role published after the
+ * build is only known on request — so navigating into this page is not instant,
+ * exactly like every other dynamic route here.
+ */
+export const instant = false;
+
 export async function generateStaticParams() {
   // Prerenders every published role at build time. A role published later is
   // picked up on the first request via dynamicParams.
