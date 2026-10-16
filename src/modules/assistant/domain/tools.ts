@@ -65,7 +65,7 @@ import {
   updateCandidateContact,
 } from "@/app/(admin)/candidates/candidate-actions";
 import { getCandidateDossier } from "@/app/(admin)/candidates/dossier-actions";
-import { readAttachmentAsCv } from "@/app/(admin)/candidates/cv-actions";
+import { readAttachmentAsCv, readRecordCv } from "@/app/(admin)/candidates/cv-actions";
 import {
   generateInterviewGuide,
   rescheduleInterview,
@@ -1549,20 +1549,22 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   },
   {
     name: "read_candidate_cv",
-    label: "Reading an attached CV into the record",
+    label: "Reading a CV into the record",
     description:
-      "Parse a file already attached to a candidate and store its text on the row, which is what AI screening reads. Attaching alone does not do this. Refuses when the record already holds CV text — that replacement is a decision for the recruiter on their own screen, so tell them to use Read as CV there.",
+      "Parse a CV file already held for a candidate and store its text on the row, which is what AI screening and the profile read. Give an attachment_id for a file staff attached, or leave it out to read the CV the applicant submitted with their application. Refuses when the record already holds CV text — that replacement is a decision for the recruiter on their own screen, so tell them to use Read as CV there.",
     args: {
       application_id: "string",
-      attachment_id: "string — from list_files or the candidate dossier",
+      attachment_id: "string — optional, from list_files or the candidate dossier; omit for the CV on the record",
     },
-    run: async (args) =>
-      report(
-        await readAttachmentAsCv({
-          applicationId: str(args, "application_id"),
-          attachmentId: str(args, "attachment_id"),
-        })
-      ),
+    run: async (args) => {
+      const applicationId = str(args, "application_id");
+      const attachmentId = optionalStr(args, "attachment_id");
+      return report(
+        attachmentId
+          ? await readAttachmentAsCv({ applicationId, attachmentId })
+          : await readRecordCv({ applicationId })
+      );
+    },
   },
   {
     name: "message_candidates",

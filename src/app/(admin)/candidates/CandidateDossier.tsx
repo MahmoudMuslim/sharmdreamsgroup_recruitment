@@ -22,6 +22,7 @@ import { humanizeStage } from "@/modules/settings/domain/templates";
 import { getCandidateDossier, type CandidateDossier as DossierData } from "./dossier-actions";
 import type { DossierAttempt } from "./dossier-actions";
 import { AttachmentPanel } from "./AttachmentPanel";
+import { readRecordCv } from "./cv-actions";
 import {
   deleteAttempt,
   extendAttemptLink,
@@ -338,6 +339,8 @@ export function CandidateDossier({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(true);
   const [retry, setRetry] = useState(0);
+  const [cvBusy, setCvBusy] = useState(false);
+  const [cvNote, setCvNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -368,6 +371,37 @@ export function CandidateDossier({
   function reload() {
     setPending(true);
     setRetry((n) => n + 1);
+  }
+
+  /**
+   * The career site parses an applicant's own CV when they apply, and if that
+   * parse comes out empty the record keeps the file but shows no text — only
+   * the screening engine can still reach it, because only it falls back to
+   * storage. This runs the stored file through the same reader a staff
+   * attachment uses, so the profile and every other CV reader see it too.
+   */
+  async function readStoredCv() {
+    setCvBusy(true);
+    setCvNote(null);
+    try {
+      let result = await readRecordCv({ applicationId });
+
+      if (!result.ok && result.needsReplace) {
+        if (!window.confirm(`${result.error}\n\nThe text already on file is lost.`)) return;
+        result = await readRecordCv({ applicationId, replace: true });
+      }
+
+      if (!result.ok) {
+        setCvNote({ tone: "error", text: result.error ?? "The stored CV could not be read." });
+        return;
+      }
+      setCvNote({ tone: "ok", text: result.note ?? "Read the stored CV into the record." });
+      reload();
+    } catch {
+      setCvNote({ tone: "error", text: "Something went wrong reading the stored CV." });
+    } finally {
+      setCvBusy(false);
+    }
   }
 
   if (pending && !dossier) {
@@ -472,11 +506,38 @@ export function CandidateDossier({
             </pre>
           ) : (
             !app.cv_error && (
-              <p className="mt-2 text-xs text-brand-ink/50">
-                {app.cv_name
-                  ? "No text could be read from this file — open it to read the CV as submitted."
-                  : "No CV text on this record — attach the file under Files added by staff, then use Read as CV so the screening engine can use it."}
-              </p>
+              <div className="mt-2">
+                <p className="text-xs text-brand-ink/50">
+                  {app.cv_name
+                    ? "No text has been read out of the stored CV, so nothing below can quote it and AI screening has to re-read the file."
+                    : "No CV text on this record — attach the file under Files added by staff, then use Read as CV so the screening engine can use it."}
+                </p>
+                {app.cv_name && dossier.can_write && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={readStoredCv}
+                    disabled={cvBusy}
+                  >
+                    {cvBusy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : (
+                      <FileText className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    Read the stored CV
+                  </Button>
+                )}
+                {cvNote && (
+                  <p
+                    className={`mt-2 text-xs ${
+                      cvNote.tone === "error" ? "text-rose-700" : "text-emerald-700"
+                    }`}
+                  >
+                    {cvNote.text}
+                  </p>
+                )}
+              </div>
             )
           )}
         </div>

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -23,6 +24,9 @@ export interface CvReadResult {
    */
   needsReplace?: boolean;
 }
+
+/** The private bucket the career site writes applicant CVs into. */
+const CV_RECORD_BUCKET = "candidate-cvs";
 
 /** The formats the parser can read text out of; a voice note is not a CV. */
 const CV_TYPES = new Set([
@@ -51,6 +55,27 @@ function typeFor(fileName: string, declared: string | null): string {
 
 function withCommas(value: number): string {
   return value.toLocaleString("en-US");
+}
+
+/**
+ * A stored object is only worth parsing if it is still the document its name
+ * claims. Three live applicant rows hold a 9 KB Google sign-in page saved under
+ * a `.pdf` name, and pdf.js answers that with "Invalid PDF structure" — a
+ * recruiter-facing sentence about a broken tool when the truth is that no CV
+ * was ever uploaded.
+ */
+function notADocument(buffer: Buffer, mime: string): string | null {
+  if (mime === "text/plain") {
+    // Bytes are already text, so there is nothing to mislabel.
+    return null;
+  }
+  const head = buffer.subarray(0, 4).toString("latin1");
+  if (mime === "application/pdf") {
+    return head.startsWith("%PDF") ? null : "The stored file is not a PDF — its bytes came from a web page, so no CV was ever uploaded.";
+  }
+  return head.startsWith("PK")
+    ? null
+    : "The stored file is not a Word document — its bytes came from something else.";
 }
 
 /**
@@ -96,6 +121,90 @@ export async function readAttachmentAsCv(input: {
     return { ok: false, error: "That file is no longer attached to this candidate." };
   }
 
+  return storeCvText(supabase, {
+    applicationId: input.applicationId,
+    replace: input.replace,
+    source: {
+      bucket: String(file.bucket),
+      path: String(file.storage_path),
+      fileName: String(file.file_name ?? "the file"),
+      declaredMime: (file.mime_type as string | null) ?? null,
+      origin: `attachment ${String(file.id)}`,
+    },
+  });
+}
+
+/**
+ * Reads the CV the candidate themselves submitted into `applications.cv_text`.
+ *
+ * The career site parses the upload on apply and stores whatever came out. When
+ * that parse fails — a download blip, a format the parser learned later — the
+ * row keeps `cv_file_path` and no text, and only the screening engine can still
+ * reach the file, because it alone falls back to storage. Every other reader of
+ * the record (the profile's CV panel, the assistant, anything that quotes the CV)
+ * then shows an empty section with a file sitting right there.
+ */
+export async function readRecordCv(input: {
+  applicationId: string;
+  replace?: boolean;
+}): Promise<CvReadResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "Reading a CV into a record needs the Edit candidates permission." };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: application } = await supabase
+    .from("applications")
+    .select("cv_file_path")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+
+  if (!application) {
+    return { ok: false, error: "This candidate record is no longer in your pipeline." };
+  }
+
+  const path = (application.cv_file_path as string | null) ?? "";
+  if (!path) {
+    return { ok: false, error: "No CV file is stored on this record — attach one first." };
+  }
+
+  return storeCvText(supabase, {
+    applicationId: input.applicationId,
+    replace: input.replace,
+    source: {
+      bucket: CV_RECORD_BUCKET,
+      path,
+      fileName: path.split("/").pop() ?? path,
+      declaredMime: null,
+      origin: "the CV on the record",
+    },
+  });
+}
+
+interface CvReadSource {
+  bucket: string;
+  path: string;
+  fileName: string;
+  declaredMime: string | null;
+  /** How the trail names where the text came from. */
+  origin: string;
+}
+
+/**
+ * The single body behind both doors: permission check, the replace refusal,
+ * download, parse, write, trail and revalidation. Two ways in, one set of rules.
+ */
+async function storeCvText(
+  supabase: SupabaseClient,
+  input: {
+    applicationId: string;
+    replace?: boolean;
+    source: CvReadSource;
+  }
+): Promise<CvReadResult> {
   const { data: application } = await supabase
     .from("applications")
     .select("id, full_name, cv_text")
@@ -106,7 +215,7 @@ export async function readAttachmentAsCv(input: {
     return { ok: false, error: "This candidate record is no longer in your pipeline." };
   }
 
-  const mime = typeFor(String(file.file_name ?? ""), (file.mime_type as string | null) ?? null);
+  const mime = typeFor(input.source.fileName, input.source.declaredMime);
   if (!CV_TYPES.has(mime)) {
     return { ok: false, error: "Only a PDF, Word document or text file can be read as a CV." };
   }
@@ -121,8 +230,8 @@ export async function readAttachmentAsCv(input: {
   }
 
   const { data: object, error: downloadError } = await supabase.storage
-    .from(String(file.bucket))
-    .download(String(file.storage_path));
+    .from(input.source.bucket)
+    .download(input.source.path);
 
   if (downloadError || !object) {
     return {
@@ -134,8 +243,13 @@ export async function readAttachmentAsCv(input: {
   }
 
   let text: string;
+  const buffer = Buffer.from(await object.arrayBuffer());
+  const mislabelled = notADocument(buffer, mime);
+  if (mislabelled) {
+    return { ok: false, error: mislabelled };
+  }
   try {
-    const extracted = await extractCvText(Buffer.from(await object.arrayBuffer()), mime);
+    const extracted = await extractCvText(buffer, mime);
     text = extracted.text.trim();
   } catch (error) {
     return {
@@ -178,13 +292,14 @@ export async function readAttachmentAsCv(input: {
     entityId: input.applicationId,
     summary: `Read ${withCommas(text.length)} characters of CV text into ${
       application.full_name ?? "a candidate"
-    }'s record from “${String(file.file_name ?? "the file").slice(0, 60)}”${
+    }'s record from ${input.source.origin}${
       replacing ? " — replacing the text already on file" : ""
     }`,
     detail: {
-      attachment_id: String(file.id),
-      bucket: String(file.bucket),
-      storage_path: String(file.storage_path),
+      source: input.source.origin,
+      bucket: input.source.bucket,
+      storage_path: input.source.path,
+      file_name: input.source.fileName.slice(0, 80),
       mime_type: mime,
       characters: text.length,
       replaced: held.slice(0, 120),
