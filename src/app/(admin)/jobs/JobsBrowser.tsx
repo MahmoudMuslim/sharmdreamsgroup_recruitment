@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { BriefcaseBusiness, CalendarClock, MapPin, Search, Users } from "lucide-react";
 import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
+import { isHireable } from "@/modules/jobs/domain/hireable";
 import { JobCardActions } from "./JobCardActions";
 import { JobApplicantsDrawer } from "./JobApplicantsDrawer";
 import type { JobForEdit, JobFormOptions } from "./JobFormDrawer";
@@ -31,6 +32,35 @@ function applicantsOf(job: JobRow) {
   return job.applications?.[0]?.count ?? 0;
 }
 
+/**
+ * Whether an opening sits under the rail the grid is showing.
+ *
+ * `HIREABLE` is not a `job_status` — it is the set a person may still be filed
+ * under, which is what the assistant's own `status` argument calls it. It has a
+ * rail here so an answer that counted those roles links to a grid holding them,
+ * rather than to one where the recruiter has to add up three chips to see the
+ * same set.
+ */
+function onRail(job: JobRow, rail: string): boolean {
+  if (!rail) return true;
+  return rail === "HIREABLE" ? isHireable(job.status) : job.status === rail;
+}
+
+/** Which rails `?status=` may name: the four statuses, plus the hireable set. */
+const RAIL_TOKENS: readonly string[] = [...STATUSES, "HIREABLE"];
+
+/**
+ * The rail a query parameter asks for.
+ *
+ * A token the grid has no chip for is dropped rather than kept: a parameter the
+ * page cannot show would leave the link looking filtered while every opening
+ * stayed on screen.
+ */
+function railToken(value: string | null): string {
+  const token = value?.trim().toUpperCase() ?? "";
+  return RAIL_TOKENS.includes(token) ? token : "";
+}
+
 /** Deadline copy, or null when the opening has no closing date. */
 function closingLabel(closingAt: string | null) {
   if (!closingAt) return null;
@@ -46,7 +76,9 @@ function closingLabel(closingAt: string | null) {
  * Status and company are rails rather than a dropdown because the counts are
  * the information: a recruiter scanning for "what is still in draft, and how
  * much of the pipeline sits under one company" should see it without opening
- * anything.
+ * anything. Which rail is lit is held in the address bar, so the view a
+ * recruiter lands on from the chat — or from a link pasted into a call — is the
+ * view the grid shows.
  */
 export function JobsBrowser({
   jobs,
@@ -61,13 +93,61 @@ export function JobsBrowser({
   canDecide: boolean;
 }) {
   const params = useSearchParams();
-  const [status, setStatus] = useState<string>("");
-  const [company, setCompany] = useState<string>("");
+  const pathname = usePathname();
+
+  /*
+   * The two rails are read out of the address bar instead of held in local
+   * state, so the chip that is lit, the openings under it and the link a
+   * recruiter can copy describe one set — and an assistant answer that counted
+   * the DRAFT roles lands on DRAFT rather than on a grid holding everything.
+   */
+  const status = railToken(params.get("status"));
+  const company = params.get("company") ?? "";
+
   // `?q=` seeds the box, so an assistant answer that searched for a role links to
-  // a grid showing the same openings — the rails above stay local state.
+  // a grid showing the same openings. The words stay local while they are typed:
+  // the box is written into the URL by the next rail click, not per keystroke.
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
   const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
+
+  // Arriving on the same route with different words — a chat link clicked while
+  // the grid is already open — re-renders this component rather than remounting
+  // it, so an incoming `?q=` is applied to the box here as well as above. Typing
+  // wins until the URL itself changes, which is why the last value taken from
+  // the address bar is tracked rather than compared to what is in the box.
+  const incomingQuery = params.get("q");
+  const [lastAppliedQuery, setLastAppliedQuery] = useState(incomingQuery);
+  if (incomingQuery !== lastAppliedQuery) {
+    setLastAppliedQuery(incomingQuery);
+    setQuery(incomingQuery ?? "");
+  }
+
+  /**
+   * Move a rail and put the view into the URL.
+   *
+   * `history.replaceState` is enough here and is chosen over a router push on
+   * purpose: this Next build patches those calls into the router, so
+   * `useSearchParams` re-renders with the new query while the openings the
+   * client already holds do the filtering — a rail on this grid is a view of
+   * rows already loaded, not a fresh question to the database. A rail click
+   * replaces the history entry, so Back leaves the page instead of replaying
+   * chips, and it carries the search words along because both filters are the
+   * grid's own. `?job=` goes, and with it the applicants drawer: a rail is a
+   * question about the set, not about one opening, and the ring or the open
+   * drawer may be pointing at a row the new rail no longer shows.
+   */
+  function openRail(rail: { status?: string; company?: string }) {
+    setApplicantsJob(null);
+    const next = new URLSearchParams();
+    const statusToken = "status" in rail ? (rail.status ?? "") : status;
+    const companyToken = "company" in rail ? (rail.company ?? "") : company;
+    if (statusToken) next.set("status", statusToken);
+    if (companyToken) next.set("company", companyToken);
+    if (query.trim()) next.set("q", query);
+    const search = next.toString();
+    window.history.replaceState(null, "", search ? `${pathname}?${search}` : pathname);
+  }
 
   // `?job=` is where the assistant's "View the opening" link lands. The opening
   // is ringed and brought into view rather than filtered to, so the recruiter
@@ -100,6 +180,8 @@ export function JobsBrowser({
 
   const totalApplicants = useMemo(() => jobs.reduce((sum, j) => sum + applicantsOf(j), 0), [jobs]);
   const maxApplicants = Math.max(...jobs.map(applicantsOf), 1);
+  /** The last chip's own count — the same predicate `onRail` answers for it. */
+  const hireableCount = useMemo(() => jobs.filter((job) => onRail(job, "HIREABLE")).length, [jobs]);
 
   /**
    * Rails, then the shared text search, then the order.
@@ -112,9 +194,7 @@ export function JobsBrowser({
   const visible = useMemo(() => {
     const rows = searchOpenings(
       jobs
-        .filter(
-          (job) => (!status || job.status === status) && (!company || job.tenant_id === company)
-        )
+        .filter((job) => onRail(job, status) && (!company || job.tenant_id === company))
         .map((job) => ({ ...job, company_name: companyNames(job.tenant_id) })),
       query
     );
@@ -189,21 +269,25 @@ export function JobsBrowser({
         </div>
 
         <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-          <FilterRail
-            label="All"
-            count={jobs.length}
-            active={status === ""}
-            onClick={() => setStatus("")}
-          />
+          <FilterRail label="All" count={jobs.length} active={status === ""} onClick={() => openRail({ status: "" })} />
           {STATUSES.map((s) => (
             <FilterRail
               key={s}
               label={s.charAt(0) + s.slice(1).toLowerCase()}
               count={statusCounts.get(s) ?? 0}
               active={status === s}
-              onClick={() => setStatus(status === s ? "" : s)}
+              onClick={() => openRail({ status: status === s ? "" : s })}
             />
           ))}
+          {/* A role nobody may be filed under is not a vacancy, so the set that
+              is still live gets its own chip — and the assistant's `HIREABLE`
+              answer, which counts exactly this, has a rail to land on. */}
+          <FilterRail
+            label="Still hiring"
+            count={hireableCount}
+            active={status === "HIREABLE"}
+            onClick={() => openRail({ status: status === "HIREABLE" ? "" : "HIREABLE" })}
+          />
         </div>
 
         {companyCounts.length > 1 && (
@@ -218,7 +302,7 @@ export function JobsBrowser({
                 count={count}
                 tone="muted"
                 active={company === id}
-                onClick={() => setCompany(company === id ? "" : id)}
+                onClick={() => openRail({ company: company === id ? "" : id })}
               />
             ))}
           </div>
