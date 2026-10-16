@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { ChevronsLeft, ChevronsRight, Sparkles, X } from "lucide-react";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
-import { NAV, ROLE_LABEL } from "@/modules/analytics/presentation/nav";
+import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import { AppBar } from "@/modules/shell/presentation/AppBar";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
 import {
@@ -48,6 +48,14 @@ function CollapseToggle({
   );
 }
 
+/**
+ * The rail itself: the nav table cut into its four groups, one row per page.
+ *
+ * A row stays one line tall and only the page you are standing on unfurls its
+ * description — the other fourteen hand theirs over on hover, which is what keeps
+ * fifteen doors scannable instead of a wall of subtext. Folded, the group headers
+ * give way to hairlines.
+ */
 function NavLinks({
   collapsed = false,
   onNavigate,
@@ -56,60 +64,92 @@ function NavLinks({
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
+  const on = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
   return (
-    <nav aria-label="Main" className="flex flex-col gap-1">
-      {NAV.map(({ href, label, icon: Icon, hint }) => {
-        const active = pathname === href || pathname.startsWith(`${href}/`);
+    <nav aria-label="Main" className="flex flex-col gap-3">
+      {navSections().map((group, index) => {
+        // The heading over the group you are in is tinted, so a folded rail of
+        // icons still tells you which block of the portal you are standing in.
+        const here = group.items.some((item) => on(item.href));
         return (
-          <Link
-            key={href}
-            href={href}
-            onClick={onNavigate}
-            aria-current={active ? "page" : undefined}
-            aria-label={collapsed ? label : undefined}
-            title={collapsed ? label : undefined}
-            className={cn(
-              "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition",
-              collapsed && "justify-center px-0",
-              active
-                ? "bg-gradient-to-r from-brand-ink to-brand-ink/85 text-brand-cream shadow-lift"
-                : "text-brand-ink/70 hover:bg-white hover:text-brand-ink hover:shadow-soft"
+          <div key={group.title}>
+            {!collapsed && (
+              <p
+                className={cn(
+                  "mb-1.5 flex items-center gap-2 px-2 text-[10px] font-bold uppercase tracking-[0.16em]",
+                  here ? "text-brand-gold-dark" : "text-brand-ink/35"
+                )}
+              >
+                {group.title}
+                <span className="h-px flex-1 bg-brand-line" aria-hidden />
+              </p>
             )}
-          >
-            {active && (
-              <span
-                className="absolute -left-1 inset-y-2 w-[3px] rounded-full bg-brand-gold"
-                aria-hidden
-              />
+            {collapsed && index > 0 && (
+              <span className="mx-2 mb-2.5 block h-px bg-brand-line" aria-hidden />
             )}
-            <Icon
-              className={cn(
-                "h-[18px] w-[18px] shrink-0 transition group-hover:scale-110",
-                active ? "text-brand-gold-light" : "text-brand-ink/45 group-hover:text-brand-gold"
-              )}
-              aria-hidden
-            />
-            {collapsed ? null : (
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-semibold leading-tight">{label}</span>
-                <span
-                  className={cn(
-                    "block truncate text-[11px] leading-tight",
-                    active ? "text-brand-cream/55" : "text-brand-ink/40"
-                  )}
-                >
-                  {hint}
-                </span>
-              </span>
-            )}
-            {active && !collapsed && (
-              <span
-                className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-gold-light"
-                aria-hidden
-              />
-            )}
-          </Link>
+            <div className="flex flex-col gap-0.5">
+              {group.items.map(({ href, label, icon: Icon, hint }) => {
+                const active = on(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={onNavigate}
+                    aria-current={active ? "page" : undefined}
+                    aria-label={collapsed ? label : undefined}
+                    title={collapsed ? label : hint}
+                    className={cn(
+                      "group relative flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm transition",
+                      collapsed && "justify-center px-0",
+                      active
+                        ? "bg-brand-ink text-brand-cream shadow-lift"
+                        : "text-brand-ink/70 hover:bg-white hover:text-brand-ink hover:shadow-soft"
+                    )}
+                  >
+                    {active && (
+                      <span
+                        className="absolute -left-1 inset-y-1.5 w-[3px] rounded-full bg-brand-gold"
+                        aria-hidden
+                      />
+                    )}
+                    <Icon
+                      className={cn(
+                        "h-[18px] w-[18px] shrink-0 transition group-hover:scale-110",
+                        active
+                          ? "text-brand-gold-light"
+                          : "text-brand-ink/45 group-hover:text-brand-gold"
+                      )}
+                      aria-hidden
+                    />
+                    {collapsed ? null : (
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={cn(
+                            "block truncate leading-tight",
+                            active ? "font-bold" : "font-semibold"
+                          )}
+                        >
+                          {label}
+                        </span>
+                        {active && (
+                          <span className="mt-0.5 block truncate text-[11px] leading-tight text-brand-cream/55">
+                            {hint}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {active && !collapsed && (
+                      <span
+                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-gold-light"
+                        aria-hidden
+                      />
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
         );
       })}
     </nav>
@@ -123,22 +163,19 @@ function EngineNote({ collapsed = false }: { collapsed?: boolean }) {
 
   if (collapsed) {
     return (
-      <div className="mt-4 flex justify-center" title={note}>
-        <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-brand-line bg-white text-brand-gold-dark shadow-soft">
-          <Sparkles className="h-4 w-4" aria-hidden />
+      <div className="mt-3 flex justify-center" title={note}>
+        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand-line bg-white text-brand-gold-dark shadow-soft">
+          <Sparkles className="h-3.5 w-3.5" aria-hidden />
         </span>
       </div>
     );
   }
 
   return (
-    <div className="mt-5 rounded-2xl border border-brand-line bg-white p-4 shadow-soft">
-      <div className="flex items-center gap-2 text-brand-gold-dark">
-        <Sparkles className="h-4 w-4" aria-hidden />
-        <span className="text-[11px] font-bold uppercase tracking-wider">AI engine</span>
-      </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-brand-ink/60">{note}</p>
-    </div>
+    <p className="mt-4 flex gap-2 border-l-2 border-brand-gold/50 pl-3 text-[11px] leading-snug text-brand-ink/50">
+      <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-gold-dark" aria-hidden />
+      {note}
+    </p>
   );
 }
 
@@ -276,11 +313,6 @@ export function AdminShell({
             collapsed ? "px-2" : "px-4"
           )}
         >
-          {!collapsed && (
-            <p className="mb-2 px-3 text-[11px] font-bold uppercase tracking-[0.18em] text-brand-ink/35">
-              Workspace
-            </p>
-          )}
           <NavLinks collapsed={collapsed} />
           <EngineNote collapsed={collapsed} />
         </div>

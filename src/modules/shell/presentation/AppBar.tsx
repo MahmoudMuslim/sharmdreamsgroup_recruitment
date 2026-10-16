@@ -34,7 +34,7 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import { NAV, ROLE_LABEL } from "@/modules/analytics/presentation/nav";
+import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import {
@@ -399,45 +399,54 @@ function GuidePanel({ open }: { open: Panel }) {
 
   return (
     <PanelShell id="guide" open={open} label="Portal guide">
-      <PanelTitle note="The same table the navigation rail renders, so this list cannot fall behind the portal.">
+      <PanelTitle note="The same table and the same four groups the navigation rail renders, so this list cannot fall behind the portal.">
         Where everything is
       </PanelTitle>
 
-      <div className="space-y-0.5">
-        {NAV.map((item) => {
-          const here = pathname === item.href || pathname.startsWith(`${item.href}/`);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "flex items-start gap-3 rounded-xl px-2.5 py-2 transition hover:bg-white hover:shadow-soft",
-                here && "bg-white shadow-soft"
-              )}
-            >
-              <item.icon
-                className={cn(
-                  "mt-0.5 h-4 w-4 shrink-0",
-                  here ? "text-brand-gold-dark" : "text-brand-ink/40"
-                )}
-                aria-hidden
-              />
-              <span className="min-w-0">
-                <span className="block text-sm font-semibold leading-tight">
-                  {item.label}
-                  {here && (
-                    <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-brand-gold-dark">
-                      here now
+      <div className="space-y-3">
+        {navSections().map((group) => (
+          <div key={group.title}>
+            <p className="mb-1 px-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-brand-ink/35">
+              {group.title}
+            </p>
+            <div className="space-y-0.5">
+              {group.items.map((item) => {
+                const here = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "flex items-start gap-3 rounded-xl px-2.5 py-2 transition hover:bg-white hover:shadow-soft",
+                      here && "bg-white shadow-soft"
+                    )}
+                  >
+                    <item.icon
+                      className={cn(
+                        "mt-0.5 h-4 w-4 shrink-0",
+                        here ? "text-brand-gold-dark" : "text-brand-ink/40"
+                      )}
+                      aria-hidden
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold leading-tight">
+                        {item.label}
+                        {here && (
+                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-brand-gold-dark">
+                            here now
+                          </span>
+                        )}
+                      </span>
+                      <span className="block text-[11px] leading-tight text-brand-ink/50">
+                        {item.hint}
+                      </span>
                     </span>
-                  )}
-                </span>
-                <span className="block text-[11px] leading-tight text-brand-ink/50">
-                  {item.hint}
-                </span>
-              </span>
-            </Link>
-          );
-        })}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       <div className="mt-4 border-t border-brand-line pt-3">
