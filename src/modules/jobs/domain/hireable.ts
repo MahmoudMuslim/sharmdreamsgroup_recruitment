@@ -86,13 +86,44 @@ export function pickerWindowNote(total: number, loaded: number): string | null {
  * `scope` is the noun phrase the query asked for — "openings", "openings in
  * DRAFT", "openings you can still hire for" — so the sentence names the set it
  * counted rather than leaving a bare number to be read as "everything".
+ *
+ * `shown` and `search` are the two numbers a text search moves: the read still
+ * carries `loaded`, but the answer now names fewer rows than that, and the words
+ * only ever reached the rows in hand. The grid holds every opening the group has
+ * and can therefore answer "there is no such role"; a chat answer searches the
+ * newest `OPENING_READ_LIMIT` and says so, pointing at `/jobs` as the door that
+ * can answer for the whole set.
  */
-export function openingReadNote(total: number, loaded: number, scope: string): string {
-  if (total <= loaded) {
-    return `All ${scope} are named here (${total.toLocaleString()}).`;
-  }
+export function openingReadNote(
+  total: number,
+  loaded: number,
+  scope: string,
+  shown: number = loaded,
+  search: string | null = null
+): string {
   const dropped = total - loaded;
-  return `This answer names the newest ${loaded.toLocaleString()} of the ${total.toLocaleString()} ${scope} — one read carries ${OPENING_READ_LIMIT.toLocaleString()}, so ${dropped.toLocaleString()} older ${
+  if (total <= loaded) {
+    const base = `All ${scope} are named here (${total.toLocaleString()}).`;
+    if (!search) return base;
+    const hits =
+      shown === 0
+        ? "matched none of them"
+        : shown === total
+          ? "matched every one of them"
+          : `matched ${shown.toLocaleString()} of them`;
+    return `${base} “${search}” ${hits}, and the whole set was searched, so no other opening holds those words.`;
+  }
+  const window = `This answer names the newest ${loaded.toLocaleString()} of the ${total.toLocaleString()} ${scope} — one read carries ${OPENING_READ_LIMIT.toLocaleString()}, so ${dropped.toLocaleString()} older ${
     dropped === 1 ? "role is" : "roles are"
   } not in it. /jobs lists them all.`;
+  if (!search) return window;
+  const hits =
+    shown === 0
+      ? "matched none of those"
+      : shown === loaded
+        ? "matched every one of those"
+        : `matched ${shown.toLocaleString()} of those`;
+  return `${window} “${search}” ${hits} — the ${dropped.toLocaleString()} older ${
+    dropped === 1 ? "opening" : "openings"
+  } beyond the read ${dropped === 1 ? "was" : "were"} never searched, so /jobs may show a role this answer could not see.`;
 }

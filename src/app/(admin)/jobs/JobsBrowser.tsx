@@ -6,6 +6,7 @@ import { BriefcaseBusiness, CalendarClock, MapPin, Search, Users } from "lucide-
 import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
+import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
 import { JobCardActions } from "./JobCardActions";
 import { JobApplicantsDrawer } from "./JobApplicantsDrawer";
 import type { JobForEdit, JobFormOptions } from "./JobFormDrawer";
@@ -62,7 +63,9 @@ export function JobsBrowser({
   const params = useSearchParams();
   const [status, setStatus] = useState<string>("");
   const [company, setCompany] = useState<string>("");
-  const [query, setQuery] = useState("");
+  // `?q=` seeds the box, so an assistant answer that searched for a role links to
+  // a grid showing the same openings — the rails above stay local state.
+  const [query, setQuery] = useState(params.get("q") ?? "");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
   const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
 
@@ -98,17 +101,22 @@ export function JobsBrowser({
   const totalApplicants = useMemo(() => jobs.reduce((sum, j) => sum + applicantsOf(j), 0), [jobs]);
   const maxApplicants = Math.max(...jobs.map(applicantsOf), 1);
 
+  /**
+   * Rails, then the shared text search, then the order.
+   *
+   * The predicate lives in the openings module because the assistant runs the
+   * same words over the openings its own read carries: an opening the chat cannot
+   * find by title must not be one the grid finds seconds later. A company is
+   * resolved to its name first, because that is what a recruiter types.
+   */
   const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const rows = jobs.filter(
-      (job) =>
-        (!status || job.status === status) &&
-        (!company || job.tenant_id === company) &&
-        (!q ||
-          job.title.toLowerCase().includes(q) ||
-          job.department.toLowerCase().includes(q) ||
-          job.location.toLowerCase().includes(q) ||
-          companyNames(job.tenant_id).toLowerCase().includes(q))
+    const rows = searchOpenings(
+      jobs
+        .filter(
+          (job) => (!status || job.status === status) && (!company || job.tenant_id === company)
+        )
+        .map((job) => ({ ...job, company_name: companyNames(job.tenant_id) })),
+      query
     );
     if (sortBy === "applicants") rows.sort((a, b) => applicantsOf(b) - applicantsOf(a));
     else if (sortBy === "title") rows.sort((a, b) => a.title.localeCompare(b.title));
@@ -160,7 +168,7 @@ export function JobsBrowser({
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search title, department, location or company"
+              placeholder={`Search ${openingSearchWords()}`}
               aria-label="Search openings"
               className="w-full rounded-xl border border-brand-line bg-white py-2.5 pl-10 pr-3 text-sm focus:border-brand-gold focus:outline-none"
             />

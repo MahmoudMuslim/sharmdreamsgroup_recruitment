@@ -43,6 +43,7 @@ import {
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
 import { SECTORS } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES, openingReadNote } from "@/modules/jobs/domain/hireable";
+import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
 import {
   APPLICATION_SOURCES,
   PIPELINE_STAGES,
@@ -650,11 +651,12 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_jobs",
     label: "Reading job openings",
     description:
-      "Job openings newest first, with their status, department, location, salary band and applicant count. Quote `scope_note` whenever openings are counted — the read is a window into the set, and the note is the set.",
+      "Job openings newest first, with their status, company, department, location, salary band and applicant count, filtered the way the openings grid's own search box filters. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
     args: {
       status: `string — optional, one of ${JOB_STATUSES.join(
         ", "
       )}, or HIREABLE for every role a person may still be filed under. Omit for all four.`,
+      query: `string — optional, the grid's own search box: ${openingSearchWords()}, matched over the openings this read carries`,
     },
     run: async (args) => {
       const word = optionalStr(args, "status")?.toUpperCase() ?? null;
@@ -664,12 +666,24 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         );
       }
       const filter = (word ?? null) as JobReadFilter;
+      const query = optionalStr(args, "query")?.trim() ?? "";
       const { jobs, total } = await listJobOpenings(filter);
+      // The status rail is answered by the query itself, so only the words are
+      // applied here — through the grid's own predicate, so a role the chat finds
+      // is a role the recruiter can find by typing the same letters.
+      const matched = searchOpenings(jobs, query);
       return {
-        scope_note: openingReadNote(total, jobs.length, openingScopeWords(filter)),
-        openings: jobs.map((job) => ({
+        scope_note: openingReadNote(
+          total,
+          jobs.length,
+          openingScopeWords(filter),
+          matched.length,
+          query || null
+        ),
+        openings: matched.map((job) => ({
           id: job.id,
           title: job.title,
+          company: job.company_name,
           status: job.status,
           department: job.department,
           location: job.location,

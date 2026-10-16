@@ -21,6 +21,15 @@ export interface AssistantJobRow {
   id: string;
   title: string;
   tenant_id: string | null;
+  /**
+   * The company the role belongs to, by name.
+   *
+   * A uuid means nothing in a spoken answer, and the openings search matches a
+   * company by the words a recruiter types rather than by its id — so the read
+   * carries the name, which is what lets the chat search the same column the
+   * grid searches.
+   */
+  company_name: string | null;
   department: string;
   sector: string;
   location: string;
@@ -37,12 +46,13 @@ export interface AssistantJobRow {
 }
 
 const JOB_SELECT =
-  "id, title, tenant_id, department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applications(count)";
+  "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applications(count)";
 
 interface RawJobRow {
   id: string;
   title: string;
   tenant_id: string | null;
+  tenants_and_companies?: { name: string } | { name: string }[] | null;
   department: string | null;
   sector: string | null;
   location: string | null;
@@ -58,11 +68,18 @@ interface RawJobRow {
   applications?: { count: number }[] | null;
 }
 
+function companyNameOf(row: RawJobRow): string | null {
+  const joined = row.tenants_and_companies;
+  const name = Array.isArray(joined) ? joined[0]?.name : joined?.name;
+  return typeof name === "string" && name !== "" ? name : null;
+}
+
 function toJob(row: RawJobRow): AssistantJobRow {
   return {
     id: row.id,
     title: row.title,
     tenant_id: row.tenant_id,
+    company_name: companyNameOf(row),
     department: row.department ?? "",
     sector: row.sector ?? "",
     location: row.location ?? "",

@@ -252,6 +252,11 @@ export function linkForTool(
       return { href: "/dashboard", label: "Open the dashboard" };
     /* Reads whose answer is a page's own table — show the table, not just the rows. */
     case "list_jobs":
+      // The grid seeds its search box from `?q=`, so a click-through opens the
+      // openings the answer just named. Its status and company rails are local
+      // state, so no rail travels: a parameter the page ignores makes the link
+      // look filtered while the grid shows everything.
+      return { href: `/jobs${query([["q", words(args.query)]])}`, label: "Open the openings" };
     case "delete_job":
       return { href: "/jobs", label: "Open the openings" };
     case "list_candidates":
