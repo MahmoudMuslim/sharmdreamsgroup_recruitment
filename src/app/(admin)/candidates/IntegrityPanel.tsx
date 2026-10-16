@@ -7,6 +7,7 @@ import {
   Clock,
   Laptop,
   Loader2,
+  RefreshCw,
   ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
@@ -16,6 +17,7 @@ import {
 import { getAttemptIntegrity, type AttemptIntegrity } from "./integrity-actions";
 import {
   getAttemptAiGrades,
+  retryAttemptGrading,
   scoreAttemptResponse,
   type AttemptGrades,
   type QuestionGrade,
@@ -60,13 +62,20 @@ function statusNote(grades: AttemptGrades): { text: string; actionable: boolean 
   // Set both when a deadline ran out and when a recruiter revoked the link.
   if (grades.status === "EXPIRED") return { text: "Link closed", actionable: false };
   if (grades.unscored === 0) {
-    return { text: "Every answer is marked — only the status is behind", actionable: false };
+    return { text: "Every answer is marked — only the status is behind", actionable: true };
   }
+  // The engine is the only thing that scores these, so say whether it can run
+  // before saying who may finish the job by hand.
+  const why: string[] = [];
+  if (grades.ai_grading === "OFF") why.push("AI grading is switched off");
+  else if (grades.ai_grading === "NO_PROVIDER") why.push("no AI provider is configured");
+  if (grades.can_score) why.push("award them below");
+
   return {
     text: `${grades.unscored} answer${grades.unscored === 1 ? "" : "s"} left unscored${
-      grades.can_score ? " — award them below" : ""
+      why.length ? ` — ${why.join(", ")}` : ""
     }`,
-    actionable: grades.can_score,
+    actionable: true,
   };
 }
 
@@ -76,9 +85,10 @@ function statusNote(grades: AttemptGrades): { text: string; actionable: boolean 
  * Signals are advisory context, not a verdict — the copy makes that explicit so
  * nobody auto-rejects on a single tab switch.
  *
- * It is also the desk where an answer the AI could not score gets its marks,
- * because this is the only screen that shows a recruiter the evidence — the
- * answer, the recording, the transcript — the mark would be awarded from.
+ * It is also the desk where an answer the AI could not score gets its marks:
+ * this is the only screen that shows a recruiter the evidence — the answer, the
+ * recording, the transcript — a mark would be awarded from, and the only place
+ * the engine can be asked to try the open answers again.
  */
 export function IntegrityPanel({
   accessToken,
@@ -92,6 +102,8 @@ export function IntegrityPanel({
   const [report, setReport] = useState<AttemptIntegrity | null>(null);
   const [grades, setGrades] = useState<AttemptGrades | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [runNote, setRunNote] = useState<{ text: string; bad: boolean } | null>(null);
 
   /**
    * `silent` keeps the report on screen while it re-reads, which is what a
@@ -119,6 +131,43 @@ export function IntegrityPanel({
     setOpen(true);
     if (report || loading) return;
     await fetchReport();
+  }
+
+  /**
+   * One grading pass, on demand, for the answers the engine left open.
+   *
+   * Reports what the run moved in its own words rather than reloading quietly:
+   * a pass that scored nothing is a real outcome a recruiter needs to see, not a
+   * button that appeared to do nothing.
+   */
+  async function runGrading(attemptId: string, mayScore: boolean) {
+    setRetrying(true);
+    setRunNote(null);
+    try {
+      const result = await retryAttemptGrading(attemptId);
+      if (!result.ok) {
+        setRunNote({ text: result.error ?? "The AI did not run.", bad: true });
+        return;
+      }
+
+      const scored = result.scored ?? 0;
+      const left = result.still_unscored ?? 0;
+      const finish = scored === 0 ? "" : mayScore ? " — or award them below" : "";
+      setRunNote({
+        text:
+          scored === 0 && left === 0
+            ? "Every answer already carried a mark."
+            : scored === 0
+              ? `The AI took another pass — all ${left} still open${finish}`
+              : left === 0
+                ? `The AI scored the last ${scored === 1 ? "answer" : `${scored} answers`} — the test is graded`
+                : `The AI scored ${scored}, ${left} still open${finish}`,
+        bad: false,
+      });
+      await fetchReport({ silent: true });
+    } finally {
+      setRetrying(false);
+    }
   }
 
   const note = grades ? statusNote(grades) : null;
@@ -235,23 +284,54 @@ export function IntegrityPanel({
                         <Sparkles className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
                         AI feedback — {grades.template_name}
                       </h3>
-                      {note && (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-semibold",
-                            note.actionable
-                              ? "bg-amber-50 text-amber-800"
-                              : "bg-brand-cream text-brand-ink/55"
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {note && (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] font-semibold",
+                              note.actionable
+                                ? "bg-amber-50 text-amber-800"
+                                : "bg-brand-cream text-brand-ink/55"
+                            )}
+                          >
+                            {note.actionable ? (
+                              <AlertTriangle className="h-3 w-3" aria-hidden />
+                            ) : (
+                              <Clock className="h-3 w-3" aria-hidden />
+                            )}
+                            {note.text}
+                          </span>
+                        )}
+                        {/* Only offered when the engine can actually run, so the
+                            button never promises a pass that would refuse. */}
+                        {grades.can_retry &&
+                          grades.unscored > 0 &&
+                          grades.ai_grading === "READY" && (
+                            <button
+                              type="button"
+                              disabled={retrying}
+                              onClick={() => void runGrading(grades.attempt_id, grades.can_score)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-brand-ink px-2.5 py-1 text-[11px] font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {retrying ? (
+                                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                              ) : (
+                                <RefreshCw className="h-3 w-3" aria-hidden />
+                              )}
+                              {retrying ? "Grading…" : "Ask the AI again"}
+                            </button>
                           )}
-                        >
-                          {note.actionable ? (
-                            <AlertTriangle className="h-3 w-3" aria-hidden />
-                          ) : (
-                            <Clock className="h-3 w-3" aria-hidden />
-                          )}
-                          {note.text}
-                        </span>
-                      )}
+                        {runNote && (
+                          <p
+                            className={cn(
+                              "w-full text-right text-[11px] leading-tight",
+                              runNote.bad ? "text-rose-700" : "text-emerald-800"
+                            )}
+                          >
+                            {runNote.text}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <ul className="space-y-3">

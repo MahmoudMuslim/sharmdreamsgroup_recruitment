@@ -4,10 +4,15 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
+import { hasAiProvider } from "@/lib/config.server";
+import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
-import { resyncAttemptTotals } from "@/modules/assessment/application/gradeAttempt";
+import {
+  gradeAttemptResponses,
+  resyncAttemptTotals,
+} from "@/modules/assessment/application/gradeAttempt";
 
 export interface QuestionGrade {
   id: string;
@@ -54,6 +59,15 @@ export interface AttemptGrades {
    * rule deliberately hides, so it would be typing into the dark.
    */
   can_score: boolean;
+  /**
+   * Whether this reviewer may ask the engine for another try.
+   *
+   * `assessments.grade` alone: a retry lets the engine write the marks, so it
+   * does not need the reader to see points the way the hand-editor does.
+   */
+  can_retry: boolean;
+  /** Whether the engine can take another turn at the open answers, and if not, why. */
+  ai_grading: "READY" | "OFF" | "NO_PROVIDER";
   grades: QuestionGrade[];
 }
 
@@ -69,10 +83,11 @@ export interface AttemptGrades {
  */
 export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGrades | null> {
   await requireStaff("/candidates");
-  const [supabase, masked, mayGrade] = await Promise.all([
+  const [supabase, masked, mayGrade, automation] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
     hasPermissionForUser("assessments.grade"),
+    getAiAutomationSettings(),
   ]);
 
   const { data: attempt } = await supabase
@@ -161,6 +176,12 @@ export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGr
     scores_masked: masked,
     unscored,
     can_score: mayGrade && !masked,
+    can_retry: mayGrade,
+    ai_grading: !automation.aiEnabled
+      ? "OFF"
+      : !hasAiProvider()
+        ? "NO_PROVIDER"
+        : "READY",
     grades,
   };
 }
@@ -314,4 +335,99 @@ export async function scoreAttemptResponse(input: {
   revalidatePath("/candidates");
 
   return { ok: true, remaining_unscored: totals.unscored };
+}
+
+export interface GradingRetryResult {
+  ok: boolean;
+  error?: string;
+  /** What this run moved, so the report can say it out loud instead of reloading in silence. */
+  scored?: number;
+  still_unscored?: number;
+}
+
+/** How many of an attempt's answers carry no mark, as the caller's session sees them. */
+async function openAnswers(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  attemptId: string
+): Promise<number> {
+  const { count } = await supabase
+    .from("candidate_responses")
+    .select("id", { count: "exact", head: true })
+    .eq("attempt_id", attemptId)
+    .is("score", null);
+  return count ?? 0;
+}
+
+/**
+ * Ask the engine to try this attempt's open answers again.
+ *
+ * The retry path lived only in `/api/cron/grading`, and nothing schedules that
+ * route — so an answer the AI failed to score at submit had no way of ever
+ * getting a mark except from a person. One pass, deliberately: someone is
+ * watching this button, and the engine's three-pass budget with its
+ * twenty-second waits is for callers nobody is waiting on.
+ *
+ * The marks the engine writes are recorded as the engine's own. This row is the
+ * separate fact that a person asked for the run.
+ */
+export async function retryAttemptGrading(attemptId: string): Promise<GradingRetryResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("assessments.grade"))) {
+    return {
+      ok: false,
+      error: "Re-running grading needs the Grade assessments permission.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+
+  const { data: found } = await supabase
+    .from("candidate_attempts")
+    .select("id, applications ( full_name )")
+    .eq("id", attemptId)
+    .maybeSingle();
+
+  if (!found) return { ok: false, error: "That attempt is no longer on file." };
+
+  const openBefore = await openAnswers(supabase, attemptId);
+  if (openBefore === 0) {
+    // Nothing for the engine to do — saying so beats spending a provider call.
+    return { ok: true, scored: 0, still_unscored: 0 };
+  }
+
+  const { aiEnabled } = await getAiAutomationSettings();
+  if (!aiEnabled || !hasAiProvider()) {
+    return {
+      ok: false,
+      error: !aiEnabled
+        ? "AI grading is switched off in Settings → AI, so there is nothing to re-run."
+        : "No AI provider is configured, so there is nothing to re-run.",
+    };
+  }
+
+  await gradeAttemptResponses(attemptId, { passes: 1 });
+
+  const openAfter = await openAnswers(supabase, attemptId);
+  const scored = Math.max(0, openBefore - openAfter);
+  const candidateName = one(found.applications)?.full_name ?? "the candidate";
+  const outcome =
+    openAfter === 0
+      ? `it scored all ${openBefore} and the test is now graded`
+      : `it scored ${scored}, ${openAfter} still open`;
+
+  await recordActivity({
+    area: "assessments",
+    action: "grading_retried",
+    entity: "attempt",
+    entityId: attemptId,
+    summary: `Asked the AI to grade ${candidateName}'s ${openBefore} open answer${
+      openBefore === 1 ? "" : "s"
+    } — ${outcome}`,
+    detail: { open_before: openBefore, scored, open_after: openAfter, passes: 1 },
+  });
+
+  revalidatePath("/candidates");
+
+  return { ok: true, scored, still_unscored: openAfter };
 }

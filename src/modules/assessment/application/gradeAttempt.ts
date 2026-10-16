@@ -145,10 +145,15 @@ async function gradingTrail(
 }
 
 export async function gradeAttemptResponses(
-  attemptId: string
+  attemptId: string,
+  options: { passes?: number } = {}
 ): Promise<{ graded: number; failed: number }> {
   const { aiEnabled } = await getAiAutomationSettings();
   if (!aiEnabled || !hasAiProvider()) return { graded: 0, failed: 0 };
+
+  // A recruiter watching a button wait wants one try and an answer; the submit
+  // route and the cron sweep get the full retry budget for free.
+  const passes = Math.max(1, options.passes ?? GRADING_PASSES);
 
   const supabase = getSupabaseServiceClient();
   const trail = await gradingTrail(supabase, attemptId);
@@ -158,7 +163,7 @@ export async function gradeAttemptResponses(
   // Provider capacity flaps (free-tier daily 429s, transient 503s), so failed
   // responses are retried in later passes instead of leaving the attempt
   // permanently half-graded — resubmission is blocked once SUBMITTED.
-  for (let pass = 0; pass < GRADING_PASSES; pass += 1) {
+  for (let pass = 0; pass < passes; pass += 1) {
     if (pass > 0) await delay(PASS_DELAY_MS);
     const result = await gradePendingResponses(supabase, attemptId, trail);
     graded += result.graded;
@@ -175,8 +180,8 @@ export async function gradeAttemptResponses(
       action: "grading_incomplete",
       entity: "attempt",
       entityId: attemptId,
-      summary: `${GRADING_PASSES} grading passes left ${failed} response${failed === 1 ? "" : "s"} of ${trail.candidateName}'s ${trail.jobTitle} test unscored, so the attempt stays submitted and ungraded`,
-      detail: { responses_unscored: failed, passes: GRADING_PASSES },
+      summary: `${passes} grading pass${passes === 1 ? "" : "es"} left ${failed} response${failed === 1 ? "" : "s"} of ${trail.candidateName}'s ${trail.jobTitle} test unscored, so the attempt stays submitted and ungraded`,
+      detail: { responses_unscored: failed, passes },
     });
   }
 
