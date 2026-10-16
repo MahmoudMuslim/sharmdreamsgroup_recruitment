@@ -207,9 +207,11 @@ export async function searchPortal(term: string): Promise<PortalSearchResult> {
 /**
  * Counts over the tables a recruiter is responsible for.
  *
- * This is deliberately not an inbox: nothing here is stored, acknowledged or
- * delivered. Each row is a live count of records that are waiting on a person
- * right now, and it links to the page where that work is actually done.
+ * Nothing here is stored on the server: each row is a live count of records
+ * waiting on a person right now, and it links to the page where that work is
+ * done. Read all and Clear all quiet the list in this browser only, at the
+ * number the recruiter was shown — `src/lib/alert-ack.ts` explains why an ack
+ * cannot live in the database.
  */
 export async function getStaffAlerts(): Promise<StaffAlertsResult> {
   const actor = await staffActor();
@@ -274,7 +276,12 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
     {
       id: "ungraded",
       label: "Assessments submitted, not graded",
-      detail: "Open the Assessment stage to run AI screening",
+      // Nothing on this console grades an attempt: the AI scores it from the
+      // submit route and the cron sweep retries what failed, and a response
+      // parked for review stays unscored with no staff control to finish it.
+      // So the row says only that grading did not complete, never that a
+      // recruiter can run it here.
+      detail: "AI grades it on submit — a queue here means grading never finished",
       count: ungradedCount,
       href: "/candidates?stage=ASSESSMENT",
       tone: "info",

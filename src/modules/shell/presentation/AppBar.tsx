@@ -329,9 +329,11 @@ function SearchField({
       >
         {tooShort && (
           <Note>
-            Type at least {MIN_TERM} characters. Names, emails, tracking codes, job
-            titles and companies are matched, and any portal page whose name fits is
-            listed alongside them.
+            Type at least {MIN_TERM} characters. Matches candidate names, emails and
+            tracking codes, job titles and departments, and prospect names, emails
+            and companies; archived candidates are not searched. Any portal page
+            whose name or one-line description fits is listed alongside them. Each
+            group shows its five newest matches, so narrow the term to see more.
           </Note>
         )}
         {error && <Note tone="danger">{error}</Note>}
