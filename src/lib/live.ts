@@ -19,9 +19,22 @@ export interface LiveSnapshot {
   /** The server's own check interval, so the badge can quote the real number. */
   everyMs: number | null;
   lastChange: { areas: string[]; at: string } | null;
+  /**
+   * Area → the page prefixes it feeds, learned from the stream's first frame.
+   *
+   * Empty until that frame arrives, which is why the badge says "connecting"
+   * rather than "not watched": a page cannot claim to be off the watch list
+   * before it has been told what the list is.
+   */
+  watched: Record<string, string[]>;
 }
 
-const SERVER_SNAPSHOT: LiveSnapshot = { status: "connecting", everyMs: null, lastChange: null };
+const SERVER_SNAPSHOT: LiveSnapshot = {
+  status: "connecting",
+  everyMs: null,
+  lastChange: null,
+  watched: {},
+};
 
 let snapshot: LiveSnapshot = SERVER_SNAPSHOT;
 const listeners = new Set<() => void>();
@@ -59,19 +72,46 @@ export function clearActivePage(pathname: string): void {
   if (active?.pathname === pathname) active = null;
 }
 
+/**
+ * Whether an area's watched pages include this one.
+ *
+ * Prefix, not equality — the same rule `isStaffPath()` uses, because it is
+ * answering the same question about the same list of page names: `/files` feeds
+ * `/files` and anything nested under it.
+ */
+export function feedsPage(pages: readonly string[] | undefined, pathname: string): boolean {
+  return (pages ?? []).some((page) => pathname === page || pathname.startsWith(`${page}/`));
+}
+
+/** Which areas feed the page on screen — all the badge is allowed to promise. */
+export function areasFeeding(watched: Record<string, string[]>, pathname: string): string[] {
+  return Object.entries(watched)
+    .filter(([, pages]) => feedsPage(pages, pathname))
+    .map(([area]) => area);
+}
+
+/**
+ * Of the areas that just moved, the ones that feed this page.
+ *
+ * Both halves of the promise read this: the stream reloads the page when it
+ * returns something, and the badge only counts a change as "here" when it does.
+ * One rule, so a page cannot be told it is live and then left stale.
+ */
+export function areasThatReached(
+  watched: Record<string, string[]>,
+  changed: readonly string[],
+  pathname: string
+): string[] {
+  return changed.filter((area) => feedsPage(watched[area], pathname));
+}
+
 function feedsActivePage(areas: string[]): boolean {
-  const here = active?.pathname ?? "";
-  return areas.some((area) =>
-    (watched[area] ?? []).some((p) => here === p || here.startsWith(`${p}/`))
-  );
+  return areasThatReached(snapshot.watched, areas, active?.pathname ?? "").length > 0;
 }
 
 /* -------------------------------------------------------------------------- */
 /* The stream                                                                  */
 /* -------------------------------------------------------------------------- */
-
-/** Area → page prefixes, learned from the stream's first frame. */
-const watched: Record<string, string[]> = {};
 
 let source: EventSource | null = null;
 let retry: number | null = null;
@@ -125,9 +165,12 @@ function open(): void {
       everyMs: number;
       watch: { area: string; paths: string[] }[];
     };
-    for (const key of Object.keys(watched)) delete watched[key];
+    // Held in the snapshot rather than in a module variable, because the badge
+    // has to answer "does anything here feed *this* page?" and only a subscribed
+    // value re-renders it when the answer changes.
+    const watched: Record<string, string[]> = {};
     for (const entry of frame.watch) watched[entry.area] = entry.paths;
-    emit({ ...snapshot, status: "live", everyMs: frame.everyMs });
+    emit({ ...snapshot, status: "live", everyMs: frame.everyMs, watched });
   });
 
   next.addEventListener("change", (event) => {

@@ -4,6 +4,8 @@ import { useEffect, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
+  areasFeeding,
+  areasThatReached,
   attachLive,
   clearActivePage,
   liveOnServer,
@@ -64,24 +66,43 @@ function clock(iso: string): string {
 /**
  * The channel's status, where a recruiter can see it.
  *
- * It claims exactly what the stream does: which part of the portal is checked,
- * how often, and when one of them last moved. Clicking it reloads this page
- * now rather than on the next check — that is the button to press when you
- * want the numbers this second.
+ * The dot and the word describe the channel — connected, paused in a background
+ * tab, or failing to reach the check. The sentence behind them describes *this*
+ * page: which areas are watched, whether any of them feeds the screen you are
+ * on, and when one that does last moved. Most of the portal is fed by a watched
+ * table and reloads itself; three pages are not, and say so, because a tip that
+ * promises "reloads this page" beside a board that never moves is the same lie
+ * as a "Live" word on a closed connection. Clicking reloads this page now either
+ * way; that is the button to press when you want the numbers this second.
  */
 export function LiveBadge({ className }: { className?: string }) {
-  const { status, everyMs, lastChange } = useLive();
+  const { status, everyMs, lastChange, watched } = useLive();
+  const pathname = usePathname();
 
   const seconds = everyMs ? Math.round(everyMs / 1000) : null;
+  /** The watch list arrives with the first frame, so before it nothing is known. */
+  const told = everyMs !== null;
+  const feeds = areasFeeding(watched, pathname);
+  /** A change in a table that does not feed this screen is not a change here. */
+  const movedAreas = areasThatReached(watched, lastChange?.areas ?? [], pathname);
+  const movedHere = lastChange && movedAreas.length > 0 ? lastChange : null;
+  const changedElsewhere = lastChange && movedAreas.length === 0 ? lastChange : null;
+
   const title = [
     status === "paused"
       ? "This tab is in the background, so the portal stopped checking; it reloads when you come back to it."
       : status === "stalled"
         ? "The portal cannot reach the change check right now, so this page may be out of date."
-        : `Watches the hiring tables every ${seconds ?? "few"} seconds and reloads this page when one of them moves.`,
-    lastChange
-      ? `Last change: ${lastChange.areas.join(", ")} at ${clock(lastChange.at)}.`
-      : "Nothing has moved since you opened this page.",
+        : !told
+          ? "Connecting to the live channel, so whether this page is watched is not known yet."
+          : feeds.length > 0
+            ? `Checks ${feeds.join(", ")} every ${seconds ?? "few"} seconds and reloads this page when one of them moves.`
+            : "No watched table feeds this page, so nothing reloads it when the hiring data moves.",
+    movedHere
+      ? `Last change here: ${movedAreas.join(", ")} at ${clock(movedHere.at)}.`
+      : changedElsewhere
+        ? `The portal last moved (${changedElsewhere.areas.join(", ")}) at ${clock(changedElsewhere.at)}, which does not feed this page.`
+        : "Nothing has moved since you opened this page.",
     "Click to reload now.",
   ].join(" ");
 
@@ -103,9 +124,9 @@ export function LiveBadge({ className }: { className?: string }) {
         <span className={cn("relative inline-flex h-2 w-2 rounded-full", DOT[status])} />
       </span>
       <span className="hidden sm:block">{WORD[status]}</span>
-      {lastChange && status === "live" && (
+      {movedHere && status === "live" && (
         <span className="hidden text-[11px] font-normal text-brand-ink/45 md:block">
-          {clock(lastChange.at)}
+          {clock(movedHere.at)}
         </span>
       )}
     </button>
