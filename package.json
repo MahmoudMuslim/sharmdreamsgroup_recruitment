@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/check-staff-routes.mjs",
     "build": "next build",
+    "check:routes": "node scripts/check-staff-routes.mjs",
     "start": "next start",
     "lint": "eslint"
   },

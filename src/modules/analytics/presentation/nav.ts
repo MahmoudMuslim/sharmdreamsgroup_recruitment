@@ -17,9 +17,15 @@ import {
   Users,
 } from "lucide-react";
 import type { SessionUser } from "@/lib/auth/session";
+import type { StaffRoute } from "@/lib/auth/staffRoutes";
 
 export interface NavItem {
-  href: string;
+  /**
+   * Typed as `StaffRoute`, not `string`: a rail link to a page the edge guard
+   * does not list is a type error, so the door a recruiter can click is always
+   * the door that enforces the idle sign-out and the candidate bounce.
+   */
+  href: StaffRoute;
   label: string;
   icon: typeof LayoutDashboard;
   hint: string;
@@ -38,6 +44,11 @@ export type NavSection = "Overview" | "Hiring" | "Records" | "Portal";
  * them and be missing from the others. The rail groups by `section` in this
  * order, so the table is also the arrangement — an entry that names a section
  * after a different one started is where a new page lands.
+ *
+ * This table, the page directories under `src/app/(admin)` and `STAFF_ROUTES`
+ * have to hold the same sixteen paths, and `scripts/check-staff-routes.mjs`
+ * (which `npm run build` runs as `prebuild`) is what makes that a build failure
+ * instead of a comment. `npx next build` straight does not run it.
  */
 export const NAV: readonly NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, hint: "Live hiring metrics", section: "Overview" },

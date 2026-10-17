@@ -3,38 +3,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseConfig } from "@/lib/config";
 import { loginSearch } from "@/lib/auth/login-target";
+import { isStaffPath } from "@/lib/auth/staffRoutes";
 import { coerceNumber } from "@/modules/settings/infrastructure/settingsReader";
-
-/*
- * Recruiter-only areas. Everything else (public job board, candidate portal,
- * tokenised assessment runner) stays reachable without a session.
- *
- * This list is the edge half of a two-part gate: every route under
- * `src/app/(admin)` is here, and every one of them also calls `requireStaff()`.
- * The page check is what stops an anonymous visitor; this one is what stops the
- * *idle* staff session further below, so a console missing from the list keeps
- * working long after `security.session_timeout_minutes` has run out — and a
- * signed-in candidate can open it. A new admin page has to be added here as
- * well as in the nav table.
- */
-const PROTECTED_PREFIXES = [
-  "/dashboard",
-  "/candidates",
-  "/assessments",
-  "/onboarding",
-  "/jobs",
-  "/apply-questions",
-  "/files",
-  "/interviews",
-  "/settings",
-  "/activity",
-  "/analytics",
-  "/assistant",
-  "/reports",
-  "/sourcing",
-  "/time",
-  "/whatsapp",
-];
 
 const STAFF_ROLES = new Set(["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"]);
 
@@ -49,12 +19,6 @@ const DEFAULT_SESSION_TIMEOUT_MINUTES = 480;
 
 /** When the staff member last touched a recruiter portal page. */
 const LAST_ACTIVE_COOKIE = "sdg_staff_last_active";
-
-function isProtected(pathname: string): boolean {
-  return PROTECTED_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
-  );
-}
 
 /**
  * The configured idle window in minutes.
@@ -107,7 +71,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
   /** Where to come back to: the page and the view it was showing. */
   const wanted = pathname + search;
 
-  if (isProtected(pathname) && !user) {
+  if (isStaffPath(pathname) && !user) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = loginSearch(wanted);
@@ -115,7 +79,7 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
   }
 
   // A signed-in candidate must never see recruiter analytics.
-  if (user && isProtected(pathname)) {
+  if (user && isStaffPath(pathname)) {
     const { data: profile } = await supabase
       .from("user_profiles")
       .select("role")
