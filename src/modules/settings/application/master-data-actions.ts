@@ -15,6 +15,7 @@ import type {
   Skill,
 } from "@/modules/settings/domain/types";
 import { isSector, SECTORS } from "@/modules/settings/domain/vocabularies";
+import { MASTER_LIST_WORDS, masterRowName } from "@/modules/settings/domain/masterDataLists";
 import { HIREABLE_STATUSES } from "@/modules/jobs/domain/hireable";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits, type ActivityEntity } from "@/modules/activity/domain/trail";
@@ -43,14 +44,7 @@ const TRAIL_ENTITY: Record<MasterEntity, ActivityEntity> = {
 };
 
 /** The list a recruiter recognises, in the words a trail row uses. */
-const LIST_WORDS: Record<MasterEntity, string> = {
-  companies: "companies",
-  departments: "departments",
-  locations: "locations",
-  role_families: "role families",
-  skills: "skills",
-  currencies: "currencies",
-};
+const LIST_WORDS = MASTER_LIST_WORDS;
 
 /** The columns read back to name a row, and to diff an edit against. */
 const READ_COLUMNS: Record<MasterEntity, string> = {
@@ -63,12 +57,7 @@ const READ_COLUMNS: Record<MasterEntity, string> = {
 };
 
 /** The row as a person would name it in a sentence. */
-function masterName(entity: MasterEntity, row: Record<string, unknown>): string {
-  if (entity === "currencies") {
-    return `${String(row.code ?? "")} ${String(row.label ?? "")}`.trim() || "a currency";
-  }
-  return String(row.label ?? row.name ?? row.key ?? "a record");
-}
+const masterName = masterRowName;
 
 /**
  * Columns the database declares NOT NULL.
@@ -462,10 +451,13 @@ export async function updateMasterRecord(
   return { ok: true, id };
 }
 
+/** A retirement, with what it found: whether the switch moved, and what still names the row. */
+export type RetireResult = MutationResult & { retired?: boolean; usage?: string };
+
 export async function deleteMasterRecord(
   entity: MasterEntity,
   id: string
-): Promise<MutationResult> {
+): Promise<RetireResult> {
   await requireStaff("/settings");
   if (!(await canEdit())) {
     return { ok: false, error: "You need the Manage platform settings permission." };
@@ -488,16 +480,17 @@ export async function deleteMasterRecord(
 
   // Nothing still-active to retire means the switch was already off; a trail row
   // for that would count a change nobody made.
-  if (before.is_active !== false) {
-    const usedBy = await masterUsage(supabase, entity, id, before);
+  const wasActive = before.is_active !== false;
+  let usage: string | null = null;
+  if (wasActive) {
+    const count = await masterUsage(supabase, entity, id, before);
+    usage = usageWords(count);
     await recordActivity({
       area: "master data",
       action: "master_retire",
       entity: TRAIL_ENTITY[entity],
       entityId: id,
-      summary: `Retired ${masterName(entity, before)} from the ${
-        LIST_WORDS[entity]
-      } list${usedBy ? ` — ${usedBy}` : ""}`,
+      summary: `Retired ${masterName(entity, before)} from the ${LIST_WORDS[entity]} list — ${usage}`,
       detail: {
         is_active: "active → retired",
         note: "The row stays so existing jobs, candidates and reports still resolve.",
@@ -506,23 +499,36 @@ export async function deleteMasterRecord(
   }
 
   revalidatePath("/settings");
-  return { ok: true, id };
+  return {
+    ok: true,
+    id,
+    retired: wasActive,
+    usage:
+      usage ??
+      `Already retired — nothing was written. Read it with get_master_data (entity ${LIST_WORDS[entity]}) and set is_active back to true to bring it in use again.`,
+  };
 }
 
 /**
- * How many live job openings still point at this record, in words.
+ * How many hireable openings still carry this record's name, as a floor.
  *
- * A retirement reads differently when it takes a company out from under three
- * posted jobs than when nothing uses it. Jobs name their company by id and their
- * department and location by the text the form stored, so each is matched the way
- * the job table actually holds it; skills and currencies are not named on a job.
+ * An opening points at its company by id and at its department and location by the
+ * *text the form stored*, so a vocabulary row is only counted where that text equals
+ * its name character for character. Measured against the live database: of 7 hireable
+ * openings, 3 spell a department the way its row is named and 2 spell a location so —
+ * the rest hold shortened or qualified text ("Finance" where the row reads "Finance &
+ * Investment"), which no lookup by name can reach. So the count says how many were
+ * *found*, never how many exist, and a zero is not proof that nothing uses the row.
+ *
+ * Skills, currencies and role families are not named on an opening at all, so they
+ * report `null` — no count — rather than a zero that reads like a clean answer.
  */
 async function masterUsage(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   entity: MasterEntity,
   id: string,
   row: Record<string, unknown>
-): Promise<string | null> {
+): Promise<number | null> {
   if (entity === "skills" || entity === "currencies" || entity === "role_families") return null;
 
   let query = supabase.from("job_openings").select("id");
@@ -536,9 +542,20 @@ async function masterUsage(
 
   const { data } = await query.in("status", [...HIREABLE_STATUSES]);
 
-  const count = (data ?? []).length;
-  if (count === 0) return null;
-  return `${count} job opening${count === 1 ? "" : "s"} still ${count === 1 ? "uses" : "use"} it`;
+  return (data ?? []).length;
+}
+
+/** The count above, in the words a trail row and a chat answer both print. */
+function usageWords(count: number | null): string {
+  if (count === null) {
+    return "Openings do not name this kind of record, so nothing was counted.";
+  }
+  if (count === 0) {
+    return "No hireable opening carries this name as written. An opening that spells it differently is not counted, so this is a floor, not proof that nothing uses it.";
+  }
+  return `${count.toLocaleString()} hireable ${
+    count === 1 ? "opening names" : "openings name"
+  } it as written — a floor, since an opening that spells the name differently is not counted.`;
 }
 
 /* -------------------------------------------------------------------------- */

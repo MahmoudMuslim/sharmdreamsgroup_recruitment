@@ -46,7 +46,12 @@ import {
 } from "@/app/(admin)/whatsapp/outbox-model";
 import { loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { listSettingsTrail } from "@/modules/settings/application/settings-trail-actions";
-import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
+import { getMasterData } from "@/modules/settings/application/master-data-actions";
+import {
+  masterListCounts,
+  masterListNote,
+  projectMasterList,
+} from "@/modules/settings/domain/masterDataLists";
 import {
   deleteCredential,
   getModelCatalogue,
@@ -475,8 +480,22 @@ const MASTER_ENTITIES: MasterEntity[] = [
   "currencies",
 ];
 
-function questionType(value: string): QuestionType {
-  const upper = value.toUpperCase();
+/**
+ * One of the six vocabularies, or a refusal that names the six.
+ *
+ * The read, the save and the retire all address a list by the same word the console
+ * uses in its own `?section=`, so one validator keeps a chat answer, a written row and
+ * a link pointing at the same list.
+ */
+function masterEntity(value: string): MasterEntity {
+  const lower = value.toLowerCase().trim();
+  if (!MASTER_ENTITIES.includes(lower as MasterEntity)) {
+    throw new ToolArgumentError(`"entity" must be one of: ${MASTER_ENTITIES.join(", ")}.`);
+  }
+  return lower as MasterEntity;
+}
+
+function questionType(value: string): QuestionType {  const upper = value.toUpperCase();
   if (!QUESTION_TYPES.includes(upper as QuestionType)) {
     throw new ToolArgumentError(
       `"question_type" must be one of: ${QUESTION_TYPES.join(", ")}. Got "${value}".`
@@ -836,7 +855,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       const { jobs, total, companyName, unknownCompany } = await listJobOpenings(filter, company);
       if (unknownCompany) {
         throw new ToolArgumentError(
-          "No company carries that id. get_master_data lists the group's companies with their ids."
+          "No company carries that id. get_master_data (entity companies) lists the group's companies with their ids."
         );
       }
       const matched = searchOpenings(jobs, query);
@@ -905,7 +924,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       ]);
       if (company && !named) {
         throw new ToolArgumentError(
-          "No company carries that id. get_master_data lists the group's companies with their ids."
+          "No company carries that id. get_master_data (entity companies) lists the group's companies with their ids."
         );
       }
       const scoped = company && named ? { id: company, name: named } : null;
@@ -1182,11 +1201,22 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   },
   {
     name: "get_master_data",
-    label: "Reading master data",
+    label: "Reading a master-data list",
     description:
-      "The picklists a job or prospect record must use: companies (with their id and sector), departments, locations, currencies, role families and skills. Needed before creating or editing a job.",
-    args: {},
-    run: () => getMasterOptions(),
+      "One controlled vocabulary, whole — the companies, departments, locations, role families, skills or currencies the portal offers. Retired rows are included and marked is_active:false, exactly as the settings console lists them. A job stores its company by id and its department, location and currency by the text in these lists, so read each list you need before creating or editing a record, and use a row that is in use.",
+    args: {
+      entity: `string — one of ${MASTER_ENTITIES.join(", ")}, the list to read`,
+    },
+    run: async (args) => {
+      const entity = masterEntity(str(args, "entity"));
+      const bundle = await getMasterData();
+      const rows = projectMasterList(entity, bundle);
+      return {
+        entity,
+        rows,
+        master_data_note: masterListNote({ entity, rows, counts: masterListCounts(bundle) }),
+      };
+    },
   },
   {
     name: "list_model_routing",
@@ -2089,13 +2119,14 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "create_job",
     label: "Creating a job opening",
     description:
-      "Create a job opening. Call get_master_data first for a valid tenant_id, department, location and currency.",
+      "Create a job opening. Read the vocabularies first — get_master_data answers one list per call, so ask it for companies, departments, locations and currencies — and use a row that is in use, not one marked is_active:false.",
     args: {
       title: "string",
-      tenant_id: "string — company id from get_master_data",
-      department: "string — department name from get_master_data",
+      tenant_id: "string — company id from get_master_data (entity companies)",
+      department:
+        "string — department name exactly as get_master_data (entity departments) lists it",
       sector: `string — one of ${SECTORS.join(", ")}`,
-      location: "string — location name from get_master_data",
+      location: "string — location name exactly as get_master_data (entity locations) lists it",
       employment_type: "string — FULL_TIME, PART_TIME, CONTRACT or INTERNSHIP",
       description: "string",
       requirements: "string[] — optional list of requirement lines",
@@ -2336,10 +2367,10 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       "Create an assessment suite, or rewrite one when suite_id is given. A suite is only useful once it has questions — add them with save_question, then assign the suite with assign_assessment.",
     args: {
       suite_id: "string — optional, the suite being edited",
-      tenant_id: "string — company id from get_master_data, required when creating",
+      tenant_id: "string — company id from get_master_data (entity companies), required when creating",
       name: "string",
       description: "string — optional",
-      role_family: "string — role family from get_master_data",
+      role_family: "string — role family label from get_master_data (entity role_families)",
       time_limit_minutes: "number — for the whole suite",
       randomize_questions: "boolean — optional, defaults to false",
       randomize_options: "boolean — optional, defaults to false",
@@ -2926,19 +2957,15 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "save_master_record",
     label: "Saving a master-data record",
     description:
-      "Add or edit one entry in a controlled vocabulary — a company, department, location, role family, skill or currency. Jobs and prospects can only use values that exist here.",
+      "Add or edit one entry in a controlled vocabulary — a company, department, location, role family, skill or currency. Jobs and prospects can only use values that exist here. This is also the way to bring a retired row back into use: send fields {\"is_active\": true}, the switch the console's Reactivate button writes.",
     args: {
       entity: `string — one of ${MASTER_ENTITIES.join(", ")}`,
       id: "string — optional, the record being edited",
-      fields: "object — the columns to write, e.g. {\"name\":\"Housekeeping\"} or {\"label\":\"US Dollar\"} for a currency",
+      fields:
+        'object — the columns to write, e.g. {"name":"Housekeeping"} or {"label":"US Dollar"} for a currency. Only the columns sent are written, so an edit never quietly re-activates a retired row; send {"is_active":true} when it should come back, or {"is_active":false} to retire it.',
     },
     run: async (args) => {
-      const entity = str(args, "entity").toLowerCase();
-      if (!MASTER_ENTITIES.includes(entity as MasterEntity)) {
-        throw new ToolArgumentError(
-          `"entity" must be one of: ${MASTER_ENTITIES.join(", ")}.`
-        );
-      }
+      const entity = masterEntity(str(args, "entity"));
       const fields = args.fields;
       if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
         throw new ToolArgumentError('"fields" must be an object of column names to values.');
@@ -2947,8 +2974,8 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       const id = optionalStr(args, "id");
       return report(
         id
-          ? await updateMasterRecord(entity as MasterEntity, id, payload)
-          : await createMasterRecord(entity as MasterEntity, payload)
+          ? await updateMasterRecord(entity, id, payload)
+          : await createMasterRecord(entity, payload)
       );
     },
   },
@@ -3148,20 +3175,17 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   },
   {
     name: "delete_master_record",
-    label: "Deleting a master-data record",
+    label: "Retiring a master-data record",
     description:
-      "Remove one company, department, location, role family, skill or currency. Refused while any opening, candidate or setting still points at it.",
+      "Take one company, department, location, role family, skill or currency out of new selections. Nothing is deleted and nothing is refused: the row stays so the openings, candidates and reports already naming it keep resolving, and the settings console lists it with a Retired badge. Undo it with save_master_record (fields {\"is_active\": true}). The answer says how many hireable openings carry its name as written — a floor, because an opening that spells the name differently is not counted.",
     args: {
       entity: `string — one of ${MASTER_ENTITIES.join(", ")}`,
       id: "string — record id",
     },
     destructive: true,
     run: async (args) => {
-      const entity = str(args, "entity").toLowerCase();
-      if (!MASTER_ENTITIES.includes(entity as MasterEntity)) {
-        throw new ToolArgumentError(`"entity" must be one of: ${MASTER_ENTITIES.join(", ")}.`);
-      }
-      return report(await deleteMasterRecord(entity as MasterEntity, str(args, "id")));
+      const entity = masterEntity(str(args, "entity"));
+      return report(await deleteMasterRecord(entity, str(args, "id")));
     },
   },
   {

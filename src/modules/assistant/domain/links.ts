@@ -14,6 +14,7 @@ import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
 import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import { trailProvider, trailScope } from "@/modules/settings/domain/credentialTrail";
 import { trailGroup, trailGroupById } from "@/modules/settings/domain/settingsTrail";
+import { MASTER_LIST_WORDS, masterListEntity } from "@/modules/settings/domain/masterDataLists";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -320,6 +321,27 @@ function credentialTrailView(result: unknown): AssistantLink {
 }
 
 /**
+ * The settings section holding one controlled vocabulary.
+ *
+ * The read names the list it answered from its own result and the writes name the
+ * list in their arguments — but only an id one of the six lists actually owns belongs
+ * in an address, so anything else opens the area's dock rather than a `?section=` the
+ * page would ignore. The label says which list is behind the door, because one list is
+ * what the console shows at a time.
+ */
+function masterListView(value: unknown): AssistantLink {
+  const entity = masterListEntity(value);
+  if (!entity) return { href: "/settings?area=organisation", label: "Open the master data" };
+  return {
+    href: `/settings${query([
+      ["area", "organisation"],
+      ["section", entity],
+    ])}`,
+    label: `Open the ${MASTER_LIST_WORDS[entity]}`,
+  };
+}
+
+/**
  * The change trail console, scoped, paged and searched the way the answer read it.
  *
  * `?trail=`, `?page=` and `?find=` are all applied to the page's own read, so the
@@ -525,13 +547,8 @@ export function linkForTool(
         (result as { channel?: unknown } | undefined | null)?.channel
       );
     case "save_master_record":
-    case "delete_master_record": {
-      const entity = fromArgs(args, "entity");
-      return {
-        href: `/settings?area=organisation&section=${entity ?? "companies"}`,
-        label: "Open the master data",
-      };
-    }
+    case "delete_master_record":
+      return masterListView(fromArgs(args, "entity"));
     case "get_audit_log":
       return settingsTrailView(result);
     case "message_candidates":
@@ -648,7 +665,7 @@ export function linkForTool(
     case "get_settings":
       return settingsView(settingKeys(result), words(args.query));
     case "get_master_data":
-      return { href: "/settings?area=organisation", label: "Open the master data" };
+      return masterListView((result as { entity?: unknown } | undefined | null)?.entity);
     default:
       return null;
   }

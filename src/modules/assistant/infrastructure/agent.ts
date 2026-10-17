@@ -111,7 +111,7 @@ export const ASSISTANT_RULES: readonly string[] = [
   "1. One tool per turn. Read the result, then decide the next step.",
   "2. Never invent an id, a name or a setting key. Look it up with a read tool first.",
   "3. Before editing a job, call get_job and send the whole record back with only the intended change.",
-  "4. Before creating or editing a job, call get_master_data for valid company, department, location and currency values.",
+  "4. Before creating or editing a job, read the vocabularies with get_master_data — it answers one list per call, so ask it for companies, then departments, locations and currencies. Use a row that is in use: a row marked is_active:false is retired and the pickers leave it out.",
   "5. Anything that changes data must come from what the user actually asked for. If a request is",
   "   ambiguous about which record to change, ask instead of guessing — with ask_question, listing the",
   "   real candidates from a tool result as the choices rather than asking an open question.",
