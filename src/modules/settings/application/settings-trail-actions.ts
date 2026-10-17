@@ -5,6 +5,8 @@ import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import {
   SETTINGS_TRAIL_LIMIT,
+  SETTINGS_TRAIL_SEARCH_SCAN,
+  trailFind,
   trailGroup,
   trailGroupById,
   trailGroupFor,
@@ -12,11 +14,16 @@ import {
   trailOffset,
   trailPage,
   trailPageCount,
+  trailRowMatches,
   trailValueText,
 } from "@/modules/settings/domain/settingsTrail";
 
 const AUDIT_DENIED =
   "Reading the change trail needs the Manage platform settings permission.";
+
+/** The columns every trail read needs, in one place, so no builder prints a row the others cannot. */
+const TRAIL_COLUMNS =
+  "id, key, previous_value, next_value, changed_at, changed_by, user_profiles(full_name)";
 
 /**
  * One recorded change, in the words the console prints.
@@ -38,16 +45,45 @@ export interface SettingsTrailEntryView {
   createdAt: string;
 }
 
+/** One stored row, in the words the console prints. */
+function toEntry(row: unknown): SettingsTrailEntryView {
+  const r = row as {
+    id: string;
+    key: string;
+    previous_value?: unknown;
+    next_value?: unknown;
+    changed_at: string;
+    user_profiles?: { full_name?: string } | { full_name?: string }[] | null;
+  };
+  const actor = Array.isArray(r.user_profiles) ? r.user_profiles[0] : r.user_profiles;
+  return {
+    id: r.id,
+    key: r.key,
+    label: trailKeyLabel(r.key),
+    group: trailGroupFor(r.key)?.id ?? null,
+    from: trailValueText(r.previous_value),
+    to: trailValueText(r.next_value),
+    actor: actor?.full_name ?? null,
+    createdAt: r.changed_at,
+  };
+}
+
 export type SettingsTrailRead =
   | {
       ok: true;
       entries: SettingsTrailEntryView[];
-      /** Rows in the database at this scope — more than `entries` on every page but the last. */
+      /** Rows this listing is drawn from: the scope, or the rows in it that match. */
       total: number;
-      /** How many rows at this scope name the person who made the change. */
+      /** How many of those rows name the person who made the change. */
       named: number;
       /** The page actually served: a request past the end is clamped, never answered blank. */
       page: number;
+      /** The words the listing was searched for, or `null` for a plain walk. */
+      find: string | null;
+      /** Rows the read looked through — the whole scope, or the search's window. */
+      scanned: number;
+      /** Rows the scope holds, whether or not the search reached that far. */
+      scopeRows: number;
     }
   | { ok: false; error: string };
 
@@ -78,9 +114,21 @@ export type SettingsTrailRead =
  * `profiles_self_read` limits that to the reader's own row: under the session
  * client every other person's name would vanish and the console would say
  * "no actor recorded" about a row that has one.
+ *
+ * A search cannot be pushed into the database, because what it matches is the row
+ * as printed — the console's name for the key, the two rendered values, the actor's
+ * name — and all three are made here, not in SQL. So it reads the scope's newest
+ * `SETTINGS_TRAIL_SEARCH_SCAN` rows, matches them with the same function the screen
+ * uses, and pages the matches. That is why the answer carries `scanned` beside
+ * `scopeRows`: past the window, "nothing matches" and "the match is older than the
+ * window" are the same empty list, and only the note can tell them apart.
  */
 export async function listSettingsTrail(
-  scope: { group?: string | null; page?: string | number | null } = {}
+  scope: {
+    group?: string | null;
+    page?: string | number | null;
+    find?: string | null;
+  } = {}
 ): Promise<SettingsTrailRead> {
   await requireStaff("/settings");
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
@@ -88,29 +136,26 @@ export async function listSettingsTrail(
   }
 
   const group = trailGroupById(trailGroup(scope.group));
+  const words = trailFind(scope.find);
   const admin = getSupabaseServiceClient();
 
   /**
-   * One page of the scope, in the trail's own newest-first order.
-   *
    * The scope predicate is repeated in each builder on purpose: a helper that took
    * a query and handed it back lost the builder's chain, and every one of these
    * reads has to describe exactly the same rows as the listing beside it, or a
    * scoped note quotes the whole trail.
    */
-  const rowsOf = (asked: number) => {
-    const offset = trailOffset(asked);
-    let query = admin
-      .from("settings_audit_log")
-      .select(
-        "id, key, previous_value, next_value, changed_at, changed_by, user_profiles(full_name)"
-      );
+  const scoped = () => {
+    let query = admin.from("settings_audit_log").select(TRAIL_COLUMNS);
     if (group?.kind === "keys") query = query.in("key", group.keys);
     else if (group) query = query.like("key", `${group.prefix}%`);
-    return query
-      .order("changed_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range(offset, offset + SETTINGS_TRAIL_LIMIT - 1);
+    return query.order("changed_at", { ascending: false }).order("id", { ascending: false });
+  };
+
+  /** One page of the scope, in the trail's own newest-first order. */
+  const rowsOf = (asked: number) => {
+    const offset = trailOffset(asked);
+    return scoped().range(offset, offset + SETTINGS_TRAIL_LIMIT - 1);
   };
 
   /** How many rows the scope holds, or how many of them name an actor. */
@@ -128,6 +173,33 @@ export async function listSettingsTrail(
     console.error("[settings] change trail refused:", message);
     return { ok: false, error: `The change trail could not be read: ${message}` };
   };
+
+  if (words !== null) {
+    const [scan, sized] = await Promise.all([
+      scoped().limit(SETTINGS_TRAIL_SEARCH_SCAN),
+      countOf(false),
+    ]);
+    if (scan.error) return refuse(scan.error.message);
+    if (sized.error) return refuse(sized.error.message);
+    const scopeRows = sized.count ?? 0;
+    const matched = (scan.data ?? [])
+      .map(toEntry)
+      .filter((entry) => trailRowMatches(entry, words));
+    // The match set is what the reader is paging through, so a page past its end is
+    // answered with its oldest rows — the same rule the walk follows.
+    const page = Math.min(trailPage(scope.page), trailPageCount(matched.length));
+    const offset = trailOffset(page);
+    return {
+      ok: true,
+      entries: matched.slice(offset, offset + SETTINGS_TRAIL_LIMIT),
+      total: matched.length,
+      named: matched.filter((entry) => entry.actor !== null).length,
+      page,
+      find: words,
+      scanned: Math.min(scopeRows, SETTINGS_TRAIL_SEARCH_SCAN),
+      scopeRows,
+    };
+  }
 
   let page = trailPage(scope.page);
   const [listed, sized, actors] = await Promise.all([
@@ -157,27 +229,16 @@ export async function listSettingsTrail(
     return refuse(listed.error.message);
   }
 
-  const entries = (found as unknown[]).map((row) => {
-    const r = row as {
-      id: string;
-      key: string;
-      previous_value?: unknown;
-      next_value?: unknown;
-      changed_at: string;
-      user_profiles?: { full_name?: string } | { full_name?: string }[] | null;
-    };
-    const actor = Array.isArray(r.user_profiles) ? r.user_profiles[0] : r.user_profiles;
-    return {
-      id: r.id,
-      key: r.key,
-      label: trailKeyLabel(r.key),
-      group: trailGroupFor(r.key)?.id ?? null,
-      from: trailValueText(r.previous_value),
-      to: trailValueText(r.next_value),
-      actor: actor?.full_name ?? null,
-      createdAt: r.changed_at,
-    };
-  });
+  const entries = (found as unknown[]).map(toEntry);
 
-  return { ok: true, entries, total, named: actors.count ?? 0, page };
+  return {
+    ok: true,
+    entries,
+    total,
+    named: actors.count ?? 0,
+    page,
+    find: null,
+    scanned: total,
+    scopeRows: total,
+  };
 }

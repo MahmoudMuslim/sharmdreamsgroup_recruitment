@@ -8,8 +8,9 @@
  * the recruiter was shown a number of changes no screen could reproduce, and the
  * link offered `/activity`, a page built on a different table that reports its
  * trail has not been created yet. So this module gives the read one scope
- * vocabulary, one page size and one disclosure, shared by the console section and
- * the chat tool exactly as the keys console's credential trail does.
+ * vocabulary, one page size, one search window and one disclosure, shared by the
+ * console section and the chat tool exactly as the keys console's credential trail
+ * does.
  *
  * A row is filed under the console section that renders its key, because that is
  * where a reader goes to look at the thing that moved — `branding.logo_url` is
@@ -48,6 +49,51 @@ export function trailOffset(page: number): number {
 /** How many pages it takes to walk a scope of `total` rows. Always at least one. */
 export function trailPageCount(total: number): number {
   return Math.max(1, Math.ceil(total / SETTINGS_TRAIL_LIMIT));
+}
+
+/**
+ * How far back a search reads.
+ *
+ * Browsing the trail walks the whole scope a page at a time, but a search has to
+ * hold the rows it is matching in one read, so it takes the newest ones and says
+ * so: `settingsTrailNote` names the window whenever the scope is deeper than it.
+ * Today's trail is 152 rows, so nothing is left out yet — the disclosure is here
+ * for the day the trail grows past the window, which is when a silent cap would
+ * start answering "no row matches" about rows nobody looked at.
+ */
+export const SETTINGS_TRAIL_SEARCH_SCAN = 400;
+
+/**
+ * The words a reader or the chat asked the trail to be searched for.
+ *
+ * Internal whitespace collapses and the ends are trimmed, because a row is matched
+ * by a substring and "stage  change" would otherwise find nothing in a table that
+ * prints "stage change". An all-blank parameter is no search at all — the same rule
+ * every other parameter on this console follows, where a missing value lists
+ * everything rather than nothing.
+ */
+export function trailFind(value: string | null | undefined): string | null {
+  const words = value?.trim().replace(/\s+/g, " ") ?? "";
+  return words === "" ? null : words;
+}
+
+/**
+ * Whether one printed row carries the words.
+ *
+ * It is given exactly the fields the console renders — the key, the console's name
+ * for it, the value before, the value after, and the actor — so the box can only
+ * ever find what is on the screen. Matching them here rather than in the browser
+ * keeps the search, its counts and its paging one read for the console and the chat
+ * alike.
+ */
+export function trailRowMatches(
+  row: { key: string; label: string | null; from: string; to: string; actor: string | null },
+  words: string
+): boolean {
+  const needle = words.toLowerCase();
+  return [row.key, row.label ?? "", row.from, row.to, row.actor ?? ""].some((field) =>
+    field.toLowerCase().includes(needle)
+  );
 }
 
 /**
@@ -174,6 +220,10 @@ export function trailValueText(value: unknown): string {
  * screen — and it now names the page as well as the row numbers, so a reader who
  * walked deeper knows the walk is finite rather than endless. The fourth is what
  * stops a blank actor column being read as "nobody changed this".
+ *
+ * A search adds a fifth: which rows the words were looked for in. "Nothing matches"
+ * and "the match is past the window" are the same empty listing, and only the note
+ * can tell them apart.
  */
 export function settingsTrailNote(input: {
   groupId: string | null;
@@ -182,13 +232,19 @@ export function settingsTrailNote(input: {
   named: number;
   /** 1-based. The read reports the page it actually served, after clamping. */
   page?: number;
+  /** Set when the listing is a search: the words, the window read, the scope's own size. */
+  search?: { words: string; scanned: number; scopeRows: number } | null;
 }): string {
-  const { groupId, total, loaded, named } = input;
+  const { groupId, total, loaded, named, search } = input;
   const page = Math.max(1, input.page ?? 1);
   const group = trailGroupById(groupId);
   const rows = (value: number) => `${value.toLocaleString()} row${value === 1 ? "" : "s"}`;
   const whose = group ? ` for ${group.label}` : "";
+  const searched = search ? searchedSentence(search) : null;
 
+  if (total === 0 && search) {
+    return `Nothing here matches “${search.words}”${whose}. ${searched} A search can only answer about the rows it read, so an empty listing is not a claim that the trail has no such change.`;
+  }
   if (total === 0) {
     return group
       ? `Nothing is recorded${whose} — this trail holds only changes made through this portal, so a setting nobody has saved has no row here.`
@@ -234,5 +290,27 @@ export function settingsTrailNote(input: {
         : `Only ${named.toLocaleString()} of the ${total.toLocaleString()} name${
             named === 1 ? "s" : ""
           } the person who made it — the rest were written by a door that recorded no actor.`;
-  return `${rows(total)} recorded${whose} — ${span}. ${who}`;
+  const head = search
+    ? `${rows(total)} ${total === 1 ? "matches" : "match"} “${search.words}”${whose}`
+    : `${rows(total)} recorded${whose}`;
+  return `${head} — ${span}. ${who}${searched ? ` ${searched}` : ""}`;
+}
+
+/**
+ * What a search actually read.
+ *
+ * The sentence has to distinguish "no row matches" from "the matching row is further
+ * back than the window", because the two look identical in a listing and only one of
+ * them is the trail's fault. When the window covers the scope it says so, which is
+ * the only case in which an empty search means anything at all.
+ */
+function searchedSentence(search: { words: string; scanned: number; scopeRows: number }): string {
+  const { scanned, scopeRows } = search;
+  if (scanned >= scopeRows) {
+    return `All ${scopeRows.toLocaleString()} rows in this scope were searched.`;
+  }
+  const left = scopeRows - scanned;
+  return `Searched the newest ${scanned.toLocaleString()} of the ${scopeRows.toLocaleString()} rows in this scope, so ${left.toLocaleString()} older ${
+    left === 1 ? "change was" : "changes were"
+  } not read.`;
 }

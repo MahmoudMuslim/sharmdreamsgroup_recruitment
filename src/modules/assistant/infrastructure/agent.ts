@@ -25,6 +25,7 @@ import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import {
   SETTINGS_TRAIL_GROUPS,
   SETTINGS_TRAIL_LIMIT,
+  SETTINGS_TRAIL_SEARCH_SCAN,
 } from "@/modules/settings/domain/settingsTrail";
 import { settingSearchWords } from "@/modules/settings/domain/settingSearch";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
@@ -147,6 +148,11 @@ export const ASSISTANT_RULES: readonly string[] = [
   `   scope ${SETTINGS_TRAIL_LIMIT} rows a page, newest first, and ?page=<2 or more> walks to the rows before them —`,
   `   a page of get_audit_log and a page of the console are the same read, so the note's "page 2 of 11" is a thing`,
   `   the recruiter can click. Quote the row numbers the note names, rather than calling any one page the whole history.`,
+  `   Its search box is ?find=<words> — the same words get_audit_log's query argument takes, matched over the printed`,
+  `   row (key, its name in the console, either value, the actor) across the newest ${SETTINGS_TRAIL_SEARCH_SCAN} rows`,
+  `   of the scope, so [the timeout change](/settings?area=platform&section=trail&find=timeout) is a real link. Say`,
+  `   which rows it searched when the note says the scope is deeper than that, and never report an empty search as`,
+  `   "no such change was made" — a match older than the window is a different sentence;`,
   "   Most rows name no person, because the doors that wrote them recorded no actor: say how many do, and never",
   "   fill a blank in with a name;",
   `   On the API keys console ?tab=${PROVIDER_GROUPS.map((group) => group.id).join("|")} is the group whose providers it lists, so`,

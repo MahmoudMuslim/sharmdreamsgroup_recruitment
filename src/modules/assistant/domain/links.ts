@@ -295,18 +295,19 @@ function credentialTrailView(result: unknown): AssistantLink {
 }
 
 /**
- * The change trail console, scoped to the part of it the answer read.
+ * The change trail console, scoped, paged and searched the way the answer read it.
  *
- * `?trail=` is applied to the page's own read, so the click lands on the rows the
- * answer counted rather than on the newest rows of every group. An unscoped read,
- * and a refused one, both go to the section itself — the trail is listed by this
- * console and nothing else, so a settings answer must never point at `/activity`,
- * which is a different table on a page that reports its trail as not yet created.
+ * `?trail=`, `?page=` and `?find=` are all applied to the page's own read, so the
+ * click lands on the rows the answer counted rather than on the newest rows of every
+ * group. An unscoped read, and a refused one, both go to the section itself — the
+ * trail is listed by this console and nothing else, so a settings answer must never
+ * point at `/activity`, which is a different table on a page that reports its trail
+ * as not yet created.
  */
 function settingsTrailView(result: unknown): AssistantLink {
   const record =
     result && typeof result === "object" && !Array.isArray(result)
-      ? (result as { audit_scope?: unknown; audit_page?: unknown })
+      ? (result as { audit_scope?: unknown; audit_page?: unknown; audit_find?: unknown })
       : {};
   const id = trailGroup(typeof record.audit_scope === "string" ? record.audit_scope : null);
   const group = id ? trailGroupById(id) : null;
@@ -315,29 +316,28 @@ function settingsTrailView(result: unknown): AssistantLink {
   // reader on different rows than the ones just quoted.
   const page =
     typeof record.audit_page === "number" && record.audit_page > 1 ? record.audit_page : null;
-  if (!group || !id) {
-    return page === null
-      ? SETTINGS_TRAIL_CONSOLE
-      : {
-          href: `/settings${query([
-            ["area", "platform"],
-            ["section", "trail"],
-            ["page", String(page)],
-          ])}`,
-          label: `Open the older changes, page ${page}`,
-        };
-  }
+  // The same rule for the words: `?find=` is normalized on the way in, so a link
+  // carrying what the model typed could search a different string than the one the
+  // answer describes.
+  const find = typeof record.audit_find === "string" && record.audit_find !== "" ? record.audit_find : null;
+  if (!id && page === null && find === null) return SETTINGS_TRAIL_CONSOLE;
+  const subject =
+    find === null
+      ? group
+        ? `the ${group.label} changes`
+        : page === null
+          ? "the change trail"
+          : "the older changes"
+      : `${group ? `the ${group.label} changes` : "the changes"} matching “${find}”`;
   return {
     href: `/settings${query([
       ["area", "platform"],
       ["section", "trail"],
       ["trail", id],
       ["page", page === null ? null : String(page)],
+      ["find", find],
     ])}`,
-    label:
-      page === null
-        ? `Open the ${group.label} changes`
-        : `Open the ${group.label} changes, page ${page}`,
+    label: `Open ${subject}${page === null ? "" : `, page ${page}`}`,
   };
 }
 
