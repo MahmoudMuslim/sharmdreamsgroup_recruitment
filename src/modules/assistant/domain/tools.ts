@@ -44,7 +44,8 @@ import {
   searchQueue,
   type OutboxBucket,
 } from "@/app/(admin)/whatsapp/outbox-model";
-import { loadAuditLog, loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
+import { loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
+import { listSettingsTrail } from "@/modules/settings/application/settings-trail-actions";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import {
   deleteCredential,
@@ -63,6 +64,11 @@ import {
 } from "@/modules/settings/domain/providers";
 import { credentialsTab } from "@/modules/settings/domain/settingsNav";
 import { trailScope, trailScopeNote } from "@/modules/settings/domain/credentialTrail";
+import {
+  SETTINGS_TRAIL_GROUPS,
+  settingsTrailNote,
+  trailGroup,
+} from "@/modules/settings/domain/settingsTrail";
 import {
   modelReadNote,
   modelSearchWords,
@@ -1251,12 +1257,49 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   },
   {
     name: "get_audit_log",
-    label: "Reading settings audit log",
-    description: "The most recent settings changes: which key, previous value, new value, when.",
-    args: { limit: "number — optional, defaults to 15, maximum 50" },
+    label: "Reading the settings change trail",
+    description:
+      "The Platform → Change trail console, row for row: which setting, message template, team account or stored file this portal wrote, the value before, the value after, when, and the person the door recorded. `group` narrows it to one part of the console exactly as the console's own `?trail=` does, so this answer and that section read the same scope, the same cap and the same order and cannot disagree about which rows exist. Values are printed short — a list of languages reads \"2 items\", a deleted row reads \"nothing\" — and the key is always there for the exact wording. Most rows name nobody, because the doors that wrote them recorded no actor, so the note says how many do instead of leaving a blank column to be read as \"nobody changed this\". This is the trail of things the console configures: an applicant moving stage or an interview being booked is not in this table.",
+    args: {
+      group: `string — optional, one of ${SETTINGS_TRAIL_GROUPS.map((group) => group.id).join("|")}, to read only the changes filed under that section or family`,
+    },
     run: async (args) => {
-      const limit = args.limit === undefined ? 15 : Math.min(num(args, "limit"), 50);
-      return loadAuditLog(limit);
+      const asked = optionalStr(args, "group");
+      const scope = asked === undefined ? null : trailGroup(asked);
+      if (asked !== undefined && scope === null) {
+        throw new ToolArgumentError(
+          `"group" must be one of ${SETTINGS_TRAIL_GROUPS.map((group) => group.id).join(
+            ", "
+          )} — the sections and families the trail files rows under, exactly as the console names them.`
+        );
+      }
+      const result = await listSettingsTrail({ group: scope });
+      if (!result.ok) {
+        // Answered as a refusal, with no counts invented behind it. An empty list
+        // would let the model tell a recruiter nobody has changed anything, which
+        // is a sentence about their permissions rather than about the portal.
+        return { audit_refused: true, audit_note: result.error, audit_scope: scope, audit: [] };
+      }
+      return {
+        audit_note: settingsTrailNote({
+          groupId: scope,
+          total: result.total,
+          loaded: result.entries.length,
+          named: result.named,
+        }),
+        audit_scope: scope,
+        audit_total: result.total,
+        audit_named: result.named,
+        audit: result.entries.map((entry) => ({
+          key: entry.key,
+          label: entry.label,
+          group: entry.group,
+          from: entry.from,
+          to: entry.to,
+          actor: entry.actor,
+          at: entry.createdAt,
+        })),
+      };
     },
   },
 

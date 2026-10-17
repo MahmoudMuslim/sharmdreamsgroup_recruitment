@@ -5,6 +5,7 @@ import {
   Building2,
   CircleDollarSign,
   Cpu,
+  History,
   GraduationCap,
   KeyRound,
   MapPin,
@@ -40,6 +41,7 @@ const ICONS: Record<string, LucideIcon> = {
   users: Users,
   key: KeyRound,
   cpu: Cpu,
+  history: History,
 };
 
 function IconFor({ name, className }: { name: string; className?: string }) {

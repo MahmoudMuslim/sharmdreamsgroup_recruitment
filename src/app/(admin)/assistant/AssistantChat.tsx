@@ -948,11 +948,12 @@ export function AssistantChat({
                 <p className="text-xs leading-relaxed text-brand-ink/55">
                   I read and change the same data the screens do — openings, candidates, screening,
                   assessments, interviews, onboarding, the apply questions, sourcing, stored files,
-                  the message outbox, the analytics report, the row-level reports, the activity
-                  trail and the settings, team and model-routing consoles — by calling the very
+                  the message outbox, the analytics report, the row-level reports, and the settings,
+                  team, model-routing, API-keys and change-trail consoles — by calling the very
                   actions those pages call, so the permissions on your role apply here unchanged.
-                  Time Tracker is the one data screen I cannot reach: its ledger table is not on the
-                  database yet. The “What can the assistant do?” button above lists every one.
+                  Time Tracker and the hiring-data activity trail are the two screens I cannot read:
+                  neither table is on the database yet. The “What can the assistant do?” button
+                  above lists every one.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
                   Attach a CV and I read it — PDF, Word or plain text, through the same parser the

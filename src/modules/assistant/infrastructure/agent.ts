@@ -22,6 +22,10 @@ import {
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
 import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
+import {
+  SETTINGS_TRAIL_GROUPS,
+  SETTINGS_TRAIL_LIMIT,
+} from "@/modules/settings/domain/settingsTrail";
 import { settingSearchWords } from "@/modules/settings/domain/settingSearch";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
 import { BUCKETS } from "@/app/(admin)/files/file-browser-types";
@@ -136,6 +140,13 @@ export const ASSISTANT_RULES: readonly string[] = [
   `   The Platform area's sections are ${SETTINGS_SCHEMA.map((section) => section.id).join("|")}, and its console box`,
   `   searches them by ${settingSearchWords()}, so [the password rule](/settings?area=platform&section=security&q=password)`,
   "   is a real link — words belong in it only when one section holds every setting the answer names;",
+  `   The Platform area's last section is the change trail, /settings?area=platform&section=trail, and ?trail=`,
+  `   scopes it to ${SETTINGS_TRAIL_GROUPS.map((group) => group.id).join("|")} — the same ids get_audit_log's group`,
+  "   argument takes and the console's own row chips write, so",
+  `   [the security changes](/settings?area=platform&section=trail&trail=security) is a real link. Both read the newest`,
+  `   ${SETTINGS_TRAIL_LIMIT} rows of that scope, so an answer and a screen cannot disagree about which rows exist.`,
+  "   Most rows name no person, because the doors that wrote them recorded no actor: say how many do, and never",
+  "   fill a blank in with a name;",
   `   On the API keys console ?tab=${PROVIDER_GROUPS.map((group) => group.id).join("|")} is the group whose providers it lists, so`,
   `   [the messaging keys](/settings?area=providers&section=credentials&tab=communication) is a real link. It covers all`,
   `   ${PROVIDERS.length} providers the portal knows, and says where each key comes from. A key is shown only as its`,

@@ -10,7 +10,6 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { printableValue } from "@/modules/activity/domain/trail";
 import type {
   AppRole,
-  AuditEntry,
   Company,
   NotificationTemplate,
   Permission,
@@ -502,17 +501,4 @@ export async function deleteNotificationTemplate(input: {
   // emits names the tab the row was filed under — and an empty portal tab stays
   // visible when the address bar asks for it, which is how "deleted" can be read.
   return { ok: true, channel: row.channel, key: row.key };
-}
-
-/** Recent settings activity, newest first. */
-export async function loadAuditLog(limit = 25): Promise<AuditEntry[]> {  await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
-
-  const { data } = await supabase
-    .from("settings_audit_log")
-    .select("id, key, previous_value, next_value, changed_at, changed_by")
-    .order("changed_at", { ascending: false })
-    .limit(limit);
-
-  return (data ?? []) as AuditEntry[];
 }

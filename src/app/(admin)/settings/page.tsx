@@ -1,10 +1,12 @@
 import { SettingsConsole } from "./SettingsConsole";
 import { SettingsShell, type SettingsNavCounts } from "./SettingsShell";
+import { SettingsTrailConsole } from "./SettingsTrailConsole";
 import { MasterDataConsole } from "./MasterDataConsole";
 import { PermissionMatrixCard } from "./PermissionMatrixCard";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
 import { loadSettings } from "./actions";
+import { listSettingsTrail } from "@/modules/settings/application/settings-trail-actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
 import { loadStaffConsole } from "@/modules/settings/application/user-actions";
 import { requireStaff } from "@/lib/auth/session";
@@ -17,6 +19,7 @@ import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings
 import { TeamSection } from "./TeamSection";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
 import { trailScope } from "@/modules/settings/domain/credentialTrail";
+import { trailGroup } from "@/modules/settings/domain/settingsTrail";
 import type { MasterData } from "@/modules/settings/domain/types";
 
 export const metadata = {
@@ -43,6 +46,21 @@ function masterCounts(master: MasterData): Record<string, number> {
   return out;
 }
 
+/**
+ * The Change trail section, with its own read.
+ *
+ * A section that renders on one of the seventeen addresses the dock offers should
+ * not cost the other sixteen three queries, and a prop that would be `null` on
+ * those sixteen is a state the panel would have to draw for a section that never
+ * shows it. So the read belongs to the section: it runs only when the dock is on
+ * `section=trail`, and the scope the address bar named is applied before it, so a
+ * chat link lands on the rows it counted rather than on the newest rows of every
+ * group.
+ */
+async function TrailPanel({ scope }: { scope: string | null }) {
+  return <SettingsTrailConsole read={await listSettingsTrail({ group: scope })} scope={scope} />;
+}
+
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -50,6 +68,7 @@ export default async function SettingsPage({
     area?: string | string[];
     section?: string | string[];
     provider?: string | string[];
+    trail?: string | string[];
   }>;
 }) {
   // Admin content is per-session; stop the static shell before any rendering so
@@ -57,15 +76,6 @@ export default async function SettingsPage({
   await connection();
   const params = await searchParams;
   const user = await requireStaff("/settings");
-  const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
-    await Promise.all([
-      loadSettings(),
-      getMasterData(),
-      loadStaffConsole(),
-      hasPermissionForUser("settings.manage_platform"),
-      canManageStaffUsers(),
-      getOrganisationTimeZone(),
-    ]);
 
   // The dock and the panel must agree, so both read the same resolved pair.
   // An unknown or missing `?area=&section=` falls back to the defaults rather
@@ -82,6 +92,23 @@ export default async function SettingsPage({
   // the filtered set — an unknown id scopes nothing, same as every other
   // parameter on this route.
   const trail = trailScope(typeof params.provider === "string" ? params.provider : undefined);
+
+  // `?trail=` scopes the settings change trail the same way, and is applied here
+  // rather than in the browser so the address bar a chat link wrote shows the rows
+  // it counted on the very first paint.
+  const changeScope = trailGroup(
+    typeof params.trail === "string" ? params.trail : undefined
+  );
+
+  const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
+    await Promise.all([
+      loadSettings(),
+      getMasterData(),
+      loadStaffConsole(),
+      hasPermissionForUser("settings.manage_platform"),
+      canManageStaffUsers(),
+      getOrganisationTimeZone(),
+    ]);
 
   // Shown by the create-user form, enforced again inside `createUser` — read from
   // the same loaded row so the hint can never drift from the rule.
@@ -114,13 +141,16 @@ export default async function SettingsPage({
       />
 
       <SettingsShell area={area.id} section={section.id} counts={counts}>
-        {area.id === "platform" && (
-          <SettingsConsole
-            initialValues={bundle.values}
-            editable={editable}
-            section={section.id}
-          />
-        )}
+        {area.id === "platform" &&
+          (section.id === "trail" ? (
+            <TrailPanel scope={changeScope} />
+          ) : (
+            <SettingsConsole
+              initialValues={bundle.values}
+              editable={editable}
+              section={section.id}
+            />
+          ))}
 
         {area.id === "organisation" && (
           <MasterDataConsole data={master} editable={editable} section={section.id} />

@@ -220,15 +220,6 @@ export interface MasterData {
   currencies: Currency[];
 }
 
-export interface AuditEntry {
-  id: string;
-  key: string;
-  previous_value: unknown;
-  next_value: unknown;
-  changed_at: string;
-  changed_by: string | null;
-}
-
 /** Controls rendered by the UI, grouped into the settings tabs. */
 export type SettingControl =
   | { kind: "toggle"; key: string; label: string; help?: string }

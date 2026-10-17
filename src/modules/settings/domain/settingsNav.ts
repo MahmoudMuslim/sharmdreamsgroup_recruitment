@@ -107,18 +107,37 @@ const PROVIDER_SECTIONS: SettingsNavSection[] = [
   },
 ];
 
+/**
+ * The Platform area's last dock entry: the trail of what this console wrote.
+ *
+ * Not a control, so not in `SETTINGS_SCHEMA` and it carries no count pill. It is
+ * declared here because the dock, the panel the page renders and the links the
+ * assistant writes all have to agree that the section exists — the same reason the
+ * model and template consoles' tabs are declared beside it. A row of
+ * `settings_audit_log` is listed by this section, by nothing else in the portal.
+ */
+const TRAIL_SECTION: SettingsNavSection = {
+  id: "trail",
+  label: "Change trail",
+  hint: "Every setting, template, team account and stored file this portal changed: the key, the value before, the value after, and when.",
+  icon: "history",
+};
+
 export const SETTINGS_NAV: readonly SettingsNavArea[] = [
   {
     id: "platform",
     label: "Platform",
     icon: "sliders",
     blurb: "How the product behaves: AI, assessments, notifications and security.",
-    sections: SETTINGS_SCHEMA.map((section) => ({
-      id: section.id,
-      label: section.title,
-      hint: section.description,
-      icon: section.icon,
-    })),
+    sections: [
+      ...SETTINGS_SCHEMA.map((section) => ({
+        id: section.id,
+        label: section.title,
+        hint: section.description,
+        icon: section.icon,
+      })),
+      TRAIL_SECTION,
+    ],
   },
   {
     id: "organisation",

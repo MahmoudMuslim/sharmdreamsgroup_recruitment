@@ -13,6 +13,7 @@ import {
 import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
 import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import { trailProvider, trailScope } from "@/modules/settings/domain/credentialTrail";
+import { trailGroup, trailGroupById } from "@/modules/settings/domain/settingsTrail";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -180,6 +181,12 @@ const CREDENTIALS_CONSOLE: AssistantLink = {
   label: "Open the API keys",
 };
 
+/** The settings change trail, when no single part of it can be named. */
+const SETTINGS_TRAIL_CONSOLE: AssistantLink = {
+  href: "/settings?area=platform&section=trail",
+  label: "Open the change trail",
+};
+
 /**
  * The setting keys a settings answer or write is about.
  *
@@ -284,6 +291,33 @@ function credentialTrailView(result: unknown): AssistantLink {
       ["provider", id],
     ])}`,
     label: `Open ${definition.displayName}'s key history`,
+  };
+}
+
+/**
+ * The change trail console, scoped to the part of it the answer read.
+ *
+ * `?trail=` is applied to the page's own read, so the click lands on the rows the
+ * answer counted rather than on the newest rows of every group. An unscoped read,
+ * and a refused one, both go to the section itself — the trail is listed by this
+ * console and nothing else, so a settings answer must never point at `/activity`,
+ * which is a different table on a page that reports its trail as not yet created.
+ */
+function settingsTrailView(result: unknown): AssistantLink {
+  const scope =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as { audit_scope?: unknown }).audit_scope
+      : null;
+  const id = trailGroup(typeof scope === "string" ? scope : null);
+  const group = id ? trailGroupById(id) : null;
+  if (!group || !id) return SETTINGS_TRAIL_CONSOLE;
+  return {
+    href: `/settings${query([
+      ["area", "platform"],
+      ["section", "trail"],
+      ["trail", id],
+    ])}`,
+    label: `Open the ${group.label} changes`,
   };
 }
 
@@ -454,7 +488,7 @@ export function linkForTool(
       };
     }
     case "get_audit_log":
-      return { href: "/activity", label: "Open the activity trail" };
+      return settingsTrailView(result);
     case "message_candidates":
       return { href: "/candidates", label: "Open the candidate pipeline" };
     case "message_prospects":
