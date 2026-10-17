@@ -20,6 +20,7 @@ import {
   updateMasterRecord,
 } from "@/modules/settings/application/master-data-actions";
 import { SECTORS, SECTOR_LABELS } from "@/modules/settings/domain/vocabularies";
+import { listTwins, twinNotice } from "@/modules/settings/domain/masterDataLists";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
 import { Badge, Button } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -275,6 +276,13 @@ export function MasterDataConsole({
   const rows = rowsFor(data, tab);
   const activeTab = meta;
 
+  // Names the list holds twice, from the rows already loaded for this section. The
+  // write door refuses a second copy, so anything here is a state the console has to
+  // show rather than prevent — and an opening filed under one of these names means
+  // whichever row `sort_order` puts first.
+  const twins = listTwins(tab, rows);
+  const twice = new Set(twins.flatMap((twin) => twin.ids));
+
   // The section now comes from the URL, so switching entity can happen with the
   // drawer still open. A draft half-filled for "Departments" must never be
   // written to "Locations", so changing entity always closes the panel.
@@ -417,6 +425,12 @@ export function MasterDataConsole({
         )}
       </header>
 
+      {twins.length > 0 && (
+        <p className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-900">
+          {twinNotice(tab, twins)}
+        </p>
+      )}
+
       {error && !open && (
         <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-sm text-rose-700">
           {error}
@@ -445,6 +459,7 @@ export function MasterDataConsole({
                   <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
                     {displayName(row)}
                     {!row.is_active && <Badge tone="neutral">Retired</Badge>}
+                    {twice.has(row.id) && <Badge tone="gold">Named twice</Badge>}
                   </p>
                   {secondary && <p className="mt-0.5 truncate text-xs text-brand-ink/50">{secondary}</p>}
                 </div>

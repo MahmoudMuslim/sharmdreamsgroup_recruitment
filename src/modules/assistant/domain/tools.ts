@@ -3019,7 +3019,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "save_master_record",
     label: "Saving a master-data record",
     description:
-      "Add or edit one entry in a controlled vocabulary — a company, department, location, role family, skill or currency. Jobs and prospects can only use values that exist here. This is also the way to bring a retired row back into use: send fields {\"is_active\": true}, the switch the console's Reactivate button writes.",
+      "Add or edit one entry in a controlled vocabulary — a company, department, location, role family, skill or currency. Jobs and prospects can only use values that exist here. A name the list already carries is refused however it is spelled: two rows that read alike are decided by the list's own order everywhere else in the portal, so edit the row you mean rather than adding a second copy. This is also the way to bring a retired row back into use: send fields {\"is_active\": true}, the switch the console's Reactivate button writes.",
     args: {
       entity: `string — one of ${MASTER_ENTITIES.join(", ")}`,
       id: "string — optional, the record being edited",

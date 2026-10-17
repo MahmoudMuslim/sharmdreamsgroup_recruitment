@@ -2,7 +2,7 @@ import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
-import { MASTER_LIST_WORDS } from "@/modules/settings/domain/masterDataLists";
+import { MASTER_LIST_WORDS, type MasterRowKey } from "@/modules/settings/domain/masterDataLists";
 import {
   driftScopeSentence,
   driftWords,
@@ -10,7 +10,6 @@ import {
   filingDrift,
   resolveFiling,
   type DriftGroup,
-  type FilingKey,
   type FilingRow,
   type FilingVocabularies,
   type FiledEntity,
@@ -24,7 +23,9 @@ type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
  * `job_openings` stores a company by id and a department, a location and a salary
  * currency as *text*, so nothing at the database level stops an opening filing
  * itself under "Finance" when the department list only holds "Finance & Investment".
- * Measured against the live database, 5 of the 7 openings do exactly that.
+ * The seeds did exactly that. The desk this read feeds names every opening still
+ * carrying one, because a count written into a comment is out of date the next
+ * time someone refiles a role.
  *
  * The read deliberately keeps retired rows: a write has to tell "this list does not
  * hold that name" apart from "it does, but it is retired", and the drawer needs the
@@ -33,7 +34,7 @@ type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 const FILING_FIELDS: readonly {
   entity: FiledEntity;
   field: "tenant_id" | "department" | "location" | "salary_currency";
-  by: FilingKey;
+  by: MasterRowKey;
   table: string;
   columns: string;
 }[] = [
@@ -136,12 +137,12 @@ export async function resolveJobFiling(input: {
 /* ------------------------------- Filing drift ------------------------------- */
 
 /** Which column carries the reference, and how the list keys it. */
-const FILED_COLUMN = new Map<FiledEntity, { field: keyof JobFilingFields; by: FilingKey }>(
+const FILED_COLUMN = new Map<FiledEntity, { field: keyof JobFilingFields; by: MasterRowKey }>(
   FILING_FIELDS.map(({ entity, field, by }) => [entity, { field, by }])
 );
 
 /** The column a refile writes for one vocabulary. */
-export function filedColumn(entity: FiledEntity): { field: keyof JobFilingFields; by: FilingKey } {
+export function filedColumn(entity: FiledEntity): { field: keyof JobFilingFields; by: MasterRowKey } {
   const column = FILED_COLUMN.get(entity);
   if (!column) throw new Error(`No job column files ${entity}.`);
   return column;

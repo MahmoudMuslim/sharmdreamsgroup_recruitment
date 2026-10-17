@@ -15,7 +15,14 @@ import type {
   Skill,
 } from "@/modules/settings/domain/types";
 import { isSector, SECTORS } from "@/modules/settings/domain/vocabularies";
-import { MASTER_LIST_WORDS, masterRowName } from "@/modules/settings/domain/masterDataLists";
+import {
+  MASTER_LIST_WORDS,
+  findListTwin,
+  foldRowKey,
+  masterRowName,
+  twinRefusal,
+  type MasterRowLike,
+} from "@/modules/settings/domain/masterDataLists";
 import { HIREABLE_STATUSES } from "@/modules/jobs/domain/hireable";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits, type ActivityEntity } from "@/modules/activity/domain/trail";
@@ -315,6 +322,19 @@ export async function createMasterRecord(
       return { ok: false, error: "Unknown record type." };
   }
 
+  // A second row that reads like one already on the list is refused here, not by the
+  // database: its unique indexes guard the columns a person never reads — a department
+  // by slug within one tenant scope, a location by name *and* city, a skill by a
+  // case-sensitive name — while a job opening stores only the words. Two rows with the
+  // same words are then decided by list order everywhere else in the portal: which one
+  // a filing resolves to, which one the console names, and the "in use" figure each
+  // row prints, since a department or location is counted by its name.
+  const added = masterName(entity, row);
+  const list = await readListRows(supabase, entity);
+  if (!list) return { ok: false, error: LIST_UNREADABLE };
+  const twin = findListTwin(entity, list, added);
+  if (twin) return { ok: false, error: twinRefusal(entity, added, masterName(entity, twin)) };
+
   const { data, error } = await supabase.from(MASTER_TABLE[entity]).insert(row).select("id").single();
 
   if (error) {
@@ -360,6 +380,33 @@ async function readMasterRow(
     .maybeSingle();
   return (data as unknown as Record<string, unknown> | null) ?? null;
 }
+
+/**
+ * Every row of one list, retired ones included, in the order the console shows them.
+ *
+ * The duplicate door has to read the whole list rather than ask the database for the
+ * name it was given: the match is case-insensitive, because that is how `findMasterRow`
+ * resolves a filing, so `lower(name)` in a query would not be the same rule.
+ *
+ * `null` means the list could not be read, which is not the same as an empty list:
+ * writing on top of an unread list would add the second copy this door exists to
+ * refuse, silently.
+ */
+async function readListRows(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  entity: MasterEntity
+): Promise<MasterRowLike[] | null> {
+  const { data, error } = await supabase
+    .from(MASTER_TABLE[entity])
+    .select(`id, ${READ_COLUMNS[entity]}`)
+    .order("sort_order");
+  if (error) return null;
+  return (data ?? []) as unknown as MasterRowLike[];
+}
+
+/** Sent instead of a twin verdict when the list could not be read at all. */
+const LIST_UNREADABLE =
+  "The list could not be read, so this save cannot be checked against it. Try again.";
 
 export async function updateMasterRecord(
   entity: MasterEntity,
@@ -417,6 +464,19 @@ export async function updateMasterRecord(
     return { ok: false, error: "That record is no longer in the list." };
   }
 
+  // The row as this edit would leave it, which the trail below also prints.
+  const label = masterName(entity, { ...before, ...row });
+
+  // Only a rename is checked against the list. Editing one of two rows that already
+  // read alike — or reactivating one, which is how a recruiter gets out of that state —
+  // is not adding a second copy, so refusing it would block the fix.
+  if (foldRowKey(label) !== foldRowKey(masterName(entity, before))) {
+    const list = await readListRows(supabase, entity);
+    if (!list) return { ok: false, error: LIST_UNREADABLE };
+    const twin = findListTwin(entity, list, label, id);
+    if (twin) return { ok: false, error: twinRefusal(entity, label, masterName(entity, twin)) };
+  }
+
   const { error } = await supabase.from(MASTER_TABLE[entity]).update(row).eq("id", id);
 
   if (error) {
@@ -435,8 +495,6 @@ export async function updateMasterRecord(
 
   const edits = scalarEdits(before, row);
   if (Object.keys(edits).length > 0) {
-    // The name a rename is *now* called, so the row reads forwards.
-    const label = masterName(entity, { ...before, ...row });
     await recordActivity({
       area: "master data",
       action: "master_update",

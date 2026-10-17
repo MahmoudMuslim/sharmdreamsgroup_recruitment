@@ -31,7 +31,10 @@
 
 import {
   MASTER_LIST_WORDS,
-  masterRowName,
+  findMasterRow,
+  foldRowKey,
+  masterRowKey,
+  type MasterRowKey,
   type MasterRowLike,
 } from "./masterDataLists";
 import type { MasterEntity } from "./types";
@@ -71,31 +74,14 @@ export type FilingMatch =
   | { status: "off_list" }
   | { status: "unchanged"; value: string; shown: string };
 
-/**
- * Where the record stores the reference.
- *
- * A company is stored by id and a currency by its code; a department and a location
- * are stored as the text of the row's name, which is exactly why they can drift.
- */
-export type FilingKey = "name" | "id" | "code";
-
 /** The longest option list one refusal quotes; the rest are counted, not listed. */
 const OPTIONS_SHOWN = 8;
 
-/** The vocabulary's own words for one row, per key. */
-function rowKey(entity: MasterEntity, row: FilingRow, by: FilingKey): string {
-  if (by === "id") return String(row.id ?? "").trim();
-  if (by === "code") return String(row.code ?? masterRowName(entity, row)).trim().toUpperCase();
-  return masterRowName(entity, row).trim();
-}
-
-const fold = (text: string) => text.toLocaleLowerCase().trim();
-
 /** The live rows of the list, in the order the console shows them. */
-function liveNames(entity: MasterEntity, rows: FilingRow[], by: FilingKey): string[] {
+function liveNames(entity: MasterEntity, rows: FilingRow[], by: MasterRowKey): string[] {
   return rows
     .filter((row) => row.is_active !== false)
-    .map((row) => rowKey(entity, row, by))
+    .map((row) => masterRowKey(entity, row, by))
     .filter(Boolean);
 }
 
@@ -104,24 +90,6 @@ function optionWords(names: string[]): string {
   if (names.length <= OPTIONS_SHOWN) return names.join(", ");
   const head = names.slice(0, OPTIONS_SHOWN).join(", ");
   return `${head}, … and ${names.length - OPTIONS_SHOWN} more`;
-}
-
-/**
- * The row a value points at, however it is spelled.
- *
- * A currency code is compared upper-case because that is how the column stores it;
- * everything else is matched case-insensitively and written back in the list's own
- * spelling, so "sales & marketing" cannot become a second facet on the grid. One
- * matcher for the write and the picker, so the screen can never offer an option the
- * action would refuse.
- */
-function findRow(entity: MasterEntity, rows: FilingRow[], value: string, by: FilingKey): FilingRow | undefined {
-  if (!value) return undefined;
-  return rows.find((row) =>
-    by === "code"
-      ? rowKey(entity, row, by) === value.toUpperCase()
-      : fold(rowKey(entity, row, by)) === fold(value)
-  );
 }
 
 /**
@@ -135,17 +103,17 @@ export function matchFiling(input: {
   entity: MasterEntity;
   rows: FilingRow[];
   submitted: string;
-  by?: FilingKey;
+  by?: MasterRowKey;
   stored?: string | null;
 }): FilingMatch {
   const by = input.by ?? "name";
   const wanted = String(input.submitted ?? "").trim();
-  const hit = findRow(input.entity, input.rows, wanted, by);
+  const hit = findMasterRow(input.entity, input.rows, wanted, by);
   if (hit && hit.is_active !== false) {
     return {
       status: "live",
-      value: rowKey(input.entity, hit, by),
-      shown: rowKey(input.entity, hit, "name"),
+      value: masterRowKey(input.entity, hit, by),
+      shown: masterRowKey(input.entity, hit, "name"),
     };
   }
 
@@ -153,15 +121,15 @@ export function matchFiling(input: {
   // own history alone: the row they are saving already carries the value, so nothing
   // new is being filed under the retired name.
   const stored = String(input.stored ?? "").trim();
-  if (stored && fold(wanted) === fold(stored)) {
+  if (stored && foldRowKey(wanted) === foldRowKey(stored)) {
     return { status: "unchanged", value: stored, shown: stored };
   }
 
   if (hit) {
     return {
       status: "retired",
-      value: rowKey(input.entity, hit, by),
-      shown: rowKey(input.entity, hit, "name"),
+      value: masterRowKey(input.entity, hit, by),
+      shown: masterRowKey(input.entity, hit, "name"),
     };
   }
   return { status: "off_list" };
@@ -173,7 +141,7 @@ export function filingRefusal(
   submitted: string,
   match: FilingMatch,
   rows: FilingRow[],
-  by: FilingKey = "name"
+  by: MasterRowKey = "name"
 ): string {
   const list = MASTER_LIST_WORDS[entity];
   // An id-keyed list is refused in the names a person recognises; the id is only
@@ -213,7 +181,7 @@ export function resolveFiling(input: {
   entity: MasterEntity;
   rows: FilingRow[];
   submitted: string;
-  by?: FilingKey;
+  by?: MasterRowKey;
   stored?: string | null;
 }): { ok: true; name: string; shown: string } | { ok: false; error: string } {
   const by = input.by ?? "name";
@@ -238,12 +206,12 @@ export function filingGhostLabel(input: {
   entity: FiledEntity;
   rows: FilingRow[];
   value: string | null | undefined;
-  by?: FilingKey;
+  by?: MasterRowKey;
 }): string | null {
   const by = input.by ?? "name";
   const value = String(input.value ?? "").trim();
   if (!value) return null;
-  const hit = findRow(input.entity, input.rows, value, by);
+  const hit = findMasterRow(input.entity, input.rows, value, by);
   if (hit && hit.is_active !== false) return null;
 
   // A retired row is named for what it is. A value the list never held is quoted
@@ -253,7 +221,7 @@ export function filingGhostLabel(input: {
     const shown = by === "id" ? `${value.slice(0, 8)}…` : value;
     return `${shown} — not in the ${MASTER_LIST_WORDS[input.entity]} list`;
   }
-  return `${rowKey(input.entity, hit, "name")} — retired, kept only because this role already uses it`;
+  return `${masterRowKey(input.entity, hit, "name")} — retired, kept only because this role already uses it`;
 }
 
 /* ------------------------------- Filing drift ------------------------------- */
@@ -294,7 +262,7 @@ export interface DriftGroup<T> {
  * that distinguish one row from another. A blank is named as one, because an empty
  * quote looks like a bug in the sentence rather than a missing filing.
  */
-export function storedFilingLabel(value: string, by: FilingKey): string {
+export function storedFilingLabel(value: string, by: MasterRowKey): string {
   const stored = String(value ?? "").trim();
   if (!stored) return "(blank)";
   return by === "id" ? `${stored.slice(0, 8)}…` : stored;
@@ -312,14 +280,14 @@ export function filingDrift<T>(input: {
   entity: FiledEntity;
   rows: FilingRow[];
   entries: DriftEntry<T>[];
-  by?: FilingKey;
+  by?: MasterRowKey;
 }): DriftGroup<T>[] {
   const by = input.by ?? "name";
   const groups = new Map<string, DriftGroup<T>>();
 
   for (const { value, record } of input.entries) {
     const stored = String(value ?? "").trim();
-    const hit = findRow(input.entity, input.rows, stored, by);
+    const hit = findMasterRow(input.entity, input.rows, stored, by);
 
     let state: DriftState;
     let canonical: string | null = null;
@@ -332,15 +300,15 @@ export function filingDrift<T>(input: {
       shown = by === "id" ? storedFilingLabel(stored, by) : null;
     } else if (hit.is_active === false) {
       state = "retired";
-      canonical = rowKey(input.entity, hit, by);
-      shown = rowKey(input.entity, hit, "name");
-    } else if (stored === rowKey(input.entity, hit, by)) {
+      canonical = masterRowKey(input.entity, hit, by);
+      shown = masterRowKey(input.entity, hit, "name");
+    } else if (stored === masterRowKey(input.entity, hit, by)) {
       // The record says exactly what the list says.
       continue;
     } else {
       state = "spelling";
-      canonical = rowKey(input.entity, hit, by);
-      shown = rowKey(input.entity, hit, "name");
+      canonical = masterRowKey(input.entity, hit, by);
+      shown = masterRowKey(input.entity, hit, "name");
     }
 
     const key = `${state}\u0000${stored}`;
@@ -394,16 +362,16 @@ export function noDriftSentence(openings: number): string {
 export function filingChoices(
   entity: FiledEntity,
   rows: FilingRow[],
-  by: FilingKey = "name"
+  by: MasterRowKey = "name"
 ): { value: string; label: string }[] {
   return rows
     .filter((row) => row.is_active !== false)
     .map((row) => ({
-      value: rowKey(entity, row, by),
+      value: masterRowKey(entity, row, by),
       // The row's own words, which for a currency already carry the code
       // ("USD US Dollar") because that is how the console prints the row everywhere
       // else — joining code and name here would read "USD — USD US Dollar".
-      label: rowKey(entity, row, "name"),
+      label: masterRowKey(entity, row, "name"),
     }))
     .filter((choice) => choice.value);
 }
