@@ -12,20 +12,25 @@ import { isEncryptionConfigured } from "@/lib/crypto/secrets";
  * Which half is open is decided by the settings dock (URL), not a tab strip in
  * here — the page already has one navigation, and this used to add a second.
  *
- * `trail` is the `?provider=` scope the page already validated, applied to the
- * read rather than to the rendered rows: a chat link asking for one provider's
- * history has to arrive holding that history, not the newest rows of everyone
- * else's. The console tracks the same parameter client-side for the same reason
- * the tabs do.
+ * `scope`, `page` and `find` are the three parameters the trail below the cards
+ * answers to — the provider `?provider=` named, the page `?page=` asked for and the
+ * words `?find=` searched — applied to the read rather than to the rendered rows. A
+ * chat link about one provider's older rows therefore arrives holding those rows, not
+ * the newest page of everyone's, and the first paint costs no round trip. The console
+ * tracks the same parameters client-side for the same reason the tabs do.
  */
 export async function ProvidersPanel({
   editable,
   section,
-  trail,
+  scope,
+  page,
+  find,
 }: {
   editable: boolean;
   section: string;
-  trail: string | null;
+  scope: string | null;
+  page: number;
+  find: string | null;
 }) {
   if (section === "models") return <ModelRoutingConsole editable={editable} />;
 
@@ -33,9 +38,9 @@ export async function ProvidersPanel({
   // `getEncryptionStatus()` action — a pure env check that cost a whole round
   // trip — and only then mount the console, which fired two more actions of its
   // own. Three serialized trips put the first card on screen 13 s after the page.
-  const [credentials, audit] = await Promise.all([
+  const [credentials, trail] = await Promise.all([
     listCredentials(),
-    listCredentialAudit({ provider: trail }),
+    listCredentialAudit({ provider: scope, page, find }),
   ]);
 
   return (
@@ -43,8 +48,7 @@ export async function ProvidersPanel({
       encryptionConfigured={isEncryptionConfigured()}
       editable={editable}
       initialCredentials={credentials}
-      initialAudit={audit.entries}
-      auditTotal={audit.total}
+      trail={{ read: trail, scope, page, find }}
     />
   );
 }

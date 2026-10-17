@@ -27,6 +27,10 @@ import {
   SETTINGS_TRAIL_LIMIT,
   SETTINGS_TRAIL_SEARCH_SCAN,
 } from "@/modules/settings/domain/settingsTrail";
+import {
+  TRAIL_LIMIT,
+  TRAIL_SEARCH_SCAN,
+} from "@/modules/settings/domain/credentialTrail";
 import { settingSearchWords } from "@/modules/settings/domain/settingSearch";
 import { linkForTool, type AssistantLink } from "@/modules/assistant/domain/links";
 import { BUCKETS } from "@/app/(admin)/files/file-browser-types";
@@ -165,7 +169,14 @@ export const ASSISTANT_RULES: readonly string[] = [
   `   The trail under those cards is scoped by ?provider=<one of ${PROVIDERS.map((provider) => provider.id).join("|")}>, the`,
   "   same ids list_credentials returns, so [OpenRouter's key history](/settings?area=providers&section=credentials&provider=openrouter)",
   "   is a real link — and get_credential_audit reads those rows, which is where a Test of an environment-served key",
-  "   survives. A VERIFIED row says somebody ran the test and what came back; it is not a claim that it passed.",
+  `   survives. It walks ${TRAIL_LIMIT} rows a page and the trail is deeper than one page, so ?page=<2 or more> reaches the`,
+  `   rows before the ones on screen and ?find=<words> runs its search box — the same arguments get_credential_audit's`,
+  `   page and query take, matched over the row as printed (the action, the provider id and its name, what it reported,`,
+  `   the actor) across the newest ${TRAIL_SEARCH_SCAN} rows of the scope, so`,
+  `   [the rejected OpenRouter test](/settings?area=providers&section=credentials&provider=openrouter&find=401) is a real`,
+  "   link too. Name the page an answer read rather than calling any one page the whole history, and never report an",
+  "   empty search as \"nobody tested this key\" — the note says how far it looked, and a match past that window is a",
+  "   different sentence. A VERIFIED row says somebody ran the test and what came back; it is not a claim that it passed.",
   "   Provider health only probes when a person opens that tab itself, so a link there shows nothing run;",
   "   /assessments takes ?q= for its own suite box, and /files takes ?q=,",
   `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,

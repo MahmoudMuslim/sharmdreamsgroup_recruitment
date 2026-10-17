@@ -28,7 +28,17 @@ import {
   type ModelOption,
   type ProviderGroup,
 } from "@/modules/settings/domain/providers";
-import { TRAIL_LIMIT, trailScope } from "@/modules/settings/domain/credentialTrail";
+import {
+  TRAIL_LIMIT,
+  TRAIL_SEARCH_SCAN,
+  trailPrintedMatches,
+  trailProvider,
+  trailScope,
+  trailStart,
+  trailNumber,
+  trailPages,
+  trailWords,
+} from "@/modules/settings/domain/credentialTrail";
 
 /**
  * Credential management.
@@ -1263,57 +1273,198 @@ export interface AuditEntryView {
   createdAt: string;
 }
 
+/** The columns every trail read needs, in one place, so no builder prints a row the others cannot. */
+const TRAIL_COLUMNS =
+  "id, provider, action, detail, created_at, actor_id, user_profiles(full_name)";
+
+/** One stored row, in the words the console prints — the actor flattened out of the embed. */
+function toAuditEntry(row: unknown): AuditEntryView {
+  const r = row as {
+    id: string;
+    provider: string | null;
+    action: string;
+    detail: string | null;
+    created_at: string;
+    user_profiles?: { full_name?: string } | { full_name?: string }[] | null;
+  };
+  const actor = Array.isArray(r.user_profiles) ? r.user_profiles[0] : r.user_profiles;
+  return {
+    id: r.id,
+    provider: r.provider,
+    action: r.action,
+    detail: r.detail,
+    actor: actor?.full_name ?? null,
+    createdAt: r.created_at,
+  };
+}
+
+export type CredentialTrailRead =
+  | {
+      ok: true;
+      entries: AuditEntryView[];
+      /** Rows this listing is drawn from: the scope, or the rows in it that match. */
+      total: number;
+      /** How many of those rows name the person who acted. */
+      named: number;
+      /** The page actually served: a request past the end is clamped, never answered blank. */
+      page: number;
+      /** The words the listing was searched for, or `null` for a plain walk. */
+      find: string | null;
+      /** Rows the read looked through — the whole scope, or the search's window. */
+      scanned: number;
+      /** Rows the scope holds, whether or not the search reached that far. */
+      scopeRows: number;
+    }
+  | { ok: false; error: string };
+
 /**
- * Credential change history, newest first, with the count the listing is drawn
- * from.
+ * Credential change history, newest first, a page at a time, with the counts the
+ * listing is drawn from.
  *
- * `total` carries the same provider predicate as the rows, so a scoped answer can
- * say "12 of 14 for OpenRouter" rather than quoting the whole table beside a
- * filtered list. Contains no secret material by construction: the writer stores a
- * fixed phrase or a masked hint, never a value.
+ * Both counts carry the same provider predicate as the rows, which is the only way a
+ * scoped answer can say "page 2 of 5 for OpenRouter" rather than quoting the whole
+ * table beside a filtered list. `named` is asked separately because the note makes a
+ * claim about every row in the scope, not about the ones on screen.
+ *
+ * A page rather than a bigger cap, because the live table already proves the cap was
+ * a lie: 24 rows against a 12-row window means half the history of every key the
+ * portal holds was unreachable, on screen and in the chat alike. There is no caller
+ * choice in the page size any more — the same reason the settings trail lost its
+ * `limit`: a read whose depth a caller picks cannot promise the screen and the answer
+ * are looking at the same rows.
+ *
+ * A page rather than a cursor, because `created_at` is not a unique column here: two
+ * providers tested in the same second share a timestamp, and a `created_at < cursor`
+ * walk would drop the rest of any batch it split. Ordering by `created_at` then `id`
+ * is a total order over the scope, so page N is a stable slice.
+ *
+ * A search cannot be pushed into the database, because what it matches is the row as
+ * printed — the provider's display name, the action, the detail text, the actor's
+ * name — and those are made here, not in SQL. So it reads the scope's newest
+ * `TRAIL_SEARCH_SCAN` rows, matches them with the same function the screen uses, and
+ * pages the matches. That is why the answer carries `scanned` beside `scopeRows`: past
+ * the window, "nothing matches" and "the match is older than the window" are the same
+ * empty list, and only the note can tell them apart.
+ *
+ * A query failure is answered as a refusal. This read used to ignore `.error` on both
+ * requests, so a table that did not answer came back as zero rows — and the note on
+ * zero rows tells the recruiter no credential has been changed or tested through this
+ * portal yet, which is a claim about their history rather than about the failure.
+ *
+ * Contains no secret material by construction: the writer stores a fixed phrase or a
+ * masked hint, never a value.
  */
 export async function listCredentialAudit(
-  scope: { provider?: string | null; limit?: number } = {}
-): Promise<{ entries: AuditEntryView[]; total: number }> {
+  scope: {
+    provider?: string | null;
+    page?: string | number | null;
+    find?: string | null;
+  } = {}
+): Promise<CredentialTrailRead> {
   await requireStaff("/settings");
 
   const provider = trailScope(scope.provider);
-  const limit = scope.limit ?? TRAIL_LIMIT;
+  const words = trailWords(scope.find);
   const admin = getSupabaseServiceClient();
 
-  const rowsQuery = admin
-    .from("credential_audit_log")
-    .select("id, provider, action, detail, created_at, actor_id, user_profiles(full_name)");
-  const countQuery = admin
-    .from("credential_audit_log")
-    .select("id", { count: "exact", head: true });
+  /**
+   * The scope predicate is repeated in each builder on purpose: every one of these
+   * reads has to describe exactly the same rows as the listing beside it, or a scoped
+   * note quotes the whole trail.
+   */
+  const scoped = () => {
+    let query = admin.from("credential_audit_log").select(TRAIL_COLUMNS);
+    if (provider) query = query.eq("provider", provider);
+    return query.order("created_at", { ascending: false }).order("id", { ascending: false });
+  };
 
-  const [{ data }, { count }] = await Promise.all([
-    provider
-      ? rowsQuery.eq("provider", provider).order("created_at", { ascending: false }).limit(limit)
-      : rowsQuery.order("created_at", { ascending: false }).limit(limit),
-    provider ? countQuery.eq("provider", provider) : countQuery,
-  ]);
+  /** One page of the scope, in the trail's own newest-first order. */
+  const rowsOf = (asked: number) => {
+    const offset = trailStart(asked);
+    return scoped().range(offset, offset + TRAIL_LIMIT - 1);
+  };
 
-  const entries = ((data ?? []) as unknown[]).map((row) => {
-    const r = row as {
-      id: string;
-      provider: string | null;
-      action: string;
-      detail: string | null;
-      created_at: string;
-      user_profiles?: { full_name?: string } | { full_name?: string }[] | null;
-    };
-    const actor = Array.isArray(r.user_profiles) ? r.user_profiles[0] : r.user_profiles;
+  /** How many rows the scope holds, or how many of them name an actor. */
+  const countOf = (onlyActor: boolean) => {
+    let query = admin
+      .from("credential_audit_log")
+      .select("id", { count: "exact", head: true });
+    if (onlyActor) query = query.not("actor_id", "is", null);
+    if (provider) query = query.eq("provider", provider);
+    return query;
+  };
+
+  const refuse = (message: string): CredentialTrailRead => {
+    console.error("[settings] credential trail refused:", message);
+    return { ok: false, error: `The credential trail could not be read: ${message}` };
+  };
+
+  if (words !== null) {
+    const [scan, sized] = await Promise.all([
+      scoped().limit(TRAIL_SEARCH_SCAN),
+      countOf(false),
+    ]);
+    if (scan.error) return refuse(scan.error.message);
+    if (sized.error) return refuse(sized.error.message);
+    const scopeRows = sized.count ?? 0;
+    const matched = (scan.data ?? []).map(toAuditEntry).filter((entry) =>
+      trailPrintedMatches(
+        { ...entry, name: trailProvider(entry.provider)?.displayName ?? null },
+        words
+      )
+    );
+    // The match set is what the reader is paging through, so a page past its end is
+    // answered with its oldest rows — the same rule the walk follows.
+    const page = Math.min(trailNumber(scope.page), trailPages(matched.length));
+    const offset = trailStart(page);
     return {
-      id: r.id,
-      provider: r.provider,
-      action: r.action,
-      detail: r.detail,
-      actor: actor?.full_name ?? null,
-      createdAt: r.created_at,
+      ok: true,
+      entries: matched.slice(offset, offset + TRAIL_LIMIT),
+      total: matched.length,
+      named: matched.filter((entry) => entry.actor !== null).length,
+      page,
+      find: words,
+      scanned: Math.min(scopeRows, TRAIL_SEARCH_SCAN),
+      scopeRows,
     };
-  });
+  }
 
-  return { entries, total: count ?? entries.length };
+  let page = trailNumber(scope.page);
+  const [listed, sized, actors] = await Promise.all([
+    rowsOf(page),
+    countOf(false),
+    countOf(true),
+  ]);
+  // Without the counts the note would claim a trail was empty, or that nobody
+  // acted, when the number was never taken.
+  if (sized.error) return refuse(sized.error.message);
+  if (actors.error) return refuse(actors.error.message);
+
+  const total = sized.count ?? 0;
+  const lastPage = trailPages(total);
+  let found = listed.data ?? [];
+  // A page beyond the end is answered with the oldest page instead of with a
+  // failure: a range past the last row is refused outright by PostgREST rather than
+  // returning an empty slice, so a bookmark for page 40 of a 24-row trail would read
+  // as "the credential trail could not be read". The count beside it carries the same
+  // scope predicate, so it already says where the trail ends.
+  if (page > lastPage) {
+    page = lastPage;
+    const again = await rowsOf(page);
+    if (again.error) return refuse(again.error.message);
+    found = again.data ?? [];
+  } else if (listed.error) {
+    return refuse(listed.error.message);
+  }
+
+  return {
+    ok: true,
+    entries: (found as unknown[]).map(toAuditEntry),
+    total,
+    named: actors.count ?? 0,
+    page,
+    find: null,
+    scanned: total,
+    scopeRows: total,
+  };
 }

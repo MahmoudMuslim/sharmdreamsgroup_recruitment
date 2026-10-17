@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -12,10 +12,12 @@ import {
   Loader2,
   Plug,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Trash2,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import {
   deleteCredential,
@@ -25,11 +27,20 @@ import {
   verifyCredential,
   type AuditEntryView,
   type CredentialKeyView,
+  type CredentialTrailRead,
   type CredentialView,
 } from "@/modules/settings/application/credential-actions";
 import { PROVIDER_GROUPS, type ProviderGroup } from "@/modules/settings/domain/providers";
 import { credentialsTab } from "@/modules/settings/domain/settingsNav";
-import { trailProvider, trailScope, trailScopeNote } from "@/modules/settings/domain/credentialTrail";
+import {
+  TRAIL_LIMIT,
+  trailNumber,
+  trailPages,
+  trailProvider,
+  trailScope,
+  trailScopeNote,
+  trailWords,
+} from "@/modules/settings/domain/credentialTrail";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
@@ -328,30 +339,78 @@ function CredentialCard({
 }
 
 /**
+ * Write the provider, the page and the words into the address bar.
+ *
+ * `replaceState` rather than a router push: the point is that the bar matches what
+ * is on screen, and a push would remount this console through the page's own read and
+ * throw away the half-typed key a card is holding. Page 1 and an empty box write
+ * nothing, so the bar never carries a parameter that changed nothing. The tab and
+ * every other parameter on the route are left exactly as they are.
+ */
+function writeTrailUrl(
+  pathname: string,
+  nextProvider: string | null,
+  nextPage: number,
+  nextFind: string | null
+) {
+  const search = new URLSearchParams(window.location.search);
+  if (nextProvider === null) search.delete("provider");
+  else search.set("provider", nextProvider);
+  if (nextPage <= 1) search.delete("page");
+  else search.set("page", String(nextPage));
+  if (nextFind === null) search.delete("find");
+  else search.set("find", nextFind);
+  window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+}
+
+/**
  * The provider credential cards.
  *
  * The first paint already holds the data: the settings page reads the store and
- * the audit trail in its own render, so no card waits on a round trip after
+ * the trail in its own render, so no card waits on a round trip after
  * hydration. `Refresh` re-reads through the same actions this console used to
  * fire on mount.
  *
  * The group tab is carried in `?tab=` like the other two tabbed consoles, so
- * clicking one leaves an address that names what is on screen. The trail is
- * scoped by `?provider=`, which the page applies to the read it already made —
- * the console only has to re-read when that address changes underneath it.
+ * clicking one leaves an address that names what is on screen. The trail below the
+ * cards is scoped by `?provider=`, paged by `?page=` and searched by `?find=`, all
+ * applied by the page to the read it already made — the console only has to re-read
+ * when that address changes underneath it.
+ *
+ * The trail is 24 rows deep on the live portal and a page is 12, so the only honest
+ * question after the first page is "what about the rest?". This answers it with a
+ * pager rather than a bigger cap: the next button moves to the next 12 rows of the
+ * same scope, the address bar carries the page, and the note names the page it is
+ * standing on. The same `listCredentialAudit` the chat calls serves both, so a
+ * screen and an answer cannot be looking at different rows.
+ *
+ * The search box matches the rows the section prints — the action, the provider and
+ * its name, the detail text, the actor — and it is a search of the same read, not a
+ * filter of what happens to be on screen, because a match is usually on a page the
+ * reader has not walked to. It commits on submit rather than on every keystroke for
+ * the same reason the change trail's box does: each commit is a server read over a
+ * window of rows.
+ *
+ * A refused read arrives as `read` rather than as an empty trail, because "nobody has
+ * tested a key" and "the trail could not be read" are different sentences — and only
+ * one of them is a fact about the portal's history.
  */
 export function CredentialsConsole({
   encryptionConfigured,
   editable,
   initialCredentials,
-  initialAudit,
-  auditTotal,
+  trail: { read, scope: seededScope, page: seededPage, find: seededFind },
 }: {
   encryptionConfigured: boolean;
   editable: boolean;
   initialCredentials: CredentialView[];
-  initialAudit: AuditEntryView[];
-  auditTotal: number;
+  /** The page's own trail read, with the three parameters it was asked with. */
+  trail: {
+    read: CredentialTrailRead;
+    scope: string | null;
+    page: number;
+    find: string | null;
+  };
 }) {
   const params = useSearchParams();
   const pathname = usePathname();
@@ -373,64 +432,139 @@ export function CredentialsConsole({
     setTab(incomingTab);
   }
 
-  const [audit, setAudit] = useState<AuditEntryView[]>(initialAudit);
-  const [total, setTotal] = useState(auditTotal);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   /**
-   * `?provider=` narrows the change trail to one provider's rows. The address bar
-   * and the rows themselves are the two writers, so the parameter is held the way
-   * the tab strip holds its own: last value applied from the URL is tracked, and a
-   * click writes the address back. The first paint already carries that scope,
-   * because the page applied it to the read it made; only a *change* costs a round
-   * trip, whether it arrives as a chat link or as a clicked provider name.
+   * `?provider=` narrows the change trail to one provider's rows, `?page=` walks
+   * that scope backwards and `?find=` searches it. All three have two writers — the
+   * address bar a chat link brought, and a control in this section — so the triplet
+   * last taken from the bar is tracked and applied, exactly the way the tab strip
+   * holds its own value. The first paint already carries them, because the page
+   * applied them to the read it made; only a *change* costs a round trip, whether it
+   * arrives as a chat link or as a clicked provider name.
    */
-  const incomingTrail = trailScope(params.get("provider"));
-  const [trail, setTrail] = useState<string | null>(incomingTrail);
-  const [lastAppliedTrail, setLastAppliedTrail] = useState<string | null>(incomingTrail);
-  if (incomingTrail !== lastAppliedTrail) {
-    setLastAppliedTrail(incomingTrail);
-    setTrail(incomingTrail);
+  const incomingScope = trailScope(params.get("provider"));
+  const incomingPage = trailNumber(params.get("page"));
+  const incomingFind = trailWords(params.get("find"));
+  const incomingTrail = `${incomingScope ?? ""}|${incomingPage}|${incomingFind ?? ""}`;
+  const [appliedTrail, setAppliedTrail] = useState(incomingTrail);
+  const [provider, setProvider] = useState<string | null>(seededScope);
+  const [page, setPage] = useState(read.ok ? read.page : seededPage);
+  const [find, setFind] = useState<string | null>(seededFind);
+  const [words, setWords] = useState(seededFind ?? "");
+  if (incomingTrail !== appliedTrail) {
+    setAppliedTrail(incomingTrail);
+    setProvider(incomingScope);
+    setPage(incomingPage);
+    setFind(incomingFind);
+    setWords(incomingFind ?? "");
   }
-  const readTrail = useRef(trail);
+
+  const [audit, setAudit] = useState<AuditEntryView[]>(read.ok ? read.entries : []);
+  const [total, setTotal] = useState(read.ok ? read.total : 0);
+  const [named, setNamed] = useState(read.ok ? read.named : 0);
+  // The note has to say how far a search looked, so the listing keeps the window it
+  // was searched over and the scope's own size, not just the rows that matched.
+  const [scanned, setScanned] = useState(read.ok ? read.scanned : 0);
+  const [scopeRows, setScopeRows] = useState(read.ok ? read.scopeRows : 0);
+  const [failure, setFailure] = useState<string | null>(read.ok ? null : read.error);
+  const [pending, setPending] = useState(false);
+  const readTrail = useRef(`${provider}|${page}|${find ?? ""}`);
+
+  // The bar always carries what the section is showing, including on the first
+  // paint: a bookmark for a page the trail has outgrown is served as its oldest
+  // page, and that is the number the bar keeps.
+  useEffect(() => {
+    writeTrailUrl(pathname, provider, page, find);
+  }, [provider, page, find, pathname]);
 
   useEffect(() => {
-    if (readTrail.current === trail) return;
-    readTrail.current = trail;
+    const key = `${provider}|${page}|${find ?? ""}`;
+    if (readTrail.current === key) return;
+    readTrail.current = key;
     let live = true;
-    listCredentialAudit({ provider: trail })
-      .then((entries) => {
+    setPending(true);
+    listCredentialAudit({ provider, page, find })
+      .then((result) => {
         if (!live) return;
-        setAudit(entries.entries);
-        setTotal(entries.total);
+        if (result.ok) {
+          setAudit(result.entries);
+          setTotal(result.total);
+          setNamed(result.named);
+          setScanned(result.scanned);
+          setScopeRows(result.scopeRows);
+          setFailure(null);
+          // A bookmark to a page the trail no longer holds is clamped by the read;
+          // the listing follows onto the page it actually served, and the bar
+          // follows the listing, so it never keeps naming rows nobody showed.
+          if (result.page !== page) {
+            readTrail.current = `${provider}|${result.page}|${find ?? ""}`;
+            setPage(result.page);
+          }
+        } else {
+          // A refused read has no rows, so the listing is cleared rather than left
+          // showing an unscoped page under a scoped heading.
+          setAudit([]);
+          setTotal(0);
+          setNamed(0);
+          setScanned(0);
+          setScopeRows(0);
+          setFailure(result.error);
+        }
       })
       .catch(() => {
-        if (live) setError("Could not load the credential store.");
+        if (!live) return;
+        setAudit([]);
+        setTotal(0);
+        setNamed(0);
+        setScanned(0);
+        setScopeRows(0);
+        setFailure("The credential trail could not be read.");
+      })
+      .finally(() => {
+        if (live) setPending(false);
       });
     return () => {
       live = false;
     };
-  }, [trail]);
+  }, [provider, page, find]);
 
   /**
    * Re-reads the store (used by the Refresh button and after any card action).
    *
    * Deliberately leaves the current list on screen: replacing it with a spinner
    * unmounts every card and wipes its local state — which is what used to make a
-   * card's Test result disappear the instant it arrived.
+   * card's Test result disappear the instant it arrived. The trail is re-read with
+   * the scope, page and words the section is standing on, so a test that just wrote
+   * a row refreshes the page the reader is looking at rather than snapping back to
+   * the newest one.
    */
   async function reload() {
     setRefreshing(true);
     try {
-      const [creds, entries] = await Promise.all([
+      const [creds, fresh] = await Promise.all([
         listCredentials(),
-        listCredentialAudit({ provider: trail }),
+        listCredentialAudit({ provider, page, find }),
       ]);
       setCredentials(creds);
-      setAudit(entries.entries);
-      setTotal(entries.total);
-      readTrail.current = trail;
+      if (fresh.ok) {
+        setAudit(fresh.entries);
+        setTotal(fresh.total);
+        setNamed(fresh.named);
+        setScanned(fresh.scanned);
+        setScopeRows(fresh.scopeRows);
+        setFailure(null);
+        readTrail.current = `${provider}|${fresh.page}|${find ?? ""}`;
+        if (fresh.page !== page) setPage(fresh.page);
+      } else {
+        setAudit([]);
+        setTotal(0);
+        setNamed(0);
+        setScanned(0);
+        setScopeRows(0);
+        setFailure(fresh.error);
+      }
       setError(null);
     } catch {
       setError("Could not load the credential store.");
@@ -457,19 +591,36 @@ export function CredentialsConsole({
     window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
   }
 
-  /** Narrow the trail to one provider, or back to the whole history. */
+  /**
+   * Narrow the trail to one provider, or back to the whole history.
+   *
+   * A new scope is a new listing, so it starts again at its newest page rather than
+   * carrying a page number that counted a different set of rows.
+   */
   function openTrail(next: string | null) {
-    setTrail(next);
-    const search = new URLSearchParams(window.location.search);
-    if (next === null) search.delete("provider");
-    else search.set("provider", next);
-    window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+    setProvider(next);
+    setPage(1);
+  }
+
+  /** A new search is a new listing, and the words narrow whatever scope is open. */
+  function searchTrail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFind(trailWords(words));
+    setPage(1);
+  }
+
+  function clearTrailSearch() {
+    setWords("");
+    setFind(null);
+    setPage(1);
   }
 
   // A scope the address bar named keeps its heading even when no row matches it,
   // so a link to one provider's history never arrives at a page that shows
   // nothing and says nothing about why.
-  const trailDefinition = trailProvider(trail);
+  const trailDefinition = trailProvider(provider);
+  const pages = trailPages(total);
+  const lastRow = (page - 1) * TRAIL_LIMIT + audit.length;
 
   return (
     <div className="space-y-6">
@@ -560,13 +711,19 @@ export function CredentialsConsole({
         ))}
       </div>
 
-      {(trail !== null || audit.length > 0) && (
+      {(provider !== null || find !== null || failure !== null || audit.length > 0) && (
         <section>
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="font-display text-base font-bold">
-              {trailDefinition ? `Recent changes — ${trailDefinition.displayName}` : "Recent changes"}
+              {`${
+                find
+                  ? `Changes matching “${find}”`
+                  : page > 1
+                    ? "Change history"
+                    : "Recent changes"
+              }${trailDefinition ? ` — ${trailDefinition.displayName}` : ""}`}
             </h3>
-            {trail !== null && (
+            {provider !== null && (
               <button
                 type="button"
                 onClick={() => openTrail(null)}
@@ -575,10 +732,57 @@ export function CredentialsConsole({
                 Show every provider
               </button>
             )}
+            {pending && (
+              <span className="text-xs text-brand-ink/40" role="status">
+                Loading…
+              </span>
+            )}
           </div>
+
+          <form onSubmit={searchTrail} className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[14rem] flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-brand-ink/35"
+                aria-hidden
+              />
+              <input
+                value={words}
+                onChange={(event) => setWords(event.target.value)}
+                placeholder="Search an action, a provider, what it reported, or who ran it"
+                aria-label="Search the credential trail"
+                className="w-full rounded-xl border border-brand-line bg-white py-2 pl-9 pr-3 text-xs text-brand-ink/80 outline-none focus:border-brand-gold"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={pending}
+              className="rounded-xl border border-brand-line px-3.5 py-2 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:opacity-45"
+            >
+              Search
+            </button>
+            {(find !== null || words !== "") && (
+              <button
+                type="button"
+                onClick={clearTrailSearch}
+                className="inline-flex items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold text-brand-ink/50 hover:bg-brand-sand"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+                Clear
+              </button>
+            )}
+          </form>
+
           <p className="mb-3 mt-1 text-xs leading-relaxed text-brand-ink/55">
-            {trailScopeNote({ providerId: trail, total, loaded: audit.length })}
-            {audit.length > 0 && (
+            {failure ??
+              trailScopeNote({
+                providerId: provider,
+                total,
+                loaded: audit.length,
+                named,
+                page,
+                search: find === null ? null : { words: find, scanned, scopeRows },
+              })}
+            {!failure && audit.length > 0 && (
               <span className="text-brand-ink/40"> Pick a provider in a row to read only its history.</span>
             )}
           </p>
@@ -608,6 +812,35 @@ export function CredentialsConsole({
                 </li>
               ))}
             </ul>
+          )}
+
+          {!failure && pages > 1 && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs">
+              {page > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setPage(page - 1)}
+                  disabled={pending}
+                  className="rounded-xl border border-brand-line px-3.5 py-2 font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:opacity-45"
+                >
+                  {`Newer changes (page ${page - 1})`}
+                </button>
+              )}
+              {lastRow < total && (
+                <button
+                  type="button"
+                  onClick={() => setPage(page + 1)}
+                  disabled={pending}
+                  className="rounded-xl border border-brand-line px-3.5 py-2 font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:opacity-45"
+                >
+                  {`Show ${Math.min(TRAIL_LIMIT, total - lastRow)} earlier changes`}
+                </button>
+              )}
+              <span className="text-brand-ink/40">
+                {`Page ${page} of ${pages}`}
+                {total > TRAIL_LIMIT ? ` — ${TRAIL_LIMIT} rows a page, newest first` : ""}
+              </span>
+            </div>
           )}
         </section>
       )}

@@ -63,7 +63,15 @@ import {
   providerById,
 } from "@/modules/settings/domain/providers";
 import { credentialsTab } from "@/modules/settings/domain/settingsNav";
-import { trailScope, trailScopeNote } from "@/modules/settings/domain/credentialTrail";
+import {
+  TRAIL_LIMIT,
+  TRAIL_SEARCH_SCAN,
+  trailNumber,
+  trailPages,
+  trailScope,
+  trailScopeNote,
+  trailWords,
+} from "@/modules/settings/domain/credentialTrail";
 import {
   SETTINGS_TRAIL_GROUPS,
   SETTINGS_TRAIL_LIMIT,
@@ -1422,10 +1430,12 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "get_credential_audit",
     label: "Reading the credential trail",
     description:
-      "The API keys console's own \"Recent changes\" list, row for row: who changed or tested a provider's credential and what the provider said. `provider` narrows it to one provider's history, exactly as the console's `?provider=` does, and both read the same newest rows — so this answer and that section can never disagree about which rows exist. A `VERIFIED` row records that somebody pressed Test and what came back; the coming-back is in `detail`, so a refused key is filed under the same action as a working one. Nothing in a row is a key value: the writer stores a fixed phrase or a masked hint.",
+      "The API keys console's own \"Recent changes\" list, row for row: who changed or tested a provider's credential and what the provider said. `provider` narrows it to one provider's history exactly as the console's `?provider=` does, `page` walks that scope backwards exactly as its `?page=` does, and `query` runs its search box exactly as `?find=` does, so this answer and that section read the same scope, the same page size, the same window and the same order and cannot disagree about which rows exist. The live trail is deeper than one page — 24 rows against 12 a page — so a page number is how an older test is reached, and the note names the page it is standing on rather than leaving the count to be divided. A `VERIFIED` row records that somebody pressed Test and what came back; the coming-back is in `detail`, so a refused key is filed under the same action as a working one. The search matches the row as printed — the action, the provider id and its display name, the detail text, the actor's name — and says how far back it looked, because a match older than that window is not the same statement as no match at all. Nothing in a row is a key value: the writer stores a fixed phrase or a masked hint, and a hint like \"••••••••EOOg\" is the only trace of the secret.",
     args: {
       provider:
         "string — optional, one provider id exactly as list_credentials returns it, to read only its history",
+      page: `number — optional, 1-based, ${TRAIL_LIMIT} rows a page: 1 is the newest, 2 the rows before them, and the note on any answer names the last page`,
+      query: `string — optional, the console's own search box, matched over the newest ${TRAIL_SEARCH_SCAN} rows of the scope and paged like any other listing; the note names the rows it searched`,
     },
     run: async (args) => {
       const asked = optionalStr(args, "provider");
@@ -1435,18 +1445,55 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           "That is not a provider the API keys console lists — read list_credentials first."
         );
       }
-      const { entries, total } = await listCredentialAudit({ provider: scope });
-      const shown = entries.slice(0, ANSWER_ROWS);
-      const parts = [
-        trailScopeNote({ providerId: scope, total, loaded: shown.length }),
-        "A provider whose key comes from the environment has no stored row to stamp, so for it this trail is the only record a Test left.",
-        "Each row names the person who acted, or system when no profile was found for that session.",
-      ];
+      const askedWords = optionalStr(args, "query");
+      const words = askedWords === undefined ? null : trailWords(askedWords);
+      // Refused rather than defaulted: a model that wrote `page: "last"` has not
+      // asked for the newest rows, and answering a different question quietly is
+      // worse than telling it what the argument takes.
+      const askedPage = args.page;
+      if (askedPage !== undefined && askedPage !== null && askedPage !== "") {
+        const parsed = typeof askedPage === "number" ? askedPage : Number(String(askedPage).trim());
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          throw new ToolArgumentError(
+            `"page" must be a whole number from 1 — 1 is the newest ${TRAIL_LIMIT} rows of the scope, 2 the rows before them.`
+          );
+        }
+      }
+      const page =
+        askedPage === undefined || askedPage === null || askedPage === ""
+          ? 1
+          : trailNumber(askedPage as string | number);
+      const result = await listCredentialAudit({ provider: scope, page, find: words });
+      if (!result.ok) {
+        // Answered as a refusal, with no counts invented behind it. An empty list
+        // would let the model tell a recruiter no key was ever tested, which is a
+        // sentence about a failed query rather than about their history.
+        return { audit_refused: true, audit_note: result.error, audit_scope: scope, audit: [] };
+      }
       return {
-        audit_note: parts.join(" "),
+        audit_note: `${trailScopeNote({
+          providerId: scope,
+          total: result.total,
+          loaded: result.entries.length,
+          named: result.named,
+          page: result.page,
+          search: result.find === null ? null : {
+            words: result.find,
+            scanned: result.scanned,
+            scopeRows: result.scopeRows,
+          },
+        })} A provider whose key comes from the environment has no stored row to stamp, so for it this trail is the only record a Test left.`,
         audit_scope: scope,
-        audit_total: total,
-        audit: shown.map((entry) => {
+        audit_page: result.page,
+        audit_pages: trailPages(result.total),
+        audit_total: result.total,
+        audit_named: result.named,
+        // The three the console's box shows under its own heading, so an answer
+        // about "the OpenRouter test" can say which rows it looked through.
+        audit_find: result.find,
+        audit_scanned: result.scanned,
+        audit_scope_rows: result.scopeRows,
+        audit: result.entries.map((entry) => {
           const definition = providerById(entry.provider ?? "");
           return {
             provider: entry.provider,

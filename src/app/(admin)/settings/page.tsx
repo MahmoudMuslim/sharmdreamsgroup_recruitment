@@ -103,23 +103,26 @@ export default async function SettingsPage({
     typeof params.section === "string" ? params.section : undefined
   );
 
-  // `?provider=` scopes the keys console's change trail, so a chat answer about
-  // one provider's history lands on that history rather than on the newest rows
-  // of every provider. Applied before the read so the first paint already holds
-  // the filtered set — an unknown id scopes nothing, same as every other
-  // parameter on this route.
-  const trail = trailScope(typeof params.provider === "string" ? params.provider : undefined);
+  // `?provider=` scopes the keys console's change trail, so a chat answer about one
+  // provider's history lands on that history rather than on the newest rows of every
+  // provider. Applied before the read so the first paint already holds the filtered
+  // set — an unknown id scopes nothing, same as every other parameter on this route.
+  const credentialScope = trailScope(
+    typeof params.provider === "string" ? params.provider : undefined
+  );
 
-  // `?trail=` scopes the settings change trail, `?page=` walks it and `?find=`
-  // searches it, all applied here rather than in the browser so the address bar a
+  // `?trail=` scopes the settings change trail. `?page=` and `?find=` then walk or
+  // search whichever trail is on screen — this route has two, the change trail and
+  // the keys console's credential history, and both read a page and a search exactly
+  // the same way — all applied here rather than in the browser so the address bar a
   // chat link wrote shows the rows that link counted on the very first paint. The
   // words are their own parameter because `?q=` already means the settings editor's
   // box on this route, and one address must not mean two different searches.
   const changeScope = trailGroup(
     typeof params.trail === "string" ? params.trail : undefined
   );
-  const changePage = trailPage(typeof params.page === "string" ? params.page : undefined);
-  const changeFind = trailFind(typeof params.find === "string" ? params.find : undefined);
+  const pageNumber = trailPage(typeof params.page === "string" ? params.page : undefined);
+  const searchWords = trailFind(typeof params.find === "string" ? params.find : undefined);
 
   const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
     await Promise.all([
@@ -164,7 +167,7 @@ export default async function SettingsPage({
       <SettingsShell area={area.id} section={section.id} counts={counts}>
         {area.id === "platform" &&
           (section.id === "trail" ? (
-            <TrailPanel scope={changeScope} page={changePage} find={changeFind} />
+            <TrailPanel scope={changeScope} page={pageNumber} find={searchWords} />
           ) : (
             <SettingsConsole
               initialValues={bundle.values}
@@ -210,7 +213,13 @@ export default async function SettingsPage({
         )}
 
         {area.id === "providers" && (
-          <ProvidersPanel editable={editable} section={section.id} trail={trail} />
+          <ProvidersPanel
+            editable={editable}
+            section={section.id}
+            scope={credentialScope}
+            page={pageNumber}
+            find={searchWords}
+          />
         )}
       </SettingsShell>
     </AdminShell>

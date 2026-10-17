@@ -270,27 +270,52 @@ function credentialGroups(result: unknown): (string | null)[] {
 }
 
 /**
- * The keys console, scoped to the one provider whose history the answer read.
+ * The keys console, scoped, paged and searched the way the answer read it.
  *
- * `?provider=` is applied to the page's own read, so the click lands on the rows
- * the answer counted rather than on the newest rows of every provider — which is
- * what makes a counted trail checkable instead of merely plausible. A held card
- * has read nothing, and an unscoped read names exactly what the section already
- * shows, so both go to the console itself.
+ * `?provider=`, `?page=` and `?find=` are all applied to the page's own read, so the
+ * click lands on the rows the answer counted rather than on the newest page of every
+ * provider — which is what makes a counted trail checkable instead of merely
+ * plausible. An unscoped read that asked for nothing goes to the console itself; a
+ * refused one still carries the scope it tried, and nothing else.
+ *
+ * The page and the words come from the read, not from the model's arguments: the read
+ * clamps a page past the end and normalizes the words on the way in, so a link built
+ * from what was asked for could land the reader on different rows than the ones just
+ * quoted.
  */
 function credentialTrailView(result: unknown): AssistantLink {
   if (!result || typeof result !== "object" || Array.isArray(result)) return CREDENTIALS_CONSOLE;
-  const scope = (result as { audit_scope?: unknown }).audit_scope;
-  const id = trailScope(typeof scope === "string" ? scope : null);
+  const record = result as {
+    audit_scope?: unknown;
+    audit_page?: unknown;
+    audit_find?: unknown;
+  };
+  const id = trailScope(typeof record.audit_scope === "string" ? record.audit_scope : null);
   const definition = trailProvider(id);
-  if (!definition || !id) return CREDENTIALS_CONSOLE;
+  const page =
+    typeof record.audit_page === "number" && record.audit_page > 1 ? record.audit_page : null;
+  const find =
+    typeof record.audit_find === "string" && record.audit_find !== ""
+      ? record.audit_find
+      : null;
+  if (!id && page === null && find === null) return CREDENTIALS_CONSOLE;
+  const subject =
+    find === null
+      ? definition
+        ? `${definition.displayName}'s key history`
+        : page === null
+          ? "the credential trail"
+          : "the older credential rows"
+      : `${definition ? `${definition.displayName}'s key history` : "the credential trail"} matching “${find}”`;
   return {
     href: `/settings${query([
       ["area", "providers"],
       ["section", "credentials"],
       ["provider", id],
+      ["page", page === null ? null : String(page)],
+      ["find", find],
     ])}`,
-    label: `Open ${definition.displayName}'s key history`,
+    label: `Open ${subject}${page === null ? "" : `, page ${page}`}`,
   };
 }
 
