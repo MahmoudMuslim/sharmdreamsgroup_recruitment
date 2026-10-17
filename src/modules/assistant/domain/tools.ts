@@ -11,6 +11,7 @@ import { assignTemplate } from "@/app/(admin)/assessments/assessment-actions";
 import {
   createJobOpening,
   deleteJobOpening,
+  refileFiling,
   setJobStatus,
   updateJobOpening,
   type JobDraft,
@@ -52,6 +53,13 @@ import {
   masterListNote,
   projectMasterList,
 } from "@/modules/settings/domain/masterDataLists";
+import {
+  FILED_ENTITIES,
+  isFiledEntity,
+  noDriftSentence,
+  type FiledEntity,
+} from "@/modules/settings/domain/masterDataFiling";
+import { readFilingDrift } from "@/modules/jobs/application/filingVocabularies";
 import {
   deleteCredential,
   getModelCatalogue,
@@ -493,6 +501,23 @@ function masterEntity(value: string): MasterEntity {
     throw new ToolArgumentError(`"entity" must be one of: ${MASTER_ENTITIES.join(", ")}.`);
   }
   return lower as MasterEntity;
+}
+
+/**
+ * One of the four lists a job opening files itself under, or a refusal that names four.
+ *
+ * Narrower than `masterEntity` on purpose: a role family and a skill are on a
+ * candidate, not on an opening, so a drift read or a refile asked about them would
+ * count nothing and say it as if that were a clean result.
+ */
+function filedEntity(value: string): FiledEntity {
+  const lower = value.toLowerCase().trim();
+  if (!isFiledEntity(lower)) {
+    throw new ToolArgumentError(
+      `"entity" must be one of: ${FILED_ENTITIES.join(", ")} — an opening files itself under those four lists.`
+    );
+  }
+  return lower;
 }
 
 function questionType(value: string): QuestionType {  const upper = value.toUpperCase();
@@ -1215,6 +1240,42 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
         entity,
         rows,
         master_data_note: masterListNote({ entity, rows, counts: masterListCounts(bundle) }),
+      };
+    },
+  },
+  {
+    name: "get_filing_drift",
+    label: "Reading openings filed outside a list",
+    description:
+      "The job openings whose company, department, location or salary currency is not one of the master-data rows in use — grouped by the value the openings actually carry, each with the roles behind it. The live rows a refile may choose are in `destinations`, once per list, keyed by the same word a card's `entity` gives. A write refuses new drift; this is the drift the seeds left behind, and it is why the careers board offers an applicant a department the departments list does not hold. Answer from this before refile_filing; do not invent a `from` value or a `to` row.",
+    args: {
+      entity: `string — optional, one of ${FILED_ENTITIES.join(", ")}; left out, all four lists an opening files itself under are counted`,
+    },
+    run: async (args) => {
+      const requested = optionalStr(args, "entity");
+      const entity = requested ? filedEntity(requested) : undefined;
+      const read = await readFilingDrift(entity);
+      if (read.error) return { entities: entity ?? FILED_ENTITIES, filing_drift_note: read.error };
+
+      const shown = read.cards.slice(0, ANSWER_ROWS);
+      const left = read.cards.length - shown.length;
+      return {
+        entities: entity ? [entity] : [...FILED_ENTITIES],
+        openings: read.openings,
+        cards: shown,
+        // Sent once per list rather than inside every card: four spellings of one
+        // department share the same rows to move onto, and repeating the list four
+        // times is what pushed this answer past the result clip and cut a card off.
+        destinations: read.destinations,
+        filing_drift_note: [
+          read.cards.length ? read.note : noDriftSentence(read.openings),
+          read.warning,
+          left > 0
+            ? `This answer names ${ANSWER_ROWS} of ${read.cards.length.toLocaleString()} drifting values — ask again with entity for one list.`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" "),
       };
     },
   },
@@ -2981,6 +3042,27 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     },
   },
   {
+    name: "refile_filing",
+    label: "Refileing openings onto a master-data row",
+    description:
+      "Move every job opening currently filed under one value onto a row the master-data list holds and has in use — the bulk repair behind the Settings → Organisation drift desk, and the only way to clear the spellings the seeds left. `from` is the text the openings carry, exactly as get_filing_drift names it (send it empty for the openings that carry nothing); `to` is one live row: a company id, a department or location name, a currency code. A destination the list does not hold in use is refused, so a refile cannot create new drift or move a role onto a retired row. One write over the matched openings, recorded in the change trail, and it changes what the public board offers applicants.",
+    args: {
+      entity: `string — one of ${FILED_ENTITIES.join(", ")}`,
+      from: "string — the value the openings carry now, as get_filing_drift reports it; empty when they carry no value at all",
+      to: "string — the live row to move them onto: company id, department or location name, currency code",
+    },
+    run: async (args) => {
+      const entity = filedEntity(str(args, "entity"));
+      const from = args.from;
+      if (typeof from !== "string") {
+        throw new ToolArgumentError(
+          '"from" must be a string — the value the openings carry, exactly as get_filing_drift names it, or "" for the ones that carry nothing.'
+        );
+      }
+      return report(await refileFiling(entity, from, str(args, "to")));
+    },
+  },
+  {
     name: "set_role_permission",
     label: "Granting or revoking a permission",
     description:
@@ -3237,6 +3319,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "list_outbox",
   "get_settings",
   "get_master_data",
+  "get_filing_drift",
   "list_model_routing",
   "get_audit_log",
   "list_credentials",

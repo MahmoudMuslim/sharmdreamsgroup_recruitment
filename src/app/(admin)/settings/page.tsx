@@ -2,6 +2,7 @@ import { SettingsConsole } from "./SettingsConsole";
 import { SettingsShell, type SettingsNavCounts } from "./SettingsShell";
 import { SettingsTrailConsole } from "./SettingsTrailConsole";
 import { MasterDataConsole } from "./MasterDataConsole";
+import { FilingDriftPanel } from "./FilingDriftPanel";
 import { PermissionMatrixCard } from "./PermissionMatrixCard";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
@@ -18,6 +19,7 @@ import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/setti
 import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import { TeamSection } from "./TeamSection";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
+import { isFiledEntity } from "@/modules/settings/domain/masterDataFiling";
 import { trailScope } from "@/modules/settings/domain/credentialTrail";
 import { trailFind, trailGroup, trailPage } from "@/modules/settings/domain/settingsTrail";
 import type { MasterData } from "@/modules/settings/domain/types";
@@ -177,7 +179,12 @@ export default async function SettingsPage({
           ))}
 
         {area.id === "organisation" && (
-          <MasterDataConsole data={master} editable={editable} section={section.id} />
+          <div className="space-y-6">
+            {/* Read only on the four sections an opening files itself under, the
+                way the change trail reads only on its own section. */}
+            {isFiledEntity(section.id) && <FilingDriftPanel entity={section.id} />}
+            <MasterDataConsole data={master} editable={editable} section={section.id} />
+          </div>
         )}
 
         {area.id === "access" && (

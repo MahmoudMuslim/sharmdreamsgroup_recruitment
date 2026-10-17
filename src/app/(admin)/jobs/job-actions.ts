@@ -8,7 +8,20 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
 import { SECTORS, isSector } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
-import { resolveJobFiling, type JobFilingFields } from "@/modules/jobs/application/filingVocabularies";
+import { MASTER_LIST_WORDS } from "@/modules/settings/domain/masterDataLists";
+import {
+  FILED_ENTITIES,
+  isFiledEntity,
+  refileSentence,
+  resolveFiling,
+  storedFilingLabel,
+} from "@/modules/settings/domain/masterDataFiling";
+import {
+  filedColumn,
+  getFilingVocabularies,
+  resolveJobFiling,
+  type JobFilingFields,
+} from "@/modules/jobs/application/filingVocabularies";
 
 export interface JobDraft {
   title: string;
@@ -404,4 +417,113 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
   revalidatePath("/jobs");
   revalidatePath("/careers");
   return { ok: true, id: jobId };
+}
+
+/* ------------------------------- Refile a filing ------------------------------- */
+
+/** A bulk move, with the rows it actually touched so the number can be checked. */
+export interface RefileResult {
+  ok: boolean;
+  error?: string;
+  moved?: number;
+  note?: string;
+  titles?: string[];
+}
+
+/**
+ * Move every opening filed under one value onto a row the vocabulary holds.
+ *
+ * The desk in Settings → Organisation names the spellings the seeds left behind;
+ * this is the only way to clear them, because the drawer's picker refuses an
+ * off-list value by design (#287) and editing seven roles one at a time is not a
+ * repair anybody performs. Three rules keep it a repair rather than a guess:
+ *
+ * - The destination goes through the same `resolveFiling` a write uses, so a refile
+ *   cannot create new drift or file a role under a retired row.
+ * - The source is matched exactly as the desk counted it — the trimmed text the
+ *   openings hold — so the number a person approved is the number that moves.
+ * - Nothing decides which row an unknown spelling *meant*. The recruiter picks.
+ */
+export async function refileFiling(entity: string, from: string, to: string): Promise<RefileResult> {
+  const access = await requireJobManager();
+  if ("error" in access) return { ok: false, error: access.error };
+  const { supabase } = access;
+
+  if (!isFiledEntity(entity)) {
+    return {
+      ok: false,
+      error: `An opening files itself under ${FILED_ENTITIES.join(", ")} — nothing else can be refiled.`,
+    };
+  }
+
+  const { field, by } = filedColumn(entity);
+  const source = String(from ?? "").trim();
+  const { vocabularies, unreadable } = await getFilingVocabularies(supabase);
+  if (unreadable.includes(entity)) {
+    return {
+      ok: false,
+      error: `The ${MASTER_LIST_WORDS[entity]} list did not load, so nothing was refiled. Try again.`,
+    };
+  }
+
+  const destination = resolveFiling({ entity, rows: vocabularies[entity], submitted: to, by });
+  if (!destination.ok) return { ok: false, error: destination.error };
+  if (destination.name === source) {
+    return {
+      ok: false,
+      error: `Those openings are already filed under “${destination.shown}”, which is the list's own spelling. Nothing was written.`,
+    };
+  }
+
+  // Read and matched here rather than with `.eq()`, because the desk counted the
+  // *trimmed* text and a stored value padded with a space would otherwise slip
+  // past a match the recruiter was told had moved.
+  const { data, error } = await supabase
+    .from("job_openings")
+    .select(`id, title, ${field}`)
+    .order("created_at", { ascending: false });
+  if (error) return { ok: false, error: describeWriteError(error) };
+
+  const moving = ((data ?? []) as unknown as Record<string, unknown>[])
+    .map((row) => ({
+      id: String(row.id),
+      title: String(row.title ?? ""),
+      carried: String(row[field] ?? "").trim(),
+    }))
+    .filter((row) => row.carried === source);
+  if (moving.length === 0) {
+    return {
+      ok: false,
+      error: `Nothing is filed under “${storedFilingLabel(source, by)}” any more — that reading is out of date. Reload the desk for the current one.`,
+    };
+  }
+
+  const { error: written } = await supabase
+    .from("job_openings")
+    .update({ [field]: destination.name })
+    .in("id", moving.map((row) => row.id));
+  if (written) return { ok: false, error: describeWriteError(written) };
+
+  const note = refileSentence(entity, storedFilingLabel(source, by), destination.shown, moving.length);
+  await recordActivity({
+    area: "jobs",
+    action: "job_refile",
+    entity: "job opening",
+    entityId: null,
+    summary: note,
+    detail: {
+      list: MASTER_LIST_WORDS[entity],
+      from: source,
+      to: destination.name,
+      openings: moving.map((row) => row.title).join(", "),
+    },
+  });
+
+  revalidatePath("/jobs");
+  // The board's filter chips are counted from this text, so a refile changes what
+  // applicants are offered and the cached board has to say so now.
+  revalidatePath("/careers");
+  revalidatePath("/settings");
+
+  return { ok: true, moved: moving.length, note, titles: moving.map((row) => row.title) };
 }

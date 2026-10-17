@@ -42,6 +42,19 @@ export type FilingRow = MasterRowLike & { is_active?: boolean | null };
 /** The four lists an opening names. Skills and role families are not on a job. */
 export type FiledEntity = "companies" | "departments" | "locations" | "currencies";
 
+/** The four, in the order a desk and a chat answer list them. */
+export const FILED_ENTITIES: readonly FiledEntity[] = [
+  "companies",
+  "departments",
+  "locations",
+  "currencies",
+];
+
+/** Narrows the free text a chat or a URL carries to one of the four lists. */
+export function isFiledEntity(value: unknown): value is FiledEntity {
+  return typeof value === "string" && (FILED_ENTITIES as readonly string[]).includes(value);
+}
+
 /** The four lists as one read carries them, retired rows included. */
 export type FilingVocabularies = Record<FiledEntity, FilingRow[]>;
 
@@ -192,7 +205,9 @@ export function filingRefusal(
  * The value to write, or the refusal.
  *
  * `name` is the vocabulary's own spelling, which is what makes the grid's facets and
- * the master-data "in use" counts line up with the rows they name.
+ * the master-data "in use" counts line up with the rows they name. `shown` is the
+ * same row in the words a person reads, because a refile that reports
+ * "moved onto 8f2c1b9a-…" promises something nobody checked.
  */
 export function resolveFiling(input: {
   entity: MasterEntity;
@@ -200,11 +215,13 @@ export function resolveFiling(input: {
   submitted: string;
   by?: FilingKey;
   stored?: string | null;
-}): { ok: true; name: string } | { ok: false; error: string } {
+}): { ok: true; name: string; shown: string } | { ok: false; error: string } {
   const by = input.by ?? "name";
   const submitted = String(input.submitted ?? "").trim();
   const match = matchFiling({ ...input, by, submitted });
-  if (match.status === "live" || match.status === "unchanged") return { ok: true, name: match.value };
+  if (match.status === "live" || match.status === "unchanged") {
+    return { ok: true, name: match.value, shown: match.shown };
+  }
   return { ok: false, error: filingRefusal(input.entity, submitted, match, input.rows, by) };
 }
 
@@ -237,4 +254,172 @@ export function filingGhostLabel(input: {
     return `${shown} — not in the ${MASTER_LIST_WORDS[input.entity]} list`;
   }
   return `${rowKey(input.entity, hit, "name")} — retired, kept only because this role already uses it`;
+}
+
+/* ------------------------------- Filing drift ------------------------------- */
+
+/**
+ * Why a value already stored on a record is not the vocabulary's own words.
+ *
+ * `spelling` is the mildest: the list holds the row, and the record spells it
+ * differently ("finance & investment", "usd"). `retired` means the row exists but is
+ * out of use, so the list no longer offers it anywhere. `off_list` is the one an
+ * applicant reads as a second department: the list never held that text at all.
+ */
+export type DriftState = "spelling" | "retired" | "off_list";
+
+/** One record's filed value, with the record kept alongside it. */
+export interface DriftEntry<T> {
+  value: string | null | undefined;
+  record: T;
+}
+
+/** One drifting value, and every record that carries it. */
+export interface DriftGroup<T> {
+  /** The text as the records hold it, trimmed; `""` when they hold nothing. */
+  value: string;
+  state: DriftState;
+  /** What to write to fix it — the id, the code, the row's own name. Null when no row owns it. */
+  canonical: string | null;
+  /** The same thing a person reads: the row's name, never an id or a bare code. */
+  shown: string | null;
+  records: T[];
+}
+
+/**
+ * A stored value quoted back to a person.
+ *
+ * A company is filed by id, so a uuid is the only thing the record holds; a desk and
+ * a trail row that print it whole read as noise, and shortening it keeps the digits
+ * that distinguish one row from another. A blank is named as one, because an empty
+ * quote looks like a bug in the sentence rather than a missing filing.
+ */
+export function storedFilingLabel(value: string, by: FilingKey): string {
+  const stored = String(value ?? "").trim();
+  if (!stored) return "(blank)";
+  return by === "id" ? `${stored.slice(0, 8)}…` : stored;
+}
+
+/**
+ * Every stored value the list does not carry as written, grouped and counted.
+ *
+ * This is the other half of the rule `matchFiling` enforces on a write: the writer
+ * refuses new drift, and this names the drift the seeds left behind so a recruiter
+ * can see it and move it. Values that agree with the list character for character are
+ * left out — the desk reports exceptions, not the whole vocabulary.
+ */
+export function filingDrift<T>(input: {
+  entity: FiledEntity;
+  rows: FilingRow[];
+  entries: DriftEntry<T>[];
+  by?: FilingKey;
+}): DriftGroup<T>[] {
+  const by = input.by ?? "name";
+  const groups = new Map<string, DriftGroup<T>>();
+
+  for (const { value, record } of input.entries) {
+    const stored = String(value ?? "").trim();
+    const hit = findRow(input.entity, input.rows, stored, by);
+
+    let state: DriftState;
+    let canonical: string | null = null;
+    let shown: string | null = null;
+    if (!hit) {
+      state = "off_list";
+      // An id nobody recognises is still what the record holds; a screen quoting it
+      // short reads better than a uuid, and there is no row left to name it. A name
+      // the list never held is quoted exactly, because that is all anybody has.
+      shown = by === "id" ? storedFilingLabel(stored, by) : null;
+    } else if (hit.is_active === false) {
+      state = "retired";
+      canonical = rowKey(input.entity, hit, by);
+      shown = rowKey(input.entity, hit, "name");
+    } else if (stored === rowKey(input.entity, hit, by)) {
+      // The record says exactly what the list says.
+      continue;
+    } else {
+      state = "spelling";
+      canonical = rowKey(input.entity, hit, by);
+      shown = rowKey(input.entity, hit, "name");
+    }
+
+    const key = `${state}\u0000${stored}`;
+    const group = groups.get(key) ?? { value: stored, state, canonical, shown, records: [] };
+    group.records.push(record);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].sort(
+    (a, b) => b.records.length - a.records.length || a.value.localeCompare(b.value)
+  );
+}
+
+/** The one line a screen, a trail row and a chat answer all print for a drifting value. */
+export function driftWords<T>(entity: FiledEntity, group: DriftGroup<T>): string {
+  const list = MASTER_LIST_WORDS[entity];
+  if (!group.value) return `These records file no ${list} at all.`;
+  if (group.state === "spelling") {
+    return `“${group.value}” is the ${list} row the list itself spells “${group.shown}”.`;
+  }
+  if (group.state === "retired") {
+    return `“${group.shown}” is on the ${list} list but retired, so nothing new may be filed under it.`;
+  }
+  // A company is filed by id, so the text nobody recognises is a uuid; `shown` is
+  // the desk's shortened form of the very same value, quoted rather than dropped
+  // because it is all anybody has to go on.
+  const quoted = group.shown ?? group.value;
+  return `“${quoted}” is not on the ${list} list at all.`;
+}
+
+/**
+ * How wide a drift count was taken, in the line under the heading.
+ *
+ * Read through the staff client, so the figure is the openings *this* account can
+ * see — a desk that stayed quiet about that would read as the whole portal.
+ */
+export function driftScopeSentence(openings: number): string {
+  return `Counted over ${openings.toLocaleString()} ${
+    openings === 1 ? "opening" : "openings"
+  } this account can see.`;
+}
+
+/** What a desk and a chat answer say when the count came back with nothing to move. */
+export function noDriftSentence(openings: number): string {
+  return `Nothing is filed outside the list: all ${openings.toLocaleString()} ${
+    openings === 1 ? "opening reads" : "openings read"
+  } it as written.`;
+}
+
+/** The destinations a refile may choose, in the list's order, live rows only. */
+export function filingChoices(
+  entity: FiledEntity,
+  rows: FilingRow[],
+  by: FilingKey = "name"
+): { value: string; label: string }[] {
+  return rows
+    .filter((row) => row.is_active !== false)
+    .map((row) => ({
+      value: rowKey(entity, row, by),
+      // The row's own words, which for a currency already carry the code
+      // ("USD US Dollar") because that is how the console prints the row everywhere
+      // else — joining code and name here would read "USD — USD US Dollar".
+      label: rowKey(entity, row, "name"),
+    }))
+    .filter((choice) => choice.value);
+}
+
+/**
+ * What a refile did, in the words the trail keeps and the chat repeats.
+ *
+ * The count is the caller's, because it is the number of records the write actually
+ * moved — which is the only figure that can be promised to match the rows named.
+ */
+export function refileSentence(
+  entity: FiledEntity,
+  fromShown: string,
+  toShown: string,
+  count: number
+): string {
+  const list = MASTER_LIST_WORDS[entity];
+  return `Filed ${count} ${count === 1 ? "opening" : "openings"} from “${fromShown}” onto “${toShown}” in the ${list} list.`;
 }

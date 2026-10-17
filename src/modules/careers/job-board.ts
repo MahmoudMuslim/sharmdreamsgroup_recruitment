@@ -55,6 +55,15 @@ export function employmentLabel(type: string): string {
   return EMPLOYMENT_LABELS[type] ?? humanize(type);
 }
 
+/**
+ * The stored text as a facet sees it.
+ *
+ * A department, a location and a currency are free-text columns on `job_openings`,
+ * so "Cairo" and "cairo" are two values in the database and one city to whoever is
+ * applying. Every facet comparison goes through this.
+ */
+const fold = (text: string): string => text.trim().toLocaleLowerCase();
+
 export type FacetField = "department" | "location" | "employment_type" | "sector";
 
 export interface BoardFilters {
@@ -104,25 +113,41 @@ export interface FacetOption {
  * left standing: an option's number then means "this many roles carry it", the
  * same wherever the applicant is in the filter sequence, instead of a figure
  * that shifts under them.
+ *
+ * Grouped by folded text, because the stored value is free text and two openings
+ * spelled "Cairo" and "cairo" are one place to an applicant — shown as two chips,
+ * each with half the roles, they read as two locations. The chip carries the
+ * spelling the most openings use, and `filterJobs` matches by the same fold, so
+ * clicking it and pasting its URL return the same rows.
  */
 export function facetOptions(jobs: PublicJob[], field: FacetField): FacetOption[] {
-  const counts = new Map<string, number>();
+  const byFold = new Map<string, { value: string; count: number; spellings: Map<string, number> }>();
   for (const job of jobs) {
     const value = job[field].trim();
     if (!value) continue;
-    counts.set(value, (counts.get(value) ?? 0) + 1);
+    const folded = fold(value);
+    const group = byFold.get(folded) ?? { value, count: 0, spellings: new Map() };
+    group.count += 1;
+    group.spellings.set(value, (group.spellings.get(value) ?? 0) + 1);
+    // The most-used spelling wins the chip's label and its URL value, so what an
+    // applicant reads is what the majority of the roles actually say.
+    const best = [...group.spellings.entries()].sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+    )[0]![0];
+    group.value = best;
+    byFold.set(folded, group);
   }
 
-  return [...counts.entries()]
-    .map(([value, count]) => ({
-      value,
-      count,
+  return [...byFold.values()]
+    .map((group) => ({
+      value: group.value,
+      count: group.count,
       label:
         field === "sector"
-          ? sectorLabel(value)
+          ? sectorLabel(group.value)
           : field === "employment_type"
-            ? employmentLabel(value)
-            : value,
+            ? employmentLabel(group.value)
+            : group.value,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
@@ -143,7 +168,10 @@ export function filterJobs(jobs: PublicJob[], filters: BoardFilters): PublicJob[
   return jobs.filter(
     (job) =>
       matchesQuery(job, filters.q) &&
-      FACETS.every((facet) => !filters[facet.field] || job[facet.field].trim() === filters[facet.field])
+      FACETS.every(
+        (facet) =>
+          !filters[facet.field] || fold(job[facet.field]) === fold(filters[facet.field])
+      )
   );
 }
 

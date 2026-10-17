@@ -389,6 +389,23 @@ function settingsTrailView(result: unknown): AssistantLink {
 }
 
 /**
+ * The list a drift answer was about.
+ *
+ * A scoped read names its own list, so the click lands on the section that shows
+ * both the rows and the desk. An unscoped one is only worth a section when every
+ * value it found sits in the same list — otherwise the link would open one
+ * vocabulary while the answer had described four, so it opens the area's dock.
+ */
+function filingDriftView(args: ToolArgs, result: unknown): AssistantLink {
+  const asked = masterListEntity(fromArgs(args, "entity"));
+  if (asked) return masterListView(asked);
+
+  const cards = (result as { cards?: { entity?: unknown }[] } | null | undefined)?.cards;
+  const found = new Set((Array.isArray(cards) ? cards : []).map((card) => String(card?.entity ?? "")));
+  return found.size === 1 ? masterListView([...found][0]) : masterListView(null);
+}
+
+/**
  * Screens that open the exact record from the query string. Every other admin
  * page ignores one, so a link there is written bare rather than dressed with a
  * parameter that would be dropped.
@@ -548,7 +565,10 @@ export function linkForTool(
       );
     case "save_master_record":
     case "delete_master_record":
+    case "refile_filing":
       return masterListView(fromArgs(args, "entity"));
+    case "get_filing_drift":
+      return filingDriftView(args, result);
     case "get_audit_log":
       return settingsTrailView(result);
     case "message_candidates":

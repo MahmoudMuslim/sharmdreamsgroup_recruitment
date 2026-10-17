@@ -164,7 +164,7 @@ const BUNDLE_KEY: Record<MasterEntity, string> = {
 };
 
 /** What one member of a list is called, for a sentence that names a single row. */
-const SINGULAR: Record<MasterEntity, string> = {
+export const MASTER_ONE_WORDS: Record<MasterEntity, string> = {
   companies: "company",
   departments: "department",
   locations: "location",
@@ -198,7 +198,7 @@ export function masterListNote(input: {
   const rowWord = (value: number) => `${value.toLocaleString()} ${value === 1 ? "row" : "rows"}`;
 
   if (rows.length === 0) {
-    return `The ${words} list is empty — nothing has been added there, so no record can name a ${SINGULAR[entity]}. Add one with save_master_record before any opening or candidate uses it.`;
+    return `The ${words} list is empty — nothing has been added there, so no record can name a ${MASTER_ONE_WORDS[entity]}. Add one with save_master_record before any opening or candidate uses it.`;
   }
 
   const head = retired.length === 0
@@ -210,7 +210,7 @@ export function masterListNote(input: {
   const retiredClause =
     retired.length === 0
       ? null
-      : ` A retired ${SINGULAR[entity]} still resolves the records that already point at it, and the console lists it with a Retired badge — but the job and assessment pickers leave it out, so do not put a retired ${SINGULAR[entity]} in a new opening. Bring one back with save_master_record (fields {\"is_active\": true}).`;
+      : ` A retired ${MASTER_ONE_WORDS[entity]} still resolves the records that already point at it, and the console lists it with a Retired badge — but the job and assessment pickers leave it out, so do not put a retired ${MASTER_ONE_WORDS[entity]} in a new opening. Bring one back with save_master_record (fields {\"is_active\": true}).`;
 
   const others = MASTER_LIST_ORDER.filter((each) => each !== entity && counts[each] !== undefined);
   const beside =
