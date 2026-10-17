@@ -12,6 +12,8 @@
  * the vocabulary and filter by it exactly as the writers do.
  */
 
+import type { StaffLink } from "@/lib/auth/staffRoutes";
+
 export const ACTOR_KINDS = ["STAFF", "AI", "CANDIDATE", "SYSTEM"] as const;
 export type ActorKind = (typeof ACTOR_KINDS)[number];
 
@@ -418,7 +420,7 @@ export function prettyAction(action: string): string {
 export function recordHref(
   entity: string,
   entityId: string | null
-): { href: string; label: string } | null {
+): { href: StaffLink; label: string } | null {
   const uuid = typeof entityId === "string" && /^[0-9a-f]{8}([0-9a-f-]{28,56})$/i.test(entityId);
 
   if (entity === "application" && uuid) {
@@ -428,7 +430,7 @@ export function recordHref(
     };
   }
 
-  const CONSOLES: Partial<Record<ActivityEntity, { href: string; label: string }>> = {
+  const CONSOLES: Partial<Record<ActivityEntity, { href: StaffLink; label: string }>> = {
     attempt: { href: "/candidates", label: "Candidate console" },
     "job opening": { href: "/jobs", label: "Jobs board" },
     interview: { href: "/interviews", label: "Interview agenda" },

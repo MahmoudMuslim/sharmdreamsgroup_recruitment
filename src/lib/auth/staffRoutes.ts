@@ -14,9 +14,13 @@
  * `scripts/check-staff-routes.mjs`, which `npm run build` runs first, compares
  * this list with the directories under `src/app/(admin)` and with the rail's
  * `NAV`, so a new page that is not registered here fails the build rather than
- * becoming another silent hole. The nav entries are typed against `StaffRoute`,
- * so the reverse omission — a rail link to a page this guard does not know — is a
- * type error.
+ * becoming another silent hole.
+ *
+ * The other direction is a type error, not a script: the rail's entries, the
+ * chat's click-throughs, the change trail's alert destinations and the live
+ * channel's page lists are all typed against `StaffRoute` (or `StaffLink` below),
+ * so a path dropped from this list stops being a page that quietly 404s and
+ * becomes a build that does not compile wherever a link names it.
  *
  * Kept free of imports so the edge runtime can read it: the rail's table lives in
  * `nav.ts` because it carries icons.
@@ -42,6 +46,21 @@ export const STAFF_ROUTES = [
 
 /** One of the staff pages, as a path prefix — `"/files"`, not a URL with a query. */
 export type StaffRoute = (typeof STAFF_ROUTES)[number];
+
+/**
+ * A link a recruiter can be handed: a staff page, with the query that selects the
+ * view inside it when there is one.
+ *
+ * Three tables outside this file write these as strings: the chat's
+ * click-throughs (`assistant/domain/links.ts`), the alert destinations in the
+ * change trail (`activity/domain/trail.ts`) and the pages a live area refreshes
+ * (`live/infrastructure/changeWatch.ts`). A string there that names a page which
+ * no longer exists fails in the one place nobody looks — the link 404s, the alert
+ * lands nowhere, the page silently never refreshes — so all three are typed
+ * against this rather than checked by a script, because they are built at runtime
+ * out of ids and only a type follows a value through a template literal.
+ */
+export type StaffLink = StaffRoute | `${StaffRoute}?${string}`;
 
 /**
  * Whether a pathname belongs to a staff page.

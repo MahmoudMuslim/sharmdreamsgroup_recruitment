@@ -15,6 +15,7 @@ import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import { trailProvider, trailScope } from "@/modules/settings/domain/credentialTrail";
 import { trailGroup, trailGroupById } from "@/modules/settings/domain/settingsTrail";
 import { MASTER_LIST_WORDS, masterListEntity } from "@/modules/settings/domain/masterDataLists";
+import type { StaffLink } from "@/lib/auth/staffRoutes";
 import type { ToolArgs } from "./tools";
 
 /**
@@ -38,7 +39,7 @@ import type { ToolArgs } from "./tools";
  */
 
 export interface AssistantLink {
-  href: string;
+  href: StaffLink;
   label: string;
 }
 
@@ -73,8 +74,14 @@ function named(value: unknown, words: readonly string[]): string | null {
   return words.includes(upper) ? upper : null;
 }
 
-/** The query for whichever of these pairs survived. */
-function query(pairs: [string, string | null][]): string {
+/**
+ * The query for whichever of these pairs survived.
+ *
+ * Typed as possibly-empty and possibly-a-`?`-lead rather than `string`, so a
+ * caller that appends it to a page name still produces a `StaffLink` — the page
+ * half of the URL stays the compiler's business.
+ */
+function query(pairs: [string, string | null][]): "" | `?${string}` {
   const kept = pairs.filter((pair): pair is [string, string] => pair[1] !== null);
   return kept.length === 0 ? "" : `?${new URLSearchParams(kept).toString()}`;
 }

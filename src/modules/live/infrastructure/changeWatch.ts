@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { StaffRoute } from "@/lib/auth/staffRoutes";
 
 /**
  * One table the portal reads, described by what a write to it does.
@@ -17,8 +18,15 @@ export interface LiveWatch {
   table: string;
   stamp?: string;
   columns?: string[];
-  /** Portal pages that have to re-read when this area moves. */
-  paths: string[];
+  /**
+   * Portal pages that have to re-read when this area moves.
+   *
+   * A page name typed wrong here is not a broken link someone can click — it is
+   * a page that silently never refreshes, on a watch list nobody reads twice.
+   * Hence `StaffRoute`, and hence bare prefixes: the browser matches these the
+   * same way the edge guard matches a pathname.
+   */
+  paths: readonly StaffRoute[];
 }
 
 /**
