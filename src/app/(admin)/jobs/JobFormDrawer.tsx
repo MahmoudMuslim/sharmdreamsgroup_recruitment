@@ -13,12 +13,18 @@ import {
   TextInput,
 } from "@/modules/analytics/presentation/Form";
 import { createJobOpening, updateJobOpening, type JobDraft } from "./job-actions";
+import {
+  filingGhostLabel,
+  type FilingVocabularies,
+} from "@/modules/settings/domain/masterDataFiling";
 
 export interface JobFormOptions {
   companies: { id: string; name: string; sector: string }[];
   departments: { id: string; name: string }[];
   locations: { id: string; name: string }[];
   currencies: { id: string; code: string; symbol: string; label: string }[];
+  /** The same four lists with their retired rows, for labelling a legacy value. */
+  filing: FilingVocabularies;
 }
 
 /** The stored row an edit starts from — only the fields this form can write. */
@@ -120,8 +126,10 @@ function editDraft(job: JobForEdit): JobFormState {
  * is — a rule checked on save but not on edit is how a bad row gets written.
  *
  * Department and location are not free text — they are seeded from the master
- * data the user maintains in Settings, so openings always use the controlled
- * vocabulary rather than drifting into "Finance" vs "finance" vs "Finance & FP&A".
+ * data the user maintains in Settings, and `jobColumnsFrom` refuses a value the
+ * list does not hold, so openings cannot drift into "Finance" vs "finance" vs
+ * "Finance & FP&A". A value an older opening already carries is the exception: it
+ * stays editable, and the ghost option below is what makes the screen admit it.
  */
 export function JobFormDrawer({
   options,
@@ -154,6 +162,35 @@ export function JobFormDrawer({
     setError(null);
     setSaved(false);
   }
+
+  // A `<select>` with no option for its own value shows the "Select …" placeholder
+  // while still holding the old text, so an opening seeded before the master tables
+  // were filled reads as if the field had been cleared. Each of these gives that
+  // value an option that says where it came from.
+  const ghosts = {
+    tenant_id: filingGhostLabel({
+      entity: "companies",
+      by: "id",
+      rows: options.filing.companies,
+      value: draft.tenant_id,
+    }),
+    department: filingGhostLabel({
+      entity: "departments",
+      rows: options.filing.departments,
+      value: draft.department,
+    }),
+    location: filingGhostLabel({
+      entity: "locations",
+      rows: options.filing.locations,
+      value: draft.location,
+    }),
+    salary_currency: filingGhostLabel({
+      entity: "currencies",
+      by: "code",
+      rows: options.filing.currencies,
+      value: draft.salary_currency,
+    }),
+  };
 
   async function submit() {
     if (!draft.title.trim()) {
@@ -244,6 +281,9 @@ export function JobFormDrawer({
                 {c.name}
               </option>
             ))}
+            {ghosts.tenant_id && (
+              <option value={draft.tenant_id}>{ghosts.tenant_id}</option>
+            )}
           </Select>
         </Field>
 
@@ -265,6 +305,9 @@ export function JobFormDrawer({
                   {d.name}
                 </option>
               ))}
+              {ghosts.department && (
+                <option value={draft.department}>{ghosts.department}</option>
+              )}
             </Select>
           </Field>
 
@@ -280,6 +323,9 @@ export function JobFormDrawer({
                   {l.name}
                 </option>
               ))}
+              {ghosts.location && (
+                <option value={draft.location}>{ghosts.location}</option>
+              )}
             </Select>
           </Field>
         </div>
@@ -351,6 +397,9 @@ export function JobFormDrawer({
                   {c.code} — {c.label}
                 </option>
               ))}
+              {ghosts.salary_currency && (
+                <option value={draft.salary_currency}>{ghosts.salary_currency}</option>
+              )}
             </Select>
           </Field>
 

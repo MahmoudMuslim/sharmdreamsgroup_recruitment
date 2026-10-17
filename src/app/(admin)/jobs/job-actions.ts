@@ -8,6 +8,7 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
 import { SECTORS, isSector } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
+import { resolveJobFiling, type JobFilingFields } from "@/modules/jobs/application/filingVocabularies";
 
 export interface JobDraft {
   title: string;
@@ -40,10 +41,14 @@ const STATUSES = new Set<string>(JOB_STATUSES);
  * Shared by create and edit so the two can never drift apart on what is
  * acceptable — a rule enforced on one path and not the other is how a draft
  * becomes undeletable once it has been saved.
+ *
+ * `stored` is the row an edit is writing over. Passing it lets a field a legacy
+ * opening already carries stay as it is — see `masterDataFiling`.
  */
 async function jobColumnsFrom(
   draft: JobDraft,
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  stored?: Partial<JobFilingFields> | null
 ): Promise<{ ok: true; columns: Record<string, unknown> } | { ok: false; error: string }> {
   const title = draft.title.trim();
   if (!title) return { ok: false, error: "A job title is required." };
@@ -70,38 +75,35 @@ async function jobColumnsFrom(
     return { ok: false, error: "Invalid status." };
   }
 
-  // The salary pair is only meaningful with its currency, so the code is
-  // validated against master data rather than trusted from the form.
-  const currency = (draft.salary_currency || "USD").trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) {
+  // The salary pair is only meaningful with its currency, so the code is checked
+  // for shape here and against master data below, like the other three filings.
+  const salary_currency = (draft.salary_currency || "USD").trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(salary_currency)) {
     return { ok: false, error: "Select a valid salary currency." };
   }
-  const { data: currencyRow } = await supabase
-    .from("currencies")
-    .select("code")
-    .eq("code", currency)
-    .maybeSingle();
-  if (!currencyRow) {
-    return {
-      ok: false,
-      error: `Currency “${currency}” is not set up. Add it in Settings → Organisation → Currencies.`,
-    };
-  }
+
+  // Company, department, location and currency are the four vocabularies an opening
+  // names, and the table stores three of them as free text. Nothing at the database
+  // level refuses "Finance" when the list holds "Finance & Investment", which is how
+  // five of the live openings drifted; the assistant types these values straight in.
+  const filed = await resolveJobFiling({
+    supabase,
+    submitted: { tenant_id: draft.tenant_id, department, location, salary_currency },
+    stored,
+  });
+  if (!filed.ok) return { ok: false, error: filed.error };
 
   return {
     ok: true,
     columns: {
-      tenant_id: draft.tenant_id,
+      ...filed.filed,
       title,
-      department,
       sector: draft.sector,
-      location,
       employment_type: draft.employment_type,
       description,
       requirements: draft.requirements ?? [],
       min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
       max_salary_usd: draft.max_salary_usd ? Number(draft.max_salary_usd) : null,
-      salary_currency: currency,
       status: draft.status,
     },
   };
@@ -259,7 +261,12 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
 
-  const built = await jobColumnsFrom(draft, supabase);
+  const built = await jobColumnsFrom(draft, supabase, {
+    tenant_id: existing.tenant_id,
+    department: existing.department,
+    location: existing.location,
+    salary_currency: existing.salary_currency,
+  });
   if (!built.ok) return { ok: false, error: built.error };
 
   const columns: Record<string, unknown> = { ...built.columns };

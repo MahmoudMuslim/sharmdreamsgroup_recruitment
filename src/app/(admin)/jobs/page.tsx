@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
+import { getFilingVocabularies } from "@/modules/jobs/application/filingVocabularies";
 import { NewJobDrawer, type JobFormOptions } from "./JobFormDrawer";
 import { JobsBrowser, type JobRow } from "./JobsBrowser";
 import { connection } from "next/server";
@@ -21,7 +22,7 @@ export default async function JobsPage() {
   const user = await requireStaff("/jobs");
   const supabase = await createSupabaseServerClient();
 
-  const [result, canManage, canDecide] = await Promise.all([
+  const [result, canManage, canDecide, filing] = await Promise.all([
     supabase
       .from("job_openings")
       .select(
@@ -33,6 +34,7 @@ export default async function JobsPage() {
       .order("created_at", { ascending: false }),
     hasPermissionForUser("jobs.manage"),
     hasPermissionForUser("candidates.write"),
+    getFilingVocabularies(supabase).then((read) => read.vocabularies),
   ]);
 
   const master = await getMasterOptions();
@@ -41,6 +43,10 @@ export default async function JobsPage() {
     departments: master.departments,
     locations: master.locations,
     currencies: master.currencies,
+    // Every row of the four lists an opening files itself under, retired ones
+    // included — the picker only offers the live rows, so the drawer needs the
+    // rest to label a legacy value it cannot offer.
+    filing,
   };
   const jobs = (result.data ?? []) as unknown as JobRow[];
 
