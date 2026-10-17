@@ -19,7 +19,7 @@ import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings
 import { TeamSection } from "./TeamSection";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
 import { trailScope } from "@/modules/settings/domain/credentialTrail";
-import { trailGroup } from "@/modules/settings/domain/settingsTrail";
+import { trailGroup, trailPage } from "@/modules/settings/domain/settingsTrail";
 import type { MasterData } from "@/modules/settings/domain/types";
 
 export const metadata = {
@@ -53,12 +53,18 @@ function masterCounts(master: MasterData): Record<string, number> {
  * not cost the other sixteen three queries, and a prop that would be `null` on
  * those sixteen is a state the panel would have to draw for a section that never
  * shows it. So the read belongs to the section: it runs only when the dock is on
- * `section=trail`, and the scope the address bar named is applied before it, so a
- * chat link lands on the rows it counted rather than on the newest rows of every
- * group.
+ * `section=trail`, and both the scope and the page the address bar named are
+ * applied before it, so a chat link lands on the rows it counted rather than on
+ * the newest 15 rows of the trail.
  */
-async function TrailPanel({ scope }: { scope: string | null }) {
-  return <SettingsTrailConsole read={await listSettingsTrail({ group: scope })} scope={scope} />;
+async function TrailPanel({ scope, page }: { scope: string | null; page: number }) {
+  return (
+    <SettingsTrailConsole
+      read={await listSettingsTrail({ group: scope, page })}
+      scope={scope}
+      page={page}
+    />
+  );
 }
 
 export default async function SettingsPage({
@@ -69,6 +75,7 @@ export default async function SettingsPage({
     section?: string | string[];
     provider?: string | string[];
     trail?: string | string[];
+    page?: string | string[];
   }>;
 }) {
   // Admin content is per-session; stop the static shell before any rendering so
@@ -93,12 +100,13 @@ export default async function SettingsPage({
   // parameter on this route.
   const trail = trailScope(typeof params.provider === "string" ? params.provider : undefined);
 
-  // `?trail=` scopes the settings change trail the same way, and is applied here
-  // rather than in the browser so the address bar a chat link wrote shows the rows
-  // it counted on the very first paint.
+  // `?trail=` scopes the settings change trail and `?page=` walks it, both applied
+  // here rather than in the browser so the address bar a chat link wrote shows the
+  // rows that link counted on the very first paint.
   const changeScope = trailGroup(
     typeof params.trail === "string" ? params.trail : undefined
   );
+  const changePage = trailPage(typeof params.page === "string" ? params.page : undefined);
 
   const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
     await Promise.all([
@@ -143,7 +151,7 @@ export default async function SettingsPage({
       <SettingsShell area={area.id} section={section.id} counts={counts}>
         {area.id === "platform" &&
           (section.id === "trail" ? (
-            <TrailPanel scope={changeScope} />
+            <TrailPanel scope={changeScope} page={changePage} />
           ) : (
             <SettingsConsole
               initialValues={bundle.values}

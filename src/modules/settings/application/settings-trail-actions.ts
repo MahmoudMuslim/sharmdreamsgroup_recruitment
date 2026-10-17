@@ -9,6 +9,9 @@ import {
   trailGroupById,
   trailGroupFor,
   trailKeyLabel,
+  trailOffset,
+  trailPage,
+  trailPageCount,
   trailValueText,
 } from "@/modules/settings/domain/settingsTrail";
 
@@ -39,20 +42,32 @@ export type SettingsTrailRead =
   | {
       ok: true;
       entries: SettingsTrailEntryView[];
-      /** Rows in the database at this scope — more than `entries` whenever the cap bit. */
+      /** Rows in the database at this scope — more than `entries` on every page but the last. */
       total: number;
       /** How many rows at this scope name the person who made the change. */
       named: number;
+      /** The page actually served: a request past the end is clamped, never answered blank. */
+      page: number;
     }
   | { ok: false; error: string };
 
 /**
- * The settings change trail, newest first, with the counts the listing is drawn from.
+ * The settings change trail, newest first, a page at a time, with the counts the
+ * listing is drawn from.
  *
  * Both counts carry the same scope predicate as the rows, which is the only way a
- * scoped answer can say "15 of the 71 for Notifications" instead of quoting the
+ * scoped answer can say "page 2 of 5 for Notifications" instead of quoting the
  * whole table beside a filtered list. `named` is asked separately because the note
  * makes a claim about every row in scope, not about the ones on screen.
+ *
+ * A page rather than a cursor, because `changed_at` is not a unique column here: a
+ * save writes one audit row per setting it moved, all under the same transaction
+ * timestamp, and the live table shows how often that bites — 152 rows share 38
+ * timestamps, six to a second at the most. A `changed_at < cursor` walk would
+ * therefore drop the rest of any batch it happened to split, which is exactly the
+ * silent gap this read exists to close. Ordering by `changed_at` then `id` is a
+ * total order over the scope, so page N is a stable slice: every row appears on
+ * exactly one page, and the last page ends the trail.
  *
  * Read with the service client after the permission has been checked here, and that
  * order matters twice over. `settings_audit_read` lets only
@@ -65,7 +80,7 @@ export type SettingsTrailRead =
  * "no actor recorded" about a row that has one.
  */
 export async function listSettingsTrail(
-  scope: { group?: string | null } = {}
+  scope: { group?: string | null; page?: string | number | null } = {}
 ): Promise<SettingsTrailRead> {
   await requireStaff("/settings");
   if (!(await hasPermissionForUser("settings.manage_platform"))) {
@@ -75,41 +90,74 @@ export async function listSettingsTrail(
   const group = trailGroupById(trailGroup(scope.group));
   const admin = getSupabaseServiceClient();
 
-  let rowsQuery = admin
-    .from("settings_audit_log")
-    .select("id, key, previous_value, next_value, changed_at, changed_by, user_profiles(full_name)", {
-      count: "exact",
-    });
-  let namedQuery = admin
-    .from("settings_audit_log")
-    .select("id", { count: "exact", head: true })
-    .not("changed_by", "is", null);
+  /**
+   * One page of the scope, in the trail's own newest-first order.
+   *
+   * The scope predicate is repeated in each builder on purpose: a helper that took
+   * a query and handed it back lost the builder's chain, and every one of these
+   * reads has to describe exactly the same rows as the listing beside it, or a
+   * scoped note quotes the whole trail.
+   */
+  const rowsOf = (asked: number) => {
+    const offset = trailOffset(asked);
+    let query = admin
+      .from("settings_audit_log")
+      .select(
+        "id, key, previous_value, next_value, changed_at, changed_by, user_profiles(full_name)"
+      );
+    if (group?.kind === "keys") query = query.in("key", group.keys);
+    else if (group) query = query.like("key", `${group.prefix}%`);
+    return query
+      .order("changed_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + SETTINGS_TRAIL_LIMIT - 1);
+  };
 
-  if (group?.kind === "keys") {
-    rowsQuery = rowsQuery.in("key", group.keys);
-    namedQuery = namedQuery.in("key", group.keys);
-  } else if (group) {
-    rowsQuery = rowsQuery.like("key", `${group.prefix}%`);
-    namedQuery = namedQuery.like("key", `${group.prefix}%`);
-  }
+  /** How many rows the scope holds, or how many of them name an actor. */
+  const countOf = (onlyActor: boolean) => {
+    let query = admin
+      .from("settings_audit_log")
+      .select("id", { count: "exact", head: true });
+    if (onlyActor) query = query.not("changed_by", "is", null);
+    if (group?.kind === "keys") query = query.in("key", group.keys);
+    else if (group) query = query.like("key", `${group.prefix}%`);
+    return query;
+  };
 
-  const [{ data, count, error }, { count: namedCount, error: namedError }] = await Promise.all([
-    rowsQuery.order("changed_at", { ascending: false }).limit(SETTINGS_TRAIL_LIMIT),
-    namedQuery,
+  const refuse = (message: string): SettingsTrailRead => {
+    console.error("[settings] change trail refused:", message);
+    return { ok: false, error: `The change trail could not be read: ${message}` };
+  };
+
+  let page = trailPage(scope.page);
+  const [listed, sized, actors] = await Promise.all([
+    rowsOf(page),
+    countOf(false),
+    countOf(true),
   ]);
+  // Without the counts the note would claim a trail was empty, or that nobody
+  // acted, when the number was never taken.
+  if (sized.error) return refuse(sized.error.message);
+  if (actors.error) return refuse(actors.error.message);
 
-  if (error) {
-    console.error("[settings] change trail refused:", error.message);
-    return { ok: false, error: `The change trail could not be read: ${error.message}` };
-  }
-  // Without this the note would claim nobody acted, which is a statement about a
-  // count that was never taken.
-  if (namedError) {
-    console.error("[settings] change trail actor count refused:", namedError.message);
-    return { ok: false, error: `The change trail could not be read: ${namedError.message}` };
+  const total = sized.count ?? 0;
+  const lastPage = trailPageCount(total);
+  let found = listed.data ?? [];
+  // A page beyond the end is answered with the oldest page instead of with a
+  // failure: `?range=` past the last row is refused outright by PostgREST rather
+  // than returning an empty slice, so a bookmark for page 40 of a 152-row trail
+  // would read as "the change trail could not be read". The count beside it is
+  // the same scope predicate, so it already says where the trail ends.
+  if (page > lastPage) {
+    page = lastPage;
+    const again = await rowsOf(page);
+    if (again.error) return refuse(again.error.message);
+    found = again.data ?? [];
+  } else if (listed.error) {
+    return refuse(listed.error.message);
   }
 
-  const entries = ((data ?? []) as unknown[]).map((row) => {
+  const entries = (found as unknown[]).map((row) => {
     const r = row as {
       id: string;
       key: string;
@@ -131,10 +179,5 @@ export async function listSettingsTrail(
     };
   });
 
-  return {
-    ok: true,
-    entries,
-    total: count ?? entries.length,
-    named: namedCount ?? 0,
-  };
+  return { ok: true, entries, total, named: actors.count ?? 0, page };
 }

@@ -66,8 +66,11 @@ import { credentialsTab } from "@/modules/settings/domain/settingsNav";
 import { trailScope, trailScopeNote } from "@/modules/settings/domain/credentialTrail";
 import {
   SETTINGS_TRAIL_GROUPS,
+  SETTINGS_TRAIL_LIMIT,
   settingsTrailNote,
   trailGroup,
+  trailPage,
+  trailPageCount,
 } from "@/modules/settings/domain/settingsTrail";
 import {
   modelReadNote,
@@ -1259,9 +1262,10 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "get_audit_log",
     label: "Reading the settings change trail",
     description:
-      "The Platform → Change trail console, row for row: which setting, message template, team account or stored file this portal wrote, the value before, the value after, when, and the person the door recorded. `group` narrows it to one part of the console exactly as the console's own `?trail=` does, so this answer and that section read the same scope, the same cap and the same order and cannot disagree about which rows exist. Values are printed short — a list of languages reads \"2 items\", a deleted row reads \"nothing\" — and the key is always there for the exact wording. Most rows name nobody, because the doors that wrote them recorded no actor, so the note says how many do instead of leaving a blank column to be read as \"nobody changed this\". This is the trail of things the console configures: an applicant moving stage or an interview being booked is not in this table.",
+      "The Platform → Change trail console, row for row: which setting, message template, team account or stored file this portal wrote, the value before, the value after, when, and the person the door recorded. `group` narrows it to one part of the console exactly as the console's own `?trail=` does, and `page` walks that scope backwards exactly as its `?page=` does, so this answer and that section read the same scope, the same page size and the same order and cannot disagree about which rows exist. A save writes one row per setting it moved and they all share a timestamp, so page 2 really is the 15 rows before page 1 rather than a shifted copy of it. Values are printed short — a list of languages reads \"2 items\", a deleted row reads \"nothing\" — and the key is always there for the exact wording. Most rows name nobody, because the doors that wrote them recorded no actor, so the note says how many do instead of leaving a blank column to be read as \"nobody changed this\". This is the trail of things the console configures: an applicant moving stage or an interview being booked is not in this table.",
     args: {
       group: `string — optional, one of ${SETTINGS_TRAIL_GROUPS.map((group) => group.id).join("|")}, to read only the changes filed under that section or family`,
+      page: `number — optional, 1-based, ${SETTINGS_TRAIL_LIMIT} rows a page: 1 is the newest, 2 the rows before them, and the note on any answer names the last page`,
     },
     run: async (args) => {
       const asked = optionalStr(args, "group");
@@ -1273,7 +1277,23 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           )} — the sections and families the trail files rows under, exactly as the console names them.`
         );
       }
-      const result = await listSettingsTrail({ group: scope });
+      // Refused rather than defaulted: a model that wrote `page: "last"` has not
+      // asked for the newest rows, and answering a different question quietly is
+      // worse than telling it what the argument takes.
+      const askedPage = args.page;
+      if (askedPage !== undefined && askedPage !== null && askedPage !== "") {
+        const parsed = typeof askedPage === "number" ? askedPage : Number(String(askedPage).trim());
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          throw new ToolArgumentError(
+            `"page" must be a whole number from 1 — 1 is the newest ${SETTINGS_TRAIL_LIMIT} rows of the scope, 2 the rows before them.`
+          );
+        }
+      }
+      const page =
+        askedPage === undefined || askedPage === null || askedPage === ""
+          ? 1
+          : trailPage(askedPage as string | number);
+      const result = await listSettingsTrail({ group: scope, page });
       if (!result.ok) {
         // Answered as a refusal, with no counts invented behind it. An empty list
         // would let the model tell a recruiter nobody has changed anything, which
@@ -1286,8 +1306,11 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           total: result.total,
           loaded: result.entries.length,
           named: result.named,
+          page: result.page,
         }),
         audit_scope: scope,
+        audit_page: result.page,
+        audit_pages: trailPageCount(result.total),
         audit_total: result.total,
         audit_named: result.named,
         audit: result.entries.map((entry) => ({

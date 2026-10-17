@@ -8,8 +8,8 @@
  * the recruiter was shown a number of changes no screen could reproduce, and the
  * link offered `/activity`, a page built on a different table that reports its
  * trail has not been created yet. So this module gives the read one scope
- * vocabulary, one cap and one disclosure, shared by the console section and the
- * chat tool exactly as the keys console's credential trail does.
+ * vocabulary, one page size and one disclosure, shared by the console section and
+ * the chat tool exactly as the keys console's credential trail does.
  *
  * A row is filed under the console section that renders its key, because that is
  * where a reader goes to look at the thing that moved — `branding.logo_url` is
@@ -30,8 +30,39 @@ import { printableValue } from "@/modules/activity/domain/trail";
 import { ALL_SETTINGS } from "./settingSearch";
 import { SETTINGS_SCHEMA } from "./schema";
 
-/** How many newest rows the console section and the chat answer both carry. */
+/**
+ * One page of the trail: how many rows the console section and the chat answer
+ * carry at a time.
+ *
+ * A page, not a ceiling — `trailPageCount` is what turns it into a depth a reader
+ * can walk. Keeping one number means the screen and the chat cannot disagree about
+ * how much of the trail a single read holds.
+ */
 export const SETTINGS_TRAIL_LIMIT = 15;
+
+/** Where a page starts in the trail's own newest-first order, zero-based. */
+export function trailOffset(page: number): number {
+  return (page - 1) * SETTINGS_TRAIL_LIMIT;
+}
+
+/** How many pages it takes to walk a scope of `total` rows. Always at least one. */
+export function trailPageCount(total: number): number {
+  return Math.max(1, Math.ceil(total / SETTINGS_TRAIL_LIMIT));
+}
+
+/**
+ * The page a parameter or argument asks for.
+ *
+ * Lenient in the same shape as `trailGroup`: page 1 is the whole trail's front, so
+ * a missing, negative, fractional or unparseable value reads as page 1 rather than
+ * as an error or an empty list. A stale bookmark that names a page the trail has
+ * outgrown is clamped by the read, not answered with nothing.
+ */
+export function trailPage(value: string | number | null | undefined): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
 
 /**
  * A slice of the trail a reader can ask for.
@@ -137,19 +168,23 @@ export function trailValueText(value: unknown): string {
  * What a trail answer is standing on.
  *
  * Four facts in the order a reader needs them: whose history this is, how many
- * rows exist, whether the listing holds all of them, and how many of those rows
+ * rows exist, which slice of them this listing holds, and how many of those rows
  * can name a person. The third clause is the one a busy portal cannot do without —
  * 15 rows of 152 reads as the whole trail to anyone who counts what is on the
- * screen. The fourth is what stops a blank actor column being read as "nobody
- * touched this".
+ * screen — and it now names the page as well as the row numbers, so a reader who
+ * walked deeper knows the walk is finite rather than endless. The fourth is what
+ * stops a blank actor column being read as "nobody changed this".
  */
 export function settingsTrailNote(input: {
   groupId: string | null;
   total: number;
   loaded: number;
   named: number;
+  /** 1-based. The read reports the page it actually served, after clamping. */
+  page?: number;
 }): string {
   const { groupId, total, loaded, named } = input;
+  const page = Math.max(1, input.page ?? 1);
   const group = trailGroupById(groupId);
   const rows = (value: number) => `${value.toLocaleString()} row${value === 1 ? "" : "s"}`;
   const whose = group ? ` for ${group.label}` : "";
@@ -160,13 +195,37 @@ export function settingsTrailNote(input: {
       : "No change has been recorded through this portal yet, so the trail is empty.";
   }
 
-  const hidden = total - loaded;
-  const span =
-    hidden > 0
-      ? `this listing carries the newest ${rows(loaded)} of them, so ${hidden.toLocaleString()} older ${
-          hidden === 1 ? "change is" : "changes are"
-        } not shown here`
-      : `this listing carries all ${rows(total)}`;
+  const pages = trailPageCount(total);
+  const offset = trailOffset(page);
+  const last = offset + loaded;
+  let span: string;
+  if (loaded >= total) {
+    span = `this listing carries all ${rows(total)}`;
+  } else {
+    const newer = offset > 0
+      ? `${offset.toLocaleString()} newer ${offset === 1 ? "change sits" : "changes sit"} on ${
+          page === 2 ? "the previous page" : "earlier pages"
+        }`
+      : null;
+    const older =
+      last < total
+        ? `${(total - last).toLocaleString()} older ${
+            total - last === 1 ? "change is" : "changes are"
+          } on ${pages - page === 1 ? "the next page" : "later pages"}`
+        : null;
+    const beside =
+      newer && older
+        ? `, with ${newer} and ${older}`
+        : newer
+          ? `, with ${newer}`
+          : older
+            ? `, so ${older}`
+            : "";
+    span =
+      `page ${page} of ${pages} shows ${
+        loaded === 1 ? "row" : "rows"
+      } ${offset + 1}${loaded > 1 ? `–${last}` : ""} of them${beside}`;
+  }
   const who =
     named === 0
       ? "No row names the person who made it: those writes recorded no actor, and the trail does not guess one."

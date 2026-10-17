@@ -8,16 +8,43 @@ import {
   type SettingsTrailRead,
 } from "@/modules/settings/application/settings-trail-actions";
 import {
+  SETTINGS_TRAIL_LIMIT,
   settingsTrailNote,
   trailGroup,
   trailGroupById,
+  trailPage,
+  trailPageCount,
 } from "@/modules/settings/domain/settingsTrail";
+
+/**
+ * Write the scope and the page into the address bar.
+ *
+ * `replaceState` rather than a router push: the point is that the bar matches what
+ * is on screen, and a push would remount this panel through the page's own read and
+ * throw away the rows the reader is looking at. Page 1 writes nothing, so the bar
+ * never carries a parameter that changed nothing.
+ */
+function writeUrl(pathname: string, nextGroup: string | null, nextPage: number) {
+  const search = new URLSearchParams(window.location.search);
+  if (nextGroup === null) search.delete("trail");
+  else search.set("trail", nextGroup);
+  if (nextPage <= 1) search.delete("page");
+  else search.set("page", String(nextPage));
+  window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+}
 
 /**
  * Everything the section shows comes from one read of `settings_audit_log`, so the
  * counts under the heading and the rows beneath them are taken from the same query
  * with the same predicate. A list that said "152 recorded" beside 15 rows invited
  * the reader to divide one by the other.
+ *
+ * The trail is 152 rows deep and a page is 15, so the only honest question after
+ * the first page is "what about the rest?". This answers it with a pager rather
+ * than a bigger cap: "Show earlier changes" moves to the next 15 rows of the same
+ * scope, the address bar carries the page, and the note names the page it is
+ * standing on. The same `listSettingsTrail` the chat calls serves both, so a
+ * screen and an answer cannot be looking at different rows.
  *
  * A refused read arrives as `read` rather than as an empty trail, because "nobody
  * has changed anything" and "you are not shown what people changed" are different
@@ -26,28 +53,36 @@ import {
 export function SettingsTrailConsole({
   read,
   scope,
+  page: seededPage,
 }: {
   /** The page's own read, so the first paint costs no round trip. */
   read: SettingsTrailRead;
   /** The group `?trail=` asked for, already validated by the page. */
   scope: string | null;
+  /** The page `?page=` asked for, already validated by the page. */
+  page: number;
 }) {
   const params = useSearchParams();
   const pathname = usePathname();
 
   /**
-   * `?trail=` narrows the trail to one part of the console. Two things write it: a
-   * chat link, and a group chip in a row. Because the same route reached again
-   * re-renders rather than remounts, the value last taken from the address bar is
-   * tracked and applied, so a link that arrives while the section is already open
-   * still moves the listing — exactly how the keys console scopes its own trail.
+   * `?trail=` and `?page=` both narrow the listing, and both are written by two
+   * doors: a chat link, and a control in this panel. Because the same route reached
+   * again re-renders rather than remounts, the pair last taken from the address bar
+   * is tracked and applied, so a link that arrives while the section is already
+   * open still moves the listing — exactly how the keys console scopes its own
+   * trail.
    */
-  const incoming = trailGroup(params.get("trail"));
+  const incomingGroup = trailGroup(params.get("trail"));
+  const incomingPage = trailPage(params.get("page"));
+  const incoming = `${incomingGroup ?? ""}|${incomingPage}`;
+  const [applied, setApplied] = useState(incoming);
   const [group, setGroup] = useState<string | null>(scope);
-  const [lastApplied, setLastApplied] = useState<string | null>(incoming);
-  if (incoming !== lastApplied) {
-    setLastApplied(incoming);
-    setGroup(incoming);
+  const [page, setPage] = useState(read.ok ? read.page : seededPage);
+  if (incoming !== applied) {
+    setApplied(incoming);
+    setGroup(incomingGroup);
+    setPage(incomingPage);
   }
 
   const [rows, setRows] = useState<SettingsTrailEntryView[]>(read.ok ? read.entries : []);
@@ -55,14 +90,22 @@ export function SettingsTrailConsole({
   const [withActor, setWithActor] = useState(read.ok ? read.named : 0);
   const [failure, setFailure] = useState<string | null>(read.ok ? null : read.error);
   const [pending, setPending] = useState(false);
-  const readGroup = useRef(group);
+  const readKey = useRef(`${group}|${page}`);
+
+  // The bar always carries what is on screen, including on the first paint: a
+  // bookmark for a page the trail has outgrown is served as its oldest page, and
+  // that is the number the bar keeps.
+  useEffect(() => {
+    writeUrl(pathname, group, page);
+  }, [group, page, pathname]);
 
   useEffect(() => {
-    if (readGroup.current === group) return;
-    readGroup.current = group;
+    const key = `${group}|${page}`;
+    if (readKey.current === key) return;
+    readKey.current = key;
     let live = true;
     setPending(true);
-    listSettingsTrail({ group })
+    listSettingsTrail({ group, page })
       .then((result) => {
         if (!live) return;
         if (result.ok) {
@@ -70,6 +113,13 @@ export function SettingsTrailConsole({
           setCount(result.total);
           setWithActor(result.named);
           setFailure(null);
+          // A bookmark to a page the trail no longer holds is clamped by the read;
+          // the listing follows onto the page it actually served, and the bar
+          // follows the listing, so it never keeps naming rows nobody showed.
+          if (result.page !== page) {
+            readKey.current = `${group}|${result.page}`;
+            setPage(result.page);
+          }
         } else {
           // A refused read has no rows, so the listing is cleared rather than left
           // showing an unscoped page under a scoped heading.
@@ -92,24 +142,28 @@ export function SettingsTrailConsole({
     return () => {
       live = false;
     };
-  }, [group]);
+  }, [group, page]);
 
+  /** A new scope is a new trail, so it starts again at its newest page. */
   function openScope(next: string | null) {
     setGroup(next);
-    const search = new URLSearchParams(window.location.search);
-    if (next === null) search.delete("trail");
-    else search.set("trail", next);
-    window.history.replaceState(null, "", `${pathname}?${search.toString()}`);
+    setPage(1);
+  }
+
+  function goToPage(next: number) {
+    setPage(next);
   }
 
   const definition = trailGroupById(group);
   const label = definition?.label ?? null;
+  const pages = trailPageCount(count);
+  const lastRow = (page - 1) * SETTINGS_TRAIL_LIMIT + rows.length;
 
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h3 className="font-display text-base font-bold">
-          {label ? `Recent changes — ${label}` : "Recent changes"}
+          {`${page > 1 ? "Change history" : "Recent changes"}${label ? ` — ${label}` : ""}`}
         </h3>
         {group !== null && (
           <button
@@ -135,6 +189,7 @@ export function SettingsTrailConsole({
               total: count,
               loaded: rows.length,
               named: withActor,
+              page,
             })}
         {!failure && rows.length > 0 && (
           <span className="text-brand-ink/40">
@@ -186,6 +241,37 @@ export function SettingsTrailConsole({
             );
           })}
         </ul>
+      )}
+
+      {!failure && pages > 1 && (
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          {page > 1 && (
+            <button
+              type="button"
+              onClick={() => goToPage(page - 1)}
+              disabled={pending}
+              className="rounded-xl border border-brand-line px-3.5 py-2 font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:opacity-45"
+            >
+              {`Newer changes (page ${page - 1})`}
+            </button>
+          )}
+          {lastRow < count && (
+            <button
+              type="button"
+              onClick={() => goToPage(page + 1)}
+              disabled={pending}
+              className="rounded-xl border border-brand-line px-3.5 py-2 font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:opacity-45"
+            >
+              {`Show ${Math.min(SETTINGS_TRAIL_LIMIT, count - lastRow)} earlier changes`}
+            </button>
+          )}
+          <span className="text-brand-ink/40">
+            {`Page ${page} of ${pages}`}
+            {count > SETTINGS_TRAIL_LIMIT
+              ? ` — ${SETTINGS_TRAIL_LIMIT} rows a page, newest first`
+              : ""}
+          </span>
+        </div>
       )}
     </section>
   );

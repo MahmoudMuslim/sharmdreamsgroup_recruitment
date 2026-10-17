@@ -304,20 +304,40 @@ function credentialTrailView(result: unknown): AssistantLink {
  * which is a different table on a page that reports its trail as not yet created.
  */
 function settingsTrailView(result: unknown): AssistantLink {
-  const scope =
+  const record =
     result && typeof result === "object" && !Array.isArray(result)
-      ? (result as { audit_scope?: unknown }).audit_scope
-      : null;
-  const id = trailGroup(typeof scope === "string" ? scope : null);
+      ? (result as { audit_scope?: unknown; audit_page?: unknown })
+      : {};
+  const id = trailGroup(typeof record.audit_scope === "string" ? record.audit_scope : null);
   const group = id ? trailGroupById(id) : null;
-  if (!group || !id) return SETTINGS_TRAIL_CONSOLE;
+  // The page the answer read, not the page the model asked for: the read clamps a
+  // request past the end, and a link that carried the stale number would land the
+  // reader on different rows than the ones just quoted.
+  const page =
+    typeof record.audit_page === "number" && record.audit_page > 1 ? record.audit_page : null;
+  if (!group || !id) {
+    return page === null
+      ? SETTINGS_TRAIL_CONSOLE
+      : {
+          href: `/settings${query([
+            ["area", "platform"],
+            ["section", "trail"],
+            ["page", String(page)],
+          ])}`,
+          label: `Open the older changes, page ${page}`,
+        };
+  }
   return {
     href: `/settings${query([
       ["area", "platform"],
       ["section", "trail"],
       ["trail", id],
+      ["page", page === null ? null : String(page)],
     ])}`,
-    label: `Open the ${group.label} changes`,
+    label:
+      page === null
+        ? `Open the ${group.label} changes`
+        : `Open the ${group.label} changes, page ${page}`,
   };
 }
 
