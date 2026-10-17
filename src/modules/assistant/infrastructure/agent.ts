@@ -21,6 +21,7 @@ import {
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
+import { fitResult } from "@/modules/assistant/domain/resultBudget";
 import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import {
   SETTINGS_TRAIL_GROUPS,
@@ -93,8 +94,6 @@ export interface AssistantTurn {
  * it, add its parts, read it back — so the budget has to cover a whole one.
  */
 const MAX_TOOL_ROUNDS = 12;
-/** A tool result is context, not a document — clip it so one read cannot eat the budget. */
-const MAX_RESULT_CHARS = 6000;
 
 /**
  * The behaviour contract, shared by both engines: the gateway's JSON protocol
@@ -116,6 +115,10 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   ambiguous about which record to change, ask instead of guessing — with ask_question, listing the",
   "   real candidates from a tool result as the choices rather than asking an open question.",
   "6. Quote real numbers from tool results. If a tool returned nothing, say so — do not fill the gap.",
+  "   When a result opens with \"result_budget\", the answer was shortened to fit one turn: the budget line",
+  "   is the truth about how much arrived, whatever the rest of the answer claims. Tell the recruiter how",
+  "   many rows or characters were left out, quote only the rows that came, and offer the narrower read the",
+  "   budget line names — never present a shortened answer as the whole set.",
   "7. Replies are read by recruiters: short, plain, specific. Use the record's real name and id.",
   "8. Format the answer for the chat panel, which renders markdown: a table when the answer has",
   "   more than two rows of the same shape (| Stage | Count | Conversion |), a bullet list of",
@@ -294,14 +297,13 @@ function parseAnswer(content: string, truncated: boolean): Parsed {
   return { kind: "broken", reason: "The reply contained neither a tool call nor an answer." };
 }
 
+/**
+ * What the model is handed for one tool result. A tool result is context, not a
+ * document, so it is bounded — but bounded by reshaping the answer and saying what
+ * came off it, never by cutting the string where the budget happens to end.
+ */
 function detailFor(value: unknown): string {
-  let text: string;
-  try {
-    text = JSON.stringify(value) ?? "null";
-  } catch {
-    text = String(value);
-  }
-  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}…` : text;
+  return fitResult(value);
 }
 
 async function runTool(

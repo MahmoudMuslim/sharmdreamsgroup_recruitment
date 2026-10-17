@@ -27,6 +27,7 @@ import {
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool } from "@/modules/assistant/domain/charts";
+import { fitResult } from "@/modules/assistant/domain/resultBudget";
 import {
   ASSISTANT_RULES,
   type AssistantProvider,
@@ -66,7 +67,6 @@ const MCP_SERVER_NAME = "talentsphere";
 /** Bound so a wedged runtime cannot hold a request open forever. */
 const TURN_TIMEOUT_MS = 120_000;
 const MAX_AGENT_TURNS = 24;
-const MAX_RESULT_CHARS = 6000;
 
 const TYPE_SCHEMAS: Record<string, z.ZodTypeAny> = {
   string: z.string(),
@@ -98,16 +98,12 @@ function shapeFor(tool: AssistantTool): Record<string, z.ZodTypeAny> {
   return shape;
 }
 
-function clip(text: string): string {
-  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}…` : text;
-}
-
+/**
+ * The same envelope the completion engine uses, so neither engine can hand the
+ * model a shorter answer than the other without saying so.
+ */
 function asText(value: unknown): string {
-  try {
-    return clip(JSON.stringify(value) ?? "null");
-  } catch {
-    return clip(String(value));
-  }
+  return fitResult(value);
 }
 
 /**
