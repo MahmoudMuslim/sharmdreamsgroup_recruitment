@@ -188,7 +188,7 @@ export function columnLetters(index: number): string {
 
 const CELL_REF = /^([A-Z]+)([0-9]+)$/;
 
-function refToRowAndColumn(ref: string): { row: number; col: number } | null {
+export function refToRowAndColumn(ref: string): { row: number; col: number } | null {
   const match = CELL_REF.exec(ref);
   if (!match) return null;
   const col = match[1]

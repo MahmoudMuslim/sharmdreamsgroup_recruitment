@@ -39,6 +39,12 @@ interface TrailContext {
   actorKind?: ActorKind;
   /** The machine's own name when `actorKind` is not `STAFF`. */
   actorLabel?: string;
+  /**
+   * The person the machine acted for. A writer deep in a chain (an AI drafting
+   * six questions, one row at a time) has no signature of its own to carry it,
+   * so it inherits the owner from the context the entry point opened.
+   */
+  actorId?: string | null;
   companyId?: string | null;
 }
 
@@ -88,7 +94,13 @@ export async function recordActivity(entry: ActivityEntry): Promise<TrailWriteRe
   const row = {
     company_id: entry.companyId ?? from.companyId ?? session?.tenantId ?? null,
     actor_id:
-      entry.actorId === undefined ? (actorKind === "STAFF" ? session?.profileId ?? null : null) : entry.actorId,
+      entry.actorId !== undefined
+        ? entry.actorId
+        : from.actorId !== undefined
+          ? from.actorId
+          : actorKind === "STAFF"
+            ? (session?.profileId ?? null)
+            : null,
     actor_kind: actorKind,
     actor_label: actorLabel,
     via: entry.via ?? from.via ?? (actorKind === "SYSTEM" ? "cron" : "console"),

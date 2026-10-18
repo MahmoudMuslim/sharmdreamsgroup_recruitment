@@ -5,8 +5,24 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { recordActivity } from "@/modules/activity/application/record";
+import { hasAiProvider } from "@/lib/config.server";
+import { recordActivity, withActivityContext } from "@/modules/activity/application/record";
 import { changePhrase, changedFields } from "@/modules/activity/domain/trail";
+import {
+  generateAssessmentQuestions,
+  type SuiteAuthoringContext,
+} from "@/modules/screening/infrastructure/openRouterEngine";
+import {
+  MAX_DRAFTS_PER_RUN,
+  DIFFICULTIES,
+  draftForRow,
+  normaliseOutputs,
+  normaliseSheet,
+  reviewDrafts,
+  type AuthoringBrief,
+  type Difficulty,
+  type GeneratedQuestion,
+} from "@/modules/assessment/domain/aiAuthoring";
 import type { QuestionConfig, QuestionType } from "@/types";
 
 /**
@@ -427,4 +443,225 @@ export async function moveQuestion(
 
   revalidatePath("/assessments");
   return { ok: true, id: questionId };
+}
+
+// ============================================================================
+// AI authoring
+// ============================================================================
+
+/**
+ * Drafts questions for a suite, and stores nothing.
+ *
+ * The split matters: a model's question is not a candidate's question until a
+ * recruiter has read it and chosen to add it. So this call spends the model
+ * request, runs the runner's own rules over what came back, and hands the result
+ * to `addDraftedQuestions` — which is the only door into `assessment_questions`.
+ */
+export interface AuthoringInput {
+  templateId: string;
+  topic: string;
+  types: QuestionType[];
+  count: number;
+  difficulty: Difficulty;
+  pointsEach: number;
+  notes: string;
+}
+
+export interface AuthoringResult extends QuestionResult {
+  drafts?: GeneratedQuestion[];
+  /** One sentence per draft refused, so a short run explains itself. */
+  dropped?: string[];
+  shortBy?: number;
+  suite?: string;
+  /** Which model answered, because the recruiter is entitled to know whose words these are. */
+  model?: string;
+}
+
+export interface DraftWriteResult extends QuestionResult {
+  created?: number;
+  /**
+   * Drafts the suite refused, each with its position in the list that was sent.
+   *
+   * The index is the only handle the review desk has: two drafts can carry the
+   * same title, and a title is not something to parse a sentence back out of.
+   */
+  refused?: { index: number; title: string; reason: string }[];
+  suite?: string;
+}
+
+const TOPIC_CAP = 400;
+const NOTES_CAP = 600;
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+async function readSuiteForAuthoring(
+  supabase: SupabaseClient,
+  templateId: string
+): Promise<SuiteAuthoringContext | null> {
+  const { data, error } = await supabase
+    .from("assessment_templates")
+    .select("id, name, description, role_family, time_limit_minutes")
+    .eq("id", templateId)
+    .maybeSingle();
+  if (error || !data) return null;
+
+  const { data: questions } = await supabase
+    .from("assessment_questions")
+    .select("title")
+    .eq("template_id", templateId)
+    .order("position");
+
+  return {
+    name: data.name,
+    description: data.description ?? "",
+    roleFamily: data.role_family ?? "",
+    timeLimitMinutes: data.time_limit_minutes ?? 60,
+    existingTitles: (questions ?? []).map((row: { title: string }) => row.title),
+  };
+}
+
+export async function draftQuestions(input: AuthoringInput): Promise<AuthoringResult> {
+  await requireStaff("/assessments");
+  const denied = await requireAssessmentEditor();
+  if (denied) return { ok: false, error: denied };
+  if (!hasAiProvider()) {
+    return { ok: false, error: "No AI provider key is configured, so nothing can be drafted." };
+  }
+
+  const topic = (input.topic ?? "").trim().slice(0, TOPIC_CAP);
+  if (topic.length < 4) {
+    return { ok: false, error: "Say what the questions should test — a skill, a tool, a judgement." };
+  }
+
+  const types = (input.types ?? []).filter((type) => QUESTION_TYPES.includes(type));
+  if (types.length === 0) {
+    return { ok: false, error: "Tick at least one question type to draft." };
+  }
+
+  const brief: AuthoringBrief = {
+    topic,
+    types,
+    count: clampInt(input.count, 1, MAX_DRAFTS_PER_RUN, 3),
+    difficulty: DIFFICULTIES.includes(input.difficulty) ? input.difficulty : "MID",
+    pointsEach: clampInt(input.pointsEach, 1, 100, 10),
+    notes: (input.notes ?? "").trim().slice(0, NOTES_CAP),
+  };
+
+  const supabase = await createSupabaseServerClient();
+  const suite = await readSuiteForAuthoring(supabase, input.templateId);
+  if (!suite) return { ok: false, error: "That suite no longer exists." };
+
+  let generated: Awaited<ReturnType<typeof generateAssessmentQuestions>>;
+  try {
+    generated = await generateAssessmentQuestions(brief, suite);
+  } catch (cause) {
+    return {
+      ok: false,
+      error: cause instanceof Error ? cause.message : "The model did not return any questions.",
+    };
+  }
+
+  const review = reviewDrafts(generated.parsed, brief, suite.existingTitles);
+  return {
+    ok: true,
+    drafts: review.drafts,
+    dropped: review.dropped,
+    shortBy: review.shortBy,
+    suite: suite.name,
+    model: generated.model,
+  };
+}
+
+/**
+ * Adds the drafts a recruiter chose, through the same writer the manual editor
+ * uses, and records them as AI-drafted.
+ *
+ * The drafts come back from the browser, so nothing about them is trusted: the
+ * grid and its required cells are rebuilt by the same pure functions that
+ * reviewed them, and every row still passes `saveQuestion`, which refuses the
+ * types, marks and answer keys the runner cannot handle.
+ *
+ * One refused draft does not stop the others — a recruiter who clicked "add all"
+ * on six and gets four back is told which two, and why, rather than having the
+ * whole batch rolled back for one bad cell reference.
+ */
+export async function addDraftedQuestions(
+  templateId: string,
+  drafts: GeneratedQuestion[]
+): Promise<DraftWriteResult> {
+  const staff = await requireStaff("/assessments");
+  const denied = await requireAssessmentEditor();
+  if (denied) return { ok: false, error: denied };
+
+  const chosen = Array.isArray(drafts) ? drafts.slice(0, MAX_DRAFTS_PER_RUN) : [];
+  if (chosen.length === 0) return { ok: false, error: "Nothing was chosen to add." };
+
+  const supabase = await createSupabaseServerClient();
+  const suite = await readSuiteForAuthoring(supabase, templateId);
+  if (!suite) return { ok: false, error: "That suite no longer exists." };
+
+  let created = 0;
+  const refused: { index: number; title: string; reason: string }[] = [];
+
+  await withActivityContext(
+    {
+      actorKind: "AI",
+      actorLabel: "AI question drafting",
+      actorId: staff.profileId,
+      companyId: staff.tenantId,
+    },
+    async () => {
+      for (const [index, draft] of chosen.entries()) {
+        const sheet = normaliseSheet(draft.sheet);
+        const { outputs, refused: cellRefusals } = normaliseOutputs(draft.outputs, sheet);
+        // A workbook can arrive here with every required cell refused — the sheet
+        // was edited, or the desk's copy is stale. `saveQuestion` cannot see that,
+        // because it does not read a spreadsheet, so the row would be stored with
+        // nothing to grade.
+        if (draft.question_type === "EXCEL_MODEL" && outputs.length === 0) {
+          refused.push({
+            index,
+            title: draft.title,
+            reason:
+              cellRefusals[0] ??
+              "none of its required cells survived, so it would score nothing",
+          });
+          continue;
+        }
+        const result = await saveQuestion(
+          draftForRow(
+            { ...draft, sheet, outputs },
+            templateId,
+            suite.existingTitles.length + index
+          )
+        );
+        if (result.ok) created += 1;
+        else {
+          refused.push({
+            index,
+            title: draft.title,
+            reason: result.error ?? "the suite refused it",
+          });
+        }
+      }
+    }
+  );
+
+  if (created === 0) {
+    return {
+      ok: false,
+      error:
+        refused.length > 0
+          ? `None of the drafts could be added. ${refused[0].title}: ${refused[0].reason}`
+          : "None of the drafts could be added to the suite.",
+      refused,
+      suite: suite.name,
+    };
+  }
+
+  return { ok: true, created, refused, suite: suite.name };
 }

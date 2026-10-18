@@ -5,8 +5,15 @@
  * - Soft Skill & Video Sentiment Analysis
  * - Personalized Feedback Generator
  * - Dynamic Interview Question Generator
+ * - Assessment question authoring for recruiters
  */
 import { complete, parseJsonResponse, type CompletionRequest } from "@/modules/screening/infrastructure/aiGateway";
+import {
+  DIFFICULTY_LABELS,
+  GENERATED_JSON_SHAPE,
+  kindsWord,
+  type AuthoringBrief,
+} from "@/modules/assessment/domain/aiAuthoring";
 import type { CvScreeningResult, SentimentAnalysisResult, FeedbackReport, GeneratedInterviewQuestions } from "@/types";
 
 /**
@@ -327,7 +334,7 @@ function refsForGrid(grid: (string | number | null)[][]): string[] {
 export async function evaluateExcelModel(
   questionPrompt: string,
   candidateCells: Record<string, string | number | null>,
-  expectedOutputs: { cell: string; formulaHint?: string; description: string }[],
+  expectedOutputs: { cell: string; formula_hint?: string; description: string }[],
   initialSheet?: (string | number | null)[][]
 ): Promise<ExcelEvaluation> {
   const breakdown: ExcelEvaluation["breakdown"] = [];
@@ -361,7 +368,7 @@ MODEL INPUT CELLS:
 ${initialSheet ? refsForGrid(initialSheet).join("\n") : "(none provided)"}
 
 REQUIRED OUTPUTS:
-${pending.map((o) => `- ${o.cell}: ${o.description}${o.formulaHint ? ` (hint: ${o.formulaHint})` : ""}`).join("\n")}
+${pending.map((o) => `- ${o.cell}: ${o.description}${o.formula_hint ? ` (hint: ${o.formula_hint})` : ""}`).join("\n")}
 
 CANDIDATE SUBMITTED CELLS (other cells were left empty or are not required):
 ${submittedLines.join("\n")}
@@ -461,4 +468,85 @@ Evaluate and return:
     strengths: string[];
     improvements: string[];
   }>(result.content, { truncated: result.truncated });
+}
+
+/** The suite a set of drafts is being written for. */
+export interface SuiteAuthoringContext {
+  name: string;
+  description: string;
+  roleFamily: string;
+  timeLimitMinutes: number;
+  existingTitles: string[];
+}
+
+/**
+ * Question authoring for recruiters.
+ *
+ * Returns the model's parsed reply rather than a finished list of questions,
+ * because "can this be sat?" is decided by `reviewDrafts` in the assessment
+ * domain — the runner's own rules, not a prompt. A model that writes a quiz with
+ * two answer keys, or a spreadsheet whose required cell is already printed on the
+ * paper, is refused there and the recruiter is told why.
+ *
+ * It rides the `case_reasoning` chain on purpose: that capability already ships
+ * as "case studies, scoring rubrics and complex analysis" and already has routing
+ * rows, so authoring needs no new capability, no new model config and no migration.
+ */
+export async function generateAssessmentQuestions(
+  brief: AuthoringBrief,
+  suite: SuiteAuthoringContext
+): Promise<{ parsed: unknown; model: string; truncated: boolean }> {
+  const systemPrompt = `You are a hiring manager writing a skills assessment that a candidate completes on screen, with no recruiter present to explain it.
+
+Each question must be answerable with only what its type gives the candidate:
+- MULTIPLE_CHOICE: exactly one option is correct. Wrong options must be plausible, not jokes. Never use "all of the above" or "none of the above" — options are shuffled per candidate.
+- CASE_STUDY: put the scenario the candidate reads in "context", then ask one thing of them in "prompt".
+- EXCEL_MODEL: the candidate edits a grid. "initial_sheet" is the paper handed to them: labels and given figures ONLY. Every cell listed in "expected_outputs" must be BLANK there — a required cell that the sheet already prints is an answer given away, not a question.
+- VIDEO_PITCH: the candidate speaks to a camera. Ask something answerable out loud in the seconds allowed, with nothing to look up.
+
+Do not invent company figures you then ask the candidate to find. Do not ask for something the question itself states. Set every number a candidate needs inside the question.
+
+Return ONLY valid JSON, no markdown:
+${GENERATED_JSON_SHAPE}`;
+
+  const already =
+    suite.existingTitles.length > 0
+      ? `\nALREADY IN THIS SUITE — do not repeat or paraphrase any of them:\n${suite.existingTitles
+          .slice(0, 20)
+          .map((title) => `- ${title}`)
+          .join("\n")}\n`
+      : "";
+
+  const userPrompt = `SUITE: ${suite.name}
+${suite.description ? `ABOUT: ${suite.description}\n` : ""}ROLE FAMILY: ${suite.roleFamily || "not set"}
+SUITE TIME LIMIT: ${suite.timeLimitMinutes} minutes
+${already}
+Write ${brief.count} ${DIFFICULTY_LABELS[brief.difficulty].toLowerCase()} question${
+    brief.count === 1 ? "" : "s"
+  } on: ${brief.topic}
+TYPES ALLOWED: ${kindsWord(brief.types)} — use nothing else.
+MARKS EACH: ${brief.pointsEach}
+${brief.notes ? `EXTRA GUIDANCE FROM THE RECRUITER: ${brief.notes}\n` : ""}
+No two questions on the same skill. Each needs its own title of six words or fewer.`;
+
+  const request: CompletionRequest = {
+    capability: "case_reasoning",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.6,
+    // A run of spreadsheet questions carries a grid and a list of required cells
+    // per question; a cap sized for prose truncates the JSON mid-sheet and the
+    // whole reply is then unparseable.
+    maxTokens: Math.min(4000, 700 + brief.count * 700),
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  return {
+    parsed: parseJsonResponse<unknown>(result.content, { truncated: result.truncated }),
+    model: result.model,
+    truncated: result.truncated,
+  };
 }
