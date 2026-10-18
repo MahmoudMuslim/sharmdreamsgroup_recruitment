@@ -181,9 +181,9 @@ export async function searchPortal(term: string): Promise<PortalSearchResult> {
       id: hit.id,
       title: hit.full_name,
       subtitle: `${hit.stage}${opening ? ` · ${opening}` : ""} · ${hit.tracking_code}`,
-      // `?c=` is the tracking-code deep link the candidate page already honours,
-      // so the row opens exactly this applicant rather than the whole list.
-      href: `/candidates?c=${encodeURIComponent(hit.tracking_code)}`,
+      // The row's own id, so the hit lands on that person's profile page — which
+      // is keyed by their address and lists every opening they hold.
+      href: `/candidates/${hit.id}`,
     };
   });
 

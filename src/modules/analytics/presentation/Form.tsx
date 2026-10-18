@@ -51,9 +51,12 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 export function FormMessage({
   error,
   success,
+  notice,
 }: {
   error?: string | null;
   success?: string | null;
+  /** A fact the write did not fail on, but the recruiter should read. */
+  notice?: string | null;
 }) {
   if (error) {
     return (
@@ -65,17 +68,27 @@ export function FormMessage({
       </p>
     );
   }
-  if (success) {
-    return (
-      <p
-        role="status"
-        className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800"
-      >
-        {success}
-      </p>
-    );
-  }
-  return null;
+  if (!success && !notice) return null;
+  return (
+    <div className="mt-4 space-y-2">
+      {success && (
+        <p
+          role="status"
+          className="rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm font-semibold text-emerald-800"
+        >
+          {success}
+        </p>
+      )}
+      {notice && (
+        <p
+          role="status"
+          className="rounded-xl border border-brand-gold/50 bg-brand-sand/60 px-3.5 py-2.5 text-xs leading-relaxed text-brand-ink/70"
+        >
+          {notice}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** Primary/secondary pair pinned to a drawer footer. */

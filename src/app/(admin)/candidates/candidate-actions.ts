@@ -19,6 +19,10 @@ import {
 } from "@/modules/settings/domain/templates";
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import { isApplicationSource } from "@/modules/candidates/domain/listFilters";
+import {
+  alreadyOnFile,
+  emailSpellings,
+} from "@/modules/candidates/domain/personIdentity";
 import { HIREABLE_STATUSES, PICKER_LIMIT } from "@/modules/jobs/domain/hireable";
 import { requireHireableOpening } from "@/modules/jobs/infrastructure/hireableOpening";
 import { notifyStageChange, sendCandidateFeedbackLetter } from "@/modules/omnichannel/application/candidate-notifications";
@@ -682,6 +686,52 @@ export interface CreateCandidateResult {
   ok: boolean;
   error?: string;
   candidate?: CreatedCandidate;
+  /** Set when the address was already live in another opening — filed, not refused. */
+  notice?: string | null;
+}
+
+type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+
+/**
+ * The other openings this address is already live in.
+ *
+ * A person is in play per opening, so a second row is normal hiring, not a
+ * duplicate — but it lands on the profile that already exists, and a recruiter
+ * who does not know that goes looking for a candidate the list never shows twice.
+ * A refused read returns no titles rather than throwing: the record was written
+ * either way, and a missing notice is not a reason to report a success as a
+ * failure. The address goes in as it was typed, so a row stored before the doors
+ * started lowercasing is still found.
+ */
+/**
+ * The title off an embedded `job_openings` row.
+ *
+ * PostgREST returns a to-one embed as an object, but an array is possible, and a
+ * door that names an opening for a recruiter would rather read both shapes than
+ * print a blank where a role name belongs.
+ */
+function embeddedTitle(job: unknown): string {
+  const row = Array.isArray(job) ? job[0] : job;
+  const title = (row as { title?: unknown } | null)?.title;
+  return typeof title === "string" ? title : "";
+}
+
+async function otherOpeningsOnFile(
+  supabase: StaffClient,
+  emailRaw: string,
+  jobId: string
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("applications")
+    .select("job_id, job_openings(title)")
+    .in("email", emailSpellings(emailRaw))
+    .is("archived_at", null)
+    .neq("job_id", jobId)
+    .limit(20);
+
+  return (data ?? [])
+    .map((row: Record<string, unknown>) => embeddedTitle(row.job_openings))
+    .filter(Boolean);
 }
 
 /**
@@ -745,7 +795,9 @@ export async function createCandidate(input: {
     if (error.code === "23505") {
       return {
         ok: false,
-        error: `${fullName} already has a live application for ${opening.title} — open that record instead of adding a second.`,
+        error:
+          alreadyOnFile({ openings: [], sameOpening: opening.title }).refusal ??
+          "That address already has a live application for this opening.",
       };
     }
     return { ok: false, error: error.message };
@@ -801,7 +853,12 @@ export async function createCandidate(input: {
   revalidatePath("/jobs");
   revalidatePath("/dashboard");
 
-  return { ok: true, candidate };
+  const notice = alreadyOnFile({
+    openings: await otherOpeningsOnFile(supabase, input.email, input.jobId),
+    sameOpening: null,
+  }).notice;
+
+  return { ok: true, candidate, notice };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -823,6 +880,8 @@ export interface ContactResult {
   error?: string;
   /** What the row now holds, after trimming and lowercasing. */
   contact?: CandidateContact;
+  /** Set when the new address is already live in another opening. */
+  notice?: string | null;
 }
 
 /**
@@ -860,9 +919,12 @@ export async function updateCandidateContact(input: {
 
   const supabase = await createSupabaseServerClient();
 
+  // The row as it stands, including the opening it sits in: the same address in
+  // that opening is the duplicate the database refuses, and the same address in
+  // any *other* opening is the profile this edit just joined.
   const { data: contactBefore } = await supabase
     .from("applications")
-    .select("full_name, email, phone")
+    .select("full_name, email, phone, job_id, job_openings(title)")
     .eq("id", input.applicationId)
     .maybeSingle();
 
@@ -877,6 +939,11 @@ export async function updateCandidateContact(input: {
     .eq("id", input.applicationId)
     .select("full_name, email, phone");
 
+  const rowJobId = String((contactBefore as { job_id?: unknown } | null)?.job_id ?? "");
+  const rowOpening = embeddedTitle(
+    (contactBefore as { job_openings?: unknown } | null)?.job_openings
+  );
+
   if (error) {
     // `applications_one_live_per_job` keeps one live application per address per
     // opening, so a merge of two duplicate rows surfaces here rather than as a
@@ -884,7 +951,9 @@ export async function updateCandidateContact(input: {
     if (error.code === "23505") {
       return {
         ok: false,
-        error: "That email already has a live application for this opening.",
+        error:
+          alreadyOnFile({ openings: [], sameOpening: rowOpening }).refusal ??
+          "That email already has a live application for this opening.",
       };
     }
     return { ok: false, error: error.message };
@@ -921,7 +990,18 @@ export async function updateCandidateContact(input: {
   });
 
   revalidatePath("/candidates");
-  return { ok: true, contact: stored };
+
+  // Only an address that actually changed can join a profile, so a name fix on
+  // someone who happens to be in two openings is not reported as a merge.
+  const notice =
+    previous.email !== null && previous.email !== current.email
+      ? alreadyOnFile({
+          openings: rowJobId ? await otherOpeningsOnFile(supabase, input.email, rowJobId) : [],
+          sameOpening: null,
+        }).notice
+      : null;
+
+  return { ok: true, contact: stored, notice };
 }
 
 /* -------------------------------------------------------------------------- */

@@ -12,7 +12,10 @@ import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/li
 import { formatInZone } from "@/lib/timezone";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 import { attachmentRule } from "@/modules/careers/attachment-rules";
-import type { GateAnswer } from "@/modules/careers/gate-questions";
+import {
+  parseGateAnswers,
+  type GateAnswer,
+} from "@/modules/careers/gate-questions";
 
 /**
  * The whole candidate record: what they submitted, what the gate asked, and
@@ -190,20 +193,6 @@ function one<T>(joined: unknown): T | null {
   return (row as T) ?? null;
 }
 
-function gateAnswers(value: unknown): GateAnswer[] {
-  if (!Array.isArray(value)) return [];
-  const answers: GateAnswer[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") continue;
-    const row = entry as Record<string, unknown>;
-    const question = asString(row.question).trim();
-    const answer = asString(row.answer).trim();
-    if (!question || !answer) continue;
-    answers.push({ question, answer, passed: row.passed === true });
-  }
-  return answers;
-}
-
 function alertStatus(row: Record<string, unknown>): DossierAlert["status"] {
   if (row.status === "PENDING") return "queued";
   if (asString(row.channel) === "IN_APP") return "written";
@@ -347,7 +336,7 @@ export async function getCandidateDossier(
             ? "The attached CV could not be opened — the candidate may have uploaded it before CV storage was enabled."
             : null,
       },
-      gate_answers: gateAnswers(row.gate_answers),
+      gate_answers: parseGateAnswers(row.gate_answers),
       attempts: (attempts.data ?? []).map((attempt: Record<string, unknown>) => ({
         id: String(attempt.id),
         access_token: asString(attempt.access_token),

@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { UserPlus } from "lucide-react";
+import { FolderOpen, UserPlus } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import {
   DrawerActions,
@@ -43,7 +44,11 @@ export function NewCandidateDrawer() {
   const [phone, setPhone] = useState("");
   const [source, setSource] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<CreatedCandidate | null>(null);
+  // One state, not two: the notice only ever describes the record it was filed
+  // with, so clearing the record cannot leave an orphaned warning on screen.
+  const [created, setCreated] = useState<{ candidate: CreatedCandidate; notice: string } | null>(
+    null
+  );
   const [pending, setPending] = useState(false);
 
   function stop() {
@@ -106,7 +111,7 @@ export function NewCandidateDrawer() {
     try {
       const result = await createCandidate({ jobId, fullName, email, phone, source });
       if (result.ok && result.candidate) {
-        setCreated(result.candidate);
+        setCreated({ candidate: result.candidate, notice: result.notice ?? "" });
         // The action already revalidated /candidates; this pulls the new row
         // into the table behind the drawer.
         router.refresh();
@@ -248,10 +253,21 @@ export function NewCandidateDrawer() {
             error={error}
             success={
               created
-                ? `Recorded ${created.full_name} for ${created.job_title}. Tracking code ${created.tracking_code}.`
+                ? `Recorded ${created.candidate.full_name} for ${created.candidate.job_title}. Tracking code ${created.candidate.tracking_code}.`
                 : null
             }
+            notice={created?.notice || null}
           />
+
+          {created && (
+            <Link
+              href={`/candidates/${created.candidate.id}`}
+              className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-gold-dark hover:underline"
+            >
+              <FolderOpen className="h-4 w-4" aria-hidden />
+              Open their profile — everything filed about them, on every opening
+            </Link>
+          )}
         </div>
       </Drawer>
     </>

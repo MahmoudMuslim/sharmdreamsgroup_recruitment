@@ -198,7 +198,7 @@ export function IssuedLinksBoard({
                 >
                   <div className="col-span-3 min-w-0">
                     <Link
-                      href={`/candidates?application=${link.application_id}`}
+                      href={`/candidates/${link.application_id}`}
                       className="truncate font-semibold text-brand-ink underline-offset-2 hover:underline"
                     >
                       {link.candidate_name}

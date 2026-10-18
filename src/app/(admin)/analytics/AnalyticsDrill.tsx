@@ -232,7 +232,7 @@ function AttemptRow({
   return (
     <RowShell
       title={row.candidate}
-      href={row.application_id ? `/candidates?application=${row.application_id}` : undefined}
+      href={row.application_id ? `/candidates/${row.application_id}` : undefined}
       lines={[
         [row.opening || "No opening on file", row.suite].filter(Boolean).join(" · "),
         [
@@ -299,7 +299,7 @@ function ProspectRow({ row, timeZone }: { row: DrillProspect; timeZone: string }
 
 function MessageRow({ row, timeZone }: { row: DrillMessage; timeZone: string }) {
   const href = row.application_id
-    ? `/candidates?application=${row.application_id}`
+    ? `/candidates/${row.application_id}`
     : row.prospect_id
       ? `/sourcing?prospect=${encodeURIComponent(row.prospect_id)}`
       : undefined;
@@ -350,7 +350,7 @@ function PanelRow({ row, timeZone }: { row: DrillPanelRow; timeZone: string }) {
   return (
     <RowShell
       title={row.candidate || "(candidate not on file)"}
-      href={row.application_id ? `/candidates?application=${row.application_id}` : undefined}
+      href={row.application_id ? `/candidates/${row.application_id}` : undefined}
       lines={[
         row.opening || "No opening on file",
         [

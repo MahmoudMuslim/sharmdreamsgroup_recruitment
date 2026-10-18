@@ -413,11 +413,28 @@ function filingDriftView(args: ToolArgs, result: unknown): AssistantLink {
 }
 
 /**
- * Screens that open the exact record from the query string. Every other admin
- * page ignores one, so a link there is written bare rather than dressed with a
- * parameter that would be dropped.
+ * The person's own page — every application they hold, with the tests, files,
+ * messages and changes sitting on any of them.
+ *
+ * One address, one page: the profile canonicalises to the person's oldest live
+ * row, so a tool that touched a newer application still lands on the one profile
+ * the recruiter would recognise rather than on one row of several.
  */
 function candidate(id: string): AssistantLink {
+  return { href: `/candidates/${id}`, label: "Open their profile" };
+}
+
+/**
+ * One application's desk: the stage buttons, the CV, the Integrity report.
+ *
+ * The profile reads a person; this is where the work on a single opening gets
+ * done, so the grading answers — which are marked on the desk's Integrity panel,
+ * not on the profile — click through straight to it. `/candidates` is one of the
+ * few pages that opens an exact record from the query string; every other admin
+ * page ignores one, so its link is written bare rather than dressed with a
+ * parameter that would be dropped.
+ */
+function candidateDesk(id: string): AssistantLink {
   return { href: `/candidates?application=${id}`, label: "Open the dossier" };
 }
 
@@ -503,10 +520,10 @@ export function linkForTool(
     case "retry_grading": {
       // Grading lives on the candidate's own Integrity report, and all three
       // actions report whose attempt they read or touched, so the chat lands on
-      // the person rather than on the whole pipeline.
+      // that application's desk rather than on the whole pipeline.
       const id = token((result as { application_id?: unknown } | null)?.application_id);
       return id
-        ? candidate(id)
+        ? candidateDesk(id)
         : { href: "/candidates", label: "Open the candidate pipeline" };
     }
     case "list_interviews":

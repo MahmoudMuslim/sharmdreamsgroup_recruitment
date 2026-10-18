@@ -123,9 +123,11 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     purpose: "The pipeline itself — every applicant, their AI score, their stage and their whole record.",
     shows: [
       "Stage, source and company rails counted in the database, the list behind them, and a profile drawer holding the submitted application, the files, the gate answers, the tests, the alerts sent, the onboarding plan and the person's other applications.",
+      "A candidate's name opens their own profile page: every application they hold across every opening, with the test links, interviews, files, messages and record changes from all of them.",
     ],
     use: [
       "Click a rail to query the database for that stage rather than filter what is loaded. Search by name, email, role, company or tracking code; sort by newest, AI fit or name.",
+      "Click a name for the person's profile page; the Desk button opens this application's drawer, where the buttons that write live.",
       "Advance moves someone to the next stage. Reject asks for the reason the candidate will be shown.",
       "Screen with AI runs the whole engine — score, strengths, gaps, feedback — and Re-screen runs it again. Draft feedback writes the letter and Email this to the candidate sends it.",
       "Award marks by hand on any answer the AI left for review, in the grading desk.",
@@ -136,7 +138,8 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     edges: [
       "The list is the newest 200 records; the rails count up to the newest 2,000 and the page says when even that stops being exact.",
       "Archiving is refused while an assessment link is open or an interview is on the calendar. Nothing is deleted — a filed-away candidate keeps their own tracking page.",
-      "One live application per person per role is what refuses a duplicate.",
+      "One live application per person per role is what refuses a duplicate. One person may hold several live applications on different roles, and the profile page says so rather than splitting them into two candidates.",
+      "A profile page is addressed by the person's oldest live record: a link naming a newer application is moved onto that address.",
       "Hand-marking needs Grade assessments, edits need Edit candidates, sending needs Send messages.",
       "A bulk send stops at 200 recipients, and the panel names the mail provider's own daily ceiling.",
     ],

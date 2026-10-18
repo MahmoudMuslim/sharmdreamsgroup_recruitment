@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
@@ -766,7 +767,7 @@ export function CandidateBrowser({
                   <th className="px-4 py-3">Stage</th>
                   <th className="px-4 py-3">AI match</th>
                   <th className="px-4 py-3">Assessment</th>
-                  <th className="px-4 py-3 text-right">Profile</th>
+                  <th className="px-4 py-3 text-right">Desk</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-brand-line">
@@ -784,7 +785,13 @@ export function CandidateBrowser({
                       </td>
                     )}
                     <td className="px-4 py-4">
-                      <p className="font-semibold">{c.full_name}</p>
+                      <Link
+                        href={`/candidates/${c.id}`}
+                        className="font-semibold hover:text-brand-gold-dark hover:underline"
+                        title={`${c.full_name}'s profile — everything filed about them, on any opening`}
+                      >
+                        {c.full_name}
+                      </Link>
                       <p className="text-xs text-brand-ink/50">{c.email}</p>
                       <p className="font-mono text-[11px] text-brand-ink/40">{c.tracking_code}</p>
                     </td>
@@ -900,7 +907,13 @@ export function CandidateBrowser({
                       />
                     )}
                     <span className="min-w-0">
-                      <span className="block truncate font-semibold">{c.full_name}</span>
+                      <Link
+                        href={`/candidates/${c.id}`}
+                        className="block truncate font-semibold hover:text-brand-gold-dark hover:underline"
+                        title={`${c.full_name}'s profile — everything filed about them, on any opening`}
+                      >
+                        {c.full_name}
+                      </Link>
                       <span className="block truncate text-xs text-brand-ink/55">{c.email}</span>
                     </span>
                   </div>
@@ -981,7 +994,7 @@ export function CandidateBrowser({
                       className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold transition hover:bg-brand-sand"
                     >
                       <FileText className="h-3.5 w-3.5" aria-hidden />
-                      View profile
+                      Desk
                     </button>
                   </div>
                 </div>
@@ -1270,6 +1283,16 @@ function ProfileDrawer({
               timeZone={timeZone}
               canGenerateQuestions={canGenerateQuestions}
             />
+            {/* This drawer is one application's. The profile is the person's — every
+                opening they hold, with the tests, files, messages and changes that
+                sit on any of them. */}
+            <Link
+              href={`/candidates/${candidate.id}`}
+              className="ms-auto inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-gold-dark transition hover:bg-brand-sand"
+            >
+              <User className="h-3.5 w-3.5" aria-hidden />
+              Their whole profile
+            </Link>
           </div>
 
           {/* Integrity and interviews each open a full-screen report of their own,
@@ -1644,6 +1667,7 @@ function ContactSection({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function startEdit() {
     setFullName(candidate.full_name);
@@ -1651,11 +1675,13 @@ function ContactSection({
     setPhone(candidate.phone ?? "");
     setError(null);
     setSaved(null);
+    setNotice(null);
     setEditing(true);
   }
 
   function cancelEdit() {
     setError(null);
+    setNotice(null);
     setEditing(false);
   }
 
@@ -1679,6 +1705,7 @@ function ContactSection({
         `Saved: ${result.contact.full_name} · ${result.contact.email}` +
           (result.contact.phone ? ` · ${result.contact.phone}` : "")
       );
+      setNotice(result.notice ?? null);
       setEditing(false);
       onSaved();
       router.refresh();
@@ -1691,19 +1718,29 @@ function ContactSection({
 
   if (!editing) {
     return (
-      <section className="flex flex-wrap items-center justify-between gap-3">
-        {saved ? (
-          <p role="status" className="text-xs font-semibold text-emerald-800">
-            {saved}
-          </p>
-        ) : (
-          <p className="text-xs text-brand-ink/50">
-            Every notice, email and WhatsApp to this candidate goes to these details.
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {saved ? (
+            <p role="status" className="text-xs font-semibold text-emerald-800">
+              {saved}
+            </p>
+          ) : (
+            <p className="text-xs text-brand-ink/50">
+              Every notice, email and WhatsApp to this candidate goes to these details.
+            </p>
+          )}
+          <Button variant="outline" size="sm" onClick={startEdit}>
+            Edit contact details
+          </Button>
+        </div>
+        {notice && (
+          <p
+            role="status"
+            className="rounded-xl border border-brand-gold/50 bg-brand-sand/60 px-3 py-2 text-xs leading-relaxed text-brand-ink/70"
+          >
+            {notice}
           </p>
         )}
-        <Button variant="outline" size="sm" onClick={startEdit}>
-          Edit contact details
-        </Button>
       </section>
     );
   }

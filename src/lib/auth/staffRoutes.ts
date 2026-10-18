@@ -59,8 +59,13 @@ export type StaffRoute = (typeof STAFF_ROUTES)[number];
  * lands nowhere, the page silently never refreshes — so all three are typed
  * against this rather than checked by a script, because they are built at runtime
  * out of ids and only a type follows a value through a template literal.
+ *
+ * A nested path is a link too: `/candidates/<id>` is one candidate's own profile
+ * page, reached by clicking a name in a list. `isStaffPath` already guarded every
+ * path under a staff page by prefix, so the type now matches the guard instead of
+ * describing a narrower portal than the middleware protects.
  */
-export type StaffLink = StaffRoute | `${StaffRoute}?${string}`;
+export type StaffLink = StaffRoute | `${StaffRoute}/${string}` | `${StaffRoute}?${string}`;
 
 /**
  * Whether a pathname belongs to a staff page.

@@ -471,8 +471,17 @@ export function InterviewAgenda({
                       </div>
                       <p className="mt-1.5 text-sm font-semibold">
                         <Link
-                          href={`/candidates?c=${encodeURIComponent(row.tracking_code)}`}
+                          href={
+                            row.application_id
+                              ? `/candidates/${row.application_id}`
+                              : `/candidates?c=${encodeURIComponent(row.tracking_code)}`
+                          }
                           className="hover:text-brand-gold-dark hover:underline"
+                          title={
+                            row.application_id
+                              ? "Their profile — every opening they hold, with the tests, files and messages on any of them"
+                              : undefined
+                          }
                         >
                           {row.candidate_name}
                         </Link>

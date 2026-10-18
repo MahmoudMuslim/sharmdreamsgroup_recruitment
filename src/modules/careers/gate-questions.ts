@@ -114,6 +114,30 @@ export function parseGateRows(rows: readonly Record<string, unknown>[]): GateQue
   return questions.sort((a, b) => a.position - b.position);
 }
 
+/**
+ * Reads the stored `gate_answers` column back.
+ *
+ * The jsonb is written once by `evaluateGate` and never rewritten, but a row
+ * edited by hand or left by an older build still has to render. An entry without
+ * both its question and its answer is dropped rather than printed as an empty
+ * line, which a recruiter would read as the candidate saying nothing.
+ */
+export function parseGateAnswers(value: unknown): GateAnswer[] {
+  if (!Array.isArray(value)) return [];
+  const answers: GateAnswer[] = [];
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const question = asText(row.question).trim();
+    const answer = asText(row.answer).trim();
+    if (!question || !answer) continue;
+    answers.push({ question, answer, passed: row.passed === true });
+  }
+
+  return answers;
+}
+
 /** Strips the passing flags before anything reaches a browser. */
 export function publicGateQuestions(
   questions: readonly GateQuestion[]

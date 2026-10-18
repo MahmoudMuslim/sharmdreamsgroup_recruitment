@@ -419,7 +419,7 @@ function DrillRow({ row, masked }: { row: DashboardDrillRow; masked: boolean }) 
     <li className="group flex items-start justify-between gap-3 py-3">
       <div className="min-w-0">
         <Link
-          href={`/candidates?application=${row.application_id}`}
+          href={`/candidates/${row.application_id}`}
           className="inline-flex items-center gap-1.5 text-sm font-semibold hover:text-brand-gold-dark hover:underline"
         >
           {row.full_name}
@@ -1054,7 +1054,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
               analytics.oldest_waiting.map((row) => (
                 <li key={row.application_id}>
                   <Link
-                    href={`/candidates?application=${row.application_id}`}
+                    href={`/candidates/${row.application_id}`}
                     className="group flex items-start justify-between gap-3 rounded-xl border border-transparent px-3 py-2.5 transition hover:border-brand-line hover:bg-brand-cream"
                   >
                     <span className="min-w-0">
@@ -1381,7 +1381,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <Link
-                        href={`/candidates?application=${candidate.application_id}`}
+                        href={`/candidates/${candidate.application_id}`}
                         className="block truncate font-semibold hover:text-brand-gold-dark hover:underline"
                       >
                         {candidate.full_name}
@@ -1485,7 +1485,7 @@ function CandidateRow({ candidate, masked }: { candidate: DashboardCandidate; ma
     <tr className="transition hover:bg-brand-cream">
       <td className="py-3.5 pl-6 pr-4">
         <Link
-          href={`/candidates?application=${candidate.application_id}`}
+          href={`/candidates/${candidate.application_id}`}
           className="font-semibold hover:text-brand-gold-dark hover:underline"
         >
           {candidate.full_name}

@@ -412,10 +412,12 @@ export function prettyAction(action: string): string {
 /**
  * Where a row points back to.
  *
- * Only a handful of records have a deep link: the candidate dossier opens by an
- * application id, so an application row can land on the exact person. Everything
- * else links to the console that holds it, which is said in the label rather
- * than promised by it — an audit row should not look like a bookmark it is not.
+ * Only a handful of records have a deep link: an application row lands on that
+ * person's own profile page, which is keyed by their address rather than by the
+ * row, so a trail of stage moves across three openings reads as one candidate's
+ * story. Everything else links to the console that holds it, which is said in the
+ * label rather than promised by it — an audit row should not look like a bookmark
+ * it is not.
  */
 export function recordHref(
   entity: string,
@@ -425,8 +427,8 @@ export function recordHref(
 
   if (entity === "application" && uuid) {
     return {
-      href: `/candidates?application=${entityId}`,
-      label: "Open this candidate",
+      href: `/candidates/${entityId}`,
+      label: "Open their profile",
     };
   }
 

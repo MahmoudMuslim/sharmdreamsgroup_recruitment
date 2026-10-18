@@ -410,10 +410,10 @@ function ApplicantDetail({
         </div>
 
         <Link
-          href={`/candidates?c=${encodeURIComponent(applicant.tracking_code)}`}
+          href={`/candidates/${applicant.id}`}
           className="text-xs font-semibold text-brand-gold-dark underline underline-offset-4"
         >
-          Full profile in Candidates
+          Their whole profile, on every opening
         </Link>
       </section>
     </div>
