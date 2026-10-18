@@ -175,9 +175,14 @@ function SoftSkillBars({ report }: { report: SoftSkillReport }) {
     <div className="space-y-2">
       {rows.map(([label, value]) => (
         <div key={label} className="flex items-center gap-3">
-          <span className="w-36 shrink-0 text-xs text-brand-ink/60">{label}</span>
-          <Meter value={value} className="flex-1" />
-          <span className="w-8 text-right text-xs font-bold">{value}</span>
+          {/*
+            Capped, not fixed: 144px of label plus the number and the gaps leaves
+            a drawer on a phone with almost no bar left to read. The cap is a
+            share of the row, so the meter keeps the wider half at any width.
+          */}
+          <span className="w-36 max-w-[45%] shrink-0 text-xs text-brand-ink/60">{label}</span>
+          <Meter value={value} className="min-w-0 flex-1" />
+          <span className="w-8 shrink-0 text-right text-xs font-bold">{value}</span>
         </div>
       ))}
     </div>

@@ -850,7 +850,15 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
               </div>
             </div>
 
-            <div className="flex h-36 items-end gap-1.5">
+            {/*
+              Fourteen columns out of a ~300px card give each day about 15px, so a
+              date label squeezed in there is nothing but an ellipsis. Below `sm`
+              the strip drops the per-day labels and names its two ends instead —
+              the same axis the analytics trend strips use — while each column
+              keeps its full date in the accessible name and opens its own day on
+              tap.
+            */}
+            <div className="flex h-36 items-end gap-1 sm:gap-1.5">
               {series.map((day, index) => (
                 <button
                   key={day.date}
@@ -861,7 +869,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                   onBlur={() => setHoverDay(null)}
                   onClick={() => drill({ type: "day", date: day.date })}
                   aria-label={`${day.count} applications on ${day.date} — open the list`}
-                  className="group flex h-full flex-1 flex-col justify-end gap-1 focus:outline-none"
+                  className="group flex h-full min-w-0 flex-1 flex-col justify-end gap-1 focus:outline-none"
                 >
                   <div
                     className={cn(
@@ -870,12 +878,18 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                     )}
                     style={{ height: `${Math.max((day.count / maxDay) * 100, 3)}%` }}
                   />
-                  <span className="truncate text-[9px] font-semibold text-brand-ink/40">
+                  <span className="hidden truncate text-[9px] font-semibold text-brand-ink/40 sm:block">
                     {shortDate(day.date)}
                   </span>
                 </button>
               ))}
             </div>
+            {series.length > 0 && (
+              <div className="mt-1 flex justify-between text-[10px] tabular-nums text-brand-ink/40 sm:hidden">
+                <span>{shortDate(series[0].date)}</span>
+                <span>{shortDate(series[series.length - 1].date)}</span>
+              </div>
+            )}
           </div>
         </Card>
 
@@ -917,14 +931,21 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
           }
         />
         <div className="p-5 sm:p-6">
-          <div className="flex gap-3 overflow-x-auto pb-2 sm:gap-5">
+          {/*
+            Seven stages at 104px each is 800px — on a phone that leaves four of
+            them past the right edge of a scroll strip nobody can see the end of.
+            Below `sm` the same columns become a two-up grid, so every stage is on
+            screen at once; the rail returns at `sm`, where there is room for it,
+            and `rail-scroll` gives it the portal's own scrollbar.
+          */}
+          <div className="grid grid-cols-2 gap-3 pb-2 rail-scroll sm:flex sm:gap-5 sm:overflow-x-auto">
             {analytics.pipeline.map((step) => {
               const active = stage === step.stage;
               return (
                 <div
                   key={step.stage}
                   className={cn(
-                    "flex min-w-[104px] flex-1 flex-col rounded-2xl border transition",
+                    "flex min-w-0 flex-col rounded-2xl border transition sm:min-w-[104px] sm:flex-1",
                     active
                       ? "border-brand-gold bg-brand-gold/10 shadow-soft"
                       : "border-transparent hover:border-brand-line hover:bg-brand-cream"

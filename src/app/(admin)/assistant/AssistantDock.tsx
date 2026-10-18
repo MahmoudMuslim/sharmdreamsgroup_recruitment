@@ -167,9 +167,13 @@ export function AssistantDock() {
           style={mode === "docked" ? { width: size.w, height: size.h } : undefined}
           className={cn(
             "fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-brand-line bg-white shadow-2xl",
+            // `min-width` beats `max-width` in CSS, so a dock that asks for
+            // 26rem keeps 416px on a 375px phone and hangs off the left edge —
+            // taking its charts with it, since the panel clips. The floor only
+            // applies from `sm`, where the drag handle and the composer need it.
             mode === "full"
               ? "inset-3"
-              : "bottom-5 right-5 min-h-[22rem] min-w-[26rem] max-w-[calc(100vw-1.5rem)]"
+              : "bottom-5 right-5 max-h-[calc(100vh-2.5rem)] max-w-[calc(100vw-2.5rem)] sm:min-h-[22rem] sm:min-w-[26rem]"
           )}
         >
           {mode === "docked" && (
