@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import { LiveBadge, useLive } from "@/modules/live/presentation/Live";
+import { areasFeeding } from "@/lib/live";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import {
@@ -402,6 +403,15 @@ function SearchField({
 
 function GuidePanel({ open }: { open: Panel }) {
   const pathname = usePathname();
+  const { watched, everyMs } = useLive();
+
+  /**
+   * What the live channel can promise *here*, read from the list that decides
+   * reloading. The Guide describing a page it does not refresh is the same
+   * over-claim the chip was making, and this panel is rendered on every page.
+   */
+  const feeds = areasFeeding(watched, pathname);
+  const seconds = everyMs ? Math.round(everyMs / 1000) : null;
 
   return (
     <PanelShell id="guide" open={open} label="Portal guide">
@@ -469,11 +479,27 @@ function GuidePanel({ open }: { open: Panel }) {
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           The <span className="font-semibold">Live</span> chip in this bar is the
-          portal&rsquo;s own pulse: while this tab is in the foreground it
-          re-checks the hiring tables every few seconds and reloads the page you
-          are standing on when one of them moves, so a colleague&rsquo;s change
-          or a new application arrives without anyone pressing refresh. A
-          background tab stops checking and catches up the moment you come back
+          portal&rsquo;s own pulse: one connection per tab, re-checking the
+          watched hiring tables every {seconds ?? "few"} seconds while the tab is
+          in the foreground.{" "}
+          {feeds.length > 0 ? (
+            <>
+              This page reads{" "}
+              <span className="font-semibold">{feeds.join(", ")}</span>, so a
+              change in one of them lands here without anyone pressing refresh.
+            </>
+          ) : everyMs === null ? (
+            <>
+              The channel has not told this page which tables it watches yet, so
+              nothing is promised until its first frame arrives.
+            </>
+          ) : (
+            <>
+              No watched table feeds this page, so it never reloads itself: the
+              chip reports the channel, and your click is what reloads it.
+            </>
+          )}{" "}
+          A background tab stops checking and catches up the moment you come back
           to it. Click the chip to reload now.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">

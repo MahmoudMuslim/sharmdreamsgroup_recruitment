@@ -24,7 +24,8 @@ export interface LiveSnapshot {
    *
    * Empty until that frame arrives, which is why the badge says "connecting"
    * rather than "not watched": a page cannot claim to be off the watch list
-   * before it has been told what the list is.
+   * before it has been told what the list is. And an area this session could
+   * not read is left out of it, so what is here is only what can actually move.
    */
   watched: Record<string, string[]>;
 }
@@ -164,12 +165,19 @@ function open(): void {
     const frame = JSON.parse((event as MessageEvent<string>).data) as {
       everyMs: number;
       watch: { area: string; paths: string[] }[];
+      /** Areas this viewer's session could not read, so they can never change. */
+      unread: string[];
     };
     // Held in the snapshot rather than in a module variable, because the badge
     // has to answer "does anything here feed *this* page?" and only a subscribed
     // value re-renders it when the answer changes.
     const watched: Record<string, string[]> = {};
     for (const entry of frame.watch) watched[entry.area] = entry.paths;
+    // Dropped from the list rather than tracked beside it, so the one rule that
+    // both reloads the page and words the badge's promise simply never sees an
+    // area the server cannot check — a page fed only by such a table reports
+    // itself as unwatched, which is the truth from the recruiter's seat.
+    for (const area of frame.unread) delete watched[area];
     emit({ ...snapshot, status: "live", everyMs: frame.everyMs, watched });
   });
 

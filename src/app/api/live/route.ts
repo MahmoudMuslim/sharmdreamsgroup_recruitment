@@ -36,6 +36,11 @@ const POLL_MS = 5_000;
 /** Consecutive failed probes before the page admits the channel has gone quiet. */
 const STALLED_AFTER = 2;
 
+/** Whether two area lists name the same areas, in any order. */
+function sameAreas(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((area) => b.includes(area));
+}
+
 export async function GET(request: Request) {
   const user = await getSessionUser();
   if (!user || !isStaff(user.role)) {
@@ -82,16 +87,28 @@ export async function GET(request: Request) {
       };
 
       let seen: LiveFingerprints = await readLiveFingerprints(supabase);
-      // The browser is told which areas exist and which pages they feed, so the
-      // watch list lives in one place and a page cannot be left out by accident.
-      if (
-        !send("hello", {
+
+      /**
+       * The areas this session cannot read.
+       *
+       * A table that no migration has created yet can never move a fingerprint,
+       * so a page fed only by one must not be promised a reload it will never
+       * get — the browser drops every area named here from its watch list.
+       */
+      const unreadOf = (marks: LiveFingerprints) =>
+        LIVE_WATCH.filter((w) => marks[w.area] === undefined).map((w) => w.area);
+
+      // The watch list is sent rather than duplicated in client code, so it
+      // lives in one place and a page cannot be left out by accident.
+      let unread = unreadOf(seen);
+      const announce = () =>
+        send("hello", {
           everyMs: POLL_MS,
           watch: LIVE_WATCH.map((w) => ({ area: w.area, paths: w.paths })),
-        })
-      ) {
-        return;
-      }
+          unread,
+        });
+
+      if (!announce()) return;
 
       let failures = 0;
       while (!closed) {
@@ -102,9 +119,9 @@ export async function GET(request: Request) {
         // unreadable is the database being unreachable, not a permissions
         // question — RLS hides rows, it does not hide a table.
         const next = await readLiveFingerprints(supabase);
-        const unreadable = LIVE_WATCH.filter((w) => next[w.area] === undefined).length;
+        const nextUnread = unreadOf(next);
 
-        if (unreadable === LIVE_WATCH.length) {
+        if (nextUnread.length === LIVE_WATCH.length) {
           failures += 1;
           if (failures === STALLED_AFTER && !send("stalled", { at: new Date().toISOString() })) {
             break;
@@ -117,6 +134,16 @@ export async function GET(request: Request) {
 
         const moved = diffLiveFingerprints(seen, next);
         seen = next;
+
+        // The list the page's promise is built from is only ever sent here, so a
+        // table that appears mid-session — a migration applied, a grant widened —
+        // has to be handed back, and one that goes away taken off the watch.
+        // Nothing else re-sends it, so without this an area briefly unread when
+        // the tab opened would stay silently unwatched for its whole life.
+        if (!sameAreas(nextUnread, unread)) {
+          unread = nextUnread;
+          if (!announce()) break;
+        }
 
         if (moved.length > 0 && !send("change", { areas: moved, at: new Date().toISOString() })) {
           break;
