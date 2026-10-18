@@ -202,9 +202,11 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   },
 
   "/assessments": {
-    purpose: "The test library: suites, their questions, and the links candidates sit.",
+    purpose: "The test library: suites, their questions, the links candidates sit, and the answers those links brought back.",
     shows: [
       "Tiles for suites, questions, assigned links and average duration, a searchable grid of suite cards, and two drawers — the suite and its questions.",
+      "Below the suites, an Issued links board: one row per link a still-held candidate holds, with the suite, status, how many answers it carries, and the score when your role may see marks.",
+      "A link's Answers or Paper button opens that candidate's whole paper — every question in the order they were dealt it, with the full typed answer, the changed spreadsheet cells, the pitch video and its transcript.",
     ],
     use: [
       "New template names the suite, its role family, duration and company; Add question builds it.",
@@ -212,12 +214,16 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Set the integrity options — shuffled question order, shuffled options, copy and paste blocked.",
       "Assign sends a per-candidate link. Pause stops new assignments while issued tests stay open; Resume reopens it.",
       "Search by the columns the box names, and filter by role family or status.",
+      "On the links board, the rails split it into Not started, Sitting now, Answered, Graded and Closed; the box searches candidate, suite and role.",
+      "A link still being sat shows what the candidate has saved so far. Re-read pulls the answers in again — a candidate working the test does not push this page by itself.",
     ],
     edges: [
       "A suite someone already holds a link for cannot be deleted — pause it instead.",
       "A question a candidate has answered cannot be deleted either; set its points to 0 or retire the suite.",
       "Link expiry, autosave and focus tracking are enforced in the candidate's runner from Settings, not from this page — the duration field here is the test's own time limit.",
       "Revoke, extend, re-issue and delete a link live on the candidate's record.",
+      "Marks are read here, never set: the desk that awards them is the candidate's assessment report.",
+      "The board lists the newest 300 links and says how many more are on file. Assigned links on the tiles counts every link ever issued, including a filed-away candidate's, so the two figures can differ.",
       "Authoring needs Create assessments; sending links needs Assign assessments.",
     ],
   },

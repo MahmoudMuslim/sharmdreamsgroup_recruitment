@@ -30,7 +30,8 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { saveTemplate, assignTemplate, deleteTemplate, setTemplateActive } from "./assessment-actions";
 import { searchSuites, suiteSearchWords } from "@/modules/assessment/domain/suiteSearch";
-import type { TemplateSummary } from "./actions";
+import type { IssuedLinksRead, TemplateSummary } from "./actions";
+import { IssuedLinksBoard } from "./IssuedLinksBoard";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -704,6 +705,8 @@ export function AssessmentGrid({
   questionsByTemplate,
   defaultDurationMinutes,
   canEdit,
+  links,
+  timeZone,
 }: {
   templates: TemplateSummary[];
   candidates: AssignableCandidate[];
@@ -711,6 +714,10 @@ export function AssessmentGrid({
   questionsByTemplate: Record<string, EditableQuestion[]>;
   defaultDurationMinutes: number;
   canEdit: boolean;
+  /** Every link the pipeline holds, with the count the whole set carries. */
+  links: IssuedLinksRead;
+  /** `organisation.timezone` — the clock a link's deadline runs on for the group. */
+  timeZone: string;
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -801,7 +808,15 @@ export function AssessmentGrid({
           <StatTile
             label="Assigned links"
             value={totalAssigned}
-            hint={`${totalCompleted} completed run${totalCompleted === 1 ? "" : "s"}`}
+            hint={
+              `${totalCompleted} completed run${totalCompleted === 1 ? "" : "s"}` +
+              // The suites count every link ever issued; the board below refuses a
+              // filed-away candidate's. Naming the difference stops the two numbers
+              // reading like a mistake in one of them.
+              (totalAssigned > links.total
+                ? ` · ${links.total.toLocaleString()} of them belong to candidates still in the pipeline, and only those are listed below`
+                : "")
+            }
             icon={<Send className="h-5 w-5" aria-hidden />}
           />
           <StatTile
@@ -907,6 +922,8 @@ export function AssessmentGrid({
             ))}
           </div>
         )}
+
+        <IssuedLinksBoard read={links} timeZone={timeZone} />
       </div>
 
       {creating && (

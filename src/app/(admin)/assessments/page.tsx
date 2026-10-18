@@ -1,30 +1,32 @@
-import { getTemplates, getAssignableCandidates, getQuestionsForEditor } from "./actions";
+import { getTemplates, getAssignableCandidates, getQuestionsForEditor, getIssuedLinks } from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
-import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
+import { getNumberSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { connection } from "next/server";
 
 export const metadata = {
   title: "Assessment Builder",
-  description: "Design Excel, video, case-study and quiz evaluation suites",
+  description: "Design Excel, video, case-study and quiz suites, then read the answers they bring back",
 };
 
 /** Auth-gated route: content is fully session/RLS dependent. */
 export const instant = false;
 
 async function loadTemplates() {
-  const [templates, candidates, options, questionsByTemplate] = await Promise.all([
+  const [templates, candidates, options, questionsByTemplate, links, timeZone] = await Promise.all([
     getTemplates(),
     getAssignableCandidates(),
     getMasterOptions(),
     getQuestionsForEditor(),
+    getIssuedLinks(),
+    getOrganisationTimeZone(),
   ]);
 
-  return { templates, candidates, options, questionsByTemplate };
+  return { templates, candidates, options, questionsByTemplate, links, timeZone };
 }
 
 export default async function AssessmentsBuilderPage() {
@@ -36,7 +38,8 @@ export default async function AssessmentsBuilderPage() {
   // here only produced a static shell whose hole the client had to re-fetch —
   // and on a hard load that fetch never landed, leaving the skeleton up
   // forever and every button unclickable.
-  const { templates, candidates, options, questionsByTemplate } = await loadTemplates();
+  const { templates, candidates, options, questionsByTemplate, links, timeZone } =
+    await loadTemplates();
   const canEdit = await hasPermissionForUser("assessments.create");
   const defaultDurationMinutes = await getNumberSetting(
     "assessment.default_duration_minutes",
@@ -48,7 +51,7 @@ export default async function AssessmentsBuilderPage() {
       <PageHeader
         eyebrow="Assessment engine"
         title="Test suite builder"
-        description="Every suite currently defined for the group, with live question counts and assignment activity."
+        description="Every suite currently defined for the group, the links candidates hold, and the answers those links brought back."
       />
 
       {/* Rendered even with zero suites: the create drawer lives inside the
@@ -64,6 +67,8 @@ export default async function AssessmentsBuilderPage() {
         questionsByTemplate={questionsByTemplate}
         defaultDurationMinutes={defaultDurationMinutes}
         canEdit={canEdit}
+        links={links}
+        timeZone={timeZone}
       />
     </AdminShell>
   );
