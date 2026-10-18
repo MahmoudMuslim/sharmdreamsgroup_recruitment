@@ -10,7 +10,7 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { printableValue } from "@/modules/activity/domain/trail";
 import type {
   AppRole,
-  Company,
+  CompanyChoice,
   NotificationTemplate,
   Permission,
   Role,
@@ -52,7 +52,7 @@ export async function loadSettings(): Promise<SettingsBundle> {
     roles: (rolesResult.data ?? []) as Role[],
     permissions: (permsResult.data ?? []) as Permission[],
     grants: (grantsResult.data ?? []) as RoleGrant[],
-    companies: (companiesResult.data ?? []) as Company[],
+    companies: (companiesResult.data ?? []) as CompanyChoice[],
     staff: (staffResult.data ?? []) as StaffMember[],
     templates: (templatesResult.data ?? []) as NotificationTemplate[],
   };

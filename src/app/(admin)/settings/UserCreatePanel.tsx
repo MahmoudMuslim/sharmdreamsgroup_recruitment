@@ -7,10 +7,10 @@ import { Button } from "@/modules/analytics/presentation/ui";
 import { CredentialReveal } from "./CredentialReveal";
 import { ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
 import { cn } from "@/lib/utils";
-import type { AssignableStaffRole, Company } from "@/modules/settings/domain/types";
+import type { AssignableStaffRole, CompanyChoice } from "@/modules/settings/domain/types";
 
 interface UserCreatePanelProps {
-  companies: Company[];
+  companies: CompanyChoice[];
   passwordMinLength: number;
   onSuccess: () => void;
   onClose: () => void;

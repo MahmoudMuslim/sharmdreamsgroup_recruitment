@@ -1,24 +1,146 @@
 import Link from "next/link";
 import { ArrowRight, BriefcaseBusiness } from "lucide-react";
-import { getPublicJobs } from "./actions";
+import { getPublicCompanies, getPublicJobs } from "./actions";
 import { CareersBoard } from "./CareersBoard";
+import { sectorLabel } from "@/modules/careers/job-board";
+import {
+  companiesWithoutOpenings,
+  companyAtAGlance,
+  groupProfile,
+  splitParagraphs,
+  type PublicCompany,
+} from "@/modules/careers/company-profile";
 
 export const metadata = {
-  title: "Open roles",
+  title: "Careers",
   description:
-    "Current openings across the Sharm Dreams Group — hospitality, real estate, development and corporate services.",
+    "Work with Sharm Dreams Group — hospitality, real estate and development in Sharm El Sheikh, Sahl Hasheesh, Marsa Alam and Cairo. Read the group's story, find an open role, apply online.",
 };
+
+/**
+ * Who the visitor is being asked to join, in the words the group filed for
+ * itself in Settings → Master data → Companies.
+ *
+ * Nothing here is written for the page: every sentence, year and milestone is
+ * read from the group's own row, and a field the console leaves blank renders no
+ * heading and no paragraph. So the history a candidate reads is the history a
+ * recruiter can point to on their own screen, and the day the owner edits it the
+ * page changes — which is the only way this page can claim to show the company.
+ */
+function GroupStory({ group }: { group: PublicCompany }) {
+  const atAGlance = companyAtAGlance(group);
+  const paragraphs = splitParagraphs(group.history);
+
+  return (
+    <section className="mt-12 border-t border-brand-line pt-12" aria-labelledby="group-story">
+      <h2 id="group-story" className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
+        {group.name}
+      </h2>
+
+      {group.tagline && (
+        <p className="mt-2 text-base leading-relaxed text-brand-gold-dark">{group.tagline}</p>
+      )}
+
+      {atAGlance.length > 0 && (
+        <dl className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
+          {atAGlance.map((figure) => (
+            <div key={figure.label}>
+              <dt className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/40">
+                {figure.label}
+              </dt>
+              <dd className="mt-0.5 text-sm font-semibold text-brand-ink/80">{figure.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {group.description && (
+        <div className="mt-6 max-w-3xl space-y-4">
+          {splitParagraphs(group.description).map((paragraph, index) => (
+            <p
+              key={index}
+              className="whitespace-pre-line text-sm leading-relaxed text-brand-ink/70"
+            >
+              {paragraph}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {paragraphs.length > 0 && (
+        <div className="mt-8 max-w-3xl space-y-4">
+          {paragraphs.map((paragraph, index) => (
+            <p
+              key={index}
+              className="whitespace-pre-line text-sm leading-relaxed text-brand-ink/70"
+            >
+              {paragraph}
+            </p>
+          ))}
+        </div>
+      )}
+
+      {group.milestones.length > 0 && (
+        <div className="mt-10">
+          <h3 className="font-display text-lg font-bold">The timeline</h3>
+          <ol className="mt-4 space-y-5 border-l border-brand-line pl-5">
+            {group.milestones.map((milestone, index) => (
+              <li key={`${milestone.title}-${index}`} className="relative">
+                <span
+                  className="absolute -left-[1.4rem] top-1.5 h-2.5 w-2.5 rounded-full border border-brand-gold/50 bg-white"
+                  aria-hidden
+                />
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-gold-dark">
+                  {milestone.year ? String(milestone.year) : "Undated"}
+                </p>
+                <p className="mt-0.5 text-sm font-bold text-brand-ink">{milestone.title}</p>
+                {milestone.detail && (
+                  <p className="mt-1 max-w-2xl whitespace-pre-line text-sm leading-relaxed text-brand-ink/65">
+                    {milestone.detail}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {group.benefits.length > 0 && (
+        <div className="mt-10">
+          <h3 className="font-display text-lg font-bold">What the group offers its people</h3>
+          <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+            {group.benefits.map((benefit, index) => (
+              <li
+                key={`${benefit.title}-${index}`}
+                className="rounded-2xl border border-brand-line bg-white p-4 shadow-soft"
+              >
+                <p className="text-sm font-bold">{benefit.title}</p>
+                {benefit.text && (
+                  <p className="mt-1 text-sm leading-relaxed text-brand-ink/60">{benefit.text}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
 
 /**
  * Public job board.
  *
- * The data is public by policy (`jobs_public_read` only exposes PUBLISHED rows),
- * so this page needs no session and no `await connection()` — it is fully
- * cacheable and every visitor sees the same list. The board below narrows that
- * list in the browser, which is what keeps it that way.
+ * The data is public by policy (`jobs_public_read` only exposes PUBLISHED rows,
+ * and the company read asks for `is_active` rows because `tenants_read` lets an
+ * anonymous caller see retired ones too), so this page needs no session and no
+ * `await connection()` — it is fully cacheable and every visitor sees the same
+ * list. The board below narrows that list in the browser, which is what keeps it
+ * that way.
  */
 export default async function CareersPage() {
-  const jobs = await getPublicJobs();
+  const [jobs, companies] = await Promise.all([getPublicJobs(), getPublicCompanies()]);
+  const group = groupProfile(companies);
+  const rest = companiesWithoutOpenings(companies, jobs);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
@@ -28,18 +150,57 @@ export default async function CareersPage() {
           We are hiring
         </span>
         <h1 className="mt-5 font-display text-4xl font-extrabold leading-tight tracking-tight sm:text-5xl">
-          Open roles across the group
+          {/* The group's own name, as filed. Only a database with no group row
+              falls back to the words this page has always carried. */}
+          {group?.name ?? "Sharm Dreams Group"}
         </h1>
         <p className="mt-4 text-base leading-relaxed text-brand-ink/65">
-          Sharm Dreams Group spans hospitality, real estate and development in Sharm El Sheikh,
-          Hurghada and Cairo. Search the board, pick a role, apply online, and track your progress
-          with the tracking code you receive.
+          {group?.tagline ??
+            "Sharm Dreams Group spans hospitality, real estate and development in Sharm El Sheikh, Hurghada and Cairo."}
+        </p>
+        <p className="mt-3 text-sm leading-relaxed text-brand-ink/55">
+          {group?.careers_pitch ??
+            "Search the board, pick a role, apply online, and track your progress with the tracking code you receive."}
         </p>
       </header>
 
+      {group && <GroupStory group={group} />}
+
       <div className="mt-12">
-        <CareersBoard jobs={jobs} />
+        <CareersBoard jobs={jobs} companies={companies} />
       </div>
+
+      {rest.length > 0 && (
+        <section className="mt-12" aria-labelledby="other-companies">
+          <h2 id="other-companies" className="font-display text-lg font-bold">
+            Also part of the group
+          </h2>
+          <p className="mt-1 text-sm leading-relaxed text-brand-ink/55">
+            These companies have no open roles right now — the board above is everything the
+            group is hiring for today.
+          </p>
+          <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {rest.map((company) => (
+              <li
+                key={company.id}
+                className="rounded-2xl border border-brand-line bg-white p-4 shadow-soft"
+              >
+                <p className="text-sm font-bold">{company.name}</p>
+                {company.sector && (
+                  <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gold-dark">
+                    {sectorLabel(company.sector)}
+                  </p>
+                )}
+                {company.tagline && (
+                  <p className="mt-2 text-sm leading-relaxed text-brand-ink/60">
+                    {company.tagline}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <aside className="mt-14 rounded-2xl border border-brand-line bg-brand-cream p-6">
         <h2 className="font-display text-base font-bold">Already applied?</h2>

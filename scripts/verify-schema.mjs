@@ -295,6 +295,7 @@ report("storage policy helpers", neededHelpers, () =>
  * silently smaller rebuild.
  */
 const REFERENCE_PKS = {
+  tenants_and_companies: ["id"],
   permissions: ["key"],
   roles: ["id"],
   role_permissions: ["role_key", "permission_key"],

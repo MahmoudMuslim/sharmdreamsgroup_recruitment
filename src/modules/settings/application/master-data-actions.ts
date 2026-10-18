@@ -25,7 +25,12 @@ import {
 } from "@/modules/settings/domain/masterDataLists";
 import { HIREABLE_STATUSES } from "@/modules/jobs/domain/hireable";
 import { recordActivity } from "@/modules/activity/application/record";
-import { changePhrase, scalarEdits, type ActivityEntity } from "@/modules/activity/domain/trail";
+import {
+  changePhrase,
+  printableValue,
+  scalarEdits,
+  type ActivityEntity,
+} from "@/modules/activity/domain/trail";
 
 /** Entities whose slug is derived from, and kept in step with, their name. */
 const SLUGGED_ENTITIES = new Set<MasterEntity>(["companies", "departments"]);
@@ -53,7 +58,21 @@ const TRAIL_ENTITY: Record<MasterEntity, ActivityEntity> = {
 /** The list a recruiter recognises, in the words a trail row uses. */
 const LIST_WORDS = MASTER_LIST_WORDS;
 
-/** The columns read back to name a row, and to diff an edit against. */
+/**
+ * A company edit also changes what the public careers page prints.
+ *
+ * Its copy is read there word for word, so `/careers` and every role page under
+ * it are invalidated with the console's own list; a recruiter who fixes a story
+ * and opens the site should not be shown the old one because the board was
+ * cached a few minutes ago. Other vocabularies are not printed publicly, so this
+ * is only ever called for a company row.
+ */
+function invalidatePublicCareers(): void {
+  revalidatePath("/careers");
+  revalidatePath("/careers/[id]", "page");
+}
+
+/** The columns read back to name a row, and to diff an edit against where a list is small enough to read whole. */
 const READ_COLUMNS: Record<MasterEntity, string> = {
   companies: "name, legal_name, slug, sector, country, city, contact_email, is_active",
   departments: "name, slug, description, is_active",
@@ -61,6 +80,33 @@ const READ_COLUMNS: Record<MasterEntity, string> = {
   role_families: "key, label, description, is_active",
   skills: "name, category, description, is_active",
   currencies: "code, symbol, label, is_active",
+};
+
+/**
+ * The columns read back for the row about to be written, so the trail can name what moved.
+ *
+ * `READ_COLUMNS` stays short on purpose: the duplicate door reads a whole list on
+ * every write, and a companies read that carried each row's history would pull tens
+ * of kilobytes of careers prose to compare two names. Only the single row being
+ * edited needs the profile — an edit that rewrites a history paragraph has to be
+ * reported as the change it is rather than as a field the diff never saw.
+ */
+const DIFF_COLUMNS: Partial<Record<MasterEntity, string>> = {
+  companies:
+    `${READ_COLUMNS.companies}, website, contact_phone, address, sort_order,` +
+    " tagline, description, history, careers_pitch, founded_year, ownership_type," +
+    " employee_range, headquarters, milestones, benefits, is_group_profile",
+};
+
+/**
+ * Columns that hold a list of entries rather than a value.
+ *
+ * `scalarEdits` compares what a form sends as the words a row prints, which renders
+ * a milestone list as "3 items → 3 items" when a person only reworded one of them.
+ * Documents are compared by `changedFields`, which reads their contents.
+ */
+const DOCUMENT_COLUMNS: Partial<Record<MasterEntity, readonly string[]>> = {
+  companies: ["milestones", "benefits"],
 };
 
 /** The row as a person would name it in a sentence. */
@@ -111,6 +157,193 @@ function clean(value: unknown): string | null {
 }
 
 /* -------------------------------------------------------------------------- */
+/* The careers profile a company page prints                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The prose columns, with the ceiling each one holds.
+ *
+ * These are the limits the database checks (`tenants_and_companies_*_length`),
+ * restated here so a person is told which field went over rather than handed an
+ * opaque constraint violation. `clean()` cannot be used on them: its 300-character
+ * cap would chop a company's history into a fragment of itself and store the
+ * fragment as fact, so an over-long field is refused and left for the writer to
+ * shorten.
+ */
+const PROFILE_LIMITS: Record<string, { label: string; max: number }> = {
+  tagline: { label: "Tagline", max: 160 },
+  description: { label: "Description", max: 4000 },
+  history: { label: "History", max: 12000 },
+  careers_pitch: { label: "Careers pitch", max: 2000 },
+};
+
+/** One entry of a jsonb list, as the console's row editor and the column comment describe it. */
+interface ListField {
+  name: string;
+  label: string;
+  max: number;
+  required?: boolean;
+  /** Checked as a year rather than as text. */
+  year?: boolean;
+}
+
+interface ListSpec {
+  /** The column's own word, plural, for the message a refusal prints. */
+  column: string;
+  one: string;
+  max: number;
+  fields: ListField[];
+}
+
+const MILESTONES: ListSpec = {
+  column: "milestones",
+  one: "milestone",
+  max: 40,
+  fields: [
+    { name: "year", label: "year", max: 4, year: true },
+    { name: "title", label: "title", max: 120, required: true },
+    { name: "detail", label: "detail", max: 600 },
+  ],
+};
+
+const BENEFITS: ListSpec = {
+  column: "benefits",
+  one: "benefit",
+  max: 20,
+  fields: [
+    { name: "title", label: "title", max: 80, required: true },
+    { name: "text", label: "description", max: 300 },
+  ],
+};
+
+const COMPANY_LISTS: Record<string, ListSpec> = {
+  milestones: MILESTONES,
+  benefits: BENEFITS,
+};
+
+/** A text field that is not prose: trimmed, and refused rather than truncated. */
+function checkedText(value: unknown, label: string, max: number): { text: string | null } | { error: string } {
+  const text = typeof value === "string" ? value.trim() : value === null || value === undefined ? "" : String(value);
+  if (!text) return { text: null };
+  if (text.length > max) {
+    return { error: `That ${label} is ${text.length.toLocaleString()} characters — it holds ${max.toLocaleString()}.` };
+  }
+  return { text };
+}
+
+function asYear(value: unknown): number | null | "invalid" {
+  if (value === null || value === undefined || value === "") return null;
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 1900 || year > 2200) return "invalid";
+  return year;
+}
+
+/**
+ * One jsonb list as the write needs it.
+ *
+ * The console posts the JSON text its row editor serialises; the assistant's
+ * `save_master_record` posts the array itself. Both are accepted, each entry is
+ * reduced to the columns the column comment names, and an empty list stores as
+ * NULL rather than `[]` — a page cannot tell an empty timeline from no timeline,
+ * and the row should not claim entries it does not have.
+ */
+function parseCompanyList(spec: ListSpec, raw: unknown): { rows: Record<string, string | number | null>[] | null } | { error: string } {
+  let value: unknown = raw;
+
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return { rows: null };
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return { error: `The ${spec.column} editor holds text that is not a list. Fix its entries and save again.` };
+    }
+  }
+
+  if (value === null || value === undefined) return { rows: null };
+  if (!Array.isArray(value)) {
+    return { error: `The ${spec.column} column holds a list of ${spec.one} entries.` };
+  }
+  if (value.length > spec.max) {
+    return { error: `That is ${value.length} ${spec.column} — a company files at most ${spec.max}.` };
+  }
+
+  const rows: Record<string, string | number | null>[] = [];
+
+  for (const [index, item] of value.entries()) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return { error: `Entry ${index + 1} in the ${spec.column} list is not a ${spec.one}.` };
+    }
+    const source = item as Record<string, unknown>;
+    const row: Record<string, string | number | null> = {};
+
+    for (const field of spec.fields) {
+      if (field.year) {
+        const year = asYear(source[field.name]);
+        if (year === "invalid") {
+          return { error: `${spec.one} ${index + 1} has a year that is not between 1900 and 2200.` };
+        }
+        row[field.name] = year;
+        continue;
+      }
+      const checked = checkedText(source[field.name], `${spec.one} ${index + 1} ${field.label}`, field.max);
+      if ("error" in checked) return checked;
+      if (!checked.text && field.required) {
+        return { error: `${spec.one} ${index + 1} has no ${field.label}.` };
+      }
+      row[field.name] = checked.text;
+    }
+
+    // A row left blank in the editor is not an entry, so it is dropped rather than
+    // stored as a milestone with no words in it.
+    if (spec.fields.every((field) => row[field.name] === null)) continue;
+    rows.push(row);
+  }
+
+  return { rows: rows.length ? rows : null };
+}
+
+/**
+ * The profile columns, in their stored shapes, or the first reason the database
+ * would refuse them.
+ *
+ * Both write doors come through here: the console posts every field it shows on
+ * every save, and the assistant posts only the keys it names. A column absent from
+ * the payload is absent from the result, so this never blanks a field nobody sent.
+ */
+function shapeCompanyProfile(payload: MasterPayload): { row: Record<string, unknown> } | { error: string } {
+  const row: Record<string, unknown> = {};
+
+  for (const [key, limit] of Object.entries(PROFILE_LIMITS)) {
+    if (!(key in payload)) continue;
+    const checked = checkedText(payload[key], limit.label, limit.max);
+    if ("error" in checked) return checked;
+    row[key] = checked.text;
+  }
+
+  for (const key of ["ownership_type", "employee_range", "headquarters"] as const) {
+    if (key in payload) row[key] = clean(payload[key]);
+  }
+
+  if ("founded_year" in payload) {
+    const year = asYear(payload.founded_year);
+    if (year === "invalid") {
+      return { error: "A founding year is a four-digit year between 1900 and 2200." };
+    }
+    row.founded_year = year;
+  }
+
+  for (const key of Object.keys(COMPANY_LISTS)) {
+    if (!(key in payload)) continue;
+    const list = parseCompanyList(COMPANY_LISTS[key]!, payload[key]);
+    if ("error" in list) return list;
+    row[key] = list.rows;
+  }
+
+  return { row };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Read                                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -136,7 +369,7 @@ export async function getMasterData(): Promise<{
       supabase
         .from("tenants_and_companies")
         .select(
-          "id, name, legal_name, slug, sector, country, website, contact_email, contact_phone, address, city, logo_url, is_active, sort_order"
+          `id, name, legal_name, slug, sector, country, website, contact_email, contact_phone, address, city, logo_url, is_active, sort_order, tagline, description, history, careers_pitch, founded_year, ownership_type, employee_range, headquarters, milestones, benefits, cover_url, is_group_profile`
         )
         .order("sort_order"),
       supabase
@@ -226,6 +459,9 @@ export async function createMasterRecord(
         return { ok: false, error: `Sector must be one of: ${SECTORS.join(", ")}.` };
       }
 
+      const profile = shapeCompanyProfile(payload);
+      if ("error" in profile) return { ok: false, error: profile.error };
+
       row = {
         name,
         slug,
@@ -240,6 +476,11 @@ export async function createMasterRecord(
         logo_url: clean(payload.logo_url),
         is_active: payload.is_active !== false,
         sort_order: Number(payload.sort_order ?? 100),
+        // A company added from here is one of the group's companies, never the row
+        // the careers page reads as the whole group: exactly one row carries that
+        // flag, and the database will not accept a second.
+        is_group_profile: false,
+        ...profile.row,
       };
       break;
     }
@@ -354,10 +595,11 @@ export async function createMasterRecord(
     entity: TRAIL_ENTITY[entity],
     entityId: data?.id,
     summary: `Added ${masterName(entity, row)} to the ${LIST_WORDS[entity]} list`,
-    detail: row,
+    detail: trailDetail(row),
   });
 
   revalidatePath("/settings");
+  if (entity === "companies") invalidatePublicCareers();
   return { ok: true, id: data?.id };
 }
 
@@ -375,7 +617,7 @@ async function readMasterRow(
 ): Promise<Record<string, unknown> | null> {
   const { data } = await supabase
     .from(MASTER_TABLE[entity])
-    .select(READ_COLUMNS[entity])
+    .select(DIFF_COLUMNS[entity] ?? READ_COLUMNS[entity])
     .eq("id", id)
     .maybeSingle();
   return (data as unknown as Record<string, unknown> | null) ?? null;
@@ -420,6 +662,18 @@ export async function updateMasterRecord(
 
   const supabase = await createSupabaseServerClient();
 
+  // The flag names which row the careers page reads as the whole group's, and the
+  // database lets exactly one row carry it. Moving it is a two-row change — unflag
+  // the old, flag the new — that a form posting one row cannot express, so neither
+  // the console nor the chat is given the column.
+  if (entity === "companies" && "is_group_profile" in payload) {
+    return {
+      ok: false,
+      error:
+        "The group-profile flag is not editable here: exactly one company row is the group's own, and moving that is a database change.",
+    };
+  }
+
   // Only copy keys that were actually supplied, so a partial edit is safe.
   //
   // The form submits every declared field on every save, and an empty <select>
@@ -445,6 +699,12 @@ export async function updateMasterRecord(
     }
 
     row[key] = value;
+  }
+
+  if (entity === "companies") {
+    const profile = shapeCompanyProfile(payload);
+    if ("error" in profile) return { ok: false, error: profile.error };
+    Object.assign(row, profile.row);
   }
 
   if (Object.keys(row).length === 0) {
@@ -493,7 +753,7 @@ export async function updateMasterRecord(
     return { ok: false, error: error.message };
   }
 
-  const edits = scalarEdits(before, row);
+  const edits = profileAwareEdits(entity, before, row);
   if (Object.keys(edits).length > 0) {
     await recordActivity({
       area: "master data",
@@ -506,7 +766,81 @@ export async function updateMasterRecord(
   }
 
   revalidatePath("/settings");
+  if (entity === "companies") invalidatePublicCareers();
   return { ok: true, id };
+}
+
+/**
+ * The columns a write moved, with a jsonb list compared by what it holds.
+ *
+ * `scalarEdits` compares values as the words a row prints, which renders any list
+ * as "N items" — so a person who reworded one milestone would save and see nothing
+ * in the trail. The document columns are therefore compared on a key-sorted
+ * serialisation (Postgres returns jsonb with its keys in its own order, not the
+ * order this file builds, and a plain compare would report an edit on every save),
+ * and described by their entries rather than by their length.
+ */
+function profileAwareEdits(
+  entity: MasterEntity,
+  before: Record<string, unknown>,
+  patch: Record<string, unknown>
+): Record<string, string> {
+  const docs = DOCUMENT_COLUMNS[entity] ?? [];
+  const scalars = Object.fromEntries(
+    Object.entries(patch).filter(([key]) => !docs.includes(key))
+  );
+  const edits: Record<string, string> = scalarEdits(before, scalars);
+
+  const canon = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(canon)
+      : value && typeof value === "object"
+        ? Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([key, inner]) => [key, canon(inner)])
+          )
+        : value;
+
+  for (const key of docs) {
+    if (!(key in patch)) continue;
+    if (JSON.stringify(canon(before[key] ?? null)) === JSON.stringify(canon(patch[key] ?? null))) {
+      continue;
+    }
+    edits[key] = `${listWords(before[key])} → ${listWords(patch[key])}`;
+  }
+
+  return edits;
+}
+
+/** A jsonb list in words worth reading, because "7 items → 7 items" names no change. */
+function listWords(value: unknown): string {
+  if (!Array.isArray(value)) return printableValue(value);
+  if (value.length === 0) return "no items";
+  const named = value
+    .slice(0, 3)
+    .map((item) => {
+      const row = (item ?? {}) as Record<string, unknown>;
+      return `${row.year ? `${row.year} ` : ""}${String(row.title ?? "")}`.trim() || "an entry";
+    })
+    .join(", ");
+  return `${value.length} entries (${named}${value.length > 3 ? ", …" : ""})`;
+}
+
+/**
+ * A create's detail, with lists described rather than stringified.
+ *
+ * The trail flattens an array value by reading each item as text, so a milestone
+ * list would land as "[object Object], [object Object]" — a row that records a
+ * change and proves nothing about it.
+ */
+function trailDetail(row: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? listWords(value) : value,
+    ])
+  );
 }
 
 /** A retirement, with what it found: whether the switch moved, and what still names the row. */
@@ -557,6 +891,7 @@ export async function deleteMasterRecord(
   }
 
   revalidatePath("/settings");
+  if (entity === "companies") invalidatePublicCareers();
   return {
     ok: true,
     id,
@@ -636,10 +971,14 @@ export async function getMasterOptions(): Promise<{
 
   const [companies, departments, locations, roleFamilies, skills, currencies] = await Promise.all([
     // `sector` is included so job creation can pre-fill it from the company.
+    // The group's own row is left out: it exists to carry the careers profile the
+    // public header prints, and a role filed under it would claim to sit inside
+    // every company at once.
     supabase
       .from("tenants_and_companies")
       .select("id, name, sector")
       .eq("is_active", true)
+      .eq("is_group_profile", false)
       .order("sort_order"),
     supabase.from("departments").select("id, name").eq("is_active", true).order("sort_order"),
     supabase.from("locations").select("id, name, city").eq("is_active", true).order("sort_order"),

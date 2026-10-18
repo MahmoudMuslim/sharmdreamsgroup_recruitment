@@ -457,16 +457,57 @@ for (const t of await q(
 }
 
 /* -------------------------------------------------------------------------- */
-block("SEED DATA — Sharm Dreams Group companies");
+block("SEED DATA — the companies, with the profile the careers page reads");
 
-say(
-  `insert into tenants_and_companies (id, name, slug, sector, country) values
-  ('11111111-1111-1111-1111-111111111101', 'Sharm Dreams Touristic', 'sharm-dreams-touristic', 'HOSPITALITY', 'Egypt'),
-  ('11111111-1111-1111-1111-111111111102', 'Rowad Misr Development', 'rowad-misr', 'COMMERCIAL_DEVELOPMENT', 'Egypt'),
-  ('11111111-1111-1111-1111-111111111103', 'Sharm Dreams Real Estate', 'sharm-dreams-realestate', 'REAL_ESTATE', 'Egypt'),
-  ('11111111-1111-1111-1111-111111111104', 'SDG Corporate Shared Services', 'sdg-corporate', 'CORPORATE', 'Egypt')
-on conflict (slug) do nothing;`
-);
+/*
+ * This block used to be four hand-written rows, because departments, locations
+ * and openings point at their ids and those ids have to exist first. Now that
+ * `tenants_and_companies` carries the copy the public careers page prints —
+ * tagline, description, history, timeline, benefits — a file that still listed
+ * four names and no profile would describe a database whose careers page has
+ * nothing to show. So the rows are dumped from live, like the reference rows
+ * below, and stay in this position so the children that follow still resolve.
+ *
+ * `contact_email`, `contact_phone` and `address` are deliberately not dumped:
+ * they are a company's contact record, not careers copy, and the anon-readable
+ * policy already serves them from the live database. A committed file has no
+ * business holding them.
+ */
+const COMPANY_COLS = [
+  "id",
+  "name",
+  "slug",
+  "sector",
+  "country",
+  "legal_name",
+  "website",
+  "tagline",
+  "description",
+  "history",
+  "careers_pitch",
+  "founded_year",
+  "ownership_type",
+  "employee_range",
+  "headquarters",
+  "milestones",
+  "benefits",
+  "logo_url",
+  "cover_url",
+  "is_active",
+  "sort_order",
+  "is_group_profile",
+];
+
+for (const r of await q(
+  `select ${COMPANY_COLS.map((c) => (["milestones", "benefits"].includes(c) ? `"${c}"::text as "${c}"` : `"${c}"`)).join(", ")}
+     from public.tenants_and_companies order by sort_order, name`
+)) {
+  say(
+    `insert into public.tenants_and_companies (${COMPANY_COLS.join(", ")}) values (` +
+      COMPANY_COLS.map((c) => lit(r[c])).join(", ") +
+      `) on conflict (id) do nothing;`
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 block("REFERENCE ROWS — the lookup data the console reads before it can render");

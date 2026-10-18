@@ -20,6 +20,7 @@ export interface PublicJob {
   min_salary_usd: number | null;
   max_salary_usd: number | null;
   salary_currency: string;
+  company_id: string | null;
   company_name: string | null;
 }
 

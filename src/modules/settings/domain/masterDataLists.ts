@@ -228,6 +228,10 @@ export function projectMasterRow(entity: MasterEntity, row: MasterRowLike): Reco
         id: row.id,
         name: row.name ?? null,
         sector: (row as Company).sector ?? null,
+        // Named because the row that carries the group's own careers profile is not
+        // a company an opening belongs to, and a chat filing a role under it would
+        // have no way to know.
+        is_group_profile: (row as Company).is_group_profile === true,
         is_active,
       };
     case "departments":

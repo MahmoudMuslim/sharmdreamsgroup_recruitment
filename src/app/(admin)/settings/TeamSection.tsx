@@ -32,7 +32,7 @@ import {
 import { formatInZone } from "@/lib/timezone";
 import type {
   AssignableStaffRole,
-  Company,
+  CompanyChoice,
   StaffInvite,
   StaffMember,
 } from "@/modules/settings/domain/types";
@@ -46,7 +46,7 @@ interface TeamSectionProps {
   accessError: string | null;
   /** Why pending invites could not be read, or null. */
   invitesError: string | null;
-  companies: Company[];
+  companies: CompanyChoice[];
   passwordMinLength: number;
   canManage: boolean;
   viewerAuthUserId: string;
@@ -267,7 +267,7 @@ function MemberRow({
   bannedUntil: string | null;
   accessUnknown: boolean;
   isSelf: boolean;
-  companies: Company[];
+  companies: CompanyChoice[];
   companyName: Map<string, string>;
   canManage: boolean;
   onEdit: () => void;

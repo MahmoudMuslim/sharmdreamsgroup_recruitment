@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import {
   BriefcaseBusiness,
   Building2,
+  ChevronDown,
+  ChevronUp,
   CircleDollarSign,
   GraduationCap,
   Loader2,
@@ -43,17 +45,33 @@ import type {
 interface FieldDef {
   name: string;
   label: string;
-  kind: "text" | "textarea" | "select";
+  /**
+   * `rows` is the one kind that writes a jsonb column: the editor below keeps
+   * order, and the value travels to the server as the JSON text it parses back.
+   */
+  kind: "text" | "textarea" | "select" | "number" | "rows";
   /** Select choices, resolved against the live dataset at render time. */
   choices?: (data: MasterData) => { value: string; label: string }[];
   required?: boolean;
   hint?: string;
+  /** Heading drawn above this field and the ones that follow it, until the next group. */
+  group?: string;
+  /** The ceiling the database checks, counted against as the person types. */
+  max?: number;
+  min?: number;
+  /** Textarea height, sized to the prose a field is meant to hold. */
+  lines?: number;
+  /** For `rows`: what one entry is called, and the columns it holds. */
+  entry?: {
+    one: string;
+    fields: { name: string; label: string; year?: boolean; wide?: boolean }[];
+  };
 }
 
 /** Every field is rendered from these definitions, so adding one is a one-liner. */
 const FIELDS: Record<MasterEntity, FieldDef[]> = {
   companies: [
-    { name: "name", label: "Display name", kind: "text", required: true },
+    { name: "name", label: "Display name", kind: "text", required: true, group: "Naming and filing" },
     { name: "legal_name", label: "Legal name", kind: "text" },
     {
       name: "sector",
@@ -61,12 +79,83 @@ const FIELDS: Record<MasterEntity, FieldDef[]> = {
       kind: "select",
       choices: () => SECTORS.map((s) => ({ value: s, label: SECTOR_LABELS[s] })),
     },
-    { name: "city", label: "City", kind: "text" },
     { name: "country", label: "Country", kind: "text" },
-    { name: "website", label: "Website", kind: "text", hint: "https://…" },
+    { name: "city", label: "City", kind: "text" },
+    { name: "website", label: "Website", kind: "text", hint: "https://…", group: "Contact" },
     { name: "contact_email", label: "Contact email", kind: "text" },
     { name: "contact_phone", label: "Contact phone", kind: "text" },
     { name: "address", label: "Registered address", kind: "textarea" },
+    {
+      name: "tagline",
+      label: "Tagline",
+      kind: "text",
+      max: 160,
+      hint: "The line under the company name on the careers page.",
+      group: "Careers profile",
+    },
+    {
+      name: "description",
+      label: "Description",
+      kind: "textarea",
+      max: 4000,
+      lines: 6,
+      hint: "Who this company is, in its own words.",
+    },
+    {
+      name: "history",
+      label: "History",
+      kind: "textarea",
+      max: 12000,
+      lines: 12,
+      hint: "One paragraph per blank line — a candidate reads it as the company's story.",
+    },
+    {
+      name: "careers_pitch",
+      label: "Why work here",
+      kind: "textarea",
+      max: 2000,
+      lines: 5,
+      hint: "The paragraph above this company's open roles.",
+    },
+    {
+      name: "milestones",
+      label: "History timeline",
+      kind: "rows",
+      hint: "In the order the page prints them. A blank year reads as \"today\".",
+      entry: {
+        one: "milestone",
+        fields: [
+          { name: "year", label: "Year", year: true },
+          { name: "title", label: "Title" },
+          { name: "detail", label: "Detail", wide: true },
+        ],
+      },
+    },
+    {
+      name: "benefits",
+      label: "What the company offers",
+      kind: "rows",
+      hint: "Shown as the group's own list, never as a contract.",
+      entry: {
+        one: "benefit",
+        fields: [
+          { name: "title", label: "Title" },
+          { name: "text", label: "In short", wide: true },
+        ],
+      },
+    },
+    {
+      name: "founded_year",
+      label: "Founded",
+      kind: "number",
+      min: 1900,
+      max: 2200,
+      hint: "Feeds the \"since 1996\" figure and the timeline.",
+      group: "At a glance",
+    },
+    { name: "headquarters", label: "Headquarters", kind: "text", hint: "As a candidate would read it." },
+    { name: "ownership_type", label: "Ownership", kind: "text" },
+    { name: "employee_range", label: "Headcount", kind: "text", hint: "A band, e.g. 501–1,000." },
   ],
   departments: [
     { name: "name", label: "Department name", kind: "text", required: true },
@@ -218,8 +307,8 @@ function subline(row: MasterRow, data: MasterData): string | null {
     const company = row as Company;
     const bits = [
       SECTOR_LABELS[company.sector as keyof typeof SECTOR_LABELS],
-      company.city,
-      company.country,
+      company.city ?? company.headquarters ?? company.country,
+      company.founded_year ? `since ${company.founded_year}` : null,
     ].filter(Boolean);
     return bits.length ? bits.join(" · ") : null;
   }
@@ -247,6 +336,216 @@ function subline(row: MasterRow, data: MasterData): string | null {
 
 function displayName(row: MasterRow): string {
   return row.name ?? row.label ?? "—";
+}
+
+/** The row whose profile is the whole group's — the one the careers header reads. */
+function isGroupRow(row: MasterRow): boolean {
+  return (row as Company).is_group_profile === true;
+}
+
+/**
+ * Whether a company has any of the profile the careers page prints.
+ *
+ * Named rows with nothing filed are the list's real gaps: the public page shows
+ * the company's name and its roles and says nothing else about it, which is what
+ * the badge below tells a recruiter to go and fill.
+ */
+function hasFiledProfile(row: MasterRow): boolean {
+  const company = row as Company;
+  return Boolean(
+    company.tagline ||
+      company.description ||
+      company.history ||
+      company.careers_pitch ||
+      company.milestones?.length ||
+      company.benefits?.length
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The jsonb list editor                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** One entry of a `rows` field, in the shape the column stores. */
+type ListEntry = Record<string, string | number | null>;
+
+/**
+ * The draft value read back as entries.
+ *
+ * `null` means the text is not a list this editor can draw — a column written by
+ * hand, or by a migration that stored something else. The field then stays a plain
+ * text box rather than showing an empty list on top of content nobody can see:
+ * saving from a blank editor would silently delete what is filed.
+ */
+function readEntries(value: string): ListEntry[] | null {
+  const text = value.trim();
+  if (!text) return [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.map((item) =>
+      item && typeof item === "object" ? (item as ListEntry) : { title: String(item ?? "") }
+    );
+  } catch {
+    return null;
+  }
+}
+
+const ROW_INPUT =
+  "w-full rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-sm focus:border-brand-gold focus:outline-none";
+const ROW_BUTTON =
+  "inline-flex h-7 w-7 items-center justify-center rounded-lg text-brand-ink/45 transition hover:bg-brand-sand hover:text-brand-ink disabled:opacity-30 disabled:hover:bg-transparent";
+
+function RowsField({
+  field,
+  id,
+  value,
+  onChange,
+}: {
+  field: FieldDef;
+  id: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const entries = readEntries(value);
+  const spec = field.entry;
+
+  if (!entries || !spec) {
+    return (
+      <>
+        <textarea
+          id={id}
+          rows={3}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className={ROW_INPUT + " resize-y"}
+        />
+        <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+          This list is stored as text the row editor cannot read, so it stays editable as
+          text. Editing it here writes exactly these characters to the column.
+        </p>
+      </>
+    );
+  }
+
+  const write = (next: ListEntry[]) => onChange(JSON.stringify(next));
+
+  const setEntry = (index: number, name: string, raw: string) =>
+    write(entries.map((entry, i) => (i === index ? { ...entry, [name]: raw } : entry)));
+
+  const move = (index: number, delta: number) => {
+    const target = index + delta;
+    if (target < 0 || target >= entries.length) return;
+    const next = [...entries];
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved!);
+    write(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      {entries.length === 0 && (
+        <p className="rounded-lg border border-dashed border-brand-line px-3 py-2 text-[11px] text-brand-ink/45">
+          Nothing filed yet — the page shows no timeline for this company.
+        </p>
+      )}
+
+      {entries.map((entry, index) => (
+        <fieldset key={index} className="rounded-xl border border-brand-line bg-brand-cream/60 p-3">
+          <legend className="sr-only">
+            {spec.one} {index + 1} of {entries.length}
+          </legend>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-brand-ink/45">
+              {spec.one} {index + 1}
+            </p>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => move(index, -1)}
+                disabled={index === 0}
+                aria-label={`Move ${spec.one} ${index + 1} up`}
+                className={ROW_BUTTON}
+              >
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={() => move(index, 1)}
+                disabled={index === entries.length - 1}
+                aria-label={`Move ${spec.one} ${index + 1} down`}
+                className={ROW_BUTTON}
+              >
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              </button>
+              <button
+                type="button"
+                onClick={() => write(entries.filter((_, i) => i !== index))}
+                aria-label={`Remove ${spec.one} ${index + 1}`}
+                className={ROW_BUTTON + " hover:bg-rose-50 hover:text-rose-700"}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {spec.fields.map((column) => (
+              <div key={column.name} className={cn(column.wide ? "block" : "flex gap-2")}>
+                {column.wide && (
+                  <label htmlFor={`${id}-${index}-${column.name}`} className="text-[11px] font-semibold text-brand-ink/50">
+                    {column.label}
+                  </label>
+                )}
+                {column.year ? (
+                  <input
+                    id={`${id}-${index}-${column.name}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={1900}
+                    max={2200}
+                    placeholder="—"
+                    aria-label={column.label}
+                    value={String(entry[column.name] ?? "")}
+                    onChange={(event) => setEntry(index, column.name, event.target.value)}
+                    className={ROW_INPUT + " w-24 shrink-0"}
+                  />
+                ) : column.wide ? (
+                  <textarea
+                    id={`${id}-${index}-${column.name}`}
+                    rows={2}
+                    aria-label={column.label}
+                    value={String(entry[column.name] ?? "")}
+                    onChange={(event) => setEntry(index, column.name, event.target.value)}
+                    className={ROW_INPUT + " mt-1 resize-y"}
+                  />
+                ) : (
+                  <input
+                    id={`${id}-${index}-${column.name}`}
+                    type="text"
+                    aria-label={column.label}
+                    value={String(entry[column.name] ?? "")}
+                    onChange={(event) => setEntry(index, column.name, event.target.value)}
+                    className={ROW_INPUT}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      ))}
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => write([...entries, {}])}
+      >
+        <Plus className="h-3.5 w-3.5" aria-hidden />
+        Add {spec.one}
+      </Button>
+    </div>
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -320,6 +619,13 @@ export function MasterDataConsole({
     const next: MasterPayload = { is_active: row.is_active };
     for (const field of FIELDS[tab]) {
       const value = (row as unknown as Record<string, unknown>)[field.name];
+      // A jsonb list travels to the form as the JSON text its row editor reads,
+      // because `String()` on an array of entries would put "[object Object]" in a
+      // text box and write that back over the company's timeline on the next save.
+      if (field.kind === "rows") {
+        next[field.name] = Array.isArray(value) ? JSON.stringify(value) : "";
+        continue;
+      }
       next[field.name] = value === null || value === undefined ? "" : String(value);
     }
     setDraft(next);
@@ -460,6 +766,12 @@ export function MasterDataConsole({
                     {displayName(row)}
                     {!row.is_active && <Badge tone="neutral">Retired</Badge>}
                     {twice.has(row.id) && <Badge tone="gold">Named twice</Badge>}
+                    {tab === "companies" && isGroupRow(row) && (
+                      <Badge tone="info">Group profile</Badge>
+                    )}
+                    {tab === "companies" && !hasFiledProfile(row) && (
+                      <Badge tone="neutral">No careers copy yet</Badge>
+                    )}
                   </p>
                   {secondary && <p className="mt-0.5 truncate text-xs text-brand-ink/50">{secondary}</p>}
                 </div>
@@ -516,7 +828,11 @@ export function MasterDataConsole({
               save();
             }}
             className={cn(
-              "absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-brand-line bg-white shadow-2xl",
+              // A company now carries a profile, so its panel gets the width the
+              // prose and the timeline rows need; the short vocabularies keep the
+              // narrow drawer.
+              "absolute inset-y-0 right-0 flex w-full flex-col border-l border-brand-line bg-white shadow-2xl",
+              tab === "companies" ? "max-w-2xl" : "max-w-md",
               "animate-in slide-in-from-right duration-200 motion-reduce:animate-none"
             )}
           >
@@ -535,6 +851,16 @@ export function MasterDataConsole({
                     ? "Available across the platform as soon as you save."
                     : "Changes apply everywhere this entry is selected."}
                 </p>
+                {tab === "companies" && (
+                  <p className="mt-1 text-xs leading-relaxed text-brand-ink/50">
+                    The careers profile below is printed on the public{" "}
+                    <code className="rounded bg-brand-sand px-1">/careers</code> pages, word for
+                    word. A blank field shows nothing rather than a placeholder.
+                    {editing && isGroupRow(editing)
+                      ? " This is the group's own row: its story heads the page, and the flag that says so is not editable here."
+                      : ""}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
@@ -549,13 +875,25 @@ export function MasterDataConsole({
             {/* Scrollable body keeps the actions pinned to the bottom on tall forms. */}
             <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">
               <div className="grid grid-cols-1 gap-4">
-                {FIELDS[tab].map((field) => {
+                {FIELDS[tab].map((field, index) => {
                 const id = `master-${tab}-${field.name}`;
-                const value = draft[field.name] ?? "";
-                const wide = field.kind === "textarea";
+                const text = String(draft[field.name] ?? "");
+                const counted = text.trim().length;
+                const over = field.max !== undefined && counted > field.max;
 
                 return (
-                  <div key={field.name} className={cn(wide && "sm:col-span-2")}>
+                  <div key={field.name}>
+                    {field.group && (
+                      <p
+                        className={cn(
+                          "mb-3 border-t border-brand-line pt-3 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-gold-dark",
+                          index === 0 && "border-t-0 pt-0"
+                        )}
+                      >
+                        {field.group}
+                      </p>
+                    )}
+
                     <label htmlFor={id} className="mb-1.5 block text-xs font-bold">
                       {field.label}
                       {field.required && <span className="ml-1 text-rose-600">*</span>}
@@ -564,7 +902,7 @@ export function MasterDataConsole({
                     {field.kind === "select" ? (
                       <select
                         id={id}
-                        value={String(value)}
+                        value={text}
                         onChange={(e) => editField(field.name, e.target.value)}
                         className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                       >
@@ -574,11 +912,30 @@ export function MasterDataConsole({
                           </option>
                         ))}
                       </select>
+                    ) : field.kind === "rows" ? (
+                      <RowsField
+                        field={field}
+                        id={id}
+                        value={text}
+                        onChange={(next) => editField(field.name, next)}
+                      />
+                    ) : field.kind === "number" ? (
+                      <input
+                        id={id}
+                        type="number"
+                        inputMode="numeric"
+                        min={field.min}
+                        max={field.max}
+                        value={text}
+                        required={field.required}
+                        onChange={(e) => editField(field.name, e.target.value)}
+                        className="w-32 rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
+                      />
                     ) : field.kind === "textarea" ? (
                       <textarea
                         id={id}
-                        value={String(value)}
-                        rows={2}
+                        value={text}
+                        rows={field.lines ?? 2}
                         onChange={(e) => editField(field.name, e.target.value)}
                         className="w-full resize-y rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                       />
@@ -586,7 +943,7 @@ export function MasterDataConsole({
                       <input
                         id={id}
                         type="text"
-                        value={String(value)}
+                        value={text}
                         required={field.required}
                         onChange={(e) =>
                           editField(field.name, normalise(field.name, e.target.value))
@@ -595,8 +952,18 @@ export function MasterDataConsole({
                       />
                     )}
 
-                    {field.hint && (
-                      <p className="mt-1 text-[11px] text-brand-ink/45">{field.hint}</p>
+                    {field.hint && <p className="mt-1 text-[11px] text-brand-ink/45">{field.hint}</p>}
+
+                    {field.max !== undefined && counted > 0 && (
+                      <p
+                        className={cn(
+                          "mt-1 text-[11px]",
+                          over ? "font-semibold text-rose-700" : "text-brand-ink/45"
+                        )}
+                      >
+                        {counted.toLocaleString()} / {field.max.toLocaleString()} characters
+                        {over ? " — the careers page cannot hold this much." : ""}
+                      </p>
                     )}
                   </div>
                 );

@@ -6,11 +6,11 @@ import { Button } from "@/modules/analytics/presentation/ui";
 import { ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
 import { updateStaffInvite } from "@/modules/settings/application/user-actions";
 import { cn } from "@/lib/utils";
-import type { AssignableStaffRole, Company, StaffInvite } from "@/modules/settings/domain/types";
+import type { AssignableStaffRole, CompanyChoice, StaffInvite } from "@/modules/settings/domain/types";
 
 interface InviteEditPanelProps {
   invite: StaffInvite;
-  companies: Company[];
+  companies: CompanyChoice[];
   onClose: () => void;
   onSaved: () => void;
 }

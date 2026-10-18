@@ -19,6 +19,10 @@ import {
   type GateQuestion,
 } from "@/modules/careers/gate-questions";
 import type { PublicJob } from "@/modules/careers/job-board";
+import {
+  toPublicCompany,
+  type PublicCompany,
+} from "@/modules/careers/company-profile";
 
 /**
  * Public careers site.
@@ -32,7 +36,18 @@ import type { PublicJob } from "@/modules/careers/job-board";
  */
 
 const JOB_COLUMNS =
-  "id, title, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, tenants_and_companies(name)";
+  "id, title, tenant_id, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, tenants_and_companies(name)";
+
+/**
+ * The company columns the public page prints, and nothing else.
+ *
+ * `contact_email`, `contact_phone` and `address` are deliberately not read here:
+ * the policy that lets an anonymous visitor see a company row lets them see the
+ * whole row, so the column list is what keeps a recruiting mailbox off a public
+ * page rather than a rule written after the fact.
+ */
+const COMPANY_COLUMNS =
+  `id, name, legal_name, slug, sector, tagline, description, history, careers_pitch, founded_year, ownership_type, employee_range, headquarters, milestones, benefits, website, is_active, sort_order, is_group_profile`;
 
 /** Normalises the company join, which PostgREST returns as object or array. */
 function companyName(value: unknown): string | null {
@@ -64,6 +79,10 @@ function toJob(row: Record<string, unknown>): PublicJob {
     min_salary_usd: row.min_salary_usd === null ? null : Number(row.min_salary_usd),
     max_salary_usd: row.max_salary_usd === null ? null : Number(row.max_salary_usd),
     salary_currency: String(row.salary_currency ?? "USD"),
+    // The company's own id is what the board groups by; its name is what a role
+    // card prints, so both are carried even when the row's company has no profile.
+    company_id:
+      typeof row.tenant_id === "string" && row.tenant_id ? row.tenant_id : null,
     company_name: companyName(row.tenants_and_companies),
   };
 }
@@ -104,6 +123,42 @@ export async function getPublicJobs(): Promise<PublicJob[]> {
   } catch (e) {
     // Handle network/auth errors during build
     console.warn("[getPublicJobs] Build-time error, returning empty:", e);
+    return [];
+  }
+}
+
+/**
+ * The companies behind the board, with the careers copy written for them.
+ *
+ * `is_active` is filtered here rather than trusted to the policy: `tenants_read`
+ * lets an anonymous caller see every company row, retired ones included, and a
+ * retired company still has the openings written while it was in use. Those rows
+ * keep resolving inside the portal — and are not the group's story to tell
+ * publicly.
+ *
+ * Cached like the board it heads, for the same reason: the words are the same for
+ * every visitor, and a Settings → Master data edit revalidates this path.
+ */
+export async function getPublicCompanies(): Promise<PublicCompany[]> {
+  "use cache";
+  cacheLife("minutes");
+
+  const supabase = getSupabaseAnonClient();
+
+  try {
+    const { data, error } = await supabase
+      .from("tenants_and_companies")
+      .select(COMPANY_COLUMNS)
+      .eq("is_active", true)
+      .order("sort_order");
+
+    if (error) {
+      console.warn("[getPublicCompanies] Supabase error (likely build time):", error.message);
+      return [];
+    }
+    return ((data ?? []) as unknown as Record<string, unknown>[]).map(toPublicCompany);
+  } catch (e) {
+    console.warn("[getPublicCompanies] Build-time error, returning empty:", e);
     return [];
   }
 }
