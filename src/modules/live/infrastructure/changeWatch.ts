@@ -136,25 +136,70 @@ const HASH_ROWS = 500;
  */
 const NEWEST_COLUMN = "created_at";
 
-/** Fingerprint per area, or `undefined` when the table could not be read. */
-export type LiveFingerprints = Record<string, string | undefined>;
+/**
+ * What one poll learned about one area.
+ *
+ * Three states, because two failures look alike on the wire and mean opposite
+ * things for the recruiter's screen. A table that is not there can never move,
+ * so a page fed only by one must stop promising a reload it will never get. A
+ * request that merely failed says nothing at all — and must not be allowed to
+ * take a working promise away, or a one-second network hiccup would silently
+ * unwatch the pipeline on seven pages and swallow every change made during it.
+ */
+export type LiveAreaMark =
+  | { state: "ok"; stamp: string }
+  /** PostgREST answered that this definition can never be read. */
+  | { state: "refused" }
+  /** The request did not complete, so the previous answer still stands. */
+  | { state: "unknown" };
+
+export type LiveFingerprints = Record<string, LiveAreaMark>;
+
+/**
+ * The codes that are a verdict on the *definition*, not on the connection:
+ * relation not in the schema cache, relation or column missing, no privilege.
+ * A transport failure comes back with an empty code, which is why the list is
+ * an allow-list of refusals rather than a list of failures.
+ */
+const REFUSALS = new Set(["PGRST205", "42P01", "42703", "42501"]);
+
+/** Only a named schema or privilege problem refuses an area. */
+function toMark(code: string | undefined): LiveAreaMark {
+  return REFUSALS.has(code ?? "") ? { state: "refused" } : { state: "unknown" };
+}
 
 export async function readLiveFingerprints(
   supabase: SupabaseClient
 ): Promise<LiveFingerprints> {
   const entries = await Promise.all(
-    LIVE_WATCH.map(async (watch): Promise<[string, string | undefined]> => {
+    LIVE_WATCH.map(async (watch): Promise<[string, LiveAreaMark]> => {
       try {
         return [watch.area, await fingerprint(supabase, watch)];
       } catch {
-        // A table this viewer cannot read, or a request that failed, must not
-        // end the stream — the next tick simply compares against nothing.
-        return [watch.area, undefined];
+        // A request that never completed is not an answer about the table.
+        return [watch.area, { state: "unknown" }];
       }
     })
   );
 
   return Object.fromEntries(entries);
+}
+
+/**
+ * The marks to remember after a poll: a refusal is an answer, an `unknown` is
+ * not, so the last stamp actually read is kept through a failed tick. That is
+ * what lets a change made while the connection was down still arrive as a
+ * change once it is back, instead of being compared against nothing.
+ */
+export function carryLastRead(
+  before: LiveFingerprints,
+  after: LiveFingerprints
+): LiveFingerprints {
+  const merged: LiveFingerprints = { ...before };
+  for (const [area, mark] of Object.entries(after)) {
+    if (mark.state !== "unknown") merged[area] = mark;
+  }
+  return merged;
 }
 
 /** The areas whose fingerprint moved since `before`. */
@@ -166,14 +211,14 @@ export function diffLiveFingerprints(
   for (const watch of LIVE_WATCH) {
     const was = before[watch.area];
     const now = after[watch.area];
-    // Either side unreadable is not a change — that would flap on permissions.
-    if (was === undefined || now === undefined) continue;
-    if (was !== now) moved.push(watch.area);
+    // Either side not a read is not a change — that would flap on permissions.
+    if (!was || !now || was.state !== "ok" || now.state !== "ok") continue;
+    if (was.stamp !== now.stamp) moved.push(watch.area);
   }
   return moved;
 }
 
-async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<string> {
+async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<LiveAreaMark> {
   if (watch.stamp) {
     const { data, count, error } = await supabase
       .from(watch.table)
@@ -183,11 +228,11 @@ async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<
       .order(watch.stamp, { ascending: false })
       .limit(1);
 
-    if (error) throw new Error(error.message);
+    if (error) return toMark(error.code);
     // The stamp is named by a variable, so PostgREST cannot infer the row shape
     // for the single column it was asked to return.
     const rows = (data ?? []) as unknown as Record<string, string | null>[];
-    return `${count ?? -1}|${rows[0]?.[watch.stamp] ?? "-"}`;
+    return { state: "ok", stamp: `${count ?? -1}|${rows[0]?.[watch.stamp] ?? "-"}` };
   }
 
   const columns = watch.columns ?? [];
@@ -197,6 +242,9 @@ async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<
     .order(NEWEST_COLUMN, { ascending: false })
     .limit(HASH_ROWS);
 
-  if (error) throw new Error(error.message);
-  return createHash("sha256").update(JSON.stringify(data ?? [])).digest("hex");
+  if (error) return toMark(error.code);
+  return {
+    state: "ok",
+    stamp: createHash("sha256").update(JSON.stringify(data ?? [])).digest("hex"),
+  };
 }

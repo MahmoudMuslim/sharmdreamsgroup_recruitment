@@ -20,6 +20,7 @@
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
+  carryLastRead,
   diffLiveFingerprints,
   readLiveFingerprints,
   type LiveFingerprints,
@@ -89,14 +90,16 @@ export async function GET(request: Request) {
       let seen: LiveFingerprints = await readLiveFingerprints(supabase);
 
       /**
-       * The areas this session cannot read.
+       * The areas this session is refused.
        *
        * A table that no migration has created yet can never move a fingerprint,
        * so a page fed only by one must not be promised a reload it will never
        * get — the browser drops every area named here from its watch list.
+       * An area whose request merely failed is not here: nothing was learned,
+       * so nothing is taken away.
        */
       const unreadOf = (marks: LiveFingerprints) =>
-        LIVE_WATCH.filter((w) => marks[w.area] === undefined).map((w) => w.area);
+        LIVE_WATCH.filter((w) => marks[w.area]?.state === "refused").map((w) => w.area);
 
       // The watch list is sent rather than duplicated in client code, so it
       // lives in one place and a page cannot be left out by accident.
@@ -115,13 +118,12 @@ export async function GET(request: Request) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
         if (closed) break;
 
-        // A table that cannot be read comes back `undefined`; every one of them
-        // unreadable is the database being unreachable, not a permissions
-        // question — RLS hides rows, it does not hide a table.
+        // Nothing readable this tick is the database being unreachable, not a
+        // permissions question — RLS hides rows, it does not hide a table.
         const next = await readLiveFingerprints(supabase);
         const nextUnread = unreadOf(next);
 
-        if (nextUnread.length === LIVE_WATCH.length) {
+        if (LIVE_WATCH.every((w) => next[w.area].state !== "ok")) {
           failures += 1;
           if (failures === STALLED_AFTER && !send("stalled", { at: new Date().toISOString() })) {
             break;
@@ -133,7 +135,10 @@ export async function GET(request: Request) {
         failures = 0;
 
         const moved = diffLiveFingerprints(seen, next);
-        seen = next;
+        // A tick that read nothing must not overwrite the stamp it could not
+        // read, or a colleague's edit made during a blip is compared against
+        // nothing and lost for the rest of the tab's life.
+        seen = carryLastRead(seen, next);
 
         // The list the page's promise is built from is only ever sent here, so a
         // table that appears mid-session — a migration applied, a grant widened —
