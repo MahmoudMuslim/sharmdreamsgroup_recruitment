@@ -42,14 +42,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    // `data-theme` is the palette the CSS ships with; the inline script in <head>
-    // may already have replaced it before React hydrates, which is why this
-    // element opts out of the attribute check. Reading the preference on the
-    // server instead would make the whole tree request-bound and cost the
-    // public pages their prerender.
+    // `data-palette` and `data-tone` are the theme the CSS ships with; the inline
+    // script in <head> may already have replaced both before React hydrates,
+    // which is why this element opts out of the attribute check. Reading the
+    // preference on the server instead would make the whole tree request-bound
+    // and cost the public pages their prerender.
     <html
       lang="en"
-      data-theme="light"
+      data-palette="base"
+      data-tone="light"
       suppressHydrationWarning
       className={`${inter.variable} ${montserrat.variable} ${amiri.variable} h-full antialiased`}
     >

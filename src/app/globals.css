@@ -32,18 +32,24 @@
   color-scheme: light;
 }
 
-/* ---------------- Dark palette ----------------
- * Tailwind v4 compiles every colour utility to `var(--color-…)`, so the whole
- * portal inverts from this block instead of from `dark:` variants at two hundred
- * call sites. Ink and the cream surfaces swap, the two gold accents swap so
- * `text-brand-gold-light` never lands on an equally light background, and the
- * pale alert tints go dark.
+/* ---------------- Tone: dark ----------------
+ * The theme is a pair — a parent (`base` or `glass`) and a tone (`light` or
+ * `dark`) — and the tone is what inverts the portal. Tailwind v4 compiles every
+ * colour utility to `var(--color-…)`, so this block flips the whole app instead
+ * of `dark:` variants at two hundred call sites. Ink and the cream surfaces
+ * swap, the two gold accents swap so `text-brand-gold-light` never lands on an
+ * equally light background, and the pale alert tints go dark.
  *
  * The saturated fills (`bg-rose-600`, `bg-emerald-500`, status dots) are left
  * alone: they read on either background. Their *text* shades cannot be swapped
  * at the token level for the same reason, so they are retargeted by class below.
+ *
+ * Light needs no block: it is what `@theme` ships. `applyTheme` and the inline
+ * script in the root layout always write both attributes together, and
+ * `scripts/check-themes.mjs` fails the build if one of them names a block that
+ * does not exist here.
  */
-html[data-theme="dark"] {
+html[data-tone="dark"] {
   color-scheme: dark;
 
   --color-brand-ink: #f1eee8;
@@ -54,105 +60,8 @@ html[data-theme="dark"] {
   --color-white: #201f1d;
 }
 
-/* ---------------- Liquid glass palette ----------------
- * The third palette, picked from the app bar or Account → Preferences and kept
- * on this browser like the other two.
- *
- * A translucent surface only says something when there is a picture behind it,
- * so this palette gives the page one: three slow gold and steel light sources
- * drift over a dark base, and every fill becomes a film in front of them — a
- * smoked-glass card is `--color-white` at partial alpha, not a paint. Ink goes
- * light with them, which is why the cream film stays dark rather than going
- * white: the active nav row and every dark button is `bg-brand-ink` carrying
- * `text-brand-cream`, and copy on those fills would wash out if the token were
- * a bright film.
- *
- * Frost is put only where content actually passes behind a surface — the rail,
- * sticky bars, overlays — because blurring a still backdrop costs a compositing
- * layer and shows nothing. `prefers-reduced-transparency` gets the same palette
- * as opaque paint.
- */
-html[data-theme="glass"] {
-  color-scheme: dark;
-  background-color: #0b0d12;
-
-  --color-brand-ink: #f2efe9;
-  --color-brand-ivory: rgb(12 14 19 / 0.38);
-  --color-brand-cream: rgb(18 21 28 / 0.72);
-  --color-brand-sand: rgb(52 57 68 / 0.62);
-  --color-brand-line: rgb(255 255 255 / 0.16);
-  --color-white: rgb(38 42 52 / 0.58);
-}
-
-/* Light in this palette comes from above, so the house shadows — warm ink on
-   paper, all but invisible on a dark mesh — become a bright top edge over a
-   deep drop. Only surfaces that already asked to be elevated are touched. */
-html[data-theme="glass"] .shadow-soft {
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.1),
-    0 16px 32px -24px rgb(0 0 0 / 0.8);
-}
-
-html[data-theme="glass"] .shadow-lift {
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.14),
-    0 24px 48px -24px rgb(0 0 0 / 0.85);
-}
-
-/* The backdrop itself: a fixed layer behind the page, not inside it, so panels
-   have something moving to blur. The build's global reduced-motion rule stops
-   the drift without a second media query here. */
-html[data-theme="glass"] body::before {
-  content: "";
-  position: fixed;
-  inset: -25vmin;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    radial-gradient(38vmax 38vmax at 18% 12%, rgb(179 143 111 / 0.34), transparent 62%),
-    radial-gradient(34vmax 34vmax at 86% 6%, rgb(212 179 147 / 0.26), transparent 64%),
-    radial-gradient(42vmax 42vmax at 62% 92%, rgb(88 116 150 / 0.3), transparent 66%),
-    radial-gradient(30vmax 30vmax at 8% 78%, rgb(168 124 82 / 0.22), transparent 62%);
-  animation: glass-drift 30s ease-in-out infinite alternate;
-}
-
-@keyframes glass-drift {
-  from {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  to {
-    transform: translate3d(-3%, -2%, 0) scale(1.08);
-  }
-}
-
-html[data-theme="glass"] :is(.rail-fold, .sticky, .fixed, dialog) {
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
-  backdrop-filter: blur(16px) saturate(150%);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  html[data-theme="glass"] {
-    --color-brand-ivory: #101319;
-    --color-brand-cream: #171b22;
-    --color-brand-sand: #262b34;
-    --color-brand-line: #333945;
-    --color-white: #1d222a;
-  }
-
-  html[data-theme="glass"] body::before {
-    animation: none;
-    opacity: 0.4;
-  }
-
-  html[data-theme="glass"] :is(.rail-fold, .sticky, .fixed, dialog) {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-  }
-}
-
-/* Shared by both dark palettes: the golds swap so `text-brand-gold-light` never
-   lands on an equally light background, and the pale alert tints go dark. */
-:is(html[data-theme="dark"], html[data-theme="glass"]) {
+/* Golds and alert tints, for both dark tones — base and glass alike. */
+html[data-tone="dark"] {
   --color-brand-gold: #c19a76;
   --color-brand-gold-light: #a87c52;
   --color-brand-gold-dark: #dcbb96;
@@ -173,22 +82,174 @@ html[data-theme="glass"] :is(.rail-fold, .sticky, .fixed, dialog) {
   --color-slate-200: #33302c;
 }
 
-:is(html[data-theme="dark"], html[data-theme="glass"])
+/* ---------------- Parent: liquid glass ----------------
+ * The second parent: either tone painted as translucent film instead of opaque
+ * fill, so the same light/dark choice holds when you move between them.
+ *
+ * A translucent surface only says something when there is a picture behind it,
+ * so this parent gives the page one: slow light sources drift over the base
+ * colour and every fill becomes a film in front of them. What a film is made of
+ * differs by tone — a smoked-glass card is a dark film, a frosted one a bright
+ * — so the tokens are declared per tone below, and only the geometry of the
+ * backdrop, the frost and the keyframes are shared here.
+ *
+ * Frost is put only where content actually passes behind a surface — the rail,
+ * sticky bars, overlays — because blurring a still backdrop costs a compositing
+ * layer and shows nothing. `prefers-reduced-transparency` gets each tone's
+ * palette as opaque paint at the end of this section.
+ */
+
+/* The backdrop itself: a fixed layer behind the page, not inside it, so panels
+   have something moving to blur. The build's global reduced-motion rule stops
+   the drift without a second media query here. */
+html[data-palette="glass"] body::before {
+  content: "";
+  position: fixed;
+  inset: -25vmin;
+  z-index: -1;
+  pointer-events: none;
+  animation: glass-drift 30s ease-in-out infinite alternate;
+}
+
+@keyframes glass-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(-3%, -2%, 0) scale(1.08);
+  }
+}
+
+html[data-palette="glass"] :is(.rail-fold, .sticky, .fixed, dialog) {
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+}
+
+/* ---- glass, dark tone ----
+ * Ink goes light with the tone, which is why the cream film stays dark rather
+ * than going white: the active nav row and every dark button is `bg-brand-ink`
+ * carrying `text-brand-cream`, and copy on those fills would wash out if the
+ * token were a bright film.
+ */
+html[data-palette="glass"][data-tone="dark"] {
+  background-color: #0b0d12;
+
+  --color-brand-ink: #f2efe9;
+  --color-brand-ivory: rgb(12 14 19 / 0.38);
+  --color-brand-cream: rgb(18 21 28 / 0.72);
+  --color-brand-sand: rgb(52 57 68 / 0.62);
+  --color-brand-line: rgb(255 255 255 / 0.16);
+  --color-white: rgb(38 42 52 / 0.58);
+}
+
+html[data-palette="glass"][data-tone="dark"] body::before {
+  background-image:
+    radial-gradient(38vmax 38vmax at 18% 12%, rgb(179 143 111 / 0.34), transparent 62%),
+    radial-gradient(34vmax 34vmax at 86% 6%, rgb(212 179 147 / 0.26), transparent 64%),
+    radial-gradient(42vmax 42vmax at 62% 92%, rgb(88 116 150 / 0.3), transparent 66%),
+    radial-gradient(30vmax 30vmax at 8% 78%, rgb(168 124 82 / 0.22), transparent 62%);
+}
+
+/* Light in this tone comes from above, so the house shadows — warm ink on
+   paper, all but invisible on a dark mesh — become a bright top edge over a
+   deep drop. Only surfaces that already asked to be elevated are touched. */
+html[data-palette="glass"][data-tone="dark"] .shadow-soft {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.1),
+    0 16px 32px -24px rgb(0 0 0 / 0.8);
+}
+
+html[data-palette="glass"][data-tone="dark"] .shadow-lift {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.14),
+    0 24px 48px -24px rgb(0 0 0 / 0.85);
+}
+
+/* ---- glass, light tone ----
+ * The same material the other way round: the light sources are bright rather
+ * than smoky, so a card is a sheet of frosted white over the drifting gold and
+ * the hairlines are the warm ink the base palette draws with, thinned to film.
+ *
+ * `--color-brand-ink` is deliberately left solid here. It is the body copy
+ * colour as often as it is a fill, and a film there multiplies with the alpha
+ * every `text-brand-ink/65` already asks for, until the page reads muddy.
+ */
+html[data-palette="glass"][data-tone="light"] {
+  background-color: #f2ece2;
+
+  --color-brand-ivory: rgb(252 250 246 / 0.5);
+  --color-brand-cream: rgb(255 255 255 / 0.78);
+  --color-brand-sand: rgb(120 100 78 / 0.14);
+  --color-brand-line: rgb(94 74 52 / 0.22);
+  --color-white: rgb(255 255 255 / 0.55);
+}
+
+html[data-palette="glass"][data-tone="light"] body::before {
+  background-image:
+    radial-gradient(38vmax 38vmax at 18% 12%, rgb(179 143 111 / 0.55), transparent 62%),
+    radial-gradient(34vmax 34vmax at 86% 6%, rgb(233 205 172 / 0.6), transparent 64%),
+    radial-gradient(42vmax 42vmax at 62% 92%, rgb(150 180 212 / 0.45), transparent 66%),
+    radial-gradient(30vmax 30vmax at 8% 78%, rgb(214 170 178 / 0.42), transparent 62%);
+}
+
+/* A film needs a rim to separate it from the mesh it sits in front of, so the
+   house shadow keeps its warm drop and gains a bright top edge. */
+html[data-palette="glass"][data-tone="light"] .shadow-soft {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.75),
+    0 16px 32px -24px rgb(84 62 40 / 0.45);
+}
+
+html[data-palette="glass"][data-tone="light"] .shadow-lift {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.85),
+    0 24px 48px -24px rgb(84 62 40 / 0.5);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html[data-palette="glass"][data-tone="dark"] {
+    --color-brand-ivory: #101319;
+    --color-brand-cream: #171b22;
+    --color-brand-sand: #262b34;
+    --color-brand-line: #333945;
+    --color-white: #1d222a;
+  }
+
+  html[data-palette="glass"][data-tone="light"] {
+    --color-brand-ivory: #f5f1e9;
+    --color-brand-cream: #fdfbf7;
+    --color-brand-sand: #ece5da;
+    --color-brand-line: #ddd3c5;
+    --color-white: #ffffff;
+  }
+
+  html[data-palette="glass"] body::before {
+    animation: none;
+    opacity: 0.4;
+  }
+
+  html[data-palette="glass"] :is(.rail-fold, .sticky, .fixed, dialog) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Retargeted by class, both dark tones: these are text shades, and a token swap
+   would take the fills that already read with them. */
+html[data-tone="dark"]
   :is(.text-rose-600, .text-rose-700, .text-rose-800, .text-rose-900, .hover\:text-rose-700:hover) {
   color: #f7a8b4;
 }
 
-:is(html[data-theme="dark"], html[data-theme="glass"])
-  :is(.text-emerald-700, .text-emerald-800, .text-emerald-900) {
+html[data-tone="dark"] :is(.text-emerald-700, .text-emerald-800, .text-emerald-900) {
   color: #82d8b0;
 }
 
-:is(html[data-theme="dark"], html[data-theme="glass"])
-  :is(.text-amber-700, .text-amber-800, .text-amber-900) {
+html[data-tone="dark"] :is(.text-amber-700, .text-amber-800, .text-amber-900) {
   color: #e8bd7c;
 }
 
-:is(html[data-theme="dark"], html[data-theme="glass"]) :is(.text-sky-700, .text-slate-700) {
+html[data-tone="dark"] :is(.text-sky-700, .text-slate-700) {
   color: #9fb8c9;
 }
 

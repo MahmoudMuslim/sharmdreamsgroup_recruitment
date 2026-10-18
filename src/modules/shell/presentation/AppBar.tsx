@@ -21,7 +21,9 @@ import {
   Download,
   Droplets,
   Eraser,
+  GlassWater,
   Languages,
+  Layers,
   Loader2,
   Menu,
   Moon,
@@ -66,13 +68,20 @@ import {
 } from "@/lib/alert-ack";
 import {
   applyTheme,
+  choiceOf,
   lightOnServer,
   NEXT_PALETTE,
   PALETTE_LABEL,
+  parentOf,
+  PARENTS,
   readTheme,
   subscribeTheme,
+  toneOf,
+  TONES,
   writeTheme,
   type ThemeChoice,
+  type ThemeParent,
+  type ThemeTone,
 } from "@/lib/theme";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
@@ -503,12 +512,15 @@ function GuidePanel({ open }: { open: Panel }) {
           to it. Click the chip to reload now.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
-          The palette button walks <span className="font-semibold">Light → Dark →
-          Liquid glass</span>, and Account → Preferences lets you pick one
-          directly. The choice is kept on this browser only, so a shared machine
-          stays as each person left it. Liquid glass makes the panels translucent
-          over a moving gold backdrop; a browser asked for less transparency gets
-          the same palette as flat paint.
+          A theme is a pair: a parent — <span className="font-semibold">Base</span>{" "}
+          or <span className="font-semibold">Liquid glass</span> — and a tone,{" "}
+          <span className="font-semibold">Light</span> or{" "}
+          <span className="font-semibold">Dark</span>, set one after the other in
+          Account → Preferences. The button walks all four. The choice is kept on
+          this browser only, so a shared machine stays as each person left it.
+          Liquid glass paints either tone as translucent film over a moving gold
+          backdrop; a browser asked for less transparency gets the same theme as
+          flat paint.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           Two screens above read a table the database does not have yet:{" "}
@@ -797,12 +809,22 @@ function AlertsPanel({
 /* Theme + rail, shared with the rail's own toggle                            */
 /* -------------------------------------------------------------------------- */
 
-/** The three palettes the CSS ships, in the order the app bar button walks. */
+/**
+ * The icon each theme wears in the app bar.
+ *
+ * Both glass tones keep a water icon so the parent reads at a glance; the tone
+ * is in the label the button carries.
+ */
 const PALETTE_ICON: Record<ThemeChoice, typeof Sun> = {
-  light: Sun,
-  dark: Moon,
-  glass: Droplets,
+  "base-light": Sun,
+  "base-dark": Moon,
+  "glass-light": GlassWater,
+  "glass-dark": Droplets,
 };
+
+/** The two controls Preferences shows: a parent, then the tone inside it. */
+const PARENT_ICON: Record<ThemeParent, typeof Sun> = { base: Layers, glass: Droplets };
+const TONE_ICON: Record<ThemeTone, typeof Sun> = { light: Sun, dark: Moon };
 
 function useTheme(): [ThemeChoice, (next: ThemeChoice) => void] {
   const theme = useSyncExternalStore(subscribeTheme, readTheme, lightOnServer);
@@ -921,21 +943,15 @@ function PreferenceChoice({
   label,
   value,
   options,
-  columns = 2,
 }: {
   label: string;
   value: string;
   options: { key: string; label: string; icon: typeof Sun; onClick: () => void }[];
-  columns?: 2 | 3;
 }) {
   return (
     <div>
       <p className="mb-1.5 text-[11px] font-semibold text-brand-ink/55">{label}</p>
-      <div
-        role="group"
-        aria-label={label}
-        className={cn("grid gap-1.5", columns === 3 ? "grid-cols-3" : "grid-cols-2")}
-      >
+      <div role="group" aria-label={label} className="grid grid-cols-2 gap-1.5">
         {options.map((option) => {
           const active = option.key === value;
           return (
@@ -964,6 +980,10 @@ function PreferenceChoice({
 function PreferencesSection() {
   const [theme, setTheme] = useTheme();
   const folded = useSyncExternalStore(subscribeCollapsed, readCollapsed, expandedOnServer);
+  // The pair is stored as one value, so each control rewrites only its own half
+  // and picking glass keeps the tone you were already reading in.
+  const parent = parentOf(theme);
+  const tone = toneOf(theme);
 
   return (
     <div className="space-y-3 rounded-xl border border-brand-line bg-white px-3 py-3">
@@ -972,14 +992,24 @@ function PreferencesSection() {
         Preferences
       </p>
       <PreferenceChoice
-        label="Palette — kept on this browser"
-        value={theme}
-        columns={3}
-        options={[
-          { key: "light", label: "Light", icon: Sun, onClick: () => setTheme("light") },
-          { key: "dark", label: "Dark", icon: Moon, onClick: () => setTheme("dark") },
-          { key: "glass", label: "Glass", icon: Droplets, onClick: () => setTheme("glass") },
-        ]}
+        label="Theme — each one comes in light and dark"
+        value={parent}
+        options={PARENTS.map((option) => ({
+          key: option.key,
+          label: option.label,
+          icon: PARENT_ICON[option.key],
+          onClick: () => setTheme(choiceOf(option.key, tone)),
+        }))}
+      />
+      <PreferenceChoice
+        label="Tone"
+        value={tone}
+        options={TONES.map((option) => ({
+          key: option.key,
+          label: option.label,
+          icon: TONE_ICON[option.key],
+          onClick: () => setTheme(choiceOf(parent, option.key)),
+        }))}
       />
       <PreferenceChoice
         label="Navigation rail — wide screens"
@@ -1249,8 +1279,8 @@ export function AppBar({
         <button
           type="button"
           onClick={() => setTheme(NEXT_PALETTE[theme])}
-          aria-label={`Switch to the ${PALETTE_LABEL[NEXT_PALETTE[theme]].toLowerCase()} palette`}
-          title={`${PALETTE_LABEL[theme]} palette — click for ${PALETTE_LABEL[
+          aria-label={`Switch to the ${PALETTE_LABEL[NEXT_PALETTE[theme]].toLowerCase()} theme`}
+          title={`${PALETTE_LABEL[theme]} theme — click for ${PALETTE_LABEL[
             NEXT_PALETTE[theme]
           ].toLowerCase()}`}
           className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand-line bg-white text-brand-ink/60 transition hover:bg-brand-sand hover:text-brand-ink"

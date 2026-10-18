@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "prebuild": "node scripts/check-staff-routes.mjs",
+    "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs",
     "build": "next build",
     "check:routes": "node scripts/check-staff-routes.mjs",
+    "check:themes": "node scripts/check-themes.mjs",
     "start": "next start",
     "lint": "eslint"
   },
