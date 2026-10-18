@@ -53,7 +53,7 @@ export const supabaseConfig = {
 } as const;
 
 export const appConfig = {
-  url: optional(process.env.APP_URL, "http://localhost:3000"),
+  url: optional(process.env.APP_URL, "http://localhost:3001"),
   name: "Sharm Dreams Talent Cloud",
   defaultLocale: "en" as const,
 } as const;

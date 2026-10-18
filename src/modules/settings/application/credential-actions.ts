@@ -566,7 +566,7 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
   }
 
   if (definition.id === "openrouter") {
-    headers["HTTP-Referer"] = process.env.APP_URL ?? "http://localhost:3000";
+    headers["HTTP-Referer"] = process.env.APP_URL ?? "http://localhost:3001";
     headers["X-Title"] = "Sharm Dreams Talent Cloud";
   }
 

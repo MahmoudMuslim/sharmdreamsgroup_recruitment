@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { appConfig } from "@/lib/config";
+import { assessmentUrl } from "@/lib/public-url";
 import { getBoolSetting, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import {
@@ -79,8 +79,8 @@ async function loadCandidate(applicationId: string): Promise<Candidate | null> {
 }
 
 /** The sentence both channels put in front of a test link. */
-function startTestLink(accessToken: string): string {
-  return `Start it here: ${appConfig.url}/test/${accessToken}`;
+async function startTestLink(accessToken: string): Promise<string> {
+  return `Start it here: ${await assessmentUrl(accessToken)}`;
 }
 
 /** Same link the WhatsApp path builds, so one template reads correctly on both. */
@@ -375,7 +375,7 @@ export async function notifyAssessmentInvite(input: {
   if (!copy) return { ...report, email: "off", inApp: "off" };
 
   const vars = await buildVars(candidate, "assessment");
-  vars.assessment_link = startTestLink(input.accessToken);
+  vars.assessment_link = await startTestLink(input.accessToken);
 
   const body = renderTemplate(copy.body, vars).trim();
   const subject = renderTemplate(copy.subject, vars).trim();

@@ -103,7 +103,7 @@ async function main() {
   console.log(`  role     : ${role}`);
   console.log(`  tenant   : ${tenantSlug ?? "(group-wide)"}`);
   if (!existing) console.log(`  password : ${password}`);
-  console.log("\nSign in at http://localhost:3000/login");
+  console.log("\nSign in at http://localhost:3001/login");
 }
 
 main().catch((error) => {

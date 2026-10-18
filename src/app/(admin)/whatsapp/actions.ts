@@ -8,7 +8,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { getBoolSetting, getOrganisationTimeZone, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector, missingSmtpFields } from "@/modules/omnichannel/infrastructure/emailConnector";
 import { humanizeStage, renderTemplate, type TemplateVars } from "@/modules/settings/domain/templates";
-import { appConfig } from "@/lib/config";
+import { assessmentUrl } from "@/lib/public-url";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase } from "@/modules/activity/domain/trail";
 import { formatInZone } from "@/lib/timezone";
@@ -678,7 +678,7 @@ async function retryVars(row: {
   const vars: TemplateVars = {
     company_name: await getStringSetting("organisation.name", "Sharm Dreams Group"),
     assessment_link: accessToken
-      ? `${appConfig.url}/test/${accessToken}`
+      ? await assessmentUrl(accessToken)
       : "your candidate portal",
   };
   if (fullName) vars.candidate_name = fullName;
