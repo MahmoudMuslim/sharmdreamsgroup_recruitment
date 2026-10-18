@@ -38,6 +38,12 @@ import {
   X,
 } from "lucide-react";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
+import {
+  GUIDE_HEADINGS,
+  PAGE_GUIDE,
+  routeOf,
+} from "@/modules/shell/domain/pageGuide";
+import type { StaffRoute } from "@/lib/auth/staffRoutes";
 import { LiveBadge, useLive } from "@/modules/live/presentation/Live";
 import { areasFeeding } from "@/lib/live";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
@@ -410,9 +416,58 @@ function SearchField({
 /* Guide                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/** One of the three lists inside a page's guide. */
+function GuideList({
+  heading,
+  items,
+  tone = "plain",
+}: {
+  heading: string;
+  items: readonly string[];
+  tone?: "plain" | "edge";
+}) {
+  return (
+    <div>
+      <p
+        className={cn(
+          "mb-1 text-[10px] font-bold uppercase tracking-[0.16em]",
+          tone === "edge" ? "text-brand-gold-dark" : "text-brand-ink/35"
+        )}
+      >
+        {heading}
+      </p>
+      <ul className="space-y-1">
+        {items.map((line) => (
+          <li key={line} className="flex gap-2 text-[11px] leading-relaxed text-brand-ink/65">
+            <span
+              className={cn(
+                "mt-[7px] h-1 w-1 shrink-0 rounded-full",
+                tone === "edge" ? "bg-brand-gold-dark" : "bg-brand-ink/30"
+              )}
+              aria-hidden
+            />
+            <span>{line}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function GuidePanel({ open }: { open: Panel }) {
   const pathname = usePathname();
   const { watched, everyMs } = useLive();
+
+  /**
+   * Which page the guide is describing. A pick only holds while the address bar
+   * still names the page it was made from, so walking to another screen follows
+   * the portal again rather than leaving a guide open for a page nobody is on.
+   */
+  const here = routeOf(pathname);
+  const [pinned, setPinned] = useState<{ from: string; route: StaffRoute } | null>(null);
+  const shown = pinned && pinned.from === pathname ? pinned.route : here;
+  const guide = shown ? PAGE_GUIDE[shown] : null;
+  const entry = shown ? NAV.find((item) => item.href === shown) : undefined;
 
   /**
    * What the live channel can promise *here*, read from the list that decides
@@ -423,9 +478,70 @@ function GuidePanel({ open }: { open: Panel }) {
   const seconds = everyMs ? Math.round(everyMs / 1000) : null;
 
   return (
-    <PanelShell id="guide" open={open} label="Portal guide">
-      <PanelTitle note="The same table and the same four groups the navigation rail renders, so this list cannot fall behind the portal.">
-        Where everything is
+    <PanelShell id="guide" open={open} label="Portal guide" width="w-[min(94vw,560px)]">
+      <PanelTitle note="Written from each page's own render and actions, so a screen cannot grow a button this guide does not mention.">
+        Guide
+      </PanelTitle>
+
+      {shown && guide && entry && (
+        <section className="rounded-2xl border border-brand-line bg-white p-3 shadow-soft">
+          <div className="flex items-start gap-2.5">
+            <entry.icon className="mt-0.5 h-4 w-4 shrink-0 text-brand-gold-dark" aria-hidden />
+            <div className="min-w-0">
+              <p className="text-sm font-bold leading-tight">
+                {entry.label}
+                <span
+                  className={cn(
+                    "ml-2 text-[10px] font-bold uppercase tracking-wider",
+                    shown === here ? "text-brand-gold-dark" : "text-brand-ink/40"
+                  )}
+                >
+                  {shown === here ? "here now" : "another page"}
+                </span>
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/70">{guide.purpose}</p>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-3">
+            <GuideList heading={GUIDE_HEADINGS.shows} items={guide.shows} />
+            <GuideList heading={GUIDE_HEADINGS.use} items={guide.use} />
+            <GuideList heading={GUIDE_HEADINGS.edges} items={guide.edges} tone="edge" />
+          </div>
+
+          <div className="mt-3 border-t border-brand-line/70 pt-2">
+            {shown === here ? (
+              <p className="text-[11px] leading-relaxed text-brand-ink/45">
+                You are on this page. Pick another below to read its guide without
+                leaving.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Link
+                  href={shown}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-ink px-2.5 py-1.5 text-[11px] font-semibold text-brand-cream transition hover:opacity-90"
+                >
+                  <entry.icon className="h-3.5 w-3.5" aria-hidden />
+                  Open {entry.label}
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setPinned(null)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink/65 transition hover:bg-brand-sand hover:text-brand-ink"
+                >
+                  <BookOpen className="h-3.5 w-3.5" aria-hidden />
+                  Back to where I am
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      <PanelTitle
+        note="The same table the navigation rail renders, so this list cannot fall behind the portal."
+      >
+        <span className="mt-4 block">Every screen — click one to read its guide</span>
       </PanelTitle>
 
       <div className="space-y-3">
@@ -436,27 +552,31 @@ function GuidePanel({ open }: { open: Panel }) {
             </p>
             <div className="space-y-0.5">
               {group.items.map((item) => {
-                const here = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const isHere = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                const reading = shown === item.href;
                 return (
-                  <Link
+                  <button
                     key={item.href}
-                    href={item.href}
+                    type="button"
+                    onClick={() => setPinned({ from: pathname, route: item.href })}
+                    aria-pressed={reading}
                     className={cn(
-                      "flex items-start gap-3 rounded-xl px-2.5 py-2 transition hover:bg-white hover:shadow-soft",
-                      here && "bg-white shadow-soft"
+                      "flex w-full items-start gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-white hover:shadow-soft",
+                      reading && "bg-white shadow-soft",
+                      isHere && !reading && "bg-brand-sand/60"
                     )}
                   >
                     <item.icon
                       className={cn(
                         "mt-0.5 h-4 w-4 shrink-0",
-                        here ? "text-brand-gold-dark" : "text-brand-ink/40"
+                        reading ? "text-brand-gold-dark" : "text-brand-ink/40"
                       )}
                       aria-hidden
                     />
                     <span className="min-w-0">
                       <span className="block text-sm font-semibold leading-tight">
                         {item.label}
-                        {here && (
+                        {isHere && (
                           <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-brand-gold-dark">
                             here now
                           </span>
@@ -466,7 +586,7 @@ function GuidePanel({ open }: { open: Panel }) {
                         {item.hint}
                       </span>
                     </span>
-                  </Link>
+                  </button>
                 );
               })}
             </div>
