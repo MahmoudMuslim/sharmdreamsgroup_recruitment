@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, History, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { Card, EmptyState } from "@/modules/analytics/presentation/ui";
+import { whenLabel } from "@/modules/assistant/presentation/whenLabel";
 import { cn } from "@/lib/utils";
 import { AssistantChat } from "./AssistantChat";
 import {
@@ -24,19 +25,6 @@ import {
  * Selection is a URL (`/assistant?session=<id>`), so a conversation is something
  * you can hand a colleague a link to and land back on from the dock.
  */
-
-function whenLabel(iso: string): string {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-
-  const minutes = Math.round((Date.now() - date.getTime()) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
 
 export function AssistantConsole({ initialSessionId }: { initialSessionId: string | null }) {
   const router = useRouter();

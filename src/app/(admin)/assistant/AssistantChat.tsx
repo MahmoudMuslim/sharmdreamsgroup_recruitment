@@ -9,6 +9,8 @@ import {
   CornerUpLeft,
   ExternalLink,
   FileText,
+  History,
+  Info,
   ListTree,
   Loader2,
   Paperclip,
@@ -22,6 +24,8 @@ import {
 import { cn } from "@/lib/utils";
 import { RichReply } from "@/modules/assistant/presentation/RichReply";
 import { ReplyChart } from "@/modules/assistant/presentation/ReplyChart";
+import { cardsOfTurn } from "@/modules/assistant/presentation/turnCards";
+import { whenLabel } from "@/modules/assistant/presentation/whenLabel";
 import type { AssistantChart } from "@/modules/assistant/domain/charts";
 import type { AssistantLink } from "@/modules/assistant/domain/links";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
@@ -33,21 +37,25 @@ import {
   extractAssistantAttachmentText,
   getAssistantCapabilities,
   getAssistantModelChoices,
+  getAssistantSessions,
   openAssistantSession,
   sendAssistantMessage,
   type AssistantAttachment,
   type AssistantCapability,
   type AssistantModelChoice,
+  type AssistantSessionSummary,
 } from "./actions";
 
 /**
- * The assistant's conversation: transcript, tool-step chips, composer, engine
- * picker and capability list.
+ * The assistant's conversation: transcript, tool-step chips, cards awaiting a
+ * click, composer, engine picker, capability list and — in the dock — the list of
+ * saved conversations.
  *
  * Both doors into the assistant render this — the panel docked to every admin
  * screen, and the full Assistant page with its history rail. The chat itself is
  * the same in each, so an answer cannot read differently depending on where it
- * was asked.
+ * was asked. Only the dock adds the saved-conversations panel, since the page
+ * already carries that list beside the box.
  *
  * The transcript is stored as it is written (`sessionId` names the saved
  * conversation), which is what lets a question asked in the dock be picked up
@@ -189,32 +197,118 @@ function writeDraft(text: string): void {
   }
 }
 
+/** The headline of a failure, kept to one readable line. */
+const MAX_HEADLINE_CHARS = 180;
+
 /**
- * A failure the operator can act on.
+ * What to do next, read off what the server actually reported.
+ *
+ * A guessed instruction sends a recruiter hunting for a settings switch that is
+ * not the problem, so anything unrecognised falls back to the one sentence that
+ * is always true here: a failed turn changed nothing.
+ */
+function nextStepFor(message: string): string {
+  const text = message.toLowerCase();
+  if (text.includes("429") || text.includes("rate") || text.includes("quota")) {
+    return "That provider has spent its allowance for the moment. Pick another model below, or wait a minute and send it again.";
+  }
+  if (
+    text.includes("502") ||
+    text.includes("503") ||
+    text.includes("overload") ||
+    text.includes("unavailable") ||
+    text.includes("timeout")
+  ) {
+    return "That provider is not answering right now. Send it again, or choose a different model below.";
+  }
+  if (text.includes("key") || text.includes("credential") || text.includes("token")) {
+    return "Settings → API keys holds the credential this answer needed — check it is there and verified.";
+  }
+  if (text.includes("model")) {
+    return "Choose another model below, or leave it on default routing, which uses the one named in Settings → AI models.";
+  }
+  if (text.includes("approval")) {
+    return "Nothing has changed. Ask for the same change again and the card goes back up.";
+  }
+  if (text.includes("conversation")) {
+    return "The conversation itself is still stored — try opening it again, or start a new one.";
+  }
+  if (text.includes("ask me something")) {
+    return "Type the question in the box below, then send it.";
+  }
+  return "Nothing was changed by this. Send the question again, or ask for a smaller piece of it.";
+}
+
+/**
+ * A failure the operator can read and act on.
  *
  * The gateway reports every provider hop it tried, which is the right thing for
  * diagnosing an outage and far too much to read in a chat bubble — so the first
- * hop is the summary and the rest sits behind a disclosure.
+ * hop is the headline, the rest sits behind a disclosure, and the line under it
+ * names the next move rather than leaving the panel looking broken.
  */
-function ErrorNote({ message }: { message: string }) {
-  const summary = message.split(" | ")[0];
-  const short = summary.length <= 180 ? summary : `${summary.slice(0, 180)}…`;
-
-  if (message === short) {
-    return (
-      <p role="alert" className="mb-2 text-xs font-semibold leading-relaxed text-rose-700">
-        {message}
-      </p>
-    );
-  }
+function FailureNote({
+  tone = "hard",
+  message,
+  hint,
+  action,
+}: {
+  tone?: "hard" | "soft";
+  message: string;
+  /** Overrides the read-off next step when the caller knows better. */
+  hint?: string;
+  action?: { label: string; run: () => void } | null;
+}) {
+  const hops = message.split(" | ");
+  const headline =
+    hops[0].length <= MAX_HEADLINE_CHARS ? hops[0] : `${hops[0].slice(0, MAX_HEADLINE_CHARS)}…`;
+  const raw = hops.slice(1).join(" | ").trim();
 
   return (
-    <details role="alert" className="mb-2 text-xs font-semibold text-rose-700">
-      <summary className="cursor-pointer leading-relaxed">{short}</summary>
-      <pre className="rail-scroll mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-lg bg-rose-50 p-2 text-[11px] font-medium leading-relaxed">
-        {message}
-      </pre>
-    </details>
+    <div
+      role="alert"
+      className={cn(
+        "mb-2 rounded-xl border p-2.5",
+        tone === "hard" ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"
+      )}
+    >
+      <p
+        className={cn(
+          "flex items-start gap-1.5 text-xs font-bold leading-snug",
+          tone === "hard" ? "text-rose-700" : "text-amber-700"
+        )}
+      >
+        {tone === "hard" ? (
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+        ) : (
+          <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
+        )}
+        <span className="min-w-0">{headline}</span>
+      </p>
+      <p className="mt-1 pl-5 text-[11px] leading-relaxed text-brand-ink/65">{hint ?? nextStepFor(message)}</p>
+
+      {raw && (
+        <details className="mt-1 pl-5">
+          <summary className="cursor-pointer text-[10px] font-semibold text-brand-ink/45">
+            What the server reported
+          </summary>
+          <pre className="rail-scroll mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-lg bg-white/70 p-2 text-[10px] font-medium leading-relaxed text-brand-ink/60">
+            {message}
+          </pre>
+        </details>
+      )}
+
+      {action && (
+        <button
+          type="button"
+          onClick={action.run}
+          className="mt-1.5 ml-5 inline-flex items-center gap-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[10px] font-bold text-brand-ink/65 transition hover:bg-brand-sand"
+        >
+          <CornerUpLeft className="h-3 w-3" aria-hidden />
+          {action.label}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -280,60 +374,72 @@ function StepChips({ steps }: { steps: AssistantStep[] }) {
  * A question the conversation has moved past stays on screen, greyed and marked
  * with what was actually answered, so an old thread reads as a Q&A and not as a
  * list of open tasks.
+ *
+ * `showQuestion` prints the question above the buttons. The bubble normally
+ * carries it, but a turn that asked twice or answered in prose before asking
+ * has no copy of the second question outside this card — and a row of nameless
+ * buttons is the thing that used to look broken.
  */
 function QuestionChoices({
   ask,
+  showQuestion,
   live,
   answered,
   pending,
   onChoose,
 }: {
   ask: AssistantQuestion;
+  showQuestion: boolean;
   live: boolean;
   answered: string | null;
   pending: boolean;
   onChoose: (option: string) => void;
 }) {
   return (
-    <div className="mt-1.5 flex flex-wrap gap-1.5">
-      {ask.options.map((option, index) => {
-        const chosen = answered === option;
-        return (
-          <button
-            key={option}
-            type="button"
-            disabled={!live || pending}
-            onClick={() => onChoose(option)}
-            title={
-              live
-                ? `Answer: ${option}`
-                : answered
-                  ? `Already answered: ${answered}`
-                  : "Answered by a later message — click through the composer instead"
-            }
-            aria-disabled={!live || pending}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-left text-[11px] font-semibold transition",
-              chosen
-                ? "border-brand-gold bg-brand-gold/20 text-brand-ink"
-                : live
-                  ? "border-brand-line bg-white text-brand-ink/75 hover:border-brand-gold hover:bg-brand-gold/10"
-                  : "border-brand-line/60 bg-brand-cream text-brand-ink/40"
-            )}
-          >
-            <span
-              aria-hidden
+    <div className="mt-1.5">
+      {showQuestion && (
+        <p className="mb-1 text-[11px] font-bold leading-snug text-brand-ink">{ask.question}</p>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {ask.options.map((option, index) => {
+          const chosen = answered === option;
+          return (
+            <button
+              key={`${option}-${index}`}
+              type="button"
+              disabled={!live || pending}
+              onClick={() => onChoose(option)}
+              title={
+                live
+                  ? `Answer: ${option}`
+                  : answered
+                    ? `Already answered: ${answered}`
+                    : "Answered by a later message — click through the composer instead"
+              }
+              aria-disabled={!live || pending}
               className={cn(
-                "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
-                chosen ? "bg-brand-gold-dark text-brand-cream" : "bg-brand-sand text-brand-ink/60"
+                "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-left text-[11px] font-semibold transition",
+                chosen
+                  ? "border-brand-gold bg-brand-gold/20 text-brand-ink"
+                  : live
+                    ? "border-brand-line bg-white text-brand-ink/75 hover:border-brand-gold hover:bg-brand-gold/10"
+                    : "border-brand-line/60 bg-brand-cream text-brand-ink/40"
               )}
             >
-              {chosen ? <Check className="h-2.5 w-2.5" aria-hidden /> : index + 1}
-            </span>
-            <span className="min-w-0">{option}</span>
-          </button>
-        );
-      })}
+              <span
+                aria-hidden
+                className={cn(
+                  "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
+                  chosen ? "bg-brand-gold-dark text-brand-cream" : "bg-brand-sand text-brand-ink/60"
+                )}
+              >
+                {chosen ? <Check className="h-2.5 w-2.5" aria-hidden /> : index + 1}
+              </span>
+              <span className="min-w-0">{option}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -344,24 +450,27 @@ function askBubble(ask: AssistantQuestion): string {
 }
 
 /**
- * What a turn ended on, when it ended on a card rather than on an answer: a
- * question for the recruiter to choose from, or a change for them to approve.
- * Walked backwards because an agent can raise both, and the last one is what is
- * still live on the screen.
+ * The notice for a live question that has no buttons.
+ *
+ * It happens for two reasons the recruiter cannot see: `ask_question` refused
+ * the choices it was given, or the model wrote the question into its prose
+ * instead of calling the tool. Either way the panel has nothing to click, and
+ * saying so is the difference between a broken-looking chat and a question to
+ * answer by typing.
  */
-function endingOf(steps: AssistantStep[] | undefined): AssistantStep | null {
-  if (!steps) return null;
-  for (let index = steps.length - 1; index >= 0; index -= 1) {
-    const step = steps[index];
-    if (step.ask || step.approval) return step;
-  }
-  return null;
+function TypedAnswerNote() {
+  return (
+    <p className="mt-1.5 rounded-xl border border-amber-200 bg-amber-50/70 px-2.5 py-1.5 text-[11px] leading-relaxed text-brand-ink/70">
+      <Info className="mr-1 inline h-3 w-3 text-amber-700" aria-hidden />
+      This question has no buttons — the choices the assistant tried to offer were not usable.
+      Answer it in the box below.
+    </p>
+  );
 }
 
 /**
- * The chart this turn earned, walked backwards for the same reason `endingOf`
- * does: a turn can read the metrics more than once, and the last read is the one
- * the answer below it is built on.
+ * The chart this turn earned, walked backwards: a turn can read the metrics more
+ * than once, and the last read is the one the answer below it is built on.
  */
 function chartOf(steps: AssistantStep[] | undefined): AssistantChart | null {
   if (!steps) return null;
@@ -485,11 +594,8 @@ function Capabilities({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      {error && (
-        <p role="alert" className="mt-3 text-xs font-semibold text-rose-700">
-          {error}
-        </p>
-      )}
+      {error && <FailureNote message={error} />}
+
       {!error && tools === null && (
         <p className="mt-4 flex items-center gap-2 text-xs text-brand-ink/50">
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -531,6 +637,146 @@ function Capabilities({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * The saved conversations, inside the docked panel.
+ *
+ * The Assistant page has a rail beside the chat; the panel floats over whatever
+ * screen the recruiter is on and had no way back into a past conversation
+ * except by walking to that page. This is that way: every one of yours, newest
+ * first, with the counts and the engine that answered it.
+ *
+ * Renaming and deleting stay on the page, which has room for those buttons —
+ * the list says so rather than looking like a panel that forgot to offer them.
+ */
+function SessionList({
+  current,
+  onSelect,
+  onClose,
+}: {
+  current: string | null;
+  onSelect: (sessionId: string) => void;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const [sessions, setSessions] = useState<AssistantSessionSummary[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const rows = await getAssistantSessions();
+        if (active) setSessions(rows);
+      } catch {
+        if (active) {
+          setSessions([]);
+          setListError("Your saved conversations could not be loaded.");
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return (
+    <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-display text-sm font-bold">Your conversations</h3>
+          <p className="mt-0.5 text-xs text-brand-ink/55">
+            Pick one to carry it on here, in the panel floating over the screen you are on. Only
+            you see these.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Back to the conversation"
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-brand-line text-brand-ink/60 transition hover:bg-brand-sand"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </div>
+
+      {listError && (
+        <div className="mt-3">
+          <FailureNote
+            message={listError}
+            hint="Nothing was lost — the list simply did not arrive. Close this and open it again."
+          />
+        </div>
+      )}
+      {!listError && sessions === null && (
+        <p className="mt-4 flex items-center gap-2 text-xs text-brand-ink/50">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          Loading…
+        </p>
+      )}
+      {sessions && sessions.length === 0 && !listError && (
+        <p className="mt-4 text-xs leading-relaxed text-brand-ink/55">
+          Nothing saved yet. Ask the assistant something and the conversation appears in this list
+          as soon as it has an answer.
+        </p>
+      )}
+
+      <ul className="mt-4 space-y-1.5">
+        {(sessions ?? []).map((session) => {
+          const isActive = session.id === current;
+          return (
+            <li key={session.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(session.id)}
+                aria-current={isActive ? "true" : undefined}
+                className={cn(
+                  "w-full rounded-xl border px-3 py-2 text-left transition",
+                  isActive
+                    ? "border-brand-gold bg-brand-gold/10"
+                    : "border-brand-line bg-white hover:bg-brand-cream"
+                )}
+              >
+                <p className="flex items-center gap-1.5 text-xs font-bold text-brand-ink">
+                  <span className="min-w-0 truncate">{session.title}</span>
+                  {isActive && (
+                    <Check
+                      className="ml-auto h-3.5 w-3.5 shrink-0 text-brand-gold-dark"
+                      aria-hidden
+                    />
+                  )}
+                </p>
+                <p className="mt-0.5 text-[11px] text-brand-ink/50">
+                  {session.messageCount} message{session.messageCount === 1 ? "" : "s"} ·{" "}
+                  {whenLabel(session.updatedAt)}
+                  {session.engine ? ` · ${session.engine}` : ""}
+                </p>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      {sessions && sessions.length > 0 && (
+        <p className="mt-3 text-[10px] leading-relaxed text-brand-ink/45">
+          Renaming or deleting a conversation happens on the{" "}
+          <button
+            type="button"
+            onClick={() =>
+              router.push(
+                current ? `/assistant?session=${encodeURIComponent(current)}` : "/assistant"
+              )
+            }
+            className="font-bold text-brand-gold-dark underline underline-offset-2"
+          >
+            Assistant page
+          </button>
+          , which has room for those two buttons.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export interface AssistantChatProps {
   /** The saved conversation the transcript is written to, or null for a new one. */
   sessionId: string | null;
@@ -555,6 +801,8 @@ export function AssistantChat({
   /** The approval card being applied, so its button cannot fire twice. */
   const [approving, setApproving] = useState<string | null>(null);
   const [showCapabilities, setShowCapabilities] = useState(false);
+  /** The docked panel's own way back into a saved conversation. */
+  const [showSessions, setShowSessions] = useState(false);
   // The stored preference is applied in the restore effect below: reading it here
   // would make the first client render disagree with the server's, because the
   // server has no localStorage to read.
@@ -805,6 +1053,7 @@ export function AssistantChat({
     setSaveError(null);
     setPending(true);
     setShowCapabilities(false);
+    setShowSessions(false);
 
     try {
       const result = await sendAssistantMessage({
@@ -886,6 +1135,9 @@ export function AssistantChat({
 
   const wide = variant === "page";
 
+  /** The question a failure can put back in the box, newest first. */
+  const lastQuestion = [...messages].reverse().find((message) => message.role === "user") ?? null;
+
   return (
     <>
       <div
@@ -924,9 +1176,38 @@ export function AssistantChat({
           New
         </button>
 
+        {/*
+          The page has a rail beside the chat; the panel floats over someone's
+          work and had no way back into a conversation it saved. Only the dock
+          gets this button — on the page the list would sit twice on screen.
+        */}
+        {variant === "docked" && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowSessions((current) => !current);
+              setShowCapabilities(false);
+            }}
+            aria-label="Your saved conversations"
+            title="Your saved conversations"
+            aria-pressed={showSessions}
+            className={cn(
+              "inline-flex h-7 w-7 items-center justify-center rounded-lg border transition",
+              showSessions
+                ? "border-brand-gold bg-brand-gold/20 text-brand-gold-dark"
+                : "border-brand-line text-brand-ink/60 hover:bg-brand-sand"
+            )}
+          >
+            <History className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
+
         <button
           type="button"
-          onClick={() => setShowCapabilities((current) => !current)}
+          onClick={() => {
+            setShowCapabilities((current) => !current);
+            setShowSessions(false);
+          }}
           aria-label="What can the assistant do?"
           title="What can the assistant do?"
           className="ml-auto inline-flex h-7 w-7 items-center justify-center rounded-lg border border-brand-line text-brand-ink/60 transition hover:bg-brand-sand"
@@ -935,7 +1216,16 @@ export function AssistantChat({
         </button>
       </div>
 
-      {showCapabilities ? (
+      {showSessions ? (
+        <SessionList
+          current={sessionId}
+          onSelect={(id) => {
+            onSessionChange(id);
+            setShowSessions(false);
+          }}
+          onClose={() => setShowSessions(false)}
+        />
+      ) : showCapabilities ? (
         <Capabilities onClose={() => setShowCapabilities(false)} />
       ) : (
         <div
@@ -964,8 +1254,11 @@ export function AssistantChat({
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/45">
                   <Sparkles className="mr-1 inline h-3 w-3 text-brand-gold" aria-hidden />
-                  Every conversation you start here is saved — pick it up from the Assistant page,
-                  or close this panel and carry on where you left off. Anything you have typed but
+                  Every conversation you start here is saved — open an older one from{" "}
+                  {variant === "docked"
+                    ? "the saved-conversations button above"
+                    : "the rail beside this box"}
+                  , or close this panel and carry on where you left off. Anything you have typed but
                   not sent comes back with it, and when a request could mean several records I ask
                   and put the choices under the question for you to click.
                 </p>
@@ -1021,24 +1314,24 @@ export function AssistantChat({
                 );
               }
 
-              // A turn that ended on a card shows the card — a question with its
-              // choices, or a change with its Approve button. The numbered list the
-              // model was fed for a question stays out of the bubble.
-              const ending = endingOf(message.steps);
-              const ask = ending?.ask ?? null;
-              const approval = ending?.approval ?? null;
+              // Every card this turn raised, not only the last — see turnCards.
+              const live = !pending && index === messages.length - 1;
+              const { cards, asks, bubbleAsk, needsTypedAnswer } = cardsOfTurn(
+                message.text,
+                message.steps,
+                live
+              );
               const chart = chartOf(message.steps);
-              const answered = ask
+              const answered = asks.length
                 ? (messages.slice(index + 1).find((entry) => entry.role === "user")?.text ?? null)
                 : null;
-              const live = !pending && index === messages.length - 1;
 
               return (
                 <div key={message.id} className="max-w-[92%]">
                   <StepChips steps={message.steps ?? []} />
                   <div className="rounded-2xl rounded-bl-sm border border-brand-line bg-brand-cream px-3 py-2.5 text-sm leading-relaxed text-brand-ink">
-                    <RichReply text={ask ? askBubble(ask) : message.text} />
-                    {chart && !ask && (
+                    <RichReply text={bubbleAsk ? askBubble(bubbleAsk) : message.text} />
+                    {chart && !bubbleAsk && (
                       <>
                         <ReplyChart chart={chart} className="mt-2.5" />
                         <p className="mt-1.5 text-[10px] leading-snug text-brand-ink/40">
@@ -1048,23 +1341,28 @@ export function AssistantChat({
                       </>
                     )}
                   </div>
-                  {ask && (
-                    <QuestionChoices
-                      ask={ask}
-                      live={live}
-                      answered={answered}
-                      pending={pending}
-                      onChoose={(option) => void send(option)}
-                    />
+                  {cards.map((step, cardIndex) =>
+                    step.ask ? (
+                      <QuestionChoices
+                        key={`${step.tool}-${cardIndex}`}
+                        ask={step.ask}
+                        showQuestion={step.ask !== bubbleAsk}
+                        live={live}
+                        answered={answered}
+                        pending={pending}
+                        onChoose={(option) => void send(option)}
+                      />
+                    ) : step.approval ? (
+                      <ApprovalCard
+                        key={`${step.tool}-${cardIndex}`}
+                        approval={step.approval}
+                        live={live}
+                        busy={approving === step.approval.id}
+                        onApprove={(entry) => void approve(entry)}
+                      />
+                    ) : null
                   )}
-                  {approval && (
-                    <ApprovalCard
-                      approval={approval}
-                      live={live}
-                      busy={approving === approval.id}
-                      onApprove={(entry) => void approve(entry)}
-                    />
-                  )}
+                  {needsTypedAnswer && <TypedAnswerNote />}
                   {message.note && (
                     <p className="mt-1 pl-1 text-[11px] leading-relaxed text-amber-700">
                       {message.note}
@@ -1089,15 +1387,26 @@ export function AssistantChat({
         </div>
       )}
 
-      {!showCapabilities && (
+      {!showCapabilities && !showSessions && (
         <footer className={cn("shrink-0 border-t border-brand-line bg-white", variant === "page" ? "px-6 py-4" : "p-3")}>
           <div className={cn(wide && "mx-auto max-w-3xl")}>
-            {error && <ErrorNote message={error} />}
+            {error && (
+              <FailureNote
+                message={error}
+                action={
+                  lastQuestion
+                    ? { label: "Put my question back in the box", run: () => reuse(lastQuestion) }
+                    : null
+                }
+              />
+            )}
 
             {saveError && (
-              <p className="mb-2 text-[11px] font-semibold leading-relaxed text-amber-700">
-                This answer is not saved to your history: {saveError}
-              </p>
+              <FailureNote
+                tone="soft"
+                message={saveError}
+                hint="The answer above is real — it is only missing from the list you open tomorrow."
+              />
             )}
 
             {attachment && (
@@ -1152,7 +1461,13 @@ export function AssistantChat({
                 )}
               </label>
               {modelListError && (
-                <p className="mt-1 text-[10px] leading-relaxed text-amber-700">{modelListError}</p>
+                <div className="mt-1">
+                  <FailureNote
+                    tone="soft"
+                    message={modelListError}
+                    hint="Leave the choice on default routing and the model named in Settings → AI models answers — that route does not depend on this list."
+                  />
+                </div>
               )}
               {model && (
                 <p className="mt-1 text-[10px] leading-relaxed text-brand-ink/40">
