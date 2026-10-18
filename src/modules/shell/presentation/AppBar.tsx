@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -39,19 +40,25 @@ import {
 } from "lucide-react";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import {
-  GUIDE_HEADINGS,
+  GUIDE_SECTION_LABELS,
+  GUIDE_SECTIONS,
   PAGE_GUIDE,
+  openLists,
   routeOf,
+  searchGuide,
+  type GuideSection,
 } from "@/modules/shell/domain/pageGuide";
 import type { StaffRoute } from "@/lib/auth/staffRoutes";
 import {
+  CHORD_LABEL_MAC,
   CLOSE_KEY,
-  GUIDE_KEYS,
+  GUIDE_KEY_LABEL,
+  HELP_KEY,
   SEARCH_INPUT_ID,
   SEARCH_KEY,
   handleQuickKey,
   isTypingTarget,
-  keyForRoute,
+  keyLabelFor,
 } from "@/modules/shell/domain/quickKeys";
 import { LiveBadge, useLive } from "@/modules/live/presentation/Live";
 import { areasFeeding } from "@/lib/live";
@@ -130,7 +137,7 @@ function BarButton({
       aria-label={badge ? `${label} (${badge})` : label}
       aria-expanded={active}
       aria-haspopup="dialog"
-      aria-keyshortcuts={keyName}
+      aria-keyshortcuts={keyName?.replace("Ctrl", "Control")}
       title={keyName ? `${label} — press ${keyName}` : label}
       className={cn(
         "relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
@@ -164,6 +171,7 @@ function PanelShell({
   open,
   label,
   width = "w-[min(92vw,420px)]",
+  maxHeight = "max-h-[min(72vh,560px)]",
   side = "right",
   children,
 }: {
@@ -171,6 +179,8 @@ function PanelShell({
   open: Panel;
   label: string;
   width?: string;
+  /** The Guide carries a manual beside a list, so it needs more room than a feed. */
+  maxHeight?: string;
   side?: "left" | "right";
   children: React.ReactNode;
 }) {
@@ -180,7 +190,8 @@ function PanelShell({
       id={`appbar-${id}`}
       aria-label={label}
       className={cn(
-        "rail-scroll absolute top-full mt-2 max-h-[min(72vh,560px)] overflow-y-auto overscroll-contain rounded-2xl border border-brand-line bg-brand-cream p-4 shadow-lift",
+        "rail-scroll absolute top-full mt-2 overflow-y-auto overscroll-contain rounded-2xl border border-brand-line bg-brand-cream p-4 shadow-lift",
+        maxHeight,
         width,
         side === "right" ? "right-0" : "left-0",
         open !== id && "hidden"
@@ -440,44 +451,93 @@ function SearchField({
 /* Guide                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** One of the three lists inside a page's guide. */
-function GuideList({
-  heading,
+/**
+ * One list of a page's manual, folded under its heading.
+ *
+ * The count sits on the summary because a heading that hides sixteen sentences is
+ * the difference between a limit a recruiter reads and one they walk past: the
+ * fold is only honest if it says how much it is holding. Which lists start open is
+ * the panel's decision, not this one's — searching the manual opens the lists that
+ * carry the words and leaves the rest shut.
+ */
+function GuideSectionBlock({
+  label,
   items,
+  open,
+  onToggle,
   tone = "plain",
 }: {
-  heading: string;
+  label: string;
   items: readonly string[];
+  open: boolean;
+  onToggle: () => void;
   tone?: "plain" | "edge";
 }) {
+  const pane = useId();
   return (
-    <div>
-      <p
-        className={cn(
-          "mb-1 text-[10px] font-bold uppercase tracking-[0.16em]",
-          tone === "edge" ? "text-brand-gold-dark" : "text-brand-ink/35"
-        )}
+    <div
+      className={cn(
+        "rounded-xl border",
+        tone === "edge" ? "border-brand-gold/40 bg-brand-gold/5" : "border-brand-line bg-white"
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={pane}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition hover:bg-brand-sand/60"
       >
-        {heading}
-      </p>
-      <ul className="space-y-1">
-        {items.map((line) => (
-          <li key={line} className="flex gap-2 text-[11px] leading-relaxed text-brand-ink/65">
-            <span
-              className={cn(
-                "mt-[7px] h-1 w-1 shrink-0 rounded-full",
-                tone === "edge" ? "bg-brand-gold-dark" : "bg-brand-ink/30"
-              )}
-              aria-hidden
-            />
-            <span>{line}</span>
-          </li>
-        ))}
-      </ul>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform",
+            open ? "rotate-0" : "-rotate-90",
+            tone === "edge" ? "text-brand-gold-dark" : "text-brand-ink/40"
+          )}
+          aria-hidden
+        />
+        <span
+          className={cn(
+            "min-w-0 flex-1 text-[10px] font-bold uppercase tracking-[0.16em]",
+            tone === "edge" ? "text-brand-gold-dark" : "text-brand-ink/45"
+          )}
+        >
+          {label}
+        </span>
+        <span className="shrink-0 rounded-md border border-brand-line bg-brand-cream px-1.5 py-0.5 text-[10px] font-bold text-brand-ink/50">
+          {items.length}
+        </span>
+      </button>
+      {open && (
+        <ul id={pane} className="space-y-1 px-2.5 pb-2.5">
+          {items.map((line, index) => (
+            <li key={`${index}-${line}`} className="flex gap-2 text-[11px] leading-relaxed text-brand-ink/65">
+              <span
+                className={cn(
+                  "mt-[7px] h-1 w-1 shrink-0 rounded-full",
+                  tone === "edge" ? "bg-brand-gold-dark" : "bg-brand-ink/30"
+                )}
+                aria-hidden
+              />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
 
+/**
+ * The Guide: the portal's manual, one screen at a time.
+ *
+ * Two panes because one scroll was the complaint — the page you were on, then all
+ * sixteen screens, then the portal's own prose, with some screens holding sixteen
+ * limit bullets. The list is now beside the manual and narrows as you type, so
+ * "where do I re-issue a test link" finds the screen instead of requiring the
+ * reader to already know it. The manual lists fold, each summary printing how many
+ * sentences it is holding, and searching opens the lists carrying the words.
+ */
 function GuidePanel({ open }: { open: Panel }) {
   const pathname = usePathname();
   const { watched, everyMs } = useLive();
@@ -493,6 +553,16 @@ function GuidePanel({ open }: { open: Panel }) {
   const guide = shown ? PAGE_GUIDE[shown] : null;
   const entry = shown ? NAV.find((item) => item.href === shown) : undefined;
 
+  const [typed, setTyped] = useState("");
+  /** One word is one word however it was spaced, and a blank box searches nothing. */
+  const needle = typed.trim();
+  const hits = useMemo(() => searchGuide(needle), [needle]);
+  const hitOf = (route: StaffRoute) => hits.find((hit) => hit.route === route) ?? null;
+  const shownHit = shown ? hitOf(shown) : null;
+
+  // The row the arrow keys are on, so the list can be read without a mouse.
+  const [cursor, setCursor] = useState(0);
+
   /**
    * What the live channel can promise *here*, read from the list that decides
    * reloading. The Guide describing a page it does not refresh is the same
@@ -501,8 +571,83 @@ function GuidePanel({ open }: { open: Panel }) {
   const feeds = areasFeeding(watched, pathname);
   const seconds = everyMs ? Math.round(everyMs / 1000) : null;
 
+  /**
+   * Whether a list of a page's manual is open. Someone toggling one wins over
+   * everything else; the default for the rest is `openLists`, which is the same
+   * rule the probe reads.
+   */
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
+  function isOpen(route: StaffRoute, section: GuideSection): boolean {
+    const key = `${route}:${section}`;
+    if (key in folded) return folded[key] === true;
+    return openLists(needle, hitOf(route)).includes(section);
+  }
+
+  /**
+   * The rows the list shows, in rail order, with the ones the box rules out
+   * removed. A screen stays when every word fits its name or its one-line hint, or
+   * when its manual says them — the second half being exactly what `searchGuide`
+   * answers, so the box never claims to search text it does not read.
+   */
+  const terms = needle.toLowerCase().split(/\s+/).filter(Boolean);
+  const allRows = navSections().flatMap((group) =>
+    group.items.map((item) => ({ group: group.title as string, item }))
+  );
+  const listRows =
+    terms.length === 0
+      ? allRows
+      : allRows.filter(
+          ({ item }) =>
+            terms.every((term) => `${item.label} ${item.hint}`.toLowerCase().includes(term)) ||
+            hitOf(item.href) !== null
+        );
+
+  /** Regrouped for the headings, keeping the rail's order rather than the match score. */
+  const groups: { title: string; rows: typeof listRows }[] = [];
+  for (const row of listRows) {
+    const last = groups[groups.length - 1];
+    if (last && last.title === row.group) last.rows.push(row);
+    else groups.push({ title: row.group, rows: [row] });
+  }
+  const active = Math.min(cursor, Math.max(listRows.length - 1, 0));
+  const rowId = useId();
+  const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  /** Below `lg` the two panes stack, so a pick has to bring the manual back into sight. */
+  const manualRef = useRef<HTMLElement | null>(null);
+
+  function moveCursor(down: boolean) {
+    if (listRows.length === 0) return;
+    const from = Math.min(cursor, listRows.length - 1);
+    const next = down
+      ? (from + 1) % listRows.length
+      : (from - 1 + listRows.length) % listRows.length;
+    setCursor(next);
+    const href = listRows[next]?.item.href;
+    if (href) rowRefs.current[href]?.scrollIntoView({ block: "nearest" });
+  }
+
+  /**
+   * Read one screen's manual. `block: "nearest"` is what keeps this a no-op on a
+   * wide screen, where both panes are already in sight.
+   */
+  function readPage(route: StaffRoute) {
+    setPinned({ from: pathname, route });
+    manualRef.current?.scrollIntoView({ block: "nearest" });
+  }
+
+  function readCursor() {
+    const row = listRows[active];
+    if (row) readPage(row.item.href);
+  }
+
   return (
-    <PanelShell id="guide" open={open} label="Portal guide" width="w-[min(94vw,560px)]">
+    <PanelShell
+      id="guide"
+      open={open}
+      label="Portal guide"
+      width="w-[min(96vw,920px)]"
+      maxHeight="max-h-[min(84vh,680px)]"
+    >
       <PanelTitle note="Written from each page's own render and actions, so a screen cannot grow a button this guide does not mention.">
         Guide
       </PanelTitle>
@@ -510,139 +655,268 @@ function GuidePanel({ open }: { open: Panel }) {
       <Note>
         <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <span className="font-semibold text-brand-ink/70">Keys:</span>
-          <Kbd>{GUIDE_KEYS[0]}</Kbd>
-          <Kbd>{GUIDE_KEYS[1]}</Kbd>
+          <Kbd>{GUIDE_KEY_LABEL}</Kbd>
+          <span>or</span>
+          <Kbd>{HELP_KEY}</Kbd>
           <span>this guide,</span>
           <Kbd>{SEARCH_KEY}</Kbd>
           <span>the search box,</span>
           <Kbd>Esc</Kbd>
-          <span>close it, and one letter per screen — printed on its row below.</span>
+          <span>close a panel, and a screen&apos;s letter under</span>
+          <Kbd>Ctrl+Alt</Kbd>
+          <span>goes straight there — the chord each row prints.</span>
         </span>
         <span className="mt-1 block">
-          A key sleeps while the caret is in a field, and a held Ctrl / Cmd / Alt is
-          left for the browser, so typing a candidate&apos;s name never moves you off
-          the page.
+          On a Mac the chord is {CHORD_LABEL_MAC} instead of Ctrl+Alt. Nothing moves while
+          the caret is in a field, and a letter on its own does nothing at all: the portal
+          only ever takes a key that already has the chord on it, so copy, print, reload
+          and the browser&apos;s own tabs stay the browser&apos;s.
         </span>
       </Note>
 
-      {shown && guide && entry && (
-        <section className="rounded-2xl border border-brand-line bg-white p-3 shadow-soft">
-          <div className="flex items-start gap-2.5">
-            <entry.icon className="mt-0.5 h-4 w-4 shrink-0 text-brand-gold-dark" aria-hidden />
-            <div className="min-w-0">
-              <p className="text-sm font-bold leading-tight">
-                {entry.label}
-                <span
-                  className={cn(
-                    "ml-2 text-[10px] font-bold uppercase tracking-wider",
-                    shown === here ? "text-brand-gold-dark" : "text-brand-ink/40"
-                  )}
-                >
-                  {shown === here ? "here now" : "another page"}
-                </span>
-              </p>
-              <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/70">{guide.purpose}</p>
-            </div>
-          </div>
-
-          <div className="mt-3 space-y-3">
-            <GuideList heading={GUIDE_HEADINGS.shows} items={guide.shows} />
-            <GuideList heading={GUIDE_HEADINGS.use} items={guide.use} />
-            <GuideList heading={GUIDE_HEADINGS.edges} items={guide.edges} tone="edge" />
-          </div>
-
-          <div className="mt-3 border-t border-brand-line/70 pt-2">
-            {shown === here ? (
-              <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-relaxed text-brand-ink/45">
-                <span>You are on this page —</span>
-                <Kbd>{keyForRoute(shown)}</Kbd>
-                <span>opens it from anywhere, and picking another screen below reads its guide without leaving.</span>
-              </p>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  href={shown}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand-ink px-2.5 py-1.5 text-[11px] font-semibold text-brand-cream transition hover:opacity-90"
-                >
-                  <entry.icon className="h-3.5 w-3.5" aria-hidden />
-                  Open {entry.label}
-                </Link>
-                <span className="flex items-center gap-1.5 text-[11px] text-brand-ink/45">
-                  <Kbd>{keyForRoute(shown)}</Kbd>
-                  <span>goes there from anywhere.</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPinned(null)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink/65 transition hover:bg-brand-sand hover:text-brand-ink"
-                >
-                  <BookOpen className="h-3.5 w-3.5" aria-hidden />
-                  Back to where I am
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
-      <PanelTitle
-        note="The same table the navigation rail renders, so this list cannot fall behind the portal."
-      >
-        <span className="mt-4 block">Every screen — click one to read its guide, or press its letter to go there</span>
-      </PanelTitle>
-
-      <div className="space-y-3">
-        {navSections().map((group) => (
-          <div key={group.title}>
-            <p className="mb-1 px-2.5 text-[10px] font-bold uppercase tracking-[0.16em] text-brand-ink/35">
-              {group.title}
-            </p>
-            <div className="space-y-0.5">
-              {group.items.map((item) => {
-                const isHere = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                const reading = shown === item.href;
-                return (
-                  <button
-                    key={item.href}
-                    type="button"
-                    onClick={() => setPinned({ from: pathname, route: item.href })}
-                    aria-pressed={reading}
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
+        {shown && guide && entry && (
+          <section
+          ref={manualRef}
+          className="rail-scroll rounded-2xl border border-brand-line bg-white p-3 shadow-soft lg:col-start-2 lg:row-start-1 lg:max-h-[min(56vh,440px)] lg:overflow-y-auto"
+        >
+            <div className="flex items-start gap-2.5">
+              <entry.icon className="mt-0.5 h-4 w-4 shrink-0 text-brand-gold-dark" aria-hidden />
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-x-2 text-sm font-bold leading-tight">
+                  {entry.label}
+                  <Kbd>{keyLabelFor(shown)}</Kbd>
+                  <span
                     className={cn(
-                      "flex w-full items-start gap-3 rounded-xl px-2.5 py-2 text-left transition hover:bg-white hover:shadow-soft",
-                      reading && "bg-white shadow-soft",
-                      isHere && !reading && "bg-brand-sand/60"
+                      "text-[10px] font-bold uppercase tracking-wider",
+                      shown === here ? "text-brand-gold-dark" : "text-brand-ink/40"
                     )}
                   >
-                    <item.icon
-                      className={cn(
-                        "mt-0.5 h-4 w-4 shrink-0",
-                        reading ? "text-brand-gold-dark" : "text-brand-ink/40"
-                      )}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold leading-tight">
-                        {item.label}
-                        {isHere && (
-                          <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-brand-gold-dark">
-                            here now
-                          </span>
-                        )}
-                      </span>
-                      <span className="block text-[11px] leading-tight text-brand-ink/50">
-                        {item.hint}
-                      </span>
-                    </span>
-                    <Kbd>{keyForRoute(item.href)}</Kbd>
-                  </button>
-                );
-              })}
+                    {shown === here ? "here now" : "another page"}
+                  </span>
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/70">{guide.purpose}</p>
+                {needle && shownHit && (
+                  <p className="mt-1.5 text-[10px] leading-relaxed text-brand-gold-dark">
+                    {shownHit.sentences} sentence{shownHit.sentences === 1 ? "" : "s"} of this
+                    page carry “{needle}”
+                    {shownHit.sections.length > 0 && (
+                      <> — under {shownHit.sections.map((s) => GUIDE_SECTION_LABELS[s].short).join(", ")}.</>
+                    )}
+                    {shownHit.sections.length === 0 && " — in its one-line purpose."}
+                  </p>
+                )}
+              </div>
             </div>
+
+            <div className="mt-3 space-y-2">
+              {GUIDE_SECTIONS.map((section) => (
+                <GuideSectionBlock
+                  key={section}
+                  label={GUIDE_SECTION_LABELS[section].heading}
+                  items={guide[section]}
+                  tone={section === "edges" ? "edge" : "plain"}
+                  open={isOpen(shown, section)}
+                  onToggle={() =>
+                    setFolded((current) => ({
+                      ...current,
+                      [`${shown}:${section}`]: !isOpen(shown, section),
+                    }))
+                  }
+                />
+              ))}
+            </div>
+
+            <div className="mt-3 border-t border-brand-line/70 pt-2">
+              {shown === here ? (
+                <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-relaxed text-brand-ink/45">
+                  <span>You are on this page —</span>
+                  <Kbd>{keyLabelFor(shown)}</Kbd>
+                  <span>opens it from anywhere, and picking another screen in the list reads its guide without leaving.</span>
+                </p>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={shown}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-brand-ink px-2.5 py-1.5 text-[11px] font-semibold text-brand-cream transition hover:opacity-90"
+                  >
+                    <entry.icon className="h-3.5 w-3.5" aria-hidden />
+                    Open {entry.label}
+                  </Link>
+                  <span className="flex items-center gap-1.5 text-[11px] text-brand-ink/45">
+                    <Kbd>{keyLabelFor(shown)}</Kbd>
+                    <span>goes there from anywhere.</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPinned(null)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink/65 transition hover:bg-brand-sand hover:text-brand-ink"
+                  >
+                    <BookOpen className="h-3.5 w-3.5" aria-hidden />
+                    Back to where I am
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        <aside className="rail-scroll rounded-2xl border border-brand-line bg-brand-cream/50 p-3 lg:col-start-1 lg:row-start-1 lg:max-h-[min(56vh,440px)] lg:overflow-y-auto">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand-ink/35">
+            Every screen
+          </p>
+          <div className="relative mt-1.5">
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-brand-ink/40"
+              aria-hidden
+            />
+            <input
+              id={`${rowId}-box`}
+              type="search"
+              value={typed}
+              onChange={(event) => {
+                setTyped(event.target.value);
+                setCursor(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  moveCursor(true);
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  moveCursor(false);
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  readCursor();
+                } else if (event.key === CLOSE_KEY) {
+                  if (typed) {
+                    event.stopPropagation();
+                    setTyped("");
+                    setCursor(0);
+                  } else {
+                    event.currentTarget.blur();
+                  }
+                }
+              }}
+              placeholder="Search the manual"
+              aria-label="Search the guide — every sentence on every screen"
+              aria-controls={`${rowId}-rows`}
+              aria-activedescendant={
+                listRows[active] ? `${rowId}-${listRows[active].item.href}` : undefined
+              }
+              className="w-full rounded-xl border border-brand-line bg-white py-2 pl-8 pr-2.5 text-xs leading-tight placeholder:text-brand-ink/35 focus:border-brand-gold focus:outline-none"
+            />
           </div>
-        ))}
+          <p className="mt-1.5 text-[10px] leading-relaxed text-brand-ink/45">
+            {terms.length === 0 ? (
+              <>
+                {allRows.length} screens, in the order the rail lists them. Type a word and the
+                box reads each page&rsquo;s whole manual, not only its name.{" "}
+                <Kbd>↑</Kbd> <Kbd>↓</Kbd> walk the list, <Kbd>Enter</Kbd> reads the screen it is
+                standing on.
+              </>
+            ) : (
+              <>
+                {listRows.length} of {allRows.length} screens say “{needle}”.{" "}
+                <Kbd>↑</Kbd> <Kbd>↓</Kbd> <Kbd>Enter</Kbd> to read one, <Kbd>Esc</Kbd> to
+                empty the box and again to close the guide.
+              </>
+            )}
+          </p>
+
+          {listRows.length === 0 ? (
+            <p className="mt-2 rounded-xl border border-brand-line bg-white px-3 py-2.5 text-[11px] leading-relaxed text-brand-ink/55">
+              No page in this guide uses “{needle}”. Try a word off the screen itself — a button
+              label, or the thing that page refuses to do.
+            </p>
+          ) : (
+            <div
+              id={`${rowId}-rows`}
+              role="listbox"
+              aria-label="Portal screens"
+              className="mt-2 space-y-2.5"
+            >
+              {groups.map((group) => (
+                <div key={group.title} role="group" aria-label={group.title}>
+                  <p className="mb-1 px-1 text-[10px] font-bold uppercase tracking-[0.16em] text-brand-ink/35">
+                    {group.title}
+                  </p>
+                  <div className="space-y-0.5">
+                    {group.rows.map(({ item }) => {
+                      const isHere =
+                        pathname === item.href || pathname.startsWith(`${item.href}/`);
+                      const reading = shown === item.href;
+                      const onCursor = listRows[active]?.item.href === item.href;
+                      const hit = hitOf(item.href);
+                      const inLabelOrHint = terms.every((term) =>
+                        `${item.label} ${item.hint}`.toLowerCase().includes(term)
+                      );
+                      return (
+                        <button
+                          key={item.href}
+                          id={`${rowId}-${item.href}`}
+                          ref={(node) => {
+                            rowRefs.current[item.href] = node;
+                          }}
+                          type="button"
+                          role="option"
+                          aria-selected={onCursor}
+                          onClick={() => readPage(item.href)}
+                          className={cn(
+                            "flex w-full items-start gap-2 rounded-xl px-2 py-1.5 text-left transition hover:bg-white hover:shadow-soft",
+                            reading && "bg-white shadow-soft",
+                            onCursor && "ring-1 ring-brand-gold",
+                            isHere && !reading && "bg-brand-sand/60"
+                          )}
+                        >
+                          <item.icon
+                            className={cn(
+                              "mt-0.5 h-4 w-4 shrink-0",
+                              reading ? "text-brand-gold-dark" : "text-brand-ink/40"
+                            )}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-semibold leading-tight">
+                              {item.label}
+                              {isHere && (
+                                <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wider text-brand-gold-dark">
+                                  here
+                                </span>
+                              )}
+                            </span>
+                            <span className="block text-[10px] leading-tight text-brand-ink/50">
+                              {item.hint}
+                            </span>
+                            {hit && !inLabelOrHint && (
+                              <span className="mt-0.5 block text-[9px] font-semibold leading-tight text-brand-gold-dark">
+                                {hit.sentences} sentence
+                                {hit.sentences === 1 ? "" : "s"} in its guide
+                                {hit.sections.length > 0
+                                  ? ` — ${hit.sections
+                                      .map((s) => GUIDE_SECTION_LABELS[s].short)
+                                      .join(", ")}`
+                                  : " — its one-line purpose"}
+                              </span>
+                            )}
+                          </span>
+                          <Kbd>{keyLabelFor(item.href)}</Kbd>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </aside>
       </div>
 
-      <div className="mt-4 border-t border-brand-line pt-3">
+      <details className="mt-3 border-t border-brand-line pt-2">
+        <summary className="cursor-pointer select-none text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/45 transition hover:text-brand-ink/70">
+          How the portal itself works
+        </summary>
+        <div className="mt-2">
         <p className="text-[11px] leading-relaxed text-brand-ink/55">
           A candidate moves New → AI screening → Assessment → Interview → Offer →
           Hired, or out to Rejected. Screening, scoring and feedback are
@@ -700,7 +974,8 @@ function GuidePanel({ open }: { open: Panel }) {
           until it is applied; every other screen here reads tables that are
           already live.
         </p>
-      </div>
+        </div>
+      </details>
     </PanelShell>
   );
 }
@@ -1407,10 +1682,19 @@ export function AppBar({
   }, [panel]);
 
   /**
-   * Quick keys: `g` or `?` opens this Guide, `/` drops the caret into the search
-   * box, and one letter per admin page goes straight there.
+   * Quick keys: `Ctrl+Alt+G` or `?` opens this Guide, `/` drops the caret into
+   * the search box, and `Ctrl+Alt` plus one letter per admin page goes straight
+   * there.
    *
-   * The bindings and the letters printed on the Guide's rows come from the same
+   * The chord is `Ctrl+Alt` rather than the plain `Ctrl` the request named
+   * because the browser already owns every plain `Ctrl+letter` that matters
+   * here — copy, print, reload, a new tab, find — and a portal that swallowed
+   * them would be the app that broke the keyboard. `event.code` travels with the
+   * stroke so an AltGr layout still lands on the letter the row printed, and
+   * `event.shiftKey` is read because `Ctrl+Alt+Shift+letter` is somebody else's
+   * shortcut.
+   *
+   * The bindings and the chords printed on the Guide's rows come from the same
    * table, so a key cannot exist on screen that the bar does not answer to — or
    * the other way round, which is the version that makes a manual wrong. The rule
    * itself lives in `domain/quickKeys`, which decides from the keystroke alone;
@@ -1421,10 +1705,12 @@ export function AppBar({
       const consumed = handleQuickKey(
         {
           key: event.key,
+          code: event.code,
           typing: isTypingTarget(event.target),
           ctrlKey: event.ctrlKey,
           metaKey: event.metaKey,
           altKey: event.altKey,
+          shiftKey: event.shiftKey,
         },
         {
           toggleGuide: () => setPanel((current) => (current === "guide" ? null : "guide")),
@@ -1473,7 +1759,7 @@ export function AppBar({
           label="Guide"
           active={panel === "guide"}
           onClick={() => toggle("guide")}
-          keyName={GUIDE_KEYS[0]}
+          keyName={GUIDE_KEY_LABEL}
         >
           <BookOpen className="h-4 w-4" aria-hidden />
         </BarButton>

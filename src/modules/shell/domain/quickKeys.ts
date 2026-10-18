@@ -11,9 +11,15 @@ import type { StaffRoute } from "@/lib/auth/staffRoutes";
  * would quietly send one of the two pages nowhere and the compiler would have
  * nothing to say about it.
  *
- * The letters are only half the feature: every one of them is printed on its row
- * in the Guide panel, so a shortcut a recruiter has never seen is a shortcut they
- * can find without leaving the page they are on.
+ * Every letter wears a chord: the bar only acts on Ctrl+Alt (⌘+⌥ on a Mac) plus
+ * the letter, never on the letter alone. A bare letter jumping pages was always
+ * one careless keystroke away from moving a recruiter off the screen they were
+ * filling in, and a plain Ctrl+letter chord was never on offer at all — the
+ * browser owns those: Ctrl+C is copy, Ctrl+W closes the tab, Ctrl+R reloads,
+ * Ctrl+P prints, Ctrl+T is a new tab and Ctrl+F is the page's own find. Binding
+ * a page to any of them would have meant swallowing the keystroke the person
+ * meant. So the letters stay exactly as they are, and the chord is what says
+ * "this one is for the portal".
  */
 const KEY_TO_ROUTE = {
   d: "/dashboard",
@@ -49,13 +55,38 @@ const ROUTE_TO_KEY = Object.fromEntries(
   Object.entries(KEY_TO_ROUTE).map(([key, route]) => [route, key])
 ) as Record<StaffRoute, QuickKey>;
 
-/** `?` is the help key a visitor reaches for first; `g` is the faster one. */
-export const GUIDE_KEYS = ["g", "?"] as const;
+/**
+ * The chord, spelled the way a recruiter reads it. The key chips print it, the
+ * bar's tooltip prints it, and `aria-keyshortcuts` is that same string with the
+ * modifier spelled out, so the chip, the tooltip, the attribute and the handler
+ * are one table and cannot disagree.
+ */
+export const CHORD_LABEL = "Ctrl+Alt";
+
+/** The chord's Mac spelling, named once because the panel has to say it out loud. */
+export const CHORD_LABEL_MAC = "⌘+⌥";
+
+/** `g` opens the Guide under the chord; `?` still does it bare, being punctuation. */
+const GUIDE_LETTER = "g";
+export const GUIDE_KEY_LABEL = `${CHORD_LABEL}+G`;
+export const HELP_KEY = "?";
+
+/** `/` is bare too, and is the one key that has always belonged to a search box. */
 export const SEARCH_KEY = "/";
 export const CLOSE_KEY = "Escape";
 
 /** The search box the `/` key focuses. One id, shared by the box and the key. */
 export const SEARCH_INPUT_ID = "global-search";
+
+/** A bound letter with its chord on, spelled for a key chip. */
+export function keyLabel(key: QuickKey): string {
+  return `${CHORD_LABEL}+${key.toUpperCase()}`;
+}
+
+/** The chip for a page: what the row prints and what the bar actually answers to. */
+export function keyLabelFor(route: StaffRoute): string {
+  return keyLabel(ROUTE_TO_KEY[route]);
+}
 
 type QuickAction =
   | { kind: "guide" }
@@ -63,25 +94,52 @@ type QuickAction =
   | { kind: "goto"; route: StaffRoute };
 
 /**
+ * The letter a stroke names.
+ *
+ * `code` is read first because Ctrl+Alt is AltGr on many layouts, which changes
+ * `key` without changing the physical key — so the chord still means the row the
+ * recruiter is looking at. With no code, `key` decides, case-folded.
+ */
+function letterOf(stroke: { key: string; code?: string }): string {
+  const physical = /^Key([A-Z])$/.exec(stroke.code ?? "");
+  if (physical) return physical[1].toLowerCase();
+  return stroke.key.length === 1 ? stroke.key.toLowerCase() : "";
+}
+
+/**
  * What a keystroke means, or nothing at all.
  *
- * Every shortcut sleeps while a field has the caret — typing a `c` into a search,
- * a filter box or a name field is the letter, not a jump to Candidates. A held
- * Ctrl/Cmd/Alt is somebody else's shortcut and is left alone, so browser and
- * extension chords (Ctrl+T, Cmd+R, Alt+D) still do what the browser expects.
- * Shift is not ignored: it is how `?` is typed.
+ * Three rules, in this order: a field keeps every keystroke it is given, so
+ * typing a candidate's name — or an AltGr character — never moves anyone and the
+ * chord is no exception; a bare letter does nothing, only `?` and `/` answer
+ * without a modifier; and a letter the portal binds only counts when Ctrl (or
+ * ⌘) and Alt are both on it, with Shift off so Ctrl+Alt+⇧ chords stay unbound.
+ * Everything the browser asked for that the portal does not take is left
+ * untouched, which is what keeps copy, print, reload and its own tabs working.
  */
 function planKey(stroke: {
   key: string;
+  code?: string;
   typing: boolean;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
+  shiftKey?: boolean;
 }): QuickAction | null {
-  if (stroke.typing || stroke.ctrlKey || stroke.metaKey || stroke.altKey) return null;
-  if ((GUIDE_KEYS as readonly string[]).includes(stroke.key)) return { kind: "guide" };
-  if (stroke.key === SEARCH_KEY) return { kind: "search" };
-  const route = routeForKey(stroke.key);
+  if (stroke.typing) return null;
+
+  const control = stroke.ctrlKey || stroke.metaKey;
+  if (!control && !stroke.altKey) {
+    if (stroke.key === HELP_KEY) return { kind: "guide" };
+    if (stroke.key === SEARCH_KEY) return { kind: "search" };
+    return null;
+  }
+
+  if (!control || !stroke.altKey || stroke.shiftKey) return null;
+
+  const letter = letterOf(stroke);
+  if (letter === GUIDE_LETTER) return { kind: "guide" };
+  const route = routeForKey(letter);
   return route ? { kind: "goto", route } : null;
 }
 
@@ -96,10 +154,11 @@ export type QuickSink = {
  * Run one keystroke through the rule and out to the bar.
  *
  * Returns whether the key was consumed: the caller only calls `preventDefault()`
- * on a key it actually took, which is what leaves the browser's own chords working.
- * Keeping the whole decision here — not inside a `useEffect` — is what lets a
- * plain Node probe press every key in the table and read back what the portal
- * would do, without a signed-in session.
+ * on a key it actually took, which is what leaves the browser's own chords
+ * working. Keeping the whole decision here — not inside a `useEffect` — is what
+ * lets a plain Node probe press all sixteen chords, every bare letter and every
+ * plain Ctrl+letter and read back what the portal would do, without a signed-in
+ * session.
  */
 export function handleQuickKey(
   stroke: Parameters<typeof planKey>[0],
@@ -117,10 +176,6 @@ export function handleQuickKey(
 export function routeForKey(key: string): StaffRoute | null {
   const letter = key.toLowerCase();
   return (KEY_TO_ROUTE as Record<string, StaffRoute>)[letter] ?? null;
-}
-
-export function keyForRoute(route: StaffRoute): QuickKey {
-  return ROUTE_TO_KEY[route];
 }
 
 /** Whether the caret is in something the recruiter is writing into. */

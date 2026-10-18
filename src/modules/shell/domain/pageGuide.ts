@@ -367,6 +367,89 @@ export const GUIDE_HEADINGS = {
   edges: "What it refuses, and its limits",
 } as const;
 
+/** The lists of a manual, in the order the panel prints them. */
+export const GUIDE_SECTIONS = ["shows", "use", "edges"] as const;
+
+export type GuideSection = (typeof GUIDE_SECTIONS)[number];
+
+/** The heading a section prints, with the short name the panel folds it under. */
+export const GUIDE_SECTION_LABELS: Record<GuideSection, { heading: string; short: string }> = {
+  shows: { heading: GUIDE_HEADINGS.shows, short: "what it shows" },
+  use: { heading: GUIDE_HEADINGS.use, short: "how to use it" },
+  edges: { heading: GUIDE_HEADINGS.edges, short: "its limits" },
+};
+
+export interface GuideHit {
+  route: StaffRoute;
+  /** The lists carrying at least one typed word — not every list of the page. */
+  sections: GuideSection[];
+  /** How many of its sentences carry one, which is what orders the results. */
+  sentences: number;
+}
+
+/**
+ * Which of a page's three lists start open.
+ *
+ * The panel keeps one exception to this — a list someone folded or opened by hand
+ * stays as they left it — and everything else comes from here: nothing typed means
+ * the manual is read straight through, and a search opens the lists that carry the
+ * words. A hit whose words sit only in the one-line purpose has no list to name, so
+ * all three stay open rather than the pane showing three folded headings with
+ * nothing inside.
+ */
+export function openLists(needle: string, hit: GuideHit | null): readonly GuideSection[] {
+  if (!needle) return GUIDE_SECTIONS;
+  if (!hit || hit.sections.length === 0) return GUIDE_SECTIONS;
+  return hit.sections;
+}
+
+/**
+ * Which screens the manual can answer for, given what was typed.
+ *
+ * A screen is a hit only when every word appears somewhere in its own text — the
+ * one-line purpose or any bullet — so "re-issue link" narrows the list instead of
+ * drowning it. The sections are reported separately because the panel opens the
+ * lists that matched and leaves the rest folded: naming a list that says nothing
+ * about the words would send a recruiter reading the wrong heading.
+ *
+ * Case and spacing are ignored; nothing is stemmed, and the box says so rather
+ * than promising fuzzy matching it does not do.
+ */
+export function searchGuide(query: string): GuideHit[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+
+  const hits: GuideHit[] = [];
+  for (const route of STAFF_ROUTES) {
+    const guide = PAGE_GUIDE[route];
+    const sections: GuideSection[] = [];
+    let sentences = 0;
+
+    const purpose = guide.purpose.toLowerCase();
+    if (terms.some((term) => purpose.includes(term))) sentences += 1;
+
+    for (const section of GUIDE_SECTIONS) {
+      let carried = false;
+      for (const line of guide[section]) {
+        const text = line.toLowerCase();
+        if (!terms.some((term) => text.includes(term))) continue;
+        carried = true;
+        sentences += 1;
+      }
+      if (carried) sections.push(section);
+    }
+
+    const whole = [guide.purpose, ...guide.shows, ...guide.use, ...guide.edges]
+      .join("\n")
+      .toLowerCase();
+    if (terms.every((term) => whole.includes(term))) {
+      hits.push({ route, sections, sentences });
+    }
+  }
+
+  return hits.sort((a, b) => b.sentences - a.sentences);
+}
+
 /**
  * Which of the sixteen staff pages a pathname is on, longest prefix first.
  *
