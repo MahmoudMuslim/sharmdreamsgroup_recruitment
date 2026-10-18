@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FileText,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import { Badge, Button, EmptyState, Meter } from "@/modules/analytics/presentation/ui";
@@ -16,6 +17,7 @@ import { FormMessage, TextArea } from "@/modules/analytics/presentation/Form";
 import { humanizeStage } from "@/modules/settings/domain/templates";
 import { PIPELINE_STAGES as STAGES } from "@/modules/candidates/domain/listFilters";
 import {
+  draftRejectionReason,
   updateApplicationStage,
   type PipelineStage,
 } from "@/app/(admin)/candidates/candidate-actions";
@@ -73,6 +75,7 @@ function StageDecisions({
   const [pending, setPending] = useState<PipelineStage | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -131,6 +134,32 @@ function StageDecisions({
     }
   }
 
+  /**
+   * Fills the textarea from the applicant's own file.
+   *
+   * The same writer the candidates table uses, so a draft drafted from the
+   * opening's side reads the same screening score and answers as the profile
+   * drawer does, and neither one saves anything until Confirm is pressed.
+   */
+  async function draftReason() {
+    setDrafting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await draftRejectionReason(applicant.id);
+      if (result.ok && result.reason) {
+        setReason(result.reason);
+        setNotice("Drafted from this applicant’s file. Edit it before rejecting — nothing is saved yet.");
+      } else {
+        setError(result.error ?? "No reason could be drafted.");
+      }
+    } catch {
+      setError("The portal did not answer, so no reason was drafted.");
+    } finally {
+      setDrafting(false);
+    }
+  }
+
   return (
     <section>
       <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
@@ -172,15 +201,28 @@ function StageDecisions({
           </label>
           <TextArea
             id={`reject-${applicant.id}`}
-            rows={2}
+            rows={3}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="Why is this applicant not moving forward? It is shown on their profile."
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={pending !== null} onClick={() => void confirmReject()}>
               {pending === "REJECTED" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : null}
               Reject
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={drafting || pending !== null}
+              onClick={() => void draftReason()}
+            >
+              {drafting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Draft from file
             </Button>
             <Button
               size="sm"

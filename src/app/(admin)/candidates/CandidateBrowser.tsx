@@ -43,6 +43,7 @@ import {
 } from "@/modules/candidates/domain/listFilters";
 import {
   draftCandidateFeedback,
+  draftRejectionReason,
   screenApplication,
   sendBulkEmail,
   sendBulkWhatsApp,
@@ -1047,6 +1048,7 @@ function ProfileDrawer({
   const [pendingStage, setPendingStage] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [reasonDrafting, setReasonDrafting] = useState(false);
   const [screenPending, setScreenPending] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState(false);
   const [sendPending, setSendPending] = useState(false);
@@ -1130,6 +1132,33 @@ function ProfileDrawer({
       setError("Something went wrong rejecting the candidate.");
     } finally {
       setPendingStage(null);
+    }
+  }
+
+  /**
+   * Writes the model's reason into the textarea, replacing what is there.
+   *
+   * Overwrite is the honest behaviour for a button labelled "draft": a partially
+   * typed reason is the recruiter's own words and they are about to read the
+   * machine's beside the Confirm button, not have them silently merged.
+   */
+  async function draftReason() {
+    if (!candidate) return;
+    setReasonDrafting(true);
+    setError(null);
+    setDone(null);
+    try {
+      const result = await draftRejectionReason(candidate.id);
+      if (result.ok && result.reason) {
+        setRejectReason(result.reason);
+        setDone("Drafted from this file's evidence. Read it and edit before confirming — nothing is saved yet.");
+      } else {
+        setError(result.error ?? "Could not draft a reason.");
+      }
+    } catch {
+      setError("The portal did not answer, so no reason was drafted.");
+    } finally {
+      setReasonDrafting(false);
     }
   }
 
@@ -1325,14 +1354,19 @@ function ProfileDrawer({
                     <label htmlFor="reject-reason" className="block text-xs font-bold text-rose-900">
                       Rejection reason
                     </label>
+                    <p className="text-[11px] leading-relaxed text-rose-900/70">
+                      For the file: this note shows on the candidate profile and in the reports export.
+                      The letter the candidate receives is written from Settings → Notifications and
+                      does not use it.
+                    </p>
                     <TextArea
                       id="reject-reason"
-                      rows={2}
+                      rows={3}
                       value={rejectReason}
                       onChange={(e) => setRejectReason(e.target.value)}
                       placeholder="Why is this candidate not moving forward?"
                     />
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         onClick={() => void confirmReject()}
@@ -1343,6 +1377,18 @@ function ProfileDrawer({
                           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                         )}
                         Confirm rejection
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void draftReason()}
+                        disabled={reasonDrafting || pendingStage !== null}
+                      >
+                        {reasonDrafting && (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                        )}
+                        {!reasonDrafting && <Sparkles className="h-3.5 w-3.5" aria-hidden />}
+                        Draft from file
                       </Button>
                       <Button
                         variant="outline"

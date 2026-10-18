@@ -7,7 +7,9 @@ import { getBoolSetting, getNumberSetting } from "@/modules/settings/infrastruct
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import { humanizeStage } from "@/modules/settings/domain/templates";
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
+import { TruncatedJsonResponseError } from "@/modules/screening/infrastructure/aiGateway";
 import {
+  draftRejectionReason,
   generateCandidateFeedback,
   screenCandidateCv,
 } from "@/modules/screening/infrastructure/openRouterEngine";
@@ -325,6 +327,135 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
 export interface FeedbackOutcome {
   ok: boolean;
   error?: string;
+}
+
+export interface RejectionReasonOutcome {
+  ok: boolean;
+  error?: string;
+  /** The drafted wording, which the recruiter edits before the stage move stores it. */
+  reason?: string;
+}
+
+/**
+ * Drafts a rejection reason from what is already on the application.
+ *
+ * Deliberately returns text and writes nothing: the reason is a decision a human
+ * owns, so it lands in the reject panel's textarea and only reaches
+ * `applications.rejection_reason` when the recruiter confirms the stage move.
+ * That is also why no trail row is written here — an unsent draft changed no row.
+ *
+ * A refusal is a real answer, not a fallback sentence. With no screening score,
+ * no graded attempt and no failed application question there is no evidence to
+ * name, and a model asked to explain the rejection anyway would produce a
+ * plausible fabrication for a real person's file.
+ */
+export async function draftRejectionReasonForApplication(
+  applicationId: string
+): Promise<RejectionReasonOutcome> {
+  if (!hasAiProvider()) {
+    return { ok: false, error: "No AI provider key is configured, so nothing can be drafted." };
+  }
+
+  const { aiEnabled } = await getAiAutomationSettings();
+  if (!aiEnabled) {
+    return { ok: false, error: "AI features are switched off in Settings → Platform." };
+  }
+
+  const supabase = getSupabaseServiceClient();
+  const { data } = await supabase
+    .from("applications")
+    .select(
+      "id, stage, job_openings(title), ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, gate_answers, candidate_attempts(total_score, max_score)"
+    )
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (!data) return { ok: false, error: "Application not found." };
+
+  const application = data as unknown as {
+    stage: string;
+    job_openings?: { title?: string } | { title?: string }[] | null;
+    ai_match_score: number | null;
+    ai_screening_summary: string | null;
+    ai_strengths: unknown;
+    ai_gaps: unknown;
+    gate_answers: unknown;
+    candidate_attempts?:
+      | { total_score: number | null; max_score: number | null }
+      | { total_score: number | null; max_score: number | null }[]
+      | null;
+  };
+
+  const job = Array.isArray(application.job_openings)
+    ? application.job_openings[0]
+    : application.job_openings;
+  const attempt = Array.isArray(application.candidate_attempts)
+    ? application.candidate_attempts[0]
+    : application.candidate_attempts;
+
+  const assessmentScore =
+    attempt?.total_score !== null &&
+    attempt?.total_score !== undefined &&
+    attempt.max_score
+      ? Math.round((attempt.total_score / attempt.max_score) * 100)
+      : null;
+
+  const gateFailures = gateFailureLines(application.gate_answers);
+
+  if (application.ai_match_score === null && assessmentScore === null && gateFailures.length === 0) {
+    return {
+      ok: false,
+      error:
+        "There is nothing on this file for a reason to be drafted from — no AI screening score, no graded assessment and no failed application question. Write the reason yourself.",
+    };
+  }
+
+  let drafted: { reason: string; model: string };
+  try {
+    drafted = await draftRejectionReason({
+      jobTitle: job?.title ?? "the role",
+      stage: application.stage,
+      cvScore: application.ai_match_score === null ? null : Number(application.ai_match_score),
+      screeningSummary: application.ai_screening_summary ?? "",
+      strengths: asStringList(application.ai_strengths),
+      gaps: asStringList(application.ai_gaps),
+      assessmentScore,
+      gateFailures,
+    });
+  } catch (cause) {
+    if (cause instanceof TruncatedJsonResponseError) {
+      return {
+        ok: false,
+        error: "The model was cut off before it finished the reason, so nothing was drafted. Try again.",
+      };
+    }
+    const detail = cause instanceof Error ? cause.message : "Unknown model error";
+    return { ok: false, error: `Draft failed: ${detail.slice(0, 200)}` };
+  }
+
+  return { ok: true, reason: drafted.reason };
+}
+
+/**
+ * The application-question failures on the row, in the words the gate desk uses.
+ *
+ * `gate_answers` is the full answer set, including the ones that passed, so the
+ * drafted reason must not claim a candidate failed a question they answered
+ * correctly. Anything malformed in the JSON column is ignored rather than
+ * quoted — a reason must not inherit text the stored shape never authorised.
+ */
+function gateFailureLines(raw: unknown): { question: string; answer: string }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { question: string; answer: string }[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const line = entry as { question?: unknown; answer?: unknown; passed?: unknown };
+    if (line.passed !== false) continue;
+    const question = typeof line.question === "string" ? line.question.trim() : "";
+    const answer = typeof line.answer === "string" ? line.answer.trim() : "";
+    if (question && answer) out.push({ question: question.slice(0, 200), answer: answer.slice(0, 200) });
+  }
+  return out;
 }
 
 /**

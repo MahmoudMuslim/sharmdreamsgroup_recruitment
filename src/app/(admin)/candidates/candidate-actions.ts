@@ -23,6 +23,7 @@ import { HIREABLE_STATUSES, PICKER_LIMIT } from "@/modules/jobs/domain/hireable"
 import { requireHireableOpening } from "@/modules/jobs/infrastructure/hireableOpening";
 import { notifyStageChange, sendCandidateFeedbackLetter } from "@/modules/omnichannel/application/candidate-notifications";
 import {
+  draftRejectionReasonForApplication,
   generateFeedbackForApplication,
   screenApplicationById,
 } from "@/modules/screening/application/screen-application";
@@ -513,6 +514,32 @@ export async function draftCandidateFeedback(applicationId: string): Promise<Scr
   }
 
   return generateFeedbackForApplication(applicationId);
+}
+
+export interface RejectionReasonResult {
+  ok: boolean;
+  error?: string;
+  reason?: string;
+}
+
+/**
+ * Puts a drafted rejection reason in the reject panel's textarea.
+ *
+ * Returns text only. The reason reaches `applications.rejection_reason` through
+ * `updateApplicationStage`, so the same rule applies whatever the model wrote:
+ * rejecting needs a reason a recruiter chose, the trail row records the human
+ * move, and the candidate is told on the channels Settings allows.
+ */
+export async function draftRejectionReason(
+  applicationId: string
+): Promise<RejectionReasonResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+
+  return draftRejectionReasonForApplication(applicationId);
 }
 
 export interface SendFeedbackResult {

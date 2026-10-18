@@ -651,7 +651,8 @@ function GuidePanel({ open }: { open: Panel }) {
           a screened score at or above the auto-advance threshold (75% as
           shipped) moves an application nobody has touched yet to Assessment,
           and one below the auto-reject threshold (40%) closes it, storing that
-          score and summary as the rejection reason the candidate sees. Set
+          score and summary as the rejection reason on the candidate&rsquo;s
+          profile. Set
           either to 0 and that side stops.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">

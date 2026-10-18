@@ -113,7 +113,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         kind: "number",
         key: "ai.match_threshold_reject",
         label: "Auto-reject threshold",
-        help: "A screened score below this closes the application and stores the score and summary as the rejection reason the candidate sees. Queues the notification for applications nobody has touched yet; 0 switches it off.",
+        help: "A screened score below this closes the application and stores the score and summary as the rejection reason on the candidate's profile. The candidate is told the outcome, never this wording — the letters they receive come from the notification templates. Queues the notification for applications nobody has touched yet; 0 switches it off.",
         min: 0,
         max: 100,
         unit: "%",
