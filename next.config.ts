@@ -30,6 +30,26 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  /**
+   * The wordmark in every header is a `public/` file, and Next serves those with
+   * `max-age=0` plus an ETag — so each page view pays a conditional request for
+   * an image that only changes when the code is deployed. A day of freshness with
+   * a week of background revalidation keeps the asset honest to its own deploy
+   * while taking that round trip off the critical path.
+   */
+  async headers() {
+    return [
+      {
+        source: "/:file(sdg-icon\\.png|favicon-32\\.png|apple-touch-icon\\.png)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, stale-while-revalidate=604800",
+          },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

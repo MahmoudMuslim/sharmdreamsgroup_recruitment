@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 import {
   CheckCircle2,
@@ -17,7 +18,6 @@ import {
   type IntegrityEventInput,
 } from "@/modules/assessment/presentation/hooks/useIntegrityMonitor";
 import { SdgMark } from "@/modules/analytics/presentation/BrandLogo";
-import { SpreadsheetRunner } from "@/modules/assessment/presentation/components/SpreadsheetRunner";
 import { VideoPitchRecorder } from "@/modules/assessment/presentation/components/VideoPitchRecorder";
 import { CaseStudyRunner } from "@/modules/assessment/presentation/components/CaseStudyRunner";
 import { QuizRunner } from "@/modules/assessment/presentation/components/QuizRunner";
@@ -27,6 +27,32 @@ import {
   type AttemptPayload,
 } from "@/stores/useAssessmentStore";
 import { cn, formatDuration } from "@/lib/utils";
+
+/**
+ * The spreadsheet grid, loaded when a paper actually shows one.
+ *
+ * `SpreadsheetRunner` drags in Handsontable and HyperFormula — the single
+ * biggest thing this app ships to a browser, and one an applicant sitting a
+ * multiple-choice or case-study paper never needs. Rendered on demand, it becomes
+ * its own chunk fetched at the question that uses it, so the rest of the runner
+ * arrives sooner; `ssr: false` because the grid reads the DOM it is mounted into
+ * and has nothing to server-render.
+ */
+const SpreadsheetRunner = dynamic(
+  () =>
+    import("@/modules/assessment/presentation/components/SpreadsheetRunner").then(
+      (mod) => mod.SpreadsheetRunner
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <p className="flex items-center gap-2 py-10 text-sm text-brand-ink/55">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+        Opening the spreadsheet…
+      </p>
+    ),
+  }
+);
 
 /** Plain-language disclosure shown to the candidate for each signal. */
 const INTEGRITY_COPY: Record<string, string> = {
