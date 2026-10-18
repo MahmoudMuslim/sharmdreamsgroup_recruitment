@@ -1,5 +1,12 @@
 import Link from "next/link";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
+import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
+import {
+  PublicDir,
+  PublicLocaleProvider,
+  PublicPrefs,
+  PublicText,
+} from "@/modules/shell/presentation/PublicChrome";
 
 /**
  * Public careers shell.
@@ -7,40 +14,50 @@ import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
  * Candidates reach these pages with no session, so the chrome lives here rather
  * than in the admin `AdminShell`. It mirrors the landing page header and footer
  * so the brand is continuous across the public surface.
+ *
+ * The language and theme controls sit in this layout because they belong to the
+ * visitor, not to a page: choosing either once carries across the board, a role
+ * and the application form, and survives a reload. Both are read from
+ * localStorage, so the layout renders in the language `organisation.locale`
+ * asks for and the browser corrects it — see `PublicChrome`.
  */
-export default function CareersLayout({ children }: LayoutProps<"/careers">) {
+export default async function CareersLayout({ children }: LayoutProps<"/careers">) {
+  const { defaultLocale, enabledLocales } = await getCandidateLocales();
+
   return (
-    <div className="flex min-h-screen flex-col bg-brand-ivory text-brand-ink">
-      <header className="sticky top-0 z-40 border-b border-brand-line bg-brand-cream/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <Link href="/" className="min-w-0">
-            <SdgLockup />
-          </Link>
-
-          <nav className="flex items-center gap-1 sm:gap-2">
-            <Link
-              href="/portal"
-              className="rounded-lg px-3 py-2 text-sm font-semibold text-brand-ink/70 transition hover:bg-brand-sand hover:text-brand-ink"
-            >
-              Track application
+    <PublicLocaleProvider defaultLocale={defaultLocale}>
+      <PublicDir className="flex min-h-screen flex-col bg-brand-ivory text-brand-ink">
+        <header className="sticky top-0 z-40 border-b border-brand-line bg-brand-cream/90 backdrop-blur-md">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
+            <Link href="/" className="min-w-0">
+              <SdgLockup />
             </Link>
-          </nav>
-        </div>
-      </header>
 
-      <main className="flex-1">{children}</main>
+            <div className="flex items-center gap-1 sm:gap-2">
+              <PublicPrefs enabledLocales={enabledLocales} />
+              <Link
+                href="/portal"
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-brand-ink/70 transition hover:bg-brand-sand hover:text-brand-ink"
+              >
+                <PublicText k="chrome.track" />
+              </Link>
+            </div>
+          </div>
+        </header>
 
-      <footer className="mt-16 border-t border-brand-line bg-brand-ink py-8">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 text-center sm:px-6">
-          <p className="font-display text-sm font-bold text-brand-cream">
-            Sharm Dreams Group
-          </p>
-          <p className="text-xs text-brand-cream/50">
-            Applications are reviewed by our people team. Keep your tracking code — it is
-            the only way to follow your application.
-          </p>
-        </div>
-      </footer>
-    </div>
+        <main className="flex-1">{children}</main>
+
+        <footer className="mt-16 border-t border-brand-line bg-brand-ink py-8">
+          <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 text-center sm:px-6">
+            <p className="font-display text-sm font-bold text-brand-cream">
+              Sharm Dreams Group
+            </p>
+            <p className="max-w-2xl text-xs leading-relaxed text-brand-cream/50">
+              <PublicText k="chrome.careersFooter" />
+            </p>
+          </div>
+        </footer>
+      </PublicDir>
+    </PublicLocaleProvider>
   );
 }

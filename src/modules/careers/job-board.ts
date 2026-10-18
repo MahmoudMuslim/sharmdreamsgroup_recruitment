@@ -7,6 +7,8 @@
  */
 
 import { SECTOR_LABELS, type Sector } from "@/modules/settings/domain/vocabularies";
+import { hasKey, translate } from "@/lib/i18n";
+import type { Locale } from "@/types";
 
 export interface PublicJob {
   id: string;
@@ -48,12 +50,36 @@ function humanize(code: string): string {
     .replace(/^\w/, (letter) => letter.toUpperCase());
 }
 
-export function sectorLabel(sector: string): string {
-  return SECTOR_LABELS[sector as Sector] ?? humanize(sector);
+export function sectorLabel(sector: string, locale?: Locale): string {
+  return localize(sector, SECTOR_LABELS[sector as Sector] ?? humanize(sector), locale);
 }
 
-export function employmentLabel(type: string): string {
-  return EMPLOYMENT_LABELS[type] ?? humanize(type);
+export function employmentLabel(type: string, locale?: Locale): string {
+  return localize(type, EMPLOYMENT_LABELS[type] ?? humanize(type), locale);
+}
+
+/**
+ * The dictionary key a stored enum code is words under, if it has any.
+ *
+ * `REAL_ESTATE` and `real_estate` land on the same key because the database has
+ * not been consistent about the case of a CHECK-constrained text column.
+ */
+export function enumKeyFor(value: string): string {
+  return `enum.${value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+}
+
+/**
+ * The English label, unless the candidate's language has words for this code.
+ *
+ * A recruiter can type a value the enum has never seen into a text column, and
+ * inventing a translation for it would mean inventing the word too — so an
+ * unmapped code keeps the label it already had rather than falling back to a
+ * dictionary key a candidate cannot read.
+ */
+function localize(code: string, english: string, locale?: Locale): string {
+  if (!locale) return english;
+  const key = enumKeyFor(code);
+  return hasKey(key) ? translate(locale, key) : english;
 }
 
 /**
@@ -94,11 +120,12 @@ export const FACETS: {
   field: Exclude<FacetField, "q">;
   param: string;
   label: string;
+  labelKey: string;
 }[] = [
-  { field: "department", param: "department", label: "Department" },
-  { field: "location", param: "location", label: "Location" },
-  { field: "employment_type", param: "type", label: "Job type" },
-  { field: "sector", param: "sector", label: "Sector" },
+  { field: "department", param: "department", label: "Department", labelKey: "facet.department" },
+  { field: "location", param: "location", label: "Location", labelKey: "facet.location" },
+  { field: "employment_type", param: "type", label: "Job type", labelKey: "facet.jobType" },
+  { field: "sector", param: "sector", label: "Sector", labelKey: "facet.sector" },
 ];
 
 export interface FacetOption {
@@ -120,8 +147,16 @@ export interface FacetOption {
  * each with half the roles, they read as two locations. The chip carries the
  * spelling the most openings use, and `filterJobs` matches by the same fold, so
  * clicking it and pasting its URL return the same rows.
+ *
+ * The two closed enums are labelled in the candidate's language when one is
+ * given; the value written into the URL stays the stored code, so a shared
+ * filtered board filters the same rows whatever language it is read in.
  */
-export function facetOptions(jobs: PublicJob[], field: FacetField): FacetOption[] {
+export function facetOptions(
+  jobs: PublicJob[],
+  field: FacetField,
+  locale?: Locale
+): FacetOption[] {
   const byFold = new Map<string, { value: string; count: number; spellings: Map<string, number> }>();
   for (const job of jobs) {
     const value = job[field].trim();
@@ -145,9 +180,9 @@ export function facetOptions(jobs: PublicJob[], field: FacetField): FacetOption[
       count: group.count,
       label:
         field === "sector"
-          ? sectorLabel(group.value)
+          ? sectorLabel(group.value, locale)
           : field === "employment_type"
-            ? employmentLabel(group.value)
+            ? employmentLabel(group.value, locale)
             : group.value,
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));

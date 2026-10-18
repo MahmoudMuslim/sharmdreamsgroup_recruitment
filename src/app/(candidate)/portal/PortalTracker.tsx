@@ -22,6 +22,11 @@ import {
 import { STAGES, stageIndex } from "./stages";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import { dirForLocale, localeLabels, translate } from "@/lib/i18n";
+import { writeLocale } from "@/lib/locale-pref";
+import {
+  PublicThemeToggle,
+  usePublicLocale,
+} from "@/modules/shell/presentation/PublicChrome";
 import type { Locale } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -365,18 +370,17 @@ function useCodeFromUrl(): string {
 
 export function PortalTracker({
   supportEmail,
-  locale,
   enabledLocales,
 }: {
   supportEmail: string;
-  locale: Locale;
   enabledLocales: Locale[];
 }) {
   const codeFromUrl = useCodeFromUrl();
 
-  // The server decides the opening language; the switcher only ever offers the
-  // languages Settings has enabled, so a disabled language cannot appear.
-  const [lang, setLang] = useState<Locale>(locale);
+  // The server decides the opening language through `organisation.locale`; the
+  // switcher only offers what Settings enabled, and the choice is the same
+  // browser-local one the careers pages use, so it carries across both.
+  const lang = usePublicLocale();
   const [code, setCode] = useState("");
   const [results, setResults] = useState<TrackedApplication[] | null>(null);
   const [notices, setNotices] = useState<PortalNotice[]>([]);
@@ -425,30 +429,33 @@ export function PortalTracker({
       <header className="border-b border-brand-line bg-brand-cream/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <SdgLockup />
-          {enabledLocales.length > 1 && (
-            <div
-              className="flex items-center gap-1"
-              role="group"
-              aria-label={translate(lang, "portal.language")}
-            >
-              {enabledLocales.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setLang(option)}
-                  aria-pressed={option === lang}
-                  className={cn(
-                    "rounded-full px-2.5 py-1 text-[11px] font-semibold transition",
-                    option === lang
-                      ? "bg-brand-ink text-brand-cream"
-                      : "text-brand-ink/55 hover:bg-brand-sand"
-                  )}
-                >
-                  {localeLabels[option]}
-                </button>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {enabledLocales.length > 1 && (
+              <div
+                className="flex items-center gap-1"
+                role="group"
+                aria-label={translate(lang, "portal.language")}
+              >
+                {enabledLocales.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => writeLocale(option)}
+                    aria-pressed={option === lang}
+                    className={cn(
+                      "rounded-full px-2.5 py-1 text-[11px] font-semibold transition",
+                      option === lang
+                        ? "bg-brand-ink text-brand-cream"
+                        : "text-brand-ink/55 hover:bg-brand-sand"
+                    )}
+                  >
+                    {localeLabels[option]}
+                  </button>
+                ))}
+              </div>
+            )}
+            <PublicThemeToggle className="h-8 w-8" />
+          </div>
         </div>
       </header>
 

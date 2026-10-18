@@ -25,6 +25,8 @@ import {
 } from "@/modules/careers/company-profile";
 import { formatSalaryRange } from "@/lib/currency";
 import { EmptyState } from "@/modules/analytics/presentation/ui";
+import { hasKey, translate } from "@/lib/i18n";
+import { usePublicLocale } from "@/modules/shell/presentation/PublicChrome";
 
 /**
  * The applicant-facing job board: search, filters, and the openings they narrow,
@@ -76,6 +78,7 @@ function publish(filters: BoardFilters): void {
 }
 
 function JobCard({ job }: { job: PublicJob }) {
+  const lang = usePublicLocale();
   const salary = formatSalaryRange({
     min: job.min_salary_usd,
     max: job.max_salary_usd,
@@ -84,8 +87,8 @@ function JobCard({ job }: { job: PublicJob }) {
 
   const tags = [
     job.department,
-    job.sector ? sectorLabel(job.sector) : "",
-    job.employment_type ? employmentLabel(job.employment_type) : "",
+    job.sector ? sectorLabel(job.sector, lang) : "",
+    job.employment_type ? employmentLabel(job.employment_type, lang) : "",
   ].filter(Boolean);
 
   return (
@@ -121,9 +124,9 @@ function JobCard({ job }: { job: PublicJob }) {
           <span />
         )}
         <span className="inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark">
-          View &amp; apply
+          {translate(lang, "careers.viewApply")}
           <ArrowRight
-            className="h-3.5 w-3.5 transition group-hover:translate-x-0.5"
+            className="h-3.5 w-3.5 transition group-hover:translate-x-0.5 rtl:rotate-180 rtl:group-hover:-translate-x-0.5"
             aria-hidden
           />
         </span>
@@ -155,6 +158,7 @@ function anchorFor(section: CompanySection): string {
  * written shows its name and its roles rather than a paragraph invented here.
  */
 function CompanyBlock({ section }: { section: CompanySection }) {
+  const lang = usePublicLocale();
   const { company, name, jobs } = section;
   const atAGlance = company ? companyAtAGlance(company) : [];
   const paragraphs = company ? splitParagraphs(company.history) : [];
@@ -164,7 +168,7 @@ function CompanyBlock({ section }: { section: CompanySection }) {
     <section
       id={anchorFor(section)}
       className="mt-10 scroll-mt-24 first:mt-8"
-      aria-label={`${name} — open roles`}
+      aria-label={`${name} — ${translate(lang, jobs.length === 1 ? "board.openRole" : "board.openRoles", { count: jobs.length })}`}
     >
       <h2 className="font-display text-2xl font-bold tracking-tight">{name}</h2>
       {company?.legal_name && company.legal_name !== name && (
@@ -177,11 +181,15 @@ function CompanyBlock({ section }: { section: CompanySection }) {
       {atAGlance.length > 0 && (
         <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-1.5">
           {atAGlance.map((figure) => (
-            <div key={figure.label} className="flex items-baseline gap-1.5">
+            <div key={figure.labelKey} className="flex items-baseline gap-1.5">
               <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-brand-ink/40">
-                {figure.label}
+                {translate(lang, figure.labelKey)}
               </dt>
-              <dd className="text-xs font-semibold text-brand-ink/70">{figure.value}</dd>
+              <dd className="text-xs font-semibold text-brand-ink/70">
+                {figure.valueKey && hasKey(figure.valueKey)
+                  ? translate(lang, figure.valueKey)
+                  : figure.value}
+              </dd>
             </div>
           ))}
         </dl>
@@ -236,7 +244,9 @@ function CompanyBlock({ section }: { section: CompanySection }) {
       )}
 
       <h3 className="mt-6 text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/40">
-        {jobs.length === 1 ? "1 open role" : `${jobs.length} open roles`}
+        {translate(lang, jobs.length === 1 ? "board.openRole" : "board.openRoles", {
+          count: jobs.length,
+        })}
       </h3>
       <ul className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {jobs.map((job) => (
@@ -256,6 +266,7 @@ export function CareersBoard({
   jobs: PublicJob[];
   companies: PublicCompany[];
 }) {
+  const lang = usePublicLocale();
   const filters = useSyncExternalStore(
     subscribe,
     () => filtersForSearch(window.location.search),
@@ -278,9 +289,9 @@ export function CareersBoard({
     () =>
       FACETS.map((facet) => ({
         ...facet,
-        options: facetOptions(jobs, facet.field),
+        options: facetOptions(jobs, facet.field, lang),
       })).filter((facet) => facet.options.length > 1),
-    [jobs]
+    [jobs, lang]
   );
 
   const narrowed = Boolean(filters.q.trim()) || activeFacetCount(filters) > 0;
@@ -289,28 +300,28 @@ export function CareersBoard({
     <>
       {jobs.length > 0 && (
         <section
-          aria-label="Search and filter open roles"
+          aria-label={translate(lang, "board.searchAria")}
           className="mt-10 rounded-2xl border border-brand-line bg-white p-4 shadow-soft sm:p-5"
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <label className="relative flex-1">
-              <span className="sr-only">Search open roles</span>
+              <span className="sr-only">{translate(lang, "board.searchLabel")}</span>
               <Search
-                className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/35"
+                className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/35 rtl:left-auto rtl:right-3.5"
                 aria-hidden
               />
               <input
                 value={filters.q}
                 onChange={(event) => publish({ ...filters, q: event.target.value })}
-                placeholder="Search a role, team, city or company"
-                className="w-full rounded-xl border border-brand-line bg-brand-cream/40 py-2.5 pl-10 pr-9 text-sm outline-none transition placeholder:text-brand-ink/35 focus:border-brand-gold focus:bg-white"
+                placeholder={translate(lang, "board.searchPlaceholder")}
+                className="w-full rounded-xl border border-brand-line bg-brand-cream/40 py-2.5 pl-10 pr-9 text-sm outline-none transition placeholder:text-brand-ink/35 focus:border-brand-gold focus:bg-white rtl:pl-9 rtl:pr-10"
               />
               {filters.q && (
                 <button
                   type="button"
                   onClick={() => publish({ ...filters, q: "" })}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-brand-ink/40 transition hover:bg-brand-sand hover:text-brand-ink"
-                  aria-label="Clear the search text"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-brand-ink/40 transition hover:bg-brand-sand hover:text-brand-ink rtl:left-2.5 rtl:right-auto"
+                  aria-label={translate(lang, "board.clearSearch")}
                 >
                   <X className="h-3.5 w-3.5" aria-hidden />
                 </button>
@@ -321,7 +332,7 @@ export function CareersBoard({
               {facets.map((facet) => (
                 <label key={facet.field} className="flex items-center gap-1.5">
                   <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-brand-ink/40">
-                    {facet.label}
+                    {translate(lang, facet.labelKey)}
                   </span>
                   <select
                     value={filters[facet.field]}
@@ -330,7 +341,7 @@ export function CareersBoard({
                     }
                     className="rounded-xl border border-brand-line bg-white px-2.5 py-2 text-xs font-semibold text-brand-ink/70 outline-none transition focus:border-brand-gold"
                   >
-                    <option value="">Any</option>
+                    <option value="">{translate(lang, "board.any")}</option>
                     {facet.options.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label} ({option.count})
@@ -343,10 +354,12 @@ export function CareersBoard({
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-brand-ink/55">
-            <p aria-live="polite">
-              <span className="font-bold text-brand-ink">{shown.length}</span>{" "}
-              {shown.length === 1 ? "role" : "roles"}
-              {narrowed ? ` of ${jobs.length} open` : " open"}
+            <p aria-live="polite" className="font-semibold text-brand-ink">
+              {translate(
+                lang,
+                narrowed ? "board.showingFiltered" : "board.showingAll",
+                { shown: shown.length, total: jobs.length }
+              )}
             </p>
             {narrowed ? (
               <button
@@ -355,12 +368,16 @@ export function CareersBoard({
                 className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line px-2.5 py-1 font-semibold text-brand-ink/65 transition hover:bg-brand-sand hover:text-brand-ink"
               >
                 <SlidersHorizontal className="h-3 w-3" aria-hidden />
-                Clear filters
+                {translate(lang, "board.clearFilters")}
               </button>
             ) : (
               facets.length > 0 && (
                 <span className="text-brand-ink/40">
-                  Filter by {facets.map((facet) => facet.label.toLowerCase()).join(", ")}
+                  {translate(lang, "board.filterBy", {
+                    facets: facets
+                      .map((facet) => translate(lang, facet.labelKey).toLocaleLowerCase(lang))
+                      .join(", "),
+                  })}
                 </span>
               )
             )}
@@ -371,14 +388,14 @@ export function CareersBoard({
       {jobs.length === 0 ? (
         <EmptyState
           icon={<BriefcaseBusiness className="h-8 w-8" aria-hidden />}
-          title="No open roles right now"
-          description="Please check back soon — new openings are posted here as soon as they are approved."
+          title={translate(lang, "board.emptyTitle")}
+          description={translate(lang, "board.emptyBody")}
         />
       ) : shown.length === 0 ? (
         <EmptyState
           icon={<Search className="h-8 w-8" aria-hidden />}
-          title="Nothing matches that search"
-          description={`None of the ${jobs.length} open ${jobs.length === 1 ? "role" : "roles"} fit the words and filters you chose. Clear them to see the whole board.`}
+          title={translate(lang, "board.emptyMatchTitle")}
+          description={translate(lang, "board.emptyMatchBody", { count: jobs.length })}
         />
       ) : (
         <>
@@ -387,7 +404,7 @@ export function CareersBoard({
               jumps there instead of scrolling through the others' openings. */}
           {sections.length > 1 && (
             <nav
-              aria-label="Companies with open roles"
+              aria-label={translate(lang, "board.companiesAria")}
               className="mt-8 flex flex-wrap gap-2"
             >
               {sections.map((section) => (

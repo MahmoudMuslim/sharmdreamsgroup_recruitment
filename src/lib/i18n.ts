@@ -92,6 +92,108 @@ const en: Dictionary = {
   "login.email": "Email",
   "login.password": "Password",
   "login.action": "Sign in",
+
+  // ---- Public chrome: the header, footer and controls every candidate sees.
+  "chrome.careers": "Careers",
+  "chrome.track": "Track application",
+  "chrome.trackCta": "Track an application",
+  "chrome.explore": "Explore",
+  "chrome.language": "Language",
+  "chrome.languageAuto": "Automatic",
+  "chrome.theme": "Theme",
+  "chrome.careersFooter":
+    "Applications are reviewed by our people team. Keep your tracking code — it is the only way to follow your application.",
+
+  // ---- Landing page.
+  "home.badge": "AI-driven recruitment platform",
+  "home.titleA": "Talent intelligence,",
+  "home.titleB": "without the bottlenecks",
+  "home.lede":
+    "Multi-tenant recruitment for the Sharm Dreams Group — bias-reduced CV screening, interactive assessment suites, interview scheduling with automatic candidate notices and real-time hiring analytics.",
+  "home.cap1Eyebrow": "Open roles",
+  "home.cap1Title": "Hiring across the group",
+  "home.cap1Copy":
+    "Every published opening — resort operations, real estate and corporate services — with the salary range stated and an application that takes a few minutes.",
+  "home.cap2Eyebrow": "Assessments",
+  "home.cap2Title": "Tests graded on what you actually did",
+  "home.cap2Copy":
+    "Invited candidates run their assessment in the browser: financial models with NPV and IRR, video pitches, case studies and quizzes, marked from what they submit.",
+  "home.cap3Eyebrow": "Candidate experience",
+  "home.cap3Title": "A portal candidates trust",
+  "home.cap3Copy":
+    "Track application status, assessment results and next steps from any device, at any time.",
+  "home.serving": "Serving the group",
+  "home.footerTag": "Enterprise HRMS, ATS & assessment platform",
+
+  // ---- The job board and a single role.
+  "careers.hiring": "We are hiring",
+  "careers.timeline": "The timeline",
+  "careers.undated": "Undated",
+  "careers.benefits": "What the group offers its people",
+  "careers.alsoGroup": "Also part of the group",
+  "careers.alsoGroupNote":
+    "These companies have no open roles right now — the board above is everything the group is hiring for today.",
+  "careers.applied": "Already applied?",
+  "careers.appliedNote":
+    "Enter the tracking code you received when you applied to see your current stage, upcoming interviews and next steps.",
+  "careers.trackMine": "Track my application",
+  "careers.allRoles": "All open roles",
+  "careers.aboutRole": "About this role",
+  "careers.looking": "What we are looking for",
+  "careers.howWorks": "How hiring works here",
+  "careers.step1": "Apply with your CV. You get a tracking code immediately.",
+  "careers.step2": "Our AI screening reads your CV against the role's requirements.",
+  "careers.step3":
+    "If there is a fit, we open an assessment and you start it from the portal with your code.",
+  "careers.step4":
+    "Your recruiter books the interview and confirms the time and joining link with you.",
+  "careers.otherRoles": "Other roles at {name}",
+  "careers.otherRolesUs": "Other roles with us",
+  "careers.aboutCompany": "About {name}",
+  "careers.theirStory": "Their story",
+  "careers.online": "{name} online",
+
+  // ---- The figures a company profile prints, and the board's filter titles.
+  "glance.founded": "Founded",
+  "glance.ownership": "Ownership",
+  "glance.people": "People",
+  "glance.headquarters": "Headquarters",
+  "glance.sector": "Sector",
+  "facet.department": "Department",
+  "facet.location": "Location",
+  "facet.jobType": "Job type",
+  "facet.sector": "Sector",
+  "board.searchAria": "Search and filter open roles",
+  "board.searchPlaceholder": "Search a role, team, city or company",
+  "board.clearSearch": "Clear the search text",
+  "board.clearFilters": "Clear filters",
+  "board.any": "Any",
+  "board.showingAll": "{shown} roles open",
+  "board.showingFiltered": "{shown} of {total} roles open",
+  "board.filterBy": "Filter by {facets}",
+  "board.emptyTitle": "No open roles right now",
+  "board.emptyBody":
+    "Please check back soon — new openings are posted here as soon as they are approved.",
+  "board.emptyMatchTitle": "Nothing matches that search",
+  "board.emptyMatchBody":
+    "None of the {count} open roles fit the words and filters you chose. Clear them to see the whole board.",
+  "board.companiesAria": "Companies with open roles",
+  "board.openRole": "{count} open role",
+  "board.openRoles": "{count} open roles",
+  "board.searchLabel": "Search open roles",
+  "careers.viewApply": "View & apply",
+
+  // ---- The closed enums a job row carries. A value with no key here is shown
+  // as the English label instead, so an enum the build has no words for never
+  // prints its own key.
+  "enum.hospitality": "Hospitality",
+  "enum.real_estate": "Real estate",
+  "enum.commercial_development": "Commercial development",
+  "enum.corporate": "Corporate",
+  "enum.full_time": "Full time",
+  "enum.part_time": "Part time",
+  "enum.contract": "Contract",
+  "enum.internship": "Internship",
 };
 
 const ar: Dictionary = {
@@ -173,6 +275,96 @@ const ar: Dictionary = {
   "login.email": "البريد الإلكتروني",
   "login.password": "كلمة المرور",
   "login.action": "دخول",
+
+  "chrome.careers": "الوظائف",
+  "chrome.track": "تتبّع الطلب",
+  "chrome.trackCta": "تتبّع طلبك",
+  "chrome.explore": "استكشف",
+  "chrome.language": "اللغة",
+  "chrome.languageAuto": "تلقائي",
+  "chrome.theme": "المظهر",
+  "chrome.careersFooter":
+    "تراجع فريق الموارد البشرية الطلبات. احتفظ برمز التتبع الخاص بك، فهو الوسيلة الوحيدة لمتابعة طلبك.",
+
+  "home.badge": "منصة توظيف مدعومة بالذكاء الاصطناعي",
+  "home.titleA": "ذكاء المواهب،",
+  "home.titleB": "دون عناء الإجراءات",
+  "home.lede":
+    "توظيف متعدد الشركات لمجموعة شرم دريمز — فرز سير ذاتية يقلّل التحيز، وتقييمات تفاعلية، وجدولة مقابلات بإشعارات تلقائية للمرشحين، وتحليلات فورية للتوظيف.",
+  "home.cap1Eyebrow": "وظائف متاحة",
+  "home.cap1Title": "التوظيف في كل شركات المجموعة",
+  "home.cap1Copy":
+    "كل وظيفة منشورة — تشغيل المنتجعات والعقارات والخدمات الإدارية — مع ذكر نطاق الراتب وطلب تقديم لا يستغرق دقائق.",
+  "home.cap2Eyebrow": "التقييمات",
+  "home.cap2Title": "اختبارات تُقيَّم على ما أنجزته فعلاً",
+  "home.cap2Copy":
+    "يؤدي المرشح المدعو تقييمه في المتصفح: نماذج مالية بحساب صافي القيمة الحالية ومعدل العائد الداخلي، وعروض مرئية، ودراسات حالة، واختبارات، وتُراجع بحسب ما يرسله.",
+  "home.cap3Eyebrow": "تجربة المرشح",
+  "home.cap3Title": "بوابة يثق بها المرشحون",
+  "home.cap3Copy": "تابع حالة طلبك ونتائج التقييم والخطوات التالية من أي جهاز وفي أي وقت.",
+  "home.serving": "نخدم مجموعة",
+  "home.footerTag": "منصة موارد بشرية ونظام تتبع مرشحين وتقييم للمؤسسات",
+
+  "careers.hiring": "نحن نوظّف",
+  "careers.timeline": "المسيرة الزمنية",
+  "careers.undated": "بلا تاريخ",
+  "careers.benefits": "ما تقدّمه المجموعة لأفرادها",
+  "careers.alsoGroup": "من المجموعة أيضاً",
+  "careers.alsoGroupNote":
+    "لا تملك هذه الشركات وظائف متاحة الآن — القائمة أعلاه هي كل ما توظّف له المجموعة اليوم.",
+  "careers.applied": "هل قدّمت من قبل؟",
+  "careers.appliedNote":
+    "أدخل رمز التتبع الذي استلمته عند التقديم لتعرف مرحلتك الحالية ومقابلاتك القادمة والخطوات التالية.",
+  "careers.trackMine": "تتبّع طلبي",
+  "careers.allRoles": "كل الوظائف المتاحة",
+  "careers.aboutRole": "عن هذه الوظيفة",
+  "careers.looking": "ما نبحث عنه",
+  "careers.howWorks": "كيف يسير التوظيف هنا",
+  "careers.step1": "قدّم بالسيرة الذاتية، ويصلك رمز تتبع فوراً.",
+  "careers.step2": "يقرأ الذكاء الاصطناعي سيرتك الذاتية مقابل متطلبات الوظيفة.",
+  "careers.step3": "عند وجود توافق نفتح لك تقييماً تبدأه من البوابة برمزك.",
+  "careers.step4": "يحجز مسؤول التوظيف المقابلة ويؤكد لك الموعد ورابط الانضمام.",
+  "careers.otherRoles": "وظائف أخرى في {name}",
+  "careers.otherRolesUs": "وظائف أخرى معنا",
+  "careers.aboutCompany": "عن {name}",
+  "careers.theirStory": "قصتهم",
+  "careers.online": "{name} على الإنترنت",
+
+  "glance.founded": "السنة",
+  "glance.ownership": "الملكية",
+  "glance.people": "عدد الموظفين",
+  "glance.headquarters": "المقر الرئيسي",
+  "glance.sector": "القطاع",
+  "facet.department": "القسم",
+  "facet.location": "الموقع",
+  "facet.jobType": "نوع الوظيفة",
+  "facet.sector": "القطاع",
+  "board.searchAria": "ابحث وصفِّ الوظائف المتاحة",
+  "board.searchPlaceholder": "ابحث عن وظيفة أو فريق أو مدينة أو شركة",
+  "board.clearSearch": "مسح نص البحث",
+  "board.clearFilters": "مسح عوامل التصفية",
+  "board.any": "الكل",
+  "board.showingAll": "{shown} وظيفة متاحة",
+  "board.showingFiltered": "{shown} من {total} وظيفة متاحة",
+  "board.filterBy": "تصفية حسب {facets}",
+  "board.emptyMatchBody":
+    "لا شيء من الوظائف المتاحة ({count}) يطابق الكلمات وعوامل التصفية التي اخترتها. امسحها لترى القائمة كاملة.",
+  "board.emptyTitle": "لا توجد وظائف متاحة الآن",
+  "board.emptyBody": "نرجو العودة قريباً — تُنشر الوظائف الجديدة هنا فور اعتمادها.",
+  "board.emptyMatchTitle": "لا نتيجة تطابق هذا البحث",
+  "board.companiesAria": "الشركات التي لديها وظائف متاحة",
+  "board.openRole": "وظيفة واحدة متاحة",
+  "board.openRoles": "{count} وظائف متاحة",
+  "board.searchLabel": "ابحث في الوظائف المتاحة",
+  "careers.viewApply": "العرض والتقديم",
+  "enum.hospitality": "الضيافة",
+  "enum.real_estate": "العقارات",
+  "enum.commercial_development": "التطوير التجاري",
+  "enum.corporate": "الإدارة المركزية",
+  "enum.full_time": "دوام كامل",
+  "enum.part_time": "دوام جزئي",
+  "enum.contract": "عقد",
+  "enum.internship": "تدريب",
 };
 
 const ru: Dictionary = {
@@ -254,6 +446,99 @@ const ru: Dictionary = {
   "login.email": "Эл. почта",
   "login.password": "Пароль",
   "login.action": "Войти",
+
+  "chrome.careers": "Вакансии",
+  "chrome.track": "Отследить заявку",
+  "chrome.trackCta": "Отследить заявку",
+  "chrome.explore": "Подробнее",
+  "chrome.language": "Язык",
+  "chrome.languageAuto": "Авто",
+  "chrome.theme": "Тема",
+  "chrome.careersFooter":
+    "Заявки рассматривает наша команда персонала. Сохраните код отслеживания — только по нему можно следить за заявкой.",
+
+  "home.badge": "Платформа подбора на основе ИИ",
+  "home.titleA": "Аналитика талантов",
+  "home.titleB": "без задержек и бюрократии",
+  "home.lede":
+    "Многоуровневый подбор для группы Sharm Dreams: скрининг резюме со снижением предвзятости, интерактивные оценки, планирование собеседований с автоматическими уведомлениями и аналитика найма в реальном времени.",
+  "home.cap1Eyebrow": "Открытые вакансии",
+  "home.cap1Title": "Найм во всей группе компаний",
+  "home.cap1Copy":
+    "Каждая опубликованная вакансия — курортные операции, недвижимость и корпоративные услуги — с указанием вилки зарплаты и заявкой на несколько минут.",
+  "home.cap2Eyebrow": "Оценки",
+  "home.cap2Title": "Тесты оцениваются по тому, что вы сделали",
+  "home.cap2Copy":
+    "Кандидат по приглашению проходит оценку в браузере: финансовые модели с NPV и IRR, видео-презентации, кейсы и тесты — балл ставится по присланной работе.",
+  "home.cap3Eyebrow": "Опыт кандидата",
+  "home.cap3Title": "Портал, которому доверяют кандидаты",
+  "home.cap3Copy":
+    "Следите за статусом заявки, результатами оценки и следующими шагами с любого устройства и в любое время.",
+  "home.serving": "Мы служим группе",
+  "home.footerTag": "Корпоративная HRMS, ATS и платформа оценки",
+
+  "careers.hiring": "Мы нанимаем",
+  "careers.timeline": "Хронология",
+  "careers.undated": "Без даты",
+  "careers.benefits": "Что группа предлагает людям",
+  "careers.alsoGroup": "Тоже часть группы",
+  "careers.alsoGroupNote":
+    "У этих компаний сейчас нет открытых вакансий — список выше это всё, куда группа набирает сегодня.",
+  "careers.applied": "Уже отправляли заявку?",
+  "careers.appliedNote":
+    "Введите код отслеживания, полученный при подаче заявки, чтобы увидеть текущий этап, будущие собеседования и следующие шаги.",
+  "careers.trackMine": "Отследить мою заявку",
+  "careers.allRoles": "Все открытые вакансии",
+  "careers.aboutRole": "Об этой вакансии",
+  "careers.looking": "Кого мы ищем",
+  "careers.howWorks": "Как устроен найм",
+  "careers.step1": "Отправьте резюме — код отслеживания придёт сразу.",
+  "careers.step2": "Наш ИИ-скрининг сверяет резюме с требованиями вакансии.",
+  "careers.step3":
+    "Если вы подходим, мы открываем оценку — начать можно на портале по вашему коду.",
+  "careers.step4": "Рекрутер назначает собеседование и подтверждает время и ссылку.",
+  "careers.otherRoles": "Другие вакансии в {name}",
+  "careers.otherRolesUs": "Другие вакансии у нас",
+  "careers.aboutCompany": "О компании {name}",
+  "careers.theirStory": "История компании",
+  "careers.online": "{name} в интернете",
+
+  "glance.founded": "Основана",
+  "glance.ownership": "Форма собственности",
+  "glance.people": "Сотрудников",
+  "glance.headquarters": "Штаб-квартира",
+  "glance.sector": "Сектор",
+  "facet.department": "Отдел",
+  "facet.location": "Локация",
+  "facet.jobType": "Тип занятости",
+  "facet.sector": "Сектор",
+  "board.searchAria": "Поиск и фильтры открытых вакансий",
+  "board.searchPlaceholder": "Вакансия, команда, город или компания",
+  "board.clearSearch": "Очистить строку поиска",
+  "board.clearFilters": "Сбросить фильтры",
+  "board.any": "Любой",
+  "board.showingAll": "Открытых вакансий: {shown}",
+  "board.showingFiltered": "{shown} из {total} открытых вакансий",
+  "board.filterBy": "Фильтр: {facets}",
+  "board.emptyMatchBody":
+    "Ни одна из {count} открытых вакансий не подходит под выбранные слова и фильтры. Сбросьте их, чтобы увидеть весь список.",
+  "board.emptyTitle": "Сейчас открытых вакансий нет",
+  "board.emptyBody":
+    "Загляните позже — новые вакансии публикуются здесь сразу после утверждения.",
+  "board.emptyMatchTitle": "Ничего не найдено по этому запросу",
+  "board.companiesAria": "Компании с открытыми вакансиями",
+  "board.openRole": "{count} открытая вакансия",
+  "board.openRoles": "{count} открытых вакансий",
+  "board.searchLabel": "Поиск открытых вакансий",
+  "careers.viewApply": "Смотреть и откликнуться",
+  "enum.hospitality": "Гостеприимство",
+  "enum.real_estate": "Недвижимость",
+  "enum.commercial_development": "Коммерческая застройка",
+  "enum.corporate": "Корпоративный блок",
+  "enum.full_time": "Полная занятость",
+  "enum.part_time": "Частичная занятость",
+  "enum.contract": "Контракт",
+  "enum.internship": "Стажировка",
 };
 
 const de: Dictionary = {
@@ -337,6 +622,100 @@ const de: Dictionary = {
   "login.email": "E-Mail",
   "login.password": "Passwort",
   "login.action": "Anmelden",
+
+  "chrome.careers": "Stellenangebote",
+  "chrome.track": "Bewerbung verfolgen",
+  "chrome.trackCta": "Bewerbung verfolgen",
+  "chrome.explore": "Ansehen",
+  "chrome.language": "Sprache",
+  "chrome.languageAuto": "Automatisch",
+  "chrome.theme": "Design",
+  "chrome.careersFooter":
+    "Bewerbungen prüft unser People-Team. Bewahren Sie Ihren Tracking-Code auf – nur damit lässt sich Ihre Bewerbung verfolgen.",
+
+  "home.badge": "KI-gestützte Recruiting-Plattform",
+  "home.titleA": "Talent-Intelligenz",
+  "home.titleB": "ohne Flaschenhälse",
+  "home.lede":
+    "Mandantenfähiges Recruiting für die Sharm Dreams Group – vorurteilsreduzierte CV-Screening, interaktive Test-Suiten, Interview-Planung mit automatischen Bewerberbenachrichtigungen und Echtzeit-Hiring-Analytics.",
+  "home.cap1Eyebrow": "Offene Stellen",
+  "home.cap1Title": "Wir stellen gruppenweit ein",
+  "home.cap1Copy":
+    "Jede veröffentlichte Stelle – Resort-Betrieb, Immobilien und Corporate Services – mit angegebenem Gehaltsrahmen und einer Bewerbung, die wenige Minuten dauert.",
+  "home.cap2Eyebrow": "Assessments",
+  "home.cap2Title": "Tests, bewertet nach dem was Sie getan haben",
+  "home.cap2Copy":
+    "Eingeladene Kandidaten führen ihren Test im Browser aus: Finanzmodelle mit NPV und IRR, Videopräsentationen, Fallstudien und Quizze – bewertet wird die abgegebene Arbeit.",
+  "home.cap3Eyebrow": "Bewerbererlebnis",
+  "home.cap3Title": "Ein Portal, dem Bewerber vertrauen",
+  "home.cap3Copy":
+    "Status der Bewerbung, Testergebnisse und nächste Schritte – auf jedem Gerät, jederzeit.",
+  "home.serving": "Im Dienst der Gruppe",
+  "home.footerTag": "Unternehmens-HRMS, ATS & Assessments-Plattform",
+
+  "careers.hiring": "Wir stellen ein",
+  "careers.timeline": "Der Zeitverlauf",
+  "careers.undated": "Ohne Datum",
+  "careers.benefits": "Was die Gruppe ihren Mitarbeitenden bietet",
+  "careers.alsoGroup": "Gehört ebenfalls zur Gruppe",
+  "careers.alsoGroupNote":
+    "Diese Unternehmen haben aktuell keine offenen Stellen – die Liste oben ist alles, wofür die Gruppe heute einstellt.",
+  "careers.applied": "Schon beworben?",
+  "careers.appliedNote":
+    "Geben Sie den Tracking-Code ein, den Sie bei der Bewerbung erhalten haben, um Stadium, geplante Interviews und nächste Schritte zu sehen.",
+  "careers.trackMine": "Meine Bewerbung verfolgen",
+  "careers.allRoles": "Alle offenen Stellen",
+  "careers.aboutRole": "Über diese Stelle",
+  "careers.looking": "Was wir suchen",
+  "careers.howWorks": "So läuft das Recruiting",
+  "careers.step1": "Bewerben Sie sich mit Ihrem CV – den Tracking-Code erhalten Sie sofort.",
+  "careers.step2": "Unser KI-Screening liest Ihren CV gegen die Anforderungen der Stelle.",
+  "careers.step3":
+    "Wenn es passt, öffnen wir einen Test – Sie starten ihn im Portal mit Ihrem Code.",
+  "careers.step4":
+    "Ihre Recruiterin plant das Interview und bestätigt Ihnen Zeit und Zugangslink.",
+  "careers.otherRoles": "Weitere Stellen bei {name}",
+  "careers.otherRolesUs": "Weitere Stellen bei uns",
+  "careers.aboutCompany": "Über {name}",
+  "careers.theirStory": "Ihre Geschichte",
+  "careers.online": "{name} im Netz",
+
+  "glance.founded": "Gegründet",
+  "glance.ownership": "Eigentumsform",
+  "glance.people": "Mitarbeitende",
+  "glance.headquarters": "Hauptsitz",
+  "glance.sector": "Bereich",
+  "facet.department": "Abteilung",
+  "facet.location": "Ort",
+  "facet.jobType": "Anstellungsart",
+  "facet.sector": "Bereich",
+  "board.searchAria": "Offene Stellen durchsuchen und filtern",
+  "board.searchPlaceholder": "Stelle, Team, Stadt oder Firma suchen",
+  "board.clearSearch": "Suchtext löschen",
+  "board.clearFilters": "Filter zurücksetzen",
+  "board.any": "Alle",
+  "board.showingAll": "{shown} offene Stellen",
+  "board.showingFiltered": "{shown} von {total} offenen Stellen",
+  "board.filterBy": "Filtern nach {facets}",
+  "board.emptyMatchBody":
+    "Keine der {count} offenen Stellen passt zu den gewählten Begriffen und Filtern. Setzen Sie sie zurück, um die ganze Liste zu sehen.",
+  "board.emptyTitle": "Derzeit keine offenen Stellen",
+  "board.emptyBody":
+    "Schauen Sie bald wieder – neue Stellen erscheinen hier sofort nach ihrer Freigabe.",
+  "board.emptyMatchTitle": "Keine Treffer für diese Suche",
+  "board.companiesAria": "Unternehmen mit offenen Stellen",
+  "board.openRole": "{count} offene Stelle",
+  "board.openRoles": "{count} offene Stellen",
+  "board.searchLabel": "Offene Stellen durchsuchen",
+  "careers.viewApply": "Ansehen & bewerben",
+  "enum.hospitality": "Hotellerie",
+  "enum.real_estate": "Immobilien",
+  "enum.commercial_development": "Gewerbeentwicklung",
+  "enum.corporate": "Corporate",
+  "enum.full_time": "Vollzeit",
+  "enum.part_time": "Teilzeit",
+  "enum.contract": "Befristet",
+  "enum.internship": "Praktikum",
 };
 
 const dictionaries: Record<Locale, Dictionary> = { en, ar, ru, de };
@@ -344,6 +723,19 @@ const dictionaries: Record<Locale, Dictionary> = { en, ar, ru, de };
 /** Narrow an untrusted string (a settings row) to a locale we ship a dictionary for. */
 export function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && (locales as readonly string[]).includes(value);
+}
+
+/**
+ * Does any dictionary carry this key?
+ *
+ * Needed where a key is built from data rather than written in the page — an
+ * enum code, for instance. `translate` answers a missing key by returning the
+ * key itself, which reads well for a typo a developer will fix but would print
+ * `enum.some_new_code` to a candidate, so the caller checks first and falls back
+ * to the word the database row already carries.
+ */
+export function hasKey(key: string): boolean {
+  return dictionaries.en[key] !== undefined;
 }
 
 /** Arabic is the only right-to-left language here, so the check stays a set. */

@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
 import { translate } from "@/lib/i18n";
+import { PublicLocaleProvider } from "@/modules/shell/presentation/PublicChrome";
 import { PortalTracker } from "./PortalTracker";
 
 /**
@@ -35,10 +36,11 @@ export default async function CandidatePortalPage() {
   ]);
 
   return (
-    <PortalTracker
-      supportEmail={supportEmail}
-      locale={locales.defaultLocale}
-      enabledLocales={locales.enabledLocales}
-    />
+    <PublicLocaleProvider defaultLocale={locales.defaultLocale}>
+      <PortalTracker
+        supportEmail={supportEmail}
+        enabledLocales={locales.enabledLocales}
+      />
+    </PublicLocaleProvider>
   );
 }

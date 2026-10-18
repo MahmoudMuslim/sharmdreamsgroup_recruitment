@@ -18,7 +18,7 @@
  * board and a plain Node check all group and order a company the same way.
  */
 
-import { sectorLabel } from "./job-board";
+import { enumKeyFor, sectorLabel } from "./job-board";
 import type { PublicJob } from "./job-board";
 
 /** One point on the company's timeline. */
@@ -174,20 +174,38 @@ export function companyOfJob(
   return companies.find((company) => company.id === job.company_id) ?? null;
 }
 
-/** The figures printed under a name, in the order the page reads them. */
+/**
+ * The figures printed under a name, in the order the page reads them.
+ *
+ * Each carries a dictionary key rather than an English word: the label is
+ * interface text the candidate reads, so it follows the language they picked,
+ * while the value beside it is what a recruiter filed and stays as written.
+ *
+ * One value is not a recruiter's sentence but a stored enum — the sector — so
+ * it carries a `valueKey` too and the page translates it, falling back to the
+ * English label when the code is one no dictionary has words for.
+ */
 export function companyAtAGlance(
   company: PublicCompany
-): { label: string; value: string }[] {
-  const rows: { label: string; value: string | null }[] = [
-    { label: "Founded", value: company.founded_year ? String(company.founded_year) : null },
-    { label: "Ownership", value: company.ownership_type },
-    { label: "People", value: company.employee_range },
-    { label: "Headquarters", value: company.headquarters },
-    { label: "Sector", value: company.sector ? sectorLabel(company.sector) : null },
+): { labelKey: string; value: string; valueKey?: string }[] {
+  const rows: { labelKey: string; value: string | null; valueKey?: string }[] = [
+    { labelKey: "glance.founded", value: company.founded_year ? String(company.founded_year) : null },
+    { labelKey: "glance.ownership", value: company.ownership_type },
+    { labelKey: "glance.people", value: company.employee_range },
+    { labelKey: "glance.headquarters", value: company.headquarters },
+    {
+      labelKey: "glance.sector",
+      value: company.sector ? sectorLabel(company.sector) : null,
+      valueKey: company.sector ? enumKeyFor(company.sector) : undefined,
+    },
   ];
   return rows
     .filter((row) => row.value)
-    .map((row) => ({ label: row.label, value: row.value as string }));
+    .map((row) => ({
+      labelKey: row.labelKey,
+      value: row.value as string,
+      valueKey: row.valueKey,
+    }));
 }
 
 /** One company and the openings it is currently hiring for. */
