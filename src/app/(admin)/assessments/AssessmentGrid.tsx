@@ -14,6 +14,7 @@ import {
   Plus,
   Search,
   Send,
+  Sparkles,
   Table2,
   Trash2,
   Video,
@@ -33,6 +34,7 @@ import { searchSuites, suiteSearchWords } from "@/modules/assessment/domain/suit
 import type { IssuedLinksRead, TemplateSummary } from "./actions";
 import { IssuedLinksBoard } from "./IssuedLinksBoard";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
+import { SuiteAuthoringDrawer } from "./SuiteAuthoringDrawer";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 
@@ -725,6 +727,7 @@ export function AssessmentGrid({
   const [editing, setEditing] = useState<TemplateSummary | null>(null);
   const [assigning, setAssigning] = useState<TemplateSummary | null>(null);
   const [questionEditing, setQuestionEditing] = useState<TemplateSummary | null>(null);
+  const [draftingSuite, setDraftingSuite] = useState(false);
 
   // `?q=` seeds the box so an assistant answer that searched the suites lands on
   // the suites it named, not on a grid holding the whole catalogue. Typing stays
@@ -866,14 +869,26 @@ export function AssessmentGrid({
               <option value="paused">Paused</option>
             </Select>
           </div>
-          <button
-            type="button"
-            onClick={() => setCreating(true)}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90"
-          >
-            <Plus className="h-4 w-4" aria-hidden />
-            New template
-          </button>
+          <div className="flex shrink-0 gap-2">
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setDraftingSuite(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-brand-line bg-white px-4 py-2.5 text-sm font-semibold transition hover:bg-brand-sand"
+              >
+                <Sparkles className="h-4 w-4" aria-hidden />
+                Draft a suite
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-ink px-4 py-2.5 text-sm font-semibold text-brand-cream shadow-soft transition hover:bg-brand-ink/90"
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              New template
+            </button>
+          </div>
         </div>
 
         {filtered.length === 0 ? (
@@ -958,6 +973,15 @@ export function AssessmentGrid({
           questions={questionsByTemplate[questionEditing.id] ?? []}
           editable={canEdit}
           onChanged={router.refresh}
+        />
+      )}
+      {draftingSuite && (
+        <SuiteAuthoringDrawer
+          open
+          onClose={() => setDraftingSuite(false)}
+          options={options}
+          defaultDurationMinutes={defaultDurationMinutes}
+          onCreated={router.refresh}
         />
       )}
     </>

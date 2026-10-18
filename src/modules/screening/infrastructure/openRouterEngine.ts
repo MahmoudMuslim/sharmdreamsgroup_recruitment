@@ -6,13 +6,19 @@
  * - Personalized Feedback Generator
  * - Dynamic Interview Question Generator
  * - Assessment question authoring for recruiters
+ * - Assessment suite drafting from a job opening
  */
 import { complete, parseJsonResponse, type CompletionRequest } from "@/modules/screening/infrastructure/aiGateway";
 import {
   DIFFICULTY_LABELS,
   GENERATED_JSON_SHAPE,
+  QUESTION_RULES,
+  SUITE_JSON_SHAPE,
+  SUITE_RULES,
   kindsWord,
+  openingSeedWords,
   type AuthoringBrief,
+  type SuiteSeedingContext,
 } from "@/modules/assessment/domain/aiAuthoring";
 import type { CvScreeningResult, SentimentAnalysisResult, FeedbackReport, GeneratedInterviewQuestions } from "@/types";
 
@@ -470,6 +476,23 @@ Evaluate and return:
   }>(result.content, { truncated: result.truncated });
 }
 
+/**
+ * How one run asks for its questions.
+ *
+ * Both authoring prompts use these words, so a suite cannot be asked for against
+ * a softer brief than a batch of drafts. The subject is the caller's line to add:
+ * a topic for the question desk, a job opening for the suite desk.
+ */
+function questionsAsk(brief: AuthoringBrief): string {
+  return `Write ${brief.count} ${DIFFICULTY_LABELS[brief.difficulty].toLowerCase()} question${
+    brief.count === 1 ? "" : "s"
+  }:
+TYPES ALLOWED: ${kindsWord(brief.types)} — use nothing else.
+MARKS EACH: ${brief.pointsEach}
+${brief.notes ? `EXTRA GUIDANCE FROM THE RECRUITER: ${brief.notes}\n` : ""}
+No two questions on the same skill. Each needs its own title of six words or fewer.`;
+}
+
 /** The suite a set of drafts is being written for. */
 export interface SuiteAuthoringContext {
   name: string;
@@ -498,13 +521,7 @@ export async function generateAssessmentQuestions(
 ): Promise<{ parsed: unknown; model: string; truncated: boolean }> {
   const systemPrompt = `You are a hiring manager writing a skills assessment that a candidate completes on screen, with no recruiter present to explain it.
 
-Each question must be answerable with only what its type gives the candidate:
-- MULTIPLE_CHOICE: exactly one option is correct. Wrong options must be plausible, not jokes. Never use "all of the above" or "none of the above" — options are shuffled per candidate.
-- CASE_STUDY: put the scenario the candidate reads in "context", then ask one thing of them in "prompt".
-- EXCEL_MODEL: the candidate edits a grid. "initial_sheet" is the paper handed to them: labels and given figures ONLY. Every cell listed in "expected_outputs" must be BLANK there — a required cell that the sheet already prints is an answer given away, not a question.
-- VIDEO_PITCH: the candidate speaks to a camera. Ask something answerable out loud in the seconds allowed, with nothing to look up.
-
-Do not invent company figures you then ask the candidate to find. Do not ask for something the question itself states. Set every number a candidate needs inside the question.
+${QUESTION_RULES}
 
 Return ONLY valid JSON, no markdown:
 ${GENERATED_JSON_SHAPE}`;
@@ -520,14 +537,8 @@ ${GENERATED_JSON_SHAPE}`;
   const userPrompt = `SUITE: ${suite.name}
 ${suite.description ? `ABOUT: ${suite.description}\n` : ""}ROLE FAMILY: ${suite.roleFamily || "not set"}
 SUITE TIME LIMIT: ${suite.timeLimitMinutes} minutes
-${already}
-Write ${brief.count} ${DIFFICULTY_LABELS[brief.difficulty].toLowerCase()} question${
-    brief.count === 1 ? "" : "s"
-  } on: ${brief.topic}
-TYPES ALLOWED: ${kindsWord(brief.types)} — use nothing else.
-MARKS EACH: ${brief.pointsEach}
-${brief.notes ? `EXTRA GUIDANCE FROM THE RECRUITER: ${brief.notes}\n` : ""}
-No two questions on the same skill. Each needs its own title of six words or fewer.`;
+${already}THE SUBJECT IS: ${brief.topic}
+${questionsAsk(brief)}`;
 
   const request: CompletionRequest = {
     capability: "case_reasoning",
@@ -540,6 +551,84 @@ No two questions on the same skill. Each needs its own title of six words or few
     // per question; a cap sized for prose truncates the JSON mid-sheet and the
     // whole reply is then unparseable.
     maxTokens: Math.min(4000, 700 + brief.count * 700),
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  return {
+    parsed: parseJsonResponse<unknown>(result.content, { truncated: result.truncated }),
+    model: result.model,
+    truncated: result.truncated,
+  };
+}
+
+/**
+ * Whole-suite authoring, seeded from a job opening.
+ *
+ * The model writes the shell and the questions in one reply, and nothing is
+ * stored from it: `reviewSuite` decides what the suite editor would accept, and
+ * the recruiter creates the suite from the review desk. So a vacancy's own words
+ * are clipped here rather than pasted whole — a posting that runs to three
+ * thousand characters would otherwise crowd out the JSON budget the gateway
+ * sends, and the reply arrives as a truncated sheet nobody can read.
+ */
+export async function generateAssessmentSuite(
+  brief: AuthoringBrief,
+  seed: SuiteSeedingContext
+): Promise<{ parsed: unknown; model: string; truncated: boolean }> {
+  const systemPrompt = `You are a hiring manager building a complete skills assessment for one role, to be sat on screen with no recruiter present to explain it.
+
+First name the suite and describe it for the candidate, then write its questions.
+
+${SUITE_RULES}
+
+${QUESTION_RULES}
+
+A job opening sells a role; a test measures whether someone can do it. Ask only about work a candidate can be handed on screen — never about pay, benefits, the team's culture or anything the advertisement promises. Technical roles are tested by making the candidate do the tool work: build the grid, reason over the numbers, record the pitch.
+
+Return ONLY valid JSON, no markdown:
+${SUITE_JSON_SHAPE}
+
+${GENERATED_JSON_SHAPE}`;
+
+  const families =
+    seed.roleFamilies.length > 0
+      ? `ROLE FAMILIES ON FILE — put one of these exact strings in "role_family":\n${seed.roleFamilies.join(", ")}\n`
+      : `No role families are on file, so leave "role_family" empty.\n`;
+
+  const taken =
+    seed.existingNames.length > 0
+      ? `SUITES ALREADY BUILT — do not name this one after any of them:\n${seed.existingNames
+          .slice(0, 30)
+          .map((name) => `- ${name}`)
+          .join("\n")}\n`
+      : "";
+
+  const subject = seed.opening
+    ? `THE VACANCY THIS TEST IS FOR:\n${openingSeedWords(seed.opening)}\n\n${
+        brief.topic
+          ? `WHAT THE RECRUITER WANTS IT TO COVER: ${brief.topic}\n`
+          : `Cover the work that role actually does.\n`
+      }`
+    : `THE SUBJECT THIS TEST COVERS: ${brief.topic}\n`;
+
+  const userPrompt = `${subject}${families}${taken}SUITE DURATION IF YOU CANNOT JUDGE ONE: ${
+    seed.defaultDurationMinutes
+  } minutes
+${questionsAsk(brief)}`;
+
+  const request: CompletionRequest = {
+    capability: "case_reasoning",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.6,
+    // A five-question suite measured 6,640 characters of JSON on a live run, and
+    // the model's own reasoning is billed against this same ceiling — so a budget
+    // sized only for the JSON arrives cut off mid-sheet. The questions desk asks
+    // for less at a time and keeps its smaller cap.
+    maxTokens: Math.min(8000, 2000 + brief.count * 1200),
     jsonMode: true,
   };
 

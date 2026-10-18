@@ -66,14 +66,14 @@ export interface EditableQuestion {
   shuffle_options: boolean;
 }
 
-const TYPE_LABELS: Record<QuestionType, string> = {
+export const TYPE_LABELS: Record<QuestionType, string> = {
   MULTIPLE_CHOICE: "Multiple choice",
   CASE_STUDY: "Case study",
   EXCEL_MODEL: "Spreadsheet model",
   VIDEO_PITCH: "Video pitch",
 };
 
-const TYPE_HINTS: Record<QuestionType, string> = {
+export const TYPE_HINTS: Record<QuestionType, string> = {
   MULTIPLE_CHOICE: "Candidate picks one option. Exactly one must be correct.",
   CASE_STUDY: "Written response graded against the criteria you set.",
   EXCEL_MODEL:
@@ -927,14 +927,21 @@ export function QuestionEditorDrawer({
   );
 }
 
-function DraftCard({
+/**
+ * One drafted question, shown as the candidate would receive it.
+ *
+ * Shared by both AI desks: the question desk offers it with an "Add to suite"
+ * button, and the suite desk shows it under a keep-checkbox before the whole
+ * suite is created. The card itself never decides what happens to a draft.
+ */
+export function DraftCard({
   draft,
-  pending,
+  pending = false,
   onAdd,
 }: {
   draft: GeneratedQuestion;
-  pending: boolean;
-  onAdd: () => void;
+  pending?: boolean;
+  onAdd?: () => void;
 }) {
   return (
     <article className="rounded-xl border border-brand-line bg-white p-4">
@@ -1018,21 +1025,23 @@ function DraftCard({
         </ul>
       )}
 
-      <div className="mt-3 flex justify-end">
-        <button
-          type="button"
-          onClick={onAdd}
-          disabled={pending}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-xs font-semibold transition hover:bg-brand-sand disabled:opacity-50"
-        >
-          {pending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <Plus className="h-3.5 w-3.5" aria-hidden />
-          )}
-          Add to suite
-        </button>
-      </div>
+      {onAdd && (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={onAdd}
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-xs font-semibold transition hover:bg-brand-sand disabled:opacity-50"
+          >
+            {pending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Plus className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Add to suite
+          </button>
+        </div>
+      )}
     </article>
   );
 }

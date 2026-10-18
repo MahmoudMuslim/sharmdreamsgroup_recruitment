@@ -15,9 +15,9 @@ import {
 import {
   MAX_DRAFTS_PER_RUN,
   DIFFICULTIES,
+  asReviewedDraft,
   draftForRow,
   normaliseOutputs,
-  normaliseSheet,
   reviewDrafts,
   type AuthoringBrief,
   type Difficulty,
@@ -615,9 +615,14 @@ export async function addDraftedQuestions(
       companyId: staff.tenantId,
     },
     async () => {
-      for (const [index, draft] of chosen.entries()) {
-        const sheet = normaliseSheet(draft.sheet);
-        const { outputs, refused: cellRefusals } = normaliseOutputs(draft.outputs, sheet);
+      for (const [index, entry] of chosen.entries()) {
+        // A draft comes back from the browser, so its shape is repaired before
+        // anything reads it: `saveQuestion` calls `.trim()` on fields a review
+        // always fills, and one missing string would throw this loop down — the
+        // whole batch lost to a server error instead of refused one at a time.
+        const draft = asReviewedDraft(entry);
+        const label = draft.title || `Question ${index + 1}`;
+        const { outputs, refused: cellRefusals } = normaliseOutputs(draft.outputs, draft.sheet);
         // A workbook can arrive here with every required cell refused — the sheet
         // was edited, or the desk's copy is stale. `saveQuestion` cannot see that,
         // because it does not read a spreadsheet, so the row would be stored with
@@ -625,7 +630,7 @@ export async function addDraftedQuestions(
         if (draft.question_type === "EXCEL_MODEL" && outputs.length === 0) {
           refused.push({
             index,
-            title: draft.title,
+            title: label,
             reason:
               cellRefusals[0] ??
               "none of its required cells survived, so it would score nothing",
@@ -633,17 +638,13 @@ export async function addDraftedQuestions(
           continue;
         }
         const result = await saveQuestion(
-          draftForRow(
-            { ...draft, sheet, outputs },
-            templateId,
-            suite.existingTitles.length + index
-          )
+          draftForRow({ ...draft, outputs }, templateId, suite.existingTitles.length + index)
         );
         if (result.ok) created += 1;
         else {
           refused.push({
             index,
-            title: draft.title,
+            title: label,
             reason: result.error ?? "the suite refused it",
           });
         }

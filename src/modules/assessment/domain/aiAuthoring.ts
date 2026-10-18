@@ -15,6 +15,11 @@ import { refToRowAndColumn } from "./attemptAnswers";
  * `saveQuestion` stays the authority on the database row. Nothing in this file
  * writes; it only turns a model's reply into drafts a human can review, so a
  * draft that slips through here is still refused at the door.
+ *
+ * A whole suite drafted from a job opening comes through the same door:
+ * `reviewSuite` checks the shell the suite editor stores — name, role family,
+ * clock — and hands its questions to `reviewDrafts`, so a drafted suite and a
+ * batch of drafted questions are judged by identical rules.
  */
 
 export const MAX_DRAFTS_PER_RUN = 8;
@@ -126,6 +131,29 @@ const QUESTION_TYPES: readonly string[] = [
   "EXCEL_MODEL",
   "VIDEO_PITCH",
 ];
+
+/**
+ * What each question type can actually give a candidate, said once.
+ *
+ * Both authoring prompts quote this. A model told one thing about a spreadsheet
+ * and refused another by `reviewDrafts` produces a run where every question is
+ * dropped, so the rules and the review are written from the same words.
+ */
+export const QUESTION_RULES = `Each question must be answerable with only what its type gives the candidate:
+- MULTIPLE_CHOICE: exactly one option is correct. Wrong options must be plausible, not jokes. Never use "all of the above" or "none of the above" — options are shuffled per candidate.
+- CASE_STUDY: put the scenario the candidate reads first in "context", then ask one thing of them in "prompt".
+- EXCEL_MODEL: the candidate edits a grid. "initial_sheet" is the paper handed to them: labels and given figures ONLY. Every cell listed in "expected_outputs" must be BLANK there — a required cell that the sheet already prints is an answer given away, not a question.
+- VIDEO_PITCH: the candidate speaks to a camera. Ask something answerable out loud in the seconds allowed, with nothing to look up.
+
+Do not invent company figures you then ask the candidate to find. Do not ask for something the question itself states. Set every number a candidate needs inside the question.`;
+
+/** How the suite shell is judged, next to the questions it holds. */
+export const SUITE_RULES = `The suite around the questions:
+- "name": a few words a recruiter recognises in a dropdown, naming the role and what is being tested — not the vacancy's reference or its posting date.
+- "description": one or two sentences to the candidate, saying what the test covers and what they need to have to hand.
+- "role_family": copy one of the families given to you, exactly as written, or the suite lands in a filter nobody uses.
+- "time_limit_minutes": long enough for every question you wrote, up to 480. A suite shorter than its own questions is a test no one can finish.
+- "block_copy_paste": true unless the test is meant to be open-book, because blocking it stops a candidate pasting their own notes or a formula.`;
 
 const TITLE_CAP = 160;
 const PROMPT_CAP = 4000;
@@ -423,14 +451,67 @@ export function reviewDrafts(
 }
 
 /**
+ * A draft put back into the shape the review produced.
+ *
+ * Both authoring doors take their drafts back from the browser, and the row
+ * authority calls `.trim()` and `.filter()` on the fields a review always fills.
+ * A payload missing one of them throws out of the write loop, which turns the
+ * batch the desk promises to refuse one at a time into a server error that names
+ * nothing. This repairs the shape only — an empty title, points or option list
+ * still reaches `saveQuestion`, where it is refused in the words that screen it.
+ */
+export function asReviewedDraft(raw: unknown): GeneratedQuestion {
+  const record = (raw ?? {}) as Record<string, unknown>;
+  const options = Array.isArray(record.options) ? record.options : [];
+  const outputs = Array.isArray(record.outputs) ? record.outputs : [];
+  const points = Number(record.points);
+  const minSeconds = whole(record.min_duration_seconds, 0, 1800);
+  const maxSeconds = whole(record.max_duration_seconds, 10, 1800);
+
+  return {
+    question_type: record.question_type as QuestionType,
+    title: text(record.title, TITLE_CAP),
+    prompt: text(record.prompt, PROMPT_CAP),
+    instructions: text(record.instructions, 1000),
+    points: Number.isFinite(points) ? points : 0,
+    time_limit_minutes: whole(record.time_limit_minutes, 1, 480),
+    shuffle_options: record.shuffle_options === true,
+    options: options.map((entry) => {
+      const option = (entry ?? {}) as Record<string, unknown>;
+      return { text: text(option.text, OPTION_CAP), is_correct: option.is_correct === true };
+    }),
+    context: text(record.context, PROMPT_CAP),
+    min_words: whole(record.min_words, 1, 3000),
+    // The same pair rule the review applies: a pitch that must run longer than
+    // its own ceiling is not a limit the recorder can honour.
+    min_duration_seconds:
+      minSeconds !== null && (maxSeconds === null || minSeconds <= maxSeconds)
+        ? minSeconds
+        : null,
+    max_duration_seconds: maxSeconds,
+    sheet: normaliseSheet(record.sheet),
+    outputs: outputs.map((entry) => {
+      const output = (entry ?? {}) as Record<string, unknown>;
+      return {
+        cell: text(output.cell, 8).toUpperCase(),
+        description: text(output.description, 300),
+        formula_hint: text(output.formula_hint, 200) || null,
+      };
+    }),
+    cautions: Array.isArray(record.cautions)
+      ? record.cautions.map((line) => text(line, 400)).filter(Boolean)
+      : [],
+  };
+}
+
+/**
  * The row the suite editor writes.
  *
  * A spreadsheet's grid and required cells go through `preserve_config` because
  * that is the field `buildConfig` keeps untouched for `EXCEL_MODEL` — the same
  * door the manual editor uses, so a generated workbook is stored exactly like a
  * hand-authored one and the runner needs no new code path.
- */
-export function draftForRow(
+ */export function draftForRow(
   draft: GeneratedQuestion,
   templateId: string,
   position: number
@@ -510,4 +591,252 @@ export function sheetNote(draft: GeneratedQuestion): string {
   } of figures and asks for ${draft.outputs.length} cell${
     draft.outputs.length === 1 ? "" : "s"
   } to be produced.`;
+}
+
+// ============================================================================
+// A whole suite, drafted from a job opening
+// ============================================================================
+
+/**
+ * The suite half of a model reply, reviewed before it can be created.
+ *
+ * A job opening is not a test: its description sells the role and its
+ * requirements list tools, and a model asked to test that will happily write a
+ * question about a benefit the candidate never has to reason about. So the suite
+ * is reviewed as a shell (name, family, duration) plus the questions, and every
+ * field that the suite editor refuses to store is fixed here rather than
+ * discovered when the recruiter clicks create.
+ */
+
+export const SUITE_JSON_SHAPE = `{
+  "suite": {
+    "name": "short name a recruiter recognises in a dropdown",
+    "description": "one or two sentences telling the candidate what this test covers",
+    "role_family": "one of the role families listed below, exactly as written",
+    "time_limit_minutes": number,
+    "block_copy_paste": boolean
+  },
+  "questions": [ ...the shape described below... ]
+}`;
+
+/** What the reviewer needs beyond the model's reply. */
+export interface SuiteReviewContext {
+  /** The live `role_families` keys — a suite cannot be filed under a retired one. */
+  roleFamilies: string[];
+  /** Suite names already on file, so a second copy is named rather than made. */
+  existingNames: string[];
+  /** `assessment.default_duration_minutes`, used when the model gives no clock. */
+  defaultDurationMinutes: number;
+}
+
+/** The vacancy a test is written for, in the words the recruiter filed. */
+export interface OpeningSeed {
+  id: string;
+  title: string;
+  department: string;
+  location: string;
+  description: string;
+  requirements: string[];
+  status: string;
+}
+
+/** Everything the prompt is built from, before a model is called. */
+export interface SuiteSeedingContext extends SuiteReviewContext {
+  opening: OpeningSeed | null;
+  /** Where the suite is filed when the model's family is refused. */
+  fallbackRoleFamily: string;
+}
+
+export interface GeneratedSuite {
+  name: string;
+  description: string;
+  role_family: string;
+  time_limit_minutes: number;
+  randomize_questions: boolean;
+  randomize_options: boolean;
+  block_copy_paste: boolean;
+  cautions: string[];
+}
+
+export interface SuiteReview {
+  suite: GeneratedSuite;
+  review: DraftReview;
+}
+
+const SUITE_NAME_CAP = 120;
+const SUITE_DESCRIPTION_CAP = 1000;
+const OPENING_COPY_CAP = 1200;
+const OPENING_REQUIREMENT_CAP = 160;
+const OPENING_REQUIREMENTS_MAX = 14;
+
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+/**
+ * The vacancy, in the words the recruiter filed, clipped to one prompt block.
+ *
+ * A job ad is written to sell a role: the salary band, the benefits, the
+ * "dynamic team environment". None of it is testable, so the block keeps the
+ * title, where the work happens and what the role asks for, and drops the rest.
+ * The clip is here rather than in the prompt so a run that reads a long
+ * description cannot push the reply past the token budget the gateway sends.
+ */
+export function openingSeedWords(opening: OpeningSeed): string {
+  const requirements = opening.requirements
+    .map((requirement) => text(requirement, OPENING_REQUIREMENT_CAP))
+    .filter(Boolean)
+    .slice(0, OPENING_REQUIREMENTS_MAX);
+  const dropped = opening.requirements.filter(Boolean).length - requirements.length;
+
+  const lines = [
+    `ROLE: ${text(opening.title, 160)}`,
+    `DEPARTMENT: ${text(opening.department, 80) || "not recorded"}`,
+    `LOCATION: ${text(opening.location, 80) || "not recorded"}`,
+    `WHAT THE OPENING SAYS: ${text(opening.description, OPENING_COPY_CAP) || "nothing was filed"}`,
+  ];
+
+  if (requirements.length > 0) {
+    lines.push(
+      `WHAT THE ROLE ASKS FOR:\n${requirements.map((r) => `- ${r}`).join("\n")}` +
+        (dropped > 0 ? `\n(${dropped} further requirements were not carried into this prompt.)` : "")
+    );
+  }
+
+  return lines.join("\n");
+}
+
+/** A suite the recruiter can actually create, plus what they should look at. */
+export function reviewSuite(
+  parsed: unknown,
+  brief: AuthoringBrief,
+  context: SuiteSeedingContext
+): SuiteReview {
+  const record = ((parsed ?? {}) as Record<string, unknown>).suite as
+    | Record<string, unknown>
+    | undefined;
+  const cautions: string[] = [];
+
+  const named = text(record?.name, SUITE_NAME_CAP);
+  if (!named) {
+    cautions.push("The model named nothing, so this suite needs a name before it can be created.");
+  } else if (
+    context.existingNames.some((existing) => existing.toLowerCase().trim() === named.toLowerCase().trim())
+  ) {
+    cautions.push(
+      `A suite called “${named}” already exists, so this would be a second copy of the name.`
+    );
+  }
+
+  const familyRaw = text(record?.role_family, 60);
+  const family = familyRaw.toUpperCase().replace(/[\s-]+/g, "_");
+  // A family the master-data list does not carry is not stored: the suite opens
+  // filed under the family the recruiter was already choosing, and the desk says
+  // so, rather than inventing a fifth value the rest of the portal cannot filter.
+  const role_family =
+    family && context.roleFamilies.includes(family) ? family : context.fallbackRoleFamily;
+  if (familyRaw && !context.roleFamilies.includes(family)) {
+    cautions.push(
+      `“${familyRaw}” is not one of the role families on file, so it opens under ${
+        context.fallbackRoleFamily || "a family you must pick"
+      }.`
+    );
+  } else if (!familyRaw) {
+    cautions.push(
+      `The model gave no role family, so it opens under ${
+        context.fallbackRoleFamily || "the family you pick"
+      }.`
+    );
+  }
+
+  const minutes = whole(record?.time_limit_minutes, 5, 480);
+  if (minutes === null) {
+    cautions.push(
+      `No usable duration came back, so it opens at the ${context.defaultDurationMinutes} minutes Settings sets.`
+    );
+  }
+
+  const blockCopy = bool(record?.block_copy_paste, false);
+  if (blockCopy) {
+    cautions.push(
+      "Copy and paste is blocked, so a candidate cannot paste their own notes or a formula."
+    );
+  }
+
+  const review = reviewDrafts(parsed, brief);
+
+  // Two drafts can carry the same title inside one run, which the suite's own
+  // duplicate check cannot see because neither exists yet.
+  const titles = new Map<string, number>();
+  for (const draft of review.drafts) {
+    const key = draft.title.toLowerCase().trim();
+    titles.set(key, (titles.get(key) ?? 0) + 1);
+  }
+  for (const draft of review.drafts) {
+    if ((titles.get(draft.title.toLowerCase().trim()) ?? 0) > 1) {
+      draft.cautions.push("Another drafted question carries this same title.");
+    }
+  }
+
+  // A suite clock shorter than the questions' own limits is a test that cannot
+  // be finished, and neither half warns the other on its own.
+  const perQuestion = review.drafts.reduce(
+    (total, draft) => total + (draft.time_limit_minutes ?? 0),
+    0
+  );
+  const suiteMinutes = minutes ?? context.defaultDurationMinutes;
+  if (perQuestion > suiteMinutes) {
+    cautions.push(
+      `The questions add up to ${perQuestion} minutes of their own against a ${suiteMinutes}-minute suite, so a candidate cannot finish them all.`
+    );
+  }
+
+  return {
+    suite: {
+      name: named,
+      description: text(record?.description, SUITE_DESCRIPTION_CAP),
+      role_family,
+      time_limit_minutes: suiteMinutes,
+      // Left off for the same reason a drafted quiz ships unshuffled: the model
+      // picked the keys, and a shuffled "all of the above" stops being a question.
+      randomize_questions: false,
+      randomize_options: false,
+      block_copy_paste: blockCopy,
+      cautions,
+    },
+    review,
+  };
+}
+
+/** Total marks the drafted questions carry, so the desk can state the weight. */
+export function totalMarks(drafts: GeneratedQuestion[]): number {
+  return drafts.reduce((total, draft) => total + draft.points, 0);
+}
+
+/** What creating this suite would write, in one sentence. */
+/**
+ * The kinds inside a drafted suite, counted.
+ *
+ * "quiz" is the one word in this list that does not take a bare "s", and the
+ * sentence a recruiter reads is the only place these counts are shown.
+ */
+function kindCount(type: QuestionType, count: number): string {
+  const word = TYPE_WORDS[type];
+  return count === 1 ? word : word.endsWith("z") ? `${word}zes` : `${word}s`;
+}
+
+export function suiteReviewNote(review: SuiteReview): string {
+  const { suite, review: questions } = review;
+  const counts = new Map<QuestionType, number>();
+  for (const draft of questions.drafts) {
+    counts.set(draft.question_type, (counts.get(draft.question_type) ?? 0) + 1);
+  }
+  const mix = [...counts.entries()]
+    .map(([type, count]) => `${count} ${kindCount(type, count)}`)
+    .join(", ");
+  return `${questions.drafts.length} question${
+    questions.drafts.length === 1 ? "" : "s"
+  } (${mix || "none yet"}) worth ${totalMarks(questions.drafts)} marks, over ${
+    suite.time_limit_minutes
+  } minutes${questions.dropped.length > 0 ? `, with ${questions.dropped.length} refused` : ""}.`;
 }
