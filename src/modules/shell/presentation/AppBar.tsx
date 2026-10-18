@@ -44,6 +44,15 @@ import {
   routeOf,
 } from "@/modules/shell/domain/pageGuide";
 import type { StaffRoute } from "@/lib/auth/staffRoutes";
+import {
+  CLOSE_KEY,
+  GUIDE_KEYS,
+  SEARCH_INPUT_ID,
+  SEARCH_KEY,
+  handleQuickKey,
+  isTypingTarget,
+  keyForRoute,
+} from "@/modules/shell/domain/quickKeys";
 import { LiveBadge, useLive } from "@/modules/live/presentation/Live";
 import { areasFeeding } from "@/lib/live";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
@@ -104,12 +113,15 @@ function BarButton({
   onClick,
   children,
   badge,
+  keyName,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
   children: React.ReactNode;
   badge?: number;
+  /** The key that opens this panel. Named on the button so the hint is the same one the bar answers to. */
+  keyName?: string;
 }) {
   return (
     <button
@@ -118,7 +130,8 @@ function BarButton({
       aria-label={badge ? `${label} (${badge})` : label}
       aria-expanded={active}
       aria-haspopup="dialog"
-      title={label}
+      aria-keyshortcuts={keyName}
+      title={keyName ? `${label} — press ${keyName}` : label}
       className={cn(
         "relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
         active
@@ -186,6 +199,15 @@ function PanelTitle({ children, note }: { children: React.ReactNode; note?: stri
       </h2>
       {note && <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">{note}</p>}
     </div>
+  );
+}
+
+/** A key drawn as a key — the only place a shortcut is legible to a recruiter. */
+function Kbd({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="shrink-0 rounded-md border border-brand-line bg-white px-1.5 py-0.5 font-mono text-[10px] font-bold leading-none text-brand-ink/70">
+      {children}
+    </kbd>
   );
 }
 
@@ -309,9 +331,11 @@ function SearchField({
             aria-hidden
           />
           <input
-            id="global-search"
+            id={SEARCH_INPUT_ID}
             type="search"
             autoComplete="off"
+            aria-keyshortcuts={SEARCH_KEY}
+            title="Search candidates, jobs and prospects — press / here"
             value={term}
             onChange={(event) => {
               setTerm(event.target.value);
@@ -483,6 +507,24 @@ function GuidePanel({ open }: { open: Panel }) {
         Guide
       </PanelTitle>
 
+      <Note>
+        <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <span className="font-semibold text-brand-ink/70">Keys:</span>
+          <Kbd>{GUIDE_KEYS[0]}</Kbd>
+          <Kbd>{GUIDE_KEYS[1]}</Kbd>
+          <span>this guide,</span>
+          <Kbd>{SEARCH_KEY}</Kbd>
+          <span>the search box,</span>
+          <Kbd>Esc</Kbd>
+          <span>close it, and one letter per screen — printed on its row below.</span>
+        </span>
+        <span className="mt-1 block">
+          A key sleeps while the caret is in a field, and a held Ctrl / Cmd / Alt is
+          left for the browser, so typing a candidate&apos;s name never moves you off
+          the page.
+        </span>
+      </Note>
+
       {shown && guide && entry && (
         <section className="rounded-2xl border border-brand-line bg-white p-3 shadow-soft">
           <div className="flex items-start gap-2.5">
@@ -511,9 +553,10 @@ function GuidePanel({ open }: { open: Panel }) {
 
           <div className="mt-3 border-t border-brand-line/70 pt-2">
             {shown === here ? (
-              <p className="text-[11px] leading-relaxed text-brand-ink/45">
-                You are on this page. Pick another below to read its guide without
-                leaving.
+              <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] leading-relaxed text-brand-ink/45">
+                <span>You are on this page —</span>
+                <Kbd>{keyForRoute(shown)}</Kbd>
+                <span>opens it from anywhere, and picking another screen below reads its guide without leaving.</span>
               </p>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
@@ -524,6 +567,10 @@ function GuidePanel({ open }: { open: Panel }) {
                   <entry.icon className="h-3.5 w-3.5" aria-hidden />
                   Open {entry.label}
                 </Link>
+                <span className="flex items-center gap-1.5 text-[11px] text-brand-ink/45">
+                  <Kbd>{keyForRoute(shown)}</Kbd>
+                  <span>goes there from anywhere.</span>
+                </span>
                 <button
                   type="button"
                   onClick={() => setPinned(null)}
@@ -541,7 +588,7 @@ function GuidePanel({ open }: { open: Panel }) {
       <PanelTitle
         note="The same table the navigation rail renders, so this list cannot fall behind the portal."
       >
-        <span className="mt-4 block">Every screen — click one to read its guide</span>
+        <span className="mt-4 block">Every screen — click one to read its guide, or press its letter to go there</span>
       </PanelTitle>
 
       <div className="space-y-3">
@@ -573,7 +620,7 @@ function GuidePanel({ open }: { open: Panel }) {
                       )}
                       aria-hidden
                     />
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold leading-tight">
                         {item.label}
                         {isHere && (
@@ -586,6 +633,7 @@ function GuidePanel({ open }: { open: Panel }) {
                         {item.hint}
                       </span>
                     </span>
+                    <Kbd>{keyForRoute(item.href)}</Kbd>
                   </button>
                 );
               })}
@@ -1278,6 +1326,7 @@ export function AppBar({
   const [alertsReadAt, setAlertsReadAt] = useState<string | null>(null);
   const barRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
+  const router = useRouter();
   const { lastChange } = useLive();
 
   const acks = useSyncExternalStore(
@@ -1339,7 +1388,7 @@ export function AppBar({
   useEffect(() => {
     if (!panel) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPanel(null);
+      if (event.key === CLOSE_KEY) setPanel(null);
     };
     // Dismissal is a document listener rather than a full-screen overlay sheet:
     // an overlay would swallow the click meant for the navigation rail, forcing
@@ -1355,6 +1404,40 @@ export function AppBar({
       document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [panel]);
+
+  /**
+   * Quick keys: `g` or `?` opens this Guide, `/` drops the caret into the search
+   * box, and one letter per admin page goes straight there.
+   *
+   * The bindings and the letters printed on the Guide's rows come from the same
+   * table, so a key cannot exist on screen that the bar does not answer to — or
+   * the other way round, which is the version that makes a manual wrong. The rule
+   * itself lives in `domain/quickKeys`, which decides from the keystroke alone;
+   * this effect is the DOM around it.
+   */
+  useEffect(() => {
+    const onQuickKey = (event: KeyboardEvent) => {
+      const consumed = handleQuickKey(
+        {
+          key: event.key,
+          typing: isTypingTarget(event.target),
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+        },
+        {
+          toggleGuide: () => setPanel((current) => (current === "guide" ? null : "guide")),
+          focusSearch: () => {
+            (document.getElementById(SEARCH_INPUT_ID) as HTMLInputElement | null)?.focus();
+          },
+          goto: (route) => router.push(route),
+        }
+      );
+      if (consumed) event.preventDefault();
+    };
+    window.addEventListener("keydown", onQuickKey);
+    return () => window.removeEventListener("keydown", onQuickKey);
+  }, [router]);
 
   return (
     <header
@@ -1385,7 +1468,12 @@ export function AppBar({
 
       <div className="relative flex shrink-0 items-center gap-1.5 sm:gap-2">
         <LiveBadge />
-        <BarButton label="Guide" active={panel === "guide"} onClick={() => toggle("guide")}>
+        <BarButton
+          label="Guide"
+          active={panel === "guide"}
+          onClick={() => toggle("guide")}
+          keyName={GUIDE_KEYS[0]}
+        >
           <BookOpen className="h-4 w-4" aria-hidden />
         </BarButton>
         <BarButton
