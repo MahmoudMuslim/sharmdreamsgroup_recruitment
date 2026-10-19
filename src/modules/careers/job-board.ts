@@ -108,6 +108,15 @@ export interface BoardFilters {
   location: string[];
   employment_type: string[];
   sector: string[];
+  /**
+   * The one company whose block is on screen, or "" for the whole board.
+   *
+   * This is a *view*, not a filter: `filterJobs` never sees it, so the ticked
+   * boxes and their counts mean the same thing whether or not a tab is picked,
+   * and switching tabs costs no re-filter. It still travels in the URL, because
+   * "look at what X is hiring for" is worth being able to send someone.
+   */
+  tab: string;
 }
 
 export const EMPTY_FILTERS: BoardFilters = {
@@ -116,6 +125,7 @@ export const EMPTY_FILTERS: BoardFilters = {
   location: [],
   employment_type: [],
   sector: [],
+  tab: "",
 };
 
 /** A query string is not a form; past that, the URL is only getting long. */
@@ -280,6 +290,7 @@ export function readFilters(search: string): BoardFilters {
     location: values("location"),
     employment_type: values("type"),
     sector: values("sector"),
+    tab: params.get("company")?.trim().slice(0, 120) ?? "",
   };
 }
 
@@ -290,5 +301,6 @@ export function writeFilters(filters: BoardFilters): string {
   for (const facet of FACETS) {
     for (const value of filters[facet.field]) params.append(facet.param, value);
   }
+  if (filters.tab) params.set("company", filters.tab);
   return params.toString();
 }

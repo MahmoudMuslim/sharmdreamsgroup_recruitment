@@ -40,8 +40,9 @@ import { cn } from "@/lib/utils";
 import type { Locale } from "@/types";
 
 /**
- * The applicant-facing job board: a sidebar of search, ticked filters and the
- * group's companies, and the openings those choices leave in the column beside it.
+ * The applicant-facing job board: a sidebar of search and ticked filters, the
+ * group's companies as a strip of tabs, and the openings those choices leave in
+ * the column beside them.
  *
  * Filtering runs here rather than on the server because `getPublicJobs` already
  * returns every PUBLISHED opening — the read carries no limit — so the whole
@@ -147,18 +148,24 @@ function JobCard({ job }: { job: PublicJob }) {
 }
 
 /**
- * The anchor a company block is jumped to by.
+ * The address a company block is jumped to by, and the value its tab is picked
+ * by.
  *
- * Built from the row's own slug where the page has one, so an address a candidate
- * shares names the company rather than a numbered section that shifts when the
- * board is filtered.
+ * Both are built from the row's own slug where the page has one, so an address a
+ * candidate shares names the company rather than a numbered section that shifts
+ * when the board is filtered — and a shared `?company=` link still points at the
+ * same employer after a recruiter reorders the group.
  */
+function slugFold(text: string): string {
+  return text.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
 function anchorFor(section: CompanySection): string {
-  const folded = (section.company?.slug || section.name)
-    .toLocaleLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `company-${folded || "unlisted"}`;
+  return `company-${slugFold(section.company?.slug || section.name) || "unlisted"}`;
+}
+
+function tabFor(section: CompanySection): string {
+  return section.company?.slug || slugFold(section.name) || "unlisted";
 }
 
 /**
@@ -273,10 +280,12 @@ function CompanyBlock({ section }: { section: CompanySection }) {
 /**
  * The board: a column of choices beside the openings they leave standing.
  *
- * Search, ticked facets and the companies on the board all live in the sidebar,
- * so an applicant narrows the list without ever losing sight of what they have
- * already chosen — the counts next to each box say how many roles each extra
- * tick would cost them.
+ * Search and the ticked facets live in the sidebar, so an applicant narrows the
+ * list without ever losing sight of what they have already chosen — the counts
+ * next to each box say how many roles each extra tick would cost them. The
+ * group's companies are the strip above the list instead: one employer's openings
+ * at a time, so a candidate reads a short page rather than scrolling through four
+ * companies' headings, histories and role grids stacked one under the next.
  */
 
 /**
@@ -288,29 +297,41 @@ function CompanyBlock({ section }: { section: CompanySection }) {
  * count that only appears below the panel is a count you have to scroll past
  * the filters to find. The one that is hidden for the current breakpoint is
  * `display: none`, so a screen reader is only ever told the number once.
+ *
+ * With a company tab picked, the number is that employer's, and naming it here
+ * is what keeps the line above the list from claiming more roles than the one
+ * block below it actually holds.
  */
 function ResultSummary({
   lang,
   filters,
   shown,
   total,
+  company,
 }: {
   lang: Locale;
   filters: BoardFilters;
   shown: number;
   total: number;
+  company: string | null;
 }) {
   const narrowed = Boolean(filters.q.trim()) || activeFacetCount(filters) > 0;
 
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <p aria-live="polite" className="text-sm font-semibold text-brand-ink">
-        {translate(lang, narrowed ? "board.showingFiltered" : "board.showingAll", {
-          shown,
-          total,
-        })}
+        {company
+          ? translate(
+              lang,
+              shown === 1 ? "board.showingCompanyOne" : "board.showingCompanyMany",
+              { shown, company }
+            )
+          : translate(lang, narrowed ? "board.showingFiltered" : "board.showingAll", {
+              shown,
+              total,
+            })}
       </p>
-      {narrowed && (
+      {(narrowed || company) && (
         <button
           type="button"
           onClick={() => publish(EMPTY_FILTERS)}
@@ -321,6 +342,88 @@ function ResultSummary({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * The companies on the board, side by side instead of stacked.
+ *
+ * Buttons in a strip, not ARIA tabs: an ARIA tablist promises arrow-key movement
+ * between its tabs, and a board that is really a filtered list would need a
+ * focus manager to keep that promise. As buttons, tab, Enter and the screen
+ * reader's own list-of-buttons all work untouched, and `aria-current` says which
+ * company is on screen.
+ *
+ * The strip scrolls sideways rather than wrapping, because three rows of company
+ * names would push the first role off the fold on a phone — the point of a tab
+ * is that the list starts higher than the page of headings it replaced.
+ */
+function CompanyTabs({
+  lang,
+  sections,
+  active,
+  onPick,
+}: {
+  lang: Locale;
+  sections: CompanySection[];
+  active: string;
+  onPick: (tab: string) => void;
+}) {
+  const pill =
+    "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold transition";
+
+  return (
+    <nav
+      aria-label={translate(lang, "board.companiesAria")}
+      className="mb-5 border-b border-brand-line pb-3"
+    >
+      <ul className="flex gap-2 overflow-x-auto pb-1">
+        <li>
+          <button
+            type="button"
+            onClick={() => onPick("")}
+            aria-current={active ? undefined : "true"}
+            className={cn(
+              pill,
+              active
+                ? "border-brand-line bg-white text-brand-ink/70 hover:bg-brand-sand hover:text-brand-ink"
+                : "border-brand-ink bg-brand-ink text-brand-cream"
+            )}
+          >
+            {translate(lang, "board.tabAll")}
+          </button>
+        </li>
+        {sections.map((section) => {
+          const tab = tabFor(section);
+          const picked = tab === active;
+          return (
+            <li key={tab}>
+              <button
+                type="button"
+                onClick={() => onPick(picked ? "" : tab)}
+                aria-current={picked ? "true" : undefined}
+                className={cn(
+                  pill,
+                  picked
+                    ? "border-brand-ink bg-brand-ink text-brand-cream"
+                    : "border-brand-line bg-white text-brand-ink/70 hover:bg-brand-sand hover:text-brand-ink"
+                )}
+              >
+                {section.name || translate(lang, "board.tabUnlisted")}
+                <span
+                  className={cn(
+                    "font-mono text-[11px]",
+                    picked ? "text-brand-cream/70" : "text-brand-ink/40"
+                  )}
+                >
+                  {section.jobs.length}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 
@@ -350,6 +453,16 @@ export function CareersBoard({
   // shows a heading over an empty list of roles.
   const sections = useMemo(() => sectionsForBoard(shown, companies), [shown, companies]);
 
+  // A tab names a company, so it survives a filter change only while that company
+  // still has a role on the board. When it does not, the strip falls back to
+  // "All companies" rather than leaving a highlighted tab over an empty column —
+  // an applicant who arrives on an old shared link sees the whole board, not a
+  // page that looks broken.
+  const onScreen = sections.find((section) => tabFor(section) === filters.tab) ?? null;
+  const activeTab = onScreen ? filters.tab : "";
+  const visible = onScreen ? [onScreen] : sections;
+  const openHere = visible.reduce((count, section) => count + section.jobs.length, 0);
+
   // A facet offering one value filters nothing, so it is not offered at all; it
   // appears as soon as the board holds two kinds of role to tell apart.
   const facets = useMemo(
@@ -376,7 +489,13 @@ export function CareersBoard({
   return (
     <>
       <div className="flex items-start justify-between gap-3 lg:hidden">
-        <ResultSummary lang={lang} filters={filters} shown={shown.length} total={jobs.length} />
+        <ResultSummary
+          lang={lang}
+          filters={filters}
+          shown={openHere}
+          total={jobs.length}
+          company={onScreen?.name ?? null}
+        />
         <button
           type="button"
           onClick={() => setPanelOpen((open) => !open)}
@@ -474,44 +593,25 @@ export function CareersBoard({
             </div>
           )}
 
-          {/* The board is one page per company, so the names are offered before the
-              list: a candidate who knows which company they want jumps there instead
-              of scrolling through the others' openings. */}
-          {sections.length > 1 && (
-            <nav
-              aria-label={translate(lang, "board.companiesAria")}
-              className="mt-5 border-t border-brand-line pt-4"
-            >
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/40">
-                {translate(lang, "board.companies")}
-              </p>
-              <ul className="mt-2 space-y-0.5">
-                {sections.map((section) => (
-                  <li key={anchorFor(section)}>
-                    <a
-                      href={`#${anchorFor(section)}`}
-                      onClick={() => setPanelOpen(false)}
-                      className="flex items-center justify-between gap-2 rounded-lg px-1 py-1 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand hover:text-brand-ink"
-                    >
-                      <span className="min-w-0 truncate">{section.name}</span>
-                      <span className="shrink-0 font-mono text-[11px] text-brand-ink/40">
-                        {section.jobs.length}
-                      </span>
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          )}
         </aside>
 
         <div className="mt-6 min-w-0 lg:mt-0">
+          {sections.length > 1 && (
+            <CompanyTabs
+              lang={lang}
+              sections={sections}
+              active={activeTab}
+              onPick={(tab) => publish({ ...filters, tab })}
+            />
+          )}
+
           <div className="mb-4 hidden lg:block">
             <ResultSummary
               lang={lang}
               filters={filters}
-              shown={shown.length}
+              shown={openHere}
               total={jobs.length}
+              company={onScreen?.name ?? null}
             />
           </div>
 
@@ -522,7 +622,9 @@ export function CareersBoard({
               description={translate(lang, "board.emptyMatchBody", { count: jobs.length })}
             />
           ) : (
-            sections.map((section) => <CompanyBlock key={anchorFor(section)} section={section} />)
+            visible.map((section) => (
+              <CompanyBlock key={anchorFor(section)} section={section} />
+            ))
           )}
         </div>
       </div>
