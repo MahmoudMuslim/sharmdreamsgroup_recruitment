@@ -9,17 +9,20 @@ import {
   ChevronRight,
   Download,
   FileText,
+  LayoutGrid,
   Loader2,
   Lock,
   Search,
   Send,
   Sparkles,
+  Table,
   User,
   Users,
   X,
   type LucideIcon,
 } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
+import { navForward } from "@/modules/shell/domain/navTransition";
 import {
   DrawerActions,
   Field,
@@ -44,7 +47,6 @@ import {
 } from "@/modules/candidates/domain/listFilters";
 import {
   draftCandidateFeedback,
-  draftRejectionReason,
   screenApplication,
   sendBulkEmail,
   sendBulkWhatsApp,
@@ -55,6 +57,8 @@ import {
   type PipelineStage,
 } from "./candidate-actions";
 import type { CandidateRow } from "./actions";
+import { CandidateBoard } from "./CandidateBoard";
+import { RejectReasonForm } from "./RejectReasonForm";
 import { CandidateDossier } from "./CandidateDossier";
 import { IntegrityPanel } from "./IntegrityPanel";
 import { InterviewPanel } from "./InterviewPanel";
@@ -258,6 +262,12 @@ export function CandidateBrowser({
   // `?c=` arrives from the interviews agenda and `?q=` from the dashboard board:
   // open the page already showing what the recruiter was looking at.
   const trackedCode = params.get("c");
+  /**
+   * Which surface the rails' rows are drawn on, read from the URL like the rails
+   * themselves, so the assistant, the Guide and a bookmarked address all land on
+   * the board or the table the link names rather than always the table.
+   */
+  const boardView = params.get("view") === "board";
   const [query, setQuery] = useState(params.get("q") ?? trackedCode ?? "");
   const [sortBy, setSortBy] = useState<CandidateSort>("recent");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -323,11 +333,31 @@ export function CandidateBrowser({
     }
   }
 
+  /**
+   * Table or board — the same rails, the same rows, a different drawing.
+   *
+   * Kept in the URL rather than local state so a link can name the surface the
+   * way it names a stage, and so switching views never looks like a filter to the
+   * server: the query behind both is byte for byte the same.
+   */
+  function setSurface(board: boolean) {
+    const search = new URLSearchParams();
+    if (gradingView) search.set("ungraded", "1");
+    else if (archivedView) search.set("archived", "1");
+    if (railStage) search.set("stage", railStage);
+    if (railSource) search.set("source", railSource);
+    if (railCompany) search.set("company", railCompany);
+    if (board) search.set("view", "board");
+    const qs = search.toString();
+    router.push(`/candidates${qs ? `?${qs}` : ""}`);
+  }
+
   /** The two views never mix, so switching one clears the other's selection. */
   function openView(archived: boolean) {
     setSelected(new Set());
     setArchiveNote(null);
-    router.push(archived ? "/candidates?archived=1" : "/candidates");
+    if (archived) router.push(boardView ? "/candidates?archived=1&view=board" : "/candidates?archived=1");
+    else router.push(boardView ? "/candidates?view=board" : "/candidates");
   }
 
   /**
@@ -351,6 +381,7 @@ export function CandidateBrowser({
     if (next.stage) search.set("stage", next.stage);
     if (next.source) search.set("source", next.source);
     if (next.company) search.set("company", next.company);
+    if (boardView) search.set("view", "board");
     const qs = search.toString();
     router.push(`/candidates${qs ? `?${qs}` : ""}`);
   }
@@ -588,6 +619,40 @@ export function CandidateBrowser({
             </button>
           )}
 
+          {/* Which surface the rails' rows are drawn on. Both read the same query
+              and the same stage write, so this changes only the drawing. */}
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="Choose how the list is drawn"
+          >
+            {[
+              { board: false, label: "Table", icon: Table },
+              { board: true, label: "Board", icon: LayoutGrid },
+            ].map((surface) => (
+              <button
+                key={surface.label}
+                type="button"
+                onClick={() => setSurface(surface.board)}
+                aria-pressed={boardView === surface.board}
+                title={
+                  surface.board
+                    ? "Show the pipeline as columns you can drag a candidate between"
+                    : "Show the pipeline as a list"
+                }
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-semibold transition",
+                  boardView === surface.board
+                    ? "border-brand-gold bg-brand-gold/15 text-brand-gold-dark"
+                    : "border-brand-line bg-white text-brand-ink/60 hover:bg-brand-sand"
+                )}
+              >
+                <surface.icon className="h-3.5 w-3.5" aria-hidden />
+                {surface.label}
+              </button>
+            ))}
+          </div>
+
           {canExport && (
             <div className="flex items-center gap-1.5" role="group" aria-label="Download this list">
               {exportFormats.map((format) => (
@@ -716,8 +781,9 @@ export function CandidateBrowser({
         {tally && tally.total > candidates.length && (
           <p className="text-[11px] leading-relaxed text-brand-ink/45">
             The rail counts cover all {tally.total.toLocaleString()}{" "}
-            {archivedView ? "filed" : "live"} applications. This table lists the newest{" "}
-            {CANDIDATE_ROW_LIMIT} of them, so a stage can count rows that are not on the page.
+            {archivedView ? "filed" : "live"} applications. This {boardView ? "board" : "table"}{" "}
+            lists the newest {CANDIDATE_ROW_LIMIT} of them, so a stage can count rows that are not
+            on the page.
             {tally.truncated &&
               ` Past the newest ${CANDIDATE_COUNT_SCAN_LIMIT.toLocaleString()} applications even the counts stop being exact.`}
           </p>
@@ -725,8 +791,9 @@ export function CandidateBrowser({
 
         {canExport && (
           <p className="text-[11px] leading-relaxed text-brand-ink/45">
-            A file is built when you click, from every application matching these filters — this
-            table only lists the most recent ones, so a download can hold more rows than you can see.
+            A file is built when you click, from every application matching these filters — this{" "}
+            {boardView ? "board" : "table"} only lists the most recent ones, so a download can hold
+            more rows than you can see.
           </p>
         )}
       </div>
@@ -742,6 +809,23 @@ export function CandidateBrowser({
             application older than the newest ${CANDIDATE_ROW_LIMIT} cannot be found from here.`}
           />
         </Card>
+      ) : boardView ? (
+        <>
+          <p className="mb-3 text-[11px] leading-relaxed text-brand-ink/50">
+            {canWrite
+              ? "Drag a card into another column, or use Move to… on the card — both run the same stage write the table’s Advance button and the profile’s stage buttons run, so the change trail, the candidate’s notice and the hired-on stamp are identical whichever door was used. A card changes column only once the page has re-read the record, so the board shows the stage the database holds rather than where a drop last landed. Rejected asks for a reason first: cancelling that step leaves the candidate exactly where they were."
+              : "The pipeline as columns. Moving a candidate needs the Edit candidates permission, so these cards do not drag and carry no move control."}
+          </p>
+          <CandidateBoard
+            rows={filtered}
+            canWrite={canWrite}
+            canSelect={!archivedView}
+            selected={selected}
+            stageCounts={tally ? stageCounts : null}
+            onToggleSelect={toggle}
+            onOpenProfile={setProfile}
+          />
+        </>
       ) : (
         <Card className="overflow-hidden">
           {/* Desktop table */}
@@ -787,6 +871,7 @@ export function CandidateBrowser({
                     <td className="px-4 py-4">
                       <Link
                         href={`/candidates/${c.id}`}
+                        transitionTypes={navForward}
                         className="font-semibold hover:text-brand-gold-dark hover:underline"
                         title={`${c.full_name}'s profile — everything filed about them, on any opening`}
                       >
@@ -909,6 +994,7 @@ export function CandidateBrowser({
                     <span className="min-w-0">
                       <Link
                         href={`/candidates/${c.id}`}
+                        transitionTypes={navForward}
                         className="block truncate font-semibold hover:text-brand-gold-dark hover:underline"
                         title={`${c.full_name}'s profile — everything filed about them, on any opening`}
                       >
@@ -1065,8 +1151,6 @@ function ProfileDrawer({
 
   const [pendingStage, setPendingStage] = useState<string | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectReason, setRejectReason] = useState("");
-  const [reasonDrafting, setReasonDrafting] = useState(false);
   const [screenPending, setScreenPending] = useState(false);
   const [feedbackPending, setFeedbackPending] = useState(false);
   const [sendPending, setSendPending] = useState(false);
@@ -1120,63 +1204,6 @@ function ProfileDrawer({
       setError("Something went wrong moving the candidate.");
     } finally {
       setPendingStage(null);
-    }
-  }
-
-  async function confirmReject() {
-    if (!candidate) return;
-    setPendingStage("REJECTED");
-    setError(null);
-    setDone(null);
-    try {
-      const result = await updateApplicationStage({
-        applicationId: candidate.id,
-        stage: "REJECTED",
-        reason: rejectReason,
-      });
-      if (result.ok) {
-        setRejectOpen(false);
-        setRejectReason("");
-        setDone(
-          result.auto_feedback
-            ? "Candidate rejected. A feedback draft is being written in the background."
-            : "Candidate rejected. Personalised feedback is switched off in Settings, so no draft was written — use Draft feedback whenever you want one."
-        );
-        router.refresh();
-      } else {
-        setError(result.error ?? "Could not reject the candidate.");
-      }
-    } catch {
-      setError("Something went wrong rejecting the candidate.");
-    } finally {
-      setPendingStage(null);
-    }
-  }
-
-  /**
-   * Writes the model's reason into the textarea, replacing what is there.
-   *
-   * Overwrite is the honest behaviour for a button labelled "draft": a partially
-   * typed reason is the recruiter's own words and they are about to read the
-   * machine's beside the Confirm button, not have them silently merged.
-   */
-  async function draftReason() {
-    if (!candidate) return;
-    setReasonDrafting(true);
-    setError(null);
-    setDone(null);
-    try {
-      const result = await draftRejectionReason(candidate.id);
-      if (result.ok && result.reason) {
-        setRejectReason(result.reason);
-        setDone("Drafted from this file's evidence. Read it and edit before confirming — nothing is saved yet.");
-      } else {
-        setError(result.error ?? "Could not draft a reason.");
-      }
-    } catch {
-      setError("The portal did not answer, so no reason was drafted.");
-    } finally {
-      setReasonDrafting(false);
     }
   }
 
@@ -1288,6 +1315,7 @@ function ProfileDrawer({
                 sit on any of them. */}
             <Link
               href={`/candidates/${candidate.id}`}
+              transitionTypes={navForward}
               className="ms-auto inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-gold-dark transition hover:bg-brand-sand"
             >
               <User className="h-3.5 w-3.5" aria-hidden />
@@ -1350,7 +1378,10 @@ function ProfileDrawer({
                   {STAGES.map((stage) => {
                     const active = candidate.stage === stage;
                     const isReject = stage === "REJECTED";
-                    const blocked = active || pendingStage !== null;
+                    // A rejection in progress or half-typed is the one moment the
+                    // other stage buttons must not answer, or a second write would
+                    // silently overwrite the reason being written.
+                    const blocked = active || pendingStage !== null || rejectOpen;
                     return (
                       <button
                         key={stage}
@@ -1378,57 +1409,20 @@ function ProfileDrawer({
                 </div>
 
                 {rejectOpen && (
-                  <div className="mt-3 space-y-2 rounded-xl border border-rose-200 bg-rose-50 p-3.5">
-                    <label htmlFor="reject-reason" className="block text-xs font-bold text-rose-900">
-                      Rejection reason
-                    </label>
-                    <p className="text-[11px] leading-relaxed text-rose-900/70">
-                      For the file: this note shows on the candidate profile and in the reports export.
-                      The letter the candidate receives is written from Settings → Notifications and
-                      does not use it.
-                    </p>
-                    <TextArea
-                      id="reject-reason"
-                      rows={3}
-                      value={rejectReason}
-                      onChange={(e) => setRejectReason(e.target.value)}
-                      placeholder="Why is this candidate not moving forward?"
+                  <div className="mt-3">
+                    <RejectReasonForm
+                      candidate={candidate}
+                      onCancel={() => setRejectOpen(false)}
+                      onMoved={(autoFeedback) => {
+                        setRejectOpen(false);
+                        setDone(
+                          autoFeedback
+                            ? "Candidate rejected. A feedback draft is being written in the background."
+                            : "Candidate rejected. Personalised feedback is switched off in Settings, so no draft was written — use Draft feedback whenever you want one."
+                        );
+                        router.refresh();
+                      }}
                     />
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => void confirmReject()}
-                        disabled={pendingStage !== null}
-                        className="bg-rose-600 text-brand-on-accent hover:bg-rose-700"
-                      >
-                        {pendingStage === "REJECTED" && (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                        )}
-                        Confirm rejection
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void draftReason()}
-                        disabled={reasonDrafting || pendingStage !== null}
-                      >
-                        {reasonDrafting && (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                        )}
-                        {!reasonDrafting && <Sparkles className="h-3.5 w-3.5" aria-hidden />}
-                        Draft from file
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setRejectOpen(false);
-                          setRejectReason("");
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
                   </div>
                 )}
               </section>
