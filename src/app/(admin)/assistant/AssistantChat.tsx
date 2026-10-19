@@ -798,6 +798,12 @@ export function AssistantChat({
   const [error, setError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [allowDestructive, setAllowDestructive] = useState(false);
+  /**
+   * Lets the Qoder engine reach the public internet for one turn. It is not
+   * remembered, and it is not sent while the conversation is pinned to an engine
+   * that cannot search — see `webAvailable`.
+   */
+  const [allowWeb, setAllowWeb] = useState(false);
   /** The approval card being applied, so its button cannot fire twice. */
   const [approving, setApproving] = useState<string | null>(null);
   const [showCapabilities, setShowCapabilities] = useState(false);
@@ -816,6 +822,16 @@ export function AssistantChat({
   const [attachment, setAttachment] = useState<AssistantAttachment | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [opening, setOpening] = useState(sessionId !== null);
+
+  /**
+   * Whether a web switch turned on right now would buy a search.
+   *
+   * Only the Qoder engine has a way to reach the network, and naming a model
+   * pins the conversation to the gateway, which has none — so under either the
+   * control is inert and is not sent, rather than left promising a lookup that
+   * would silently not happen.
+   */
+  const webAvailable = engine !== "gateway" && !model;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1060,6 +1076,7 @@ export function AssistantChat({
         history,
         prompt,
         allowDestructive,
+        allowWeb: allowWeb && webAvailable,
         engine,
         model: model || null,
         attachment: attached ?? undefined,
@@ -1489,6 +1506,39 @@ export function AssistantChat({
                 Allow deletions — lets me offer an opening, a prospect or a queued message for you to
                 approve when you name it. Every delete still waits for your click. It is never
                 remembered between conversations.
+              </span>
+            </label>
+
+            <label
+              className={cn(
+                "mb-2 flex items-start gap-2 text-[11px] leading-snug",
+                webAvailable ? "text-brand-ink/55" : "text-brand-ink/35"
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={allowWeb}
+                disabled={!webAvailable}
+                onChange={(event) => setAllowWeb(event.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark disabled:cursor-not-allowed"
+                title={
+                  webAvailable
+                    ? "Let this turn search the public internet"
+                    : "Only the Qoder engine can search — clear the model choice or pick the Qoder engine above"
+                }
+              />
+              <span>
+                Allow web search — lets me look up what is outside this portal: a market salary band,
+                a pay survey, an industry benchmark. Each lookup shows as a chip so you can see what
+                was searched, and what comes back is advice with its source named — I never write a
+                fetched figure into an opening. Runs on the Qoder engine only, and is never
+                remembered between conversations.
+                {!webAvailable && (
+                  <span className="mt-0.5 block font-semibold text-brand-ink/45">
+                    Off while {model ? `${model} answers this conversation` : "the engine is set to Gateway"}:
+                    the model gateway has no way to reach the network.
+                  </span>
+                )}
               </span>
             </label>
 

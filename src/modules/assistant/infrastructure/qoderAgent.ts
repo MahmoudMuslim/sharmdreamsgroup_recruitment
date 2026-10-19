@@ -51,21 +51,54 @@ import type { ChatCompletionMessage } from "@/types";
  * those is disallowed and `canUseTool` denies anything that is not a portal
  * tool, so the model can only ever reach the database through the same server
  * actions the screens use, with the same permissions and the same RLS.
+ *
+ * The one exception is deliberate, and the recruiter opens it per turn: the
+ * web switch hands back the runtime's own `WebSearch` and `WebFetch`, which
+ * read the public internet and can read nothing here. A fetched figure is
+ * advice the panel prints with its source, never a value a tool writes into a
+ * record — so the search is audited as a step and the boundary is stated in
+ * the prompt rather than left to the model to infer.
  */
 
 /** Thrown when Qoder cannot serve this turn, so the caller may fall back. */
 export class QoderAssistantError extends Error {}
 
 /**
- * The runtime's own tools, blocked the same way the completion path blocks them.
- * The list lives with the completion engine so the two cannot drift apart.
+ * The runtime's own tools. The list lives with the completion engine so the two
+ * cannot drift apart; the assistant blocks all of it except the two names the
+ * web switch hands back.
  */
 const BUILTIN_AGENT_TOOLS = QODER_BUILTIN_TOOLS;
 
 const MCP_SERVER_NAME = "talentsphere";
 
-/** Bound so a wedged runtime cannot hold a request open forever. */
+/**
+ * The two tools the web switch unlocks — the runtime's own, so the search runs
+ * on the Qoder account the token already pays for, and nothing in this portal
+ * has to hold a key for a search provider. Every other builtin stays blocked,
+ * including the file and shell tools.
+ */
+const WEB_AGENT_TOOLS: readonly string[] = ["WebSearch", "WebFetch"];
+
+/**
+ * Whether a name the runtime reported is one of those two.
+ *
+ * Builtins are named bare, but a namespace a future runtime adds would still be
+ * the same tool, and a switch that only works until the name gains a prefix is a
+ * switch that silently stops working.
+ */
+function webToolName(name: string): string | null {
+  const bare = name.slice(name.lastIndexOf("__") + 2);
+  return (WEB_AGENT_TOOLS as readonly string[]).includes(bare) ? bare : null;
+}
+
+/**
+ * The scratch directory the agent starts in is its own, but a turn that reads
+ * several pages needs longer than one that answers from the database, so a web
+ * turn gets more of the clock before it is aborted.
+ */
 const TURN_TIMEOUT_MS = 120_000;
+const WEB_TURN_TIMEOUT_MS = 210_000;
 const MAX_AGENT_TURNS = 24;
 
 const TYPE_SCHEMAS: Record<string, z.ZodTypeAny> = {
@@ -232,7 +265,54 @@ function promptFor(history: ChatCompletionMessage[]): string {
   ].join("\n");
 }
 
-function systemPromptFor(allowDestructive: boolean): string {
+/**
+ * What a web lookup is worth saying out loud.
+ *
+ * The step is pushed when the runtime asks for the call and corrected when its
+ * own result arrives, so a chip that says "searched the web" reflects what the
+ * runtime reported rather than what the model intended.
+ */
+function webStepFor(name: string, input: unknown): AssistantStep | null {
+  const args = (input ?? {}) as Record<string, unknown>;
+  const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+
+  if (name === "WebSearch") {
+    const query = text(args.query);
+    if (!query) return null;
+    return {
+      tool: "web_search",
+      label: "Searched the web",
+      ok: true,
+      detail: `Asked the public internet for: ${query} — outside this portal, so what came back is advice, not a record.`.slice(
+        0,
+        220
+      ),
+    };
+  }
+
+  const url = text(args.url);
+  if (!url) return null;
+  return {
+    tool: "web_fetch",
+    label: `Read ${hostOf(url)}`,
+    ok: true,
+    detail: `Read ${url} from the public internet — outside this portal, so the figure it names belongs to that page, not to any record here.`.slice(
+      0,
+      220
+    ),
+  };
+}
+
+/** The page's own domain, because a salary band means nothing without knowing where it was read. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "a web page";
+  }
+}
+
+function systemPromptFor(allowDestructive: boolean, allowWeb: boolean): string {
   return [
     ...ASSISTANT_RULES,
     "",
@@ -240,7 +320,25 @@ function systemPromptFor(allowDestructive: boolean): string {
       ? "Deleting tools are available. Delete only what the user explicitly named, and say what was deleted — the switch opens the door, but the delete still waits for them to click Approve."
       : "Deleting is not available in this session. If the user asks you to delete something, reply that they need to switch on “Allow deletions” in the assistant panel first.",
     "",
-    "You have no file, shell or web tools. Your only way to act is the portal tools.",
+    "You have no file or shell tools. Your only way to read or change a record here is the portal tools.",
+    allowWeb
+      ? [
+          "WebSearch and WebFetch are ON for this turn. They reach the public internet, which is outside this",
+          "portal and is paid for by the organisation's Qoder account — so use them for what the records cannot",
+          "answer: a market salary band, a pay survey, an industry benchmark, a competitor's job ad.",
+          "What you fetch is advice, never data: name the source, its domain and the date or page it came from,",
+          "say which market, currency and seniority the figure describes, and give a range rather than one",
+          "number when the sources disagree. Never write a fetched figure into a job opening or any other",
+          "record — the salary fields belong on the opening's own screen, typed in by a person who has read",
+          "the band. If the search returns nothing usable, say so plainly; never dress a remembered number up",
+          "as a search result, and never claim a lookup you did not make.",
+        ].join("\n")
+      : [
+          "You have no way to reach the network this turn. If the user asks for something outside these records —",
+          "a market salary band, a pay survey, a competitor's ad — reply that they need to switch on “Allow web",
+          "search” in the assistant panel first, and never invent the figure yourself or present one you know",
+          "from training as though you had looked it up.",
+        ].join("\n"),
   ].join("\n");
 }
 
@@ -275,6 +373,8 @@ export async function qoderEngineStatus(): Promise<{
 export async function runQoderAssistantTurn(
   history: ChatCompletionMessage[],
   allowDestructive: boolean,
+  /** The panel's web switch: hands the runtime its own search and page-reader for one turn. */
+  allowWeb: boolean,
   /** `user_profiles.id` of the signed-in recruiter, who must approve any write. */
   profileId: string
 ): Promise<AssistantTurn> {
@@ -305,11 +405,20 @@ export async function runQoderAssistantTurn(
   const allowed = tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool.name}`);
   const portalToolNames = new Set(allowed);
 
+  // The web switch is the one thing that can lift a builtin, and it lifts two
+  // names only: the shell, the file tools and sub-agents stay blocked whether or
+  // not the recruiter is letting this turn search the internet.
+  const webNames = allowWeb ? [...WEB_AGENT_TOOLS] : [];
+  const blockedBuiltins = BUILTIN_AGENT_TOOLS.filter((name) => !webNames.includes(name));
+
   // A scratch directory only: the agent's file tools are blocked, and this way
   // nothing it does incidentally can touch the application's own tree.
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "sdg-assistant-"));
   const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), TURN_TIMEOUT_MS);
+  const timer = setTimeout(
+    () => abortController.abort(),
+    allowWeb ? WEB_TURN_TIMEOUT_MS : TURN_TIMEOUT_MS
+  );
 
   let model = "";
   let reply = "";
@@ -320,35 +429,94 @@ export async function runQoderAssistantTurn(
       options: {
         auth: sdk.accessToken(token),
         cwd,
-        systemPrompt: systemPromptFor(allowDestructive),
+        systemPrompt: systemPromptFor(allowDestructive, allowWeb),
         mcpServers: { [MCP_SERVER_NAME]: server },
-        allowedTools: allowed,
-        disallowedTools: BUILTIN_AGENT_TOOLS,
+        allowedTools: [...allowed, ...webNames],
+        disallowedTools: blockedBuiltins,
         maxTurns: MAX_AGENT_TURNS,
         abortController,
         canUseTool: async (toolName: string) =>
-          portalToolNames.has(toolName)
+          portalToolNames.has(toolName) || webToolName(toolName)
             ? { behavior: "allow" as const }
-            : { behavior: "deny" as const, message: "Only portal tools are available here." },
+            : {
+                behavior: "deny" as const,
+                message: allowWeb
+                  ? "Only this portal's tools and the two web tools are available here."
+                  : "Only this portal's tools are available here, and the web switch is off.",
+              },
       },
     });
 
     try {
+      /** Web lookups still waiting for the runtime to report what came back. */
+      const webLookups = new Map<string, AssistantStep>();
+
       for await (const message of query) {
         if (message.type === "system" && message.subtype === "init") {
           model = message.model ?? "";
         }
 
         if (message.type === "assistant") {
-          const blocks: { type?: unknown; text?: unknown }[] =
-            (message as { message?: { content?: { type?: unknown; text?: unknown }[] } }).message
-              ?.content ?? [];
+          const blocks: {
+            type?: unknown;
+            text?: unknown;
+            id?: unknown;
+            name?: unknown;
+            input?: unknown;
+          }[] =
+            (
+              message as {
+                message?: {
+                  content?: {
+                    type?: unknown;
+                    text?: unknown;
+                    id?: unknown;
+                    name?: unknown;
+                    input?: unknown;
+                  }[];
+                };
+              }
+            ).message?.content ?? [];
           const text = blocks
             .filter((block) => block.type === "text" && typeof block.text === "string")
             .map((block) => block.text as string)
             .join("\n")
             .trim();
           if (text) reply = text;
+
+          for (const block of blocks) {
+            if (block.type !== "tool_use" || typeof block.name !== "string") continue;
+            const tool = webToolName(block.name);
+            if (!tool) continue;
+            const step = webStepFor(tool, block.input);
+            if (!step) continue;
+            steps.push(step);
+            if (typeof block.id === "string") webLookups.set(block.id, step);
+          }
+        }
+
+        // The result of the runtime's own tools arrives on the next message, and
+        // this is the only place a failed lookup can stop being shown as one that
+        // worked — a chip claiming the web was searched has to mean it was.
+        if (message.type === "user" && webLookups.size > 0) {
+          const blocks: { type?: unknown; tool_use_id?: unknown; is_error?: unknown }[] =
+            (
+              message as {
+                message?: {
+                  content?: { type?: unknown; tool_use_id?: unknown; is_error?: unknown }[];
+                };
+              }
+            ).message?.content ?? [];
+          for (const block of blocks) {
+            if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+            const step = webLookups.get(block.tool_use_id);
+            if (!step) continue;
+            webLookups.delete(block.tool_use_id);
+            if (block.is_error === true) {
+              step.ok = false;
+              step.detail = `${step.detail} — and the lookup came back failed.`.slice(0, 220);
+            }
+          }
         }
 
         if (message.type === "result") {

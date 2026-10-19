@@ -219,6 +219,12 @@ export async function sendAssistantMessage(input: {
   history: ChatCompletionMessage[];
   prompt: string;
   allowDestructive: boolean;
+  /**
+   * Hands the Qoder runtime its own search and page-reader for this turn. The
+   * gateway engine has no equivalent, so a turn it answers cannot reach the
+   * network and the reply says which engine had no way to search.
+   */
+  allowWeb?: boolean;
   engine?: AssistantEngine;
   /**
    * A model chosen for this conversation, tried on its own instead of through
@@ -267,10 +273,13 @@ export async function sendAssistantMessage(input: {
   ];
 
   const allowDestructive = input.allowDestructive === true;
+  const allowWeb = input.allowWeb === true;
 
   try {
     let turn: AssistantTurn | null = null;
     let note: string | undefined = modelNote ?? undefined;
+    /** Which engine answered, because that decides whether any searching happened. */
+    let servedByQoder = false;
 
     if (engine !== "gateway") {
       const status = await qoderEngineStatus();
@@ -288,8 +297,9 @@ export async function sendAssistantMessage(input: {
       } else {
         try {
           turn = await withActivityContext({ via: "assistant" }, () =>
-            runQoderAssistantTurn(history, allowDestructive, staff.profileId)
+            runQoderAssistantTurn(history, allowDestructive, allowWeb, staff.profileId)
           );
+          servedByQoder = true;
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
           if (engine === "qoder") {
@@ -312,6 +322,13 @@ export async function sendAssistantMessage(input: {
           error instanceof Error ? error.message : "The assistant could not be reached.";
         throw new Error(note ? `${note} ${gatewayError}` : gatewayError);
       }
+    }
+
+    // The switch the recruiter turned on buys a search on the Qoder engine only.
+    // Saying nothing here would leave them believing the answer they got was
+    // looked up, when the engine that answered has no way to reach the network.
+    if (allowWeb && !servedByQoder) {
+      note = `${note ? `${note} ` : ""}The web switch runs on the Qoder engine only — the model gateway has no way to reach the network, so this answer came from the portal's own tools.`;
     }
 
     const saved = await saveAssistantTurn({

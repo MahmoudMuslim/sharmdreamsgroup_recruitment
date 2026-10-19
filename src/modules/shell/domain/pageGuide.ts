@@ -346,6 +346,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     use: [
       "Ask in words: it reads candidates, openings, tests, the outbox, settings and the change trails, and answers with a table or a chart drawn by the portal from the figures it read.",
       "Instruct a change and nothing happens until you press Approve & run on the card. A delete also needs the Allow deletions switch. Ignoring the card leaves the record exactly as it is.",
+      "Allow web search lets the Qoder engine look up what is outside the portal — a market salary band, a pay survey, a competitor's ad — on the Qoder account the stored token pays for. Every lookup shows as a chip, the figure arrives as advice with its source named, and nothing it reads is written into a record. The switch is inert while a model is chosen or the engine is Gateway, because neither can reach the network.",
       "Attach a PDF, Word or text file for it to read, pick the engine and model, and Rename, Delete or Reload a conversation.",
       "Edit and send again re-runs a turn you were not happy with.",
     ],
