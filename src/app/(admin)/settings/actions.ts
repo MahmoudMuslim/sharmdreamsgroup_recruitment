@@ -281,6 +281,10 @@ export async function updateRolePermission(
   });
 
   revalidatePath("/settings");
+  // The grants a role holds are cached for the whole portal, so the reviewer on
+  // the other desk sees this grant on their next request rather than whenever
+  // the cache window happens to close.
+  updateTag("role-grants");
   return { ok: true };
 }
 

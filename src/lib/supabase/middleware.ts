@@ -1,5 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseConfig } from "@/lib/config";
 import { loginSearch } from "@/lib/auth/login-target";
@@ -21,23 +21,57 @@ const DEFAULT_SESSION_TIMEOUT_MINUTES = 480;
 const LAST_ACTIVE_COOKIE = "sdg_staff_last_active";
 
 /**
+ * How long the proxy remembers the idle window between requests.
+ *
+ * `readGlobalSettings` is cached for the render, but the proxy runs outside it
+ * and cannot use `"use cache"`, and one portal click fires this file once per
+ * matched request. Without a memo the same GLOBAL row was read on every one of
+ * them. A saved timeout therefore takes up to a minute to bite here — the bound
+ * the cached render reads already accept.
+ */
+const TIMEOUT_MEMO_MS = 60_000;
+
+let timeoutMemo: { minutes: number; readAt: number } | null = null;
+
+/**
  * The configured idle window in minutes.
  *
  * Read with the caller's own client: `app_settings_read` grants SELECT to
  * `is_staff()`, and this branch only runs for a session that has already been
  * confirmed to hold a staff role.
  */
-async function getSessionTimeoutMinutes(
-  supabase: SupabaseClient
-): Promise<number> {
-  const { data } = await supabase
+async function getSessionTimeoutMinutes(supabase: SupabaseClient): Promise<number> {
+  const now = Date.now();
+  if (timeoutMemo && now - timeoutMemo.readAt < TIMEOUT_MEMO_MS) return timeoutMemo.minutes;
+
+  const { data, error } = await supabase
     .from("app_settings")
     .select("value")
     .eq("scope", "GLOBAL")
     .eq("key", "security.session_timeout_minutes")
     .maybeSingle();
 
-  return coerceNumber(data?.value, DEFAULT_SESSION_TIMEOUT_MINUTES);
+  const minutes = coerceNumber(data?.value, DEFAULT_SESSION_TIMEOUT_MINUTES);
+
+  // A read that failed is not remembered, so a database hiccup cannot pin the
+  // shipped default for the next minute.
+  if (!error) timeoutMemo = { minutes, readAt: now };
+  return minutes;
+}
+
+/**
+ * Whether this browser carries a Supabase session cookie at all.
+ *
+ * `getUser()` is a network call to the auth service, and for a visitor with an
+ * empty jar its only possible answer is "nobody is signed in" — which the jar
+ * already says for free. Public page views are the bulk of the traffic, so this
+ * is the round trip they no longer pay. A request that does carry a cookie is
+ * verified exactly as before.
+ */
+function hasSessionCookie(request: NextRequest): boolean {
+  return request.cookies
+    .getAll()
+    .some(({ name, value }) => name.startsWith("sb-") && value.length > 0);
 }
 
 /**
@@ -62,10 +96,12 @@ export async function updateSession(request: NextRequest): Promise<NextResponse>
     },
   });
 
-  // Important: getUser() revalidates the token with the auth server.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Important: getUser() revalidates the token with the auth server. With no
+  // session cookie in the jar there is no token to revalidate.
+  let user: User | null = null;
+  if (hasSessionCookie(request)) {
+    user = (await supabase.auth.getUser()).data.user;
+  }
 
   const { pathname, search } = request.nextUrl;
   /** Where to come back to: the page and the view it was showing. */

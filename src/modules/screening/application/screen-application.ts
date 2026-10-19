@@ -3,7 +3,11 @@ import "server-only";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasAiProvider } from "@/lib/config.server";
 import { engineActivityActor, recordActivity } from "@/modules/activity/application/record";
-import { getBoolSetting, getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
+import {
+  getBoolSetting,
+  getNumberSetting,
+  readGlobalSettings,
+} from "@/modules/settings/infrastructure/settingsReader";
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import { humanizeStage } from "@/modules/settings/domain/templates";
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
@@ -44,22 +48,25 @@ export interface AiAutomationSettings {
   autoScreen: boolean;
 }
 
-/** Reads the AI automation toggles from `app_settings` (defaults: on). */
+/**
+ * Reads the AI automation toggles (defaults: on).
+ *
+ * Both keys are read in one call so the pair is a single entry in the settings
+ * cache rather than two: every application that lands here used to spend its own
+ * uncached query on the same two GLOBAL rows.
+ */
 export async function getAiAutomationSettings(): Promise<AiAutomationSettings> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
-    .from("app_settings")
-    .select("key, value")
-    .eq("scope", "GLOBAL")
-    .in("key", ["ai.enabled", "ai.auto_screen_applications"]);
+  const settings = await readGlobalSettings([
+    "ai.enabled",
+    "ai.auto_screen_applications",
+  ]);
 
-  const map = new Map((data ?? []).map((row: { key: string; value: unknown }) => [row.key, row.value]));
-  const asBool = (value: unknown, fallback: boolean): boolean =>
-    value === true || value === "true" ? true : value === false || value === "false" ? false : fallback;
+  const asBool = (value: unknown): boolean =>
+    value === false || value === "false" ? false : true;
 
   return {
-    aiEnabled: asBool(map.get("ai.enabled"), true),
-    autoScreen: asBool(map.get("ai.auto_screen_applications"), true),
+    aiEnabled: asBool(settings.get("ai.enabled")),
+    autoScreen: asBool(settings.get("ai.auto_screen_applications")),
   };
 }
 
