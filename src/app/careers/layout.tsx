@@ -47,12 +47,12 @@ export default async function CareersLayout({ children }: LayoutProps<"/careers"
 
         <main className="flex-1">{children}</main>
 
-        <footer className="mt-16 border-t border-brand-line bg-brand-ink py-8">
+        <footer className="mt-16 border-t border-brand-line bg-brand-footer py-8">
           <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 text-center sm:px-6">
-            <p className="font-display text-sm font-bold text-brand-cream">
+            <p className="font-display text-sm font-bold text-brand-on-accent">
               Sharm Dreams Group
             </p>
-            <p className="max-w-2xl text-xs leading-relaxed text-brand-cream/50">
+            <p className="max-w-2xl text-xs leading-relaxed text-brand-on-accent/80">
               <PublicText k="chrome.careersFooter" />
             </p>
           </div>

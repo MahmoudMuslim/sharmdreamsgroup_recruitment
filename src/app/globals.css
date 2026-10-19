@@ -22,6 +22,15 @@
   /* Stays white when a palette inverts: copy that sits on a gold or rose fill
      must not flip to a dark surface along with `--color-white`. */
   --color-brand-on-accent: #ffffff;
+  /* The public footers are an accent band, and an accent band cannot be built
+     from the two tokens it used to borrow. `--color-brand-ink` is the body copy
+     colour, so it goes light in the dark tones to keep the page readable — which
+     turns a `bg-brand-ink` footer into a bright slab at the foot of a dark page.
+     `--color-brand-cream` is a paper surface, so under glass it is a translucent
+     film, and `/50` on a film multiplies two alphas until the small print
+     disappears. This band and the copy on it are therefore named for themselves
+     and painted per theme: dark in every theme, opaque text in every theme. */
+  --color-brand-footer: #161616;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
@@ -53,6 +62,7 @@ html[data-tone="dark"] {
   color-scheme: dark;
 
   --color-brand-ink: #f1eee8;
+  --color-brand-footer: #0d0d0c;
   --color-brand-ivory: #131313;
   --color-brand-cream: #1c1b1a;
   --color-brand-sand: #242321;
@@ -185,6 +195,7 @@ html[data-palette="glass"][data-tone="dark"] {
   background-color: #0b0d12;
 
   --color-brand-ink: #f2efe9;
+  --color-brand-footer: rgb(8 10 15 / 0.72);
   --color-brand-ivory: rgb(12 14 19 / 0.38);
   --color-brand-cream: rgb(18 21 28 / 0.72);
   --color-brand-sand: rgb(52 57 68 / 0.62);
@@ -258,6 +269,7 @@ html[data-palette="glass"][data-tone="dark"] .shadow-2xl {
 html[data-palette="glass"][data-tone="light"] {
   background-color: #f2ece2;
 
+  --color-brand-footer: rgb(30 25 18 / 0.72);
   --color-brand-ivory: rgb(252 250 246 / 0.5);
   --color-brand-cream: rgb(255 255 255 / 0.78);
   --color-brand-sand: rgb(120 100 78 / 0.14);
@@ -325,6 +337,7 @@ html[data-palette="glass"][data-tone="light"] .shadow-2xl {
   /* Opaque paint, mixed from the same hue the film uses into this tone's own
      paper — so the washes keep their meaning, and only the transparency goes. */
   html[data-palette="glass"][data-tone="dark"] {
+    --color-brand-footer: #080a0f;
     --color-brand-ivory: #101319;
     --color-brand-cream: #171b22;
     --color-brand-sand: #262b34;
@@ -348,6 +361,7 @@ html[data-palette="glass"][data-tone="light"] .shadow-2xl {
   }
 
   html[data-palette="glass"][data-tone="light"] {
+    --color-brand-footer: #1e1912;
     --color-brand-ivory: #f5f1e9;
     --color-brand-cream: #fdfbf7;
     --color-brand-sand: #ece5da;

@@ -171,12 +171,12 @@ export default async function Home() {
           </div>
         </section>
 
-        <footer className="bg-brand-ink py-8">
+        <footer className="bg-brand-footer py-8">
           <div className="mx-auto flex max-w-6xl flex-col items-center gap-2 px-4 text-center sm:px-6">
-            <p className="font-display text-sm font-bold text-brand-cream">
+            <p className="font-display text-sm font-bold text-brand-on-accent">
               Sharm Dreams Talent Cloud
             </p>
-            <p className="text-xs text-brand-cream/50">
+            <p className="text-xs text-brand-on-accent/80">
               © Sharm Dreams Group · <PublicText k="home.footerTag" />
             </p>
           </div>
