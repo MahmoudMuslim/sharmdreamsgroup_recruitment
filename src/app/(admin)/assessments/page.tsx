@@ -1,8 +1,8 @@
 import { getTemplates, getAssignableCandidates, getQuestionsForEditor, getIssuedLinks } from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import { getNumberSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
@@ -31,7 +31,7 @@ async function loadTemplates() {
 
 export default async function AssessmentsBuilderPage() {
   await connection();
-  const user = await requireStaff("/assessments");
+  await requireStaff("/assessments");
 
   // Fetched in the page component rather than behind a <Suspense> boundary.
   // The page is already request-time (await connection() above), so a boundary
@@ -47,7 +47,7 @@ export default async function AssessmentsBuilderPage() {
   );
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Assessment engine"
         title="Test suite builder"
@@ -70,6 +70,6 @@ export default async function AssessmentsBuilderPage() {
         links={links}
         timeZone={timeZone}
       />
-    </AdminShell>
+    </PageTransition>
   );
 }

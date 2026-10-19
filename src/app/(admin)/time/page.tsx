@@ -3,7 +3,7 @@ import { Timer } from "lucide-react";
 import { getLedger } from "./actions";
 import { TimeView } from "./TimeView";
 import { requireStaff } from "@/lib/auth/session";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -22,7 +22,7 @@ const DEFAULT_SCOPE = "mine" as const;
 
 export default async function TimePage() {
   await connection();
-  const user = await requireStaff("/time");
+  await requireStaff("/time");
 
   const canTrack = await hasPermissionForUser("time.track");
 
@@ -33,7 +33,7 @@ export default async function TimePage() {
   const view = result.view;
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Day to day"
         title="Time Tracker"
@@ -73,6 +73,6 @@ export default async function TimePage() {
           exportFormats={EXPORT_FORMATS}
         />
       )}
-    </AdminShell>
+    </PageTransition>
   );
 }

@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import { getFilingVocabularies } from "@/modules/jobs/application/filingVocabularies";
@@ -19,7 +19,7 @@ export const instant = false;
 
 export default async function JobsPage() {
   await connection();
-  const user = await requireStaff("/jobs");
+  await requireStaff("/jobs");
   const supabase = await createSupabaseServerClient();
 
   const [result, canManage, canDecide, filing] = await Promise.all([
@@ -51,7 +51,7 @@ export default async function JobsPage() {
   const jobs = (result.data ?? []) as unknown as JobRow[];
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Requisitions"
         title="Job openings"
@@ -60,6 +60,6 @@ export default async function JobsPage() {
       />
 
       <JobsBrowser jobs={jobs} options={options} canManage={canManage} canDecide={canDecide} />
-    </AdminShell>
+    </PageTransition>
   );
 }

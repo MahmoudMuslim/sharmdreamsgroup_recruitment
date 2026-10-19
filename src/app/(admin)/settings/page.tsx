@@ -11,8 +11,8 @@ import { listSettingsTrail } from "@/modules/settings/application/settings-trail
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
 import { loadStaffConsole } from "@/modules/settings/application/user-actions";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { connection } from "next/server";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { canManageStaffUsers, hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
@@ -159,76 +159,76 @@ export default async function SettingsPage({
   };
 
   return (
-    <AdminShell user={user}>
-      <PageHeader
-        eyebrow="Administration"
-        title="Settings"
-        description="Control every aspect of the platform — AI behaviour, assessment rules, notifications, security, organisation structure and team access."
-      />
+    <PageTransition>
+    <PageHeader
+      eyebrow="Administration"
+      title="Settings"
+      description="Control every aspect of the platform — AI behaviour, assessment rules, notifications, security, organisation structure and team access."
+    />
 
-      <SettingsShell area={area.id} section={section.id} counts={counts}>
-        {area.id === "platform" &&
-          (section.id === "trail" ? (
-            <TrailPanel scope={changeScope} page={pageNumber} find={searchWords} />
-          ) : (
-            <SettingsConsole
-              initialValues={bundle.values}
-              editable={editable}
-              section={section.id}
-            />
-          ))}
-
-        {area.id === "organisation" && (
-          <div className="space-y-6">
-            {/* Read only on the four sections an opening files itself under, the
-                way the change trail reads only on its own section. */}
-            {isFiledEntity(section.id) && <FilingDriftPanel entity={section.id} />}
-            <MasterDataConsole data={master} editable={editable} section={section.id} />
-          </div>
-        )}
-
-        {area.id === "access" && (
-          <div className="space-y-6">
-            {section.id === "permissions" && (
-              <PermissionMatrixCard
-                roles={bundle.roles}
-                permissions={bundle.permissions}
-                grants={bundle.grants}
-                editable={editable}
-              />
-            )}
-
-            {section.id === "team" && (
-              <TeamSection
-                staff={bundle.staff}
-                invites={staffConsole.invites}
-                access={staffConsole.access}
-                accessError={staffConsole.accessError}
-                invitesError={staffConsole.invitesError}
-                companies={bundle.companies}
-                passwordMinLength={passwordMinLength}
-                canManage={canManageStaff}
-                viewerAuthUserId={user.authUserId}
-                timeZone={organisationTimezone}
-              />
-            )}
-
-            {section.id === "templates" && (
-              <TemplatesConsole templates={bundle.templates} editable={editable} />
-            )}
-          </div>
-        )}
-
-        {area.id === "providers" && (
-          <ProvidersPanel
+    <SettingsShell area={area.id} section={section.id} counts={counts}>
+      {area.id === "platform" &&
+        (section.id === "trail" ? (
+          <TrailPanel scope={changeScope} page={pageNumber} find={searchWords} />
+        ) : (
+          <SettingsConsole
+            initialValues={bundle.values}
             editable={editable}
             section={section.id}
-            scope={credentialScope}
-            page={pageNumber}
-            find={searchWords}
           />
-        )}
-      </SettingsShell>
-    </AdminShell>
+        ))}
+
+      {area.id === "organisation" && (
+        <div className="space-y-6">
+          {/* Read only on the four sections an opening files itself under, the
+              way the change trail reads only on its own section. */}
+          {isFiledEntity(section.id) && <FilingDriftPanel entity={section.id} />}
+          <MasterDataConsole data={master} editable={editable} section={section.id} />
+        </div>
+      )}
+
+      {area.id === "access" && (
+        <div className="space-y-6">
+          {section.id === "permissions" && (
+            <PermissionMatrixCard
+              roles={bundle.roles}
+              permissions={bundle.permissions}
+              grants={bundle.grants}
+              editable={editable}
+            />
+          )}
+
+          {section.id === "team" && (
+            <TeamSection
+              staff={bundle.staff}
+              invites={staffConsole.invites}
+              access={staffConsole.access}
+              accessError={staffConsole.accessError}
+              invitesError={staffConsole.invitesError}
+              companies={bundle.companies}
+              passwordMinLength={passwordMinLength}
+              canManage={canManageStaff}
+              viewerAuthUserId={user.authUserId}
+              timeZone={organisationTimezone}
+            />
+          )}
+
+          {section.id === "templates" && (
+            <TemplatesConsole templates={bundle.templates} editable={editable} />
+          )}
+        </div>
+      )}
+
+      {area.id === "providers" && (
+        <ProvidersPanel
+          editable={editable}
+          section={section.id}
+          scope={credentialScope}
+          page={pageNumber}
+          find={searchWords}
+        />
+      )}
+    </SettingsShell>
+    </PageTransition>
   );
 }

@@ -344,6 +344,155 @@ html[data-nav-animated] .rail-shift {
   transition: padding-left 200ms ease-out;
 }
 
+/* --------------------------------------------------------------------------
+ * Page-to-page motion.
+ *
+ * React's <ViewTransition> slides the admin content column from the transition
+ * type stamped on the navigation: `nav-forward` sends the old screen out to the
+ * left and brings the new one in from the right; `nav-back` mirrors it. A move
+ * nobody tagged — the browser's own Back button, a live-channel refresh, a
+ * filter written into the address — is not a direction the portal can honestly
+ * claim, so it swaps without sliding.
+ *
+ * The class names here are the strings in lib/navTransition.ts, and a browser
+ * without the View Transitions API simply runs none of it: the page changes,
+ * nothing animates, nothing is missing.
+ * ------------------------------------------------------------------------ */
+:root {
+  /* The old screen leaves faster than the new one arrives, so the two never
+     compete for attention — the exit clears the stage, the enter lands on it. */
+  --vt-exit: 150ms;
+  --vt-enter: 210ms;
+  --vt-move: 380ms;
+  /* Enough travel to read as "this came from somewhere" without asking the eye
+     to chase a whole page across the viewport. */
+  --vt-offset: 48px;
+}
+
+/* The snapshot overlay sits above the live page and would otherwise swallow the
+   next click — which during a 380ms slide is exactly the rail item a recruiter
+   is reaching for. */
+::view-transition {
+  pointer-events: none;
+}
+
+/* The rail and the app bar are furniture. They are named so they are cut out of
+   the page snapshot instead of sliding with it, and their own animation is
+   switched off because nothing about them changes. `display: none` on the old
+   half stops the brief double-image where both bars are painted at once. */
+::view-transition-group(sdg-rail),
+::view-transition-group(sdg-bar) {
+  animation: none;
+  z-index: 100;
+}
+
+::view-transition-old(sdg-rail),
+::view-transition-old(sdg-bar) {
+  display: none;
+}
+
+::view-transition-new(sdg-rail),
+::view-transition-new(sdg-bar) {
+  animation: none;
+}
+
+/* Everything the shell leaves unnamed — the page background, the floating
+   assistant dock — must not crossfade behind a sliding column. A ghost of the
+   old page under the new one reads as a paint bug, not as motion. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(.nav-forward) {
+  --vt-offset: -48px;
+  animation:
+    var(--vt-exit) ease-in both vt-fade reverse,
+    var(--vt-move) ease-in-out both vt-slide reverse;
+}
+
+::view-transition-new(.nav-forward) {
+  --vt-offset: 48px;
+  animation:
+    var(--vt-enter) ease-out var(--vt-exit) both vt-fade,
+    var(--vt-move) ease-in-out both vt-slide;
+}
+
+::view-transition-old(.nav-back) {
+  --vt-offset: 48px;
+  animation:
+    var(--vt-exit) ease-in both vt-fade reverse,
+    var(--vt-move) ease-in-out both vt-slide reverse;
+}
+
+::view-transition-new(.nav-back) {
+  --vt-offset: -48px;
+  animation:
+    var(--vt-enter) ease-out var(--vt-exit) both vt-fade,
+    var(--vt-move) ease-in-out both vt-slide;
+}
+
+@keyframes vt-fade {
+  from {
+    filter: blur(2px);
+    opacity: 0;
+  }
+  to {
+    filter: blur(0);
+    opacity: 1;
+  }
+}
+
+@keyframes vt-slide {
+  from {
+    translate: var(--vt-offset);
+  }
+  to {
+    translate: 0;
+  }
+}
+
+/* While a rail link's destination is still being read, the row you clicked
+   shimmers. This is Next's own `useLinkStatus` signal, which only a descendant
+   of a `<Link>` can see — so the hint is on the row, not a bar across the
+   viewport that would have to guess when a navigation started.
+   The dot is always rendered and only its opacity moves, so a row cannot jump
+   when the pending phase begins. */
+.nav-pending-dot {
+  height: 6px;
+  width: 6px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.nav-pending-dot.is-pending {
+  visibility: visible;
+  animation-name: vt-wait-fade, vt-wait-pulse;
+  animation-duration: 200ms, 1s;
+  /* Nothing shows for a navigation that finishes at once; a shimmer only
+     starts if the destination is actually late. */
+  animation-delay: 120ms, 120ms;
+  animation-timing-function: ease, ease-in-out;
+  animation-iteration-count: 1, infinite;
+  animation-fill-mode: forwards, none;
+}
+
+@keyframes vt-wait-fade {
+  to {
+    opacity: 0.55;
+  }
+}
+
+@keyframes vt-wait-pulse {
+  50% {
+    opacity: 0.15;
+  }
+}
+
 /* Amiri is the only Arabic face in the build (Inter and Montserrat ship no
    Arabic subset), so right-to-left copy falls to it. Written as an attribute
    rule rather than a utility so a per-element class such as `font-mono` still
@@ -363,5 +512,16 @@ html[data-nav-animated] .rail-shift {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* The rule above cannot reach these: the snapshot tree lives outside the
+     document, so `*` never matches it. Without this a page still slides across
+     the viewport for someone who asked the operating system to stop doing that
+     — the one animation in this portal that moves a whole screen. */
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
   }
 }

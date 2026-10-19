@@ -5,7 +5,7 @@ import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { getRowReport } from "./actions";
 import { ReportsView } from "./ReportsView";
 import { requireStaff } from "@/lib/auth/session";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
@@ -22,7 +22,7 @@ const DEFAULT_WINDOW = "90" as const;
 
 export default async function ReportsPage() {
   await connection();
-  const user = await requireStaff("/reports");
+  await requireStaff("/reports");
 
   const [canView, canExport] = await Promise.all([
     hasPermissionForUser("analytics.view"),
@@ -34,7 +34,7 @@ export default async function ReportsPage() {
     : { ok: false as const, error: "These reports need the View analytics permission." };
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Reporting"
         title="Reports"
@@ -74,6 +74,6 @@ export default async function ReportsPage() {
         />
       )}
 
-    </AdminShell>
+    </PageTransition>
   );
 }

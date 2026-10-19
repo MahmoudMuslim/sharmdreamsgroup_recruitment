@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import { getTrail } from "./actions";
 import { ActivityView } from "./ActivityView";
 import { requireStaff } from "@/lib/auth/session";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { TRAIL_LIST } from "@/modules/activity/domain/trail";
@@ -21,7 +21,7 @@ const DEFAULT_WINDOW = "30d" as const;
 
 export default async function ActivityPage() {
   await connection();
-  const user = await requireStaff("/activity");
+  await requireStaff("/activity");
 
   const canRead = await hasPermissionForUser("settings.manage_platform");
 
@@ -34,7 +34,7 @@ export default async function ActivityPage() {
       };
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Oversight"
         title="Activity"
@@ -64,6 +64,6 @@ export default async function ActivityPage() {
           caveats={TRAIL_LIST.caveats}
         />
       )}
-    </AdminShell>
+    </PageTransition>
   );
 }

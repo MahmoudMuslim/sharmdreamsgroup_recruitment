@@ -61,6 +61,7 @@ import {
   keyLabelFor,
 } from "@/modules/shell/domain/quickKeys";
 import { LiveBadge, useLive } from "@/modules/live/presentation/Live";
+import { navForward } from "@/modules/shell/domain/navTransition";
 import { areasFeeding } from "@/lib/live";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
@@ -252,6 +253,7 @@ function HitRow({ hit }: { hit: SearchHit }) {
   return (
     <Link
       href={hit.href}
+      transitionTypes={navForward}
       className="flex items-start gap-3 rounded-xl px-2.5 py-2 transition hover:bg-white hover:shadow-soft"
     >
       <span className="min-w-0 flex-1">
@@ -311,7 +313,7 @@ function SearchField({
 
   function go(href: string) {
     onClose();
-    router.push(href);
+    router.push(href, { transitionTypes: navForward });
   }
 
   function firstHit(): string | null {
@@ -738,6 +740,7 @@ function GuidePanel({ open }: { open: Panel }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <Link
                     href={shown}
+                    transitionTypes={navForward}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-brand-ink px-2.5 py-1.5 text-[11px] font-semibold text-brand-cream transition hover:opacity-90"
                   >
                     <entry.icon className="h-3.5 w-3.5" aria-hidden />
@@ -1147,6 +1150,7 @@ function AlertsPanel({
             >
               <Link
                 href={alert.href}
+                transitionTypes={navForward}
                 onClick={() => acknowledgeOneAlert(userId, alert, false)}
                 className="flex min-w-0 flex-1 items-start gap-3 px-2.5 py-2"
               >
@@ -1208,6 +1212,7 @@ function AlertsPanel({
                   <Link
                     key={alert.id}
                     href={alert.href}
+                    transitionTypes={navForward}
                     className="mt-1 flex items-start gap-3 rounded-xl px-2.5 py-1.5 opacity-70 transition hover:bg-white hover:opacity-100"
                   >
                     <AlertCount alert={alert} muted />
@@ -1561,6 +1566,7 @@ function AccountMenu({ user, open }: { user: SessionUser; open: Panel }) {
       <div className="mt-3 space-y-2">
         <Link
           href="/settings"
+          transitionTypes={navForward}
           className="flex items-center gap-2.5 rounded-xl border border-brand-line bg-white px-3 py-2.5 text-sm font-semibold text-brand-ink/75 transition hover:bg-brand-sand hover:text-brand-ink"
         >
           <Settings2 className="h-4 w-4 shrink-0 text-brand-gold-dark" aria-hidden />
@@ -1717,7 +1723,7 @@ export function AppBar({
           focusSearch: () => {
             (document.getElementById(SEARCH_INPUT_ID) as HTMLInputElement | null)?.focus();
           },
-          goto: (route) => router.push(route),
+          goto: (route) => router.push(route, { transitionTypes: navForward }),
         }
       );
       if (consumed) event.preventDefault();
@@ -1729,6 +1735,7 @@ export function AppBar({
   return (
     <header
       ref={barRef}
+      style={{ viewTransitionName: "sdg-bar" }}
       className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b border-brand-line bg-brand-cream/95 px-3 backdrop-blur-md sm:gap-3 sm:px-4"
     >
       <button

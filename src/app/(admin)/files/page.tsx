@@ -3,8 +3,8 @@ import { connection } from "next/server";
 import { getFileBrowserData } from "./actions";
 import { FileBrowser } from "./FileBrowser";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 
 export const metadata = {
@@ -20,7 +20,7 @@ type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 export default async function FilesPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
-  const user = await requireStaff("/files");
+  await requireStaff("/files");
   // Which folder to open on arrival is read here, not in the browser, so the
   // listing the page hands over is the one the address bar names — the same
   // folder an assistant answer read when it searched for a file.
@@ -40,7 +40,7 @@ export default async function FilesPage({ searchParams }: { searchParams: Search
   const view = data?.view ?? null;
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Storage"
         title="File manager"
@@ -63,6 +63,6 @@ export default async function FilesPage({ searchParams }: { searchParams: Search
           canDelete={canDelete}
         />
       )}
-    </AdminShell>
+    </PageTransition>
   );
 }

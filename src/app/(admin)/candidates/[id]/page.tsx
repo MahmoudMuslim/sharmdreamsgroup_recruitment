@@ -17,9 +17,10 @@ import {
   UserRoundSearch,
 } from "lucide-react";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { formatInZone } from "@/lib/timezone";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Badge, Card, CardHeader, PageHeader } from "@/modules/analytics/presentation/ui";
+import { navBack } from "@/modules/shell/domain/navTransition";
 import type { GateAnswer } from "@/modules/careers/gate-questions";
 import { getCandidateProfile } from "./profile";
 import type {
@@ -62,7 +63,7 @@ export default async function CandidateProfilePage({
 }: PageProps<"/candidates/[id]">) {
   await connection();
   const { id } = await params;
-  const user = await requireStaff(`/candidates/${id}`);
+  await requireStaff(`/candidates/${id}`);
 
   const result = await getCandidateProfile(id);
   if (!result.ok) notFound();
@@ -75,149 +76,151 @@ export default async function CandidateProfilePage({
   const { person, time_zone: zone } = profile;
 
   return (
-    <AdminShell user={user}>
-      <PageHeader
-        eyebrow="Candidate profile"
-        title={person.full_name}
-        description={`One profile for ${person.email}. They hold ${person.applications} application${
-          person.applications === 1 ? "" : "s"
-        } across ${person.openings.length || "no"} opening${
-          person.openings.length === 1 ? "" : "s"
-        }${
-          // `applications` is the database's own count; the rows printed below are
-          // the newest ones this read is allowed to take. Say which is which.
-          person.rows_read < person.applications
-            ? ` — this page reads the newest ${person.rows_read} of them`
-            : ""
-        }. Everything filed against this address is here.`}
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href="/candidates"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-white px-3 py-2 text-xs font-semibold transition hover:shadow-soft"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
-              All candidates
-            </Link>
-            <Link
-              href={`/candidates?application=${person.opened_id}`}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-brand-gold px-3 py-2 text-xs font-bold text-brand-on-accent transition hover:shadow-lift"
-            >
-              <UserRoundSearch className="h-3.5 w-3.5" aria-hidden />
-              Open in the desk
-            </Link>
-          </div>
-        }
-      />
+    <PageTransition>
+        <PageHeader
+          eyebrow="Candidate profile"
+          title={person.full_name}
+          description={`One profile for ${person.email}. They hold ${person.applications} application${
+            person.applications === 1 ? "" : "s"
+          } across ${person.openings.length || "no"} opening${
+            person.openings.length === 1 ? "" : "s"
+          }${
+            // `applications` is the database's own count; the rows printed below are
+            // the newest ones this read is allowed to take. Say which is which.
+            person.rows_read < person.applications
+              ? ` — this page reads the newest ${person.rows_read} of them`
+              : ""
+          }. Everything filed against this address is here.`}
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/candidates"
+                transitionTypes={navBack}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-white px-3 py-2 text-xs font-semibold transition hover:shadow-soft"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+                All candidates
+              </Link>
+              <Link
+                href={`/candidates?application=${person.opened_id}`}
+                transitionTypes={navBack}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-brand-gold px-3 py-2 text-xs font-bold text-brand-on-accent transition hover:shadow-lift"
+              >
+                <UserRoundSearch className="h-3.5 w-3.5" aria-hidden />
+                Open in the desk
+              </Link>
+            </div>
+          }
+        />
 
-      {person.repeated && (
-        <Card className="mb-6 border-brand-gold/60 bg-brand-sand/50 p-5">
-          <p className="flex items-start gap-2 text-sm font-semibold">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-brand-gold-dark" aria-hidden />
-            {person.live} live applications for this one person
-            {profile.clipped.applications ? ` among the rows this page reads` : ""}.
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed text-brand-ink/65">
-            They are in play for {person.openings.join(", ") || "several openings"} at the same
-            time. That is normal — a person may be in two pipelines — but they are still one
-            candidate with this one profile, not {person.live} people. Duplicate live records for
-            the same opening are refused by the database, so the row you add next cannot repeat
-            them.
-          </p>
-        </Card>
-      )}
-
-      <section className="grid gap-5 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="Who they are" meta="contact details and how they arrived" />
-          <div className="divide-y divide-brand-line/60">
-            <Field label="Email">{person.email}</Field>
-            <Field label="Phone">
-              {person.phone ?? "not on file"}
-              {person.other_phones.length > 0 && (
-                <span className="ml-1 text-brand-ink/55">
-                  also filed as {person.other_phones.join(", ")}
-                </span>
-              )}
-            </Field>
-            <Field label="Tracking codes">{person.tracking_codes.join(" · ") || "—"}</Field>
-            <Field label="Came through">{person.sources.join(", ") || "—"}</Field>
-            <Field label="First seen">{day(person.first_seen, zone)}</Field>
-            <Field label="Last activity">{day(person.last_seen, zone)}</Field>
-            <Field label="Records">
-              {person.applications} application{person.applications === 1 ? "" : "s"}
-              {person.archived > 0 && ` · ${person.archived} filed away`}
-            </Field>
-          </div>
-          {person.other_names.length > 0 && (
-            <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] leading-relaxed text-brand-ink/55">
-              This address is also filed under {person.other_names.join(" and ")}. Same person, one
-              profile — the name is whatever the candidate typed on each application.
+        {person.repeated && (
+          <Card className="mb-6 border-brand-gold/60 bg-brand-sand/50 p-5">
+            <p className="flex items-start gap-2 text-sm font-semibold">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-brand-gold-dark" aria-hidden />
+              {person.live} live applications for this one person
+              {profile.clipped.applications ? ` among the rows this page reads` : ""}.
             </p>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader title="Every application they hold" meta="one row per opening" />
-          <ul className="divide-y divide-brand-line/60">
-            {profile.applications.map((app) => (
-              <li key={app.id} className="px-5 py-3.5">
-                <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                  {app.job_title ?? "an opening nobody can read"}
-                  <StageBadge stage={app.stage} />
-                  {app.archived_at && <Badge tone="neutral">filed away</Badge>}
-                  {app.opened && <Badge tone="gold">this URL</Badge>}
-                </p>
-                <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/55">
-                  {app.company_name ?? "no company on the opening"} · {app.source.replace(/_/g, " ")}{" "}
-                  · applied {day(app.applied_at, zone)} · {app.tracking_code}
-                </p>
-              </li>
-            ))}
-          </ul>
-          {profile.clipped.applications && (
-            <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] text-brand-ink/55">
-              Only the newest {profile.applications.length} of their applications are read here.
+            <p className="mt-1.5 text-xs leading-relaxed text-brand-ink/65">
+              They are in play for {person.openings.join(", ") || "several openings"} at the same
+              time. That is normal — a person may be in two pipelines — but they are still one
+              candidate with this one profile, not {person.live} people. Duplicate live records for
+              the same opening are refused by the database, so the row you add next cannot repeat
+              them.
             </p>
-          )}
-        </Card>
-      </section>
+          </Card>
+        )}
 
-      <section className="mt-6 space-y-6">
-        {profile.applications.map((app) => (
-          <ApplicationCard key={app.id} app={app} zone={zone} masked={profile.scores_masked} />
-        ))}
-      </section>
+        <section className="grid gap-5 lg:grid-cols-2">
+          <Card>
+            <CardHeader title="Who they are" meta="contact details and how they arrived" />
+            <div className="divide-y divide-brand-line/60">
+              <Field label="Email">{person.email}</Field>
+              <Field label="Phone">
+                {person.phone ?? "not on file"}
+                {person.other_phones.length > 0 && (
+                  <span className="ml-1 text-brand-ink/55">
+                    also filed as {person.other_phones.join(", ")}
+                  </span>
+                )}
+              </Field>
+              <Field label="Tracking codes">{person.tracking_codes.join(" · ") || "—"}</Field>
+              <Field label="Came through">{person.sources.join(", ") || "—"}</Field>
+              <Field label="First seen">{day(person.first_seen, zone)}</Field>
+              <Field label="Last activity">{day(person.last_seen, zone)}</Field>
+              <Field label="Records">
+                {person.applications} application{person.applications === 1 ? "" : "s"}
+                {person.archived > 0 && ` · ${person.archived} filed away`}
+              </Field>
+            </div>
+            {person.other_names.length > 0 && (
+              <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] leading-relaxed text-brand-ink/55">
+                This address is also filed under {person.other_names.join(" and ")}. Same person, one
+                profile — the name is whatever the candidate typed on each application.
+              </p>
+            )}
+          </Card>
 
-      <AssessmentsCard
-        attempts={profile.attempts}
-        zone={zone}
-        masked={profile.scores_masked}
-        clipped={profile.clipped.attempts}
-      />
+          <Card>
+            <CardHeader title="Every application they hold" meta="one row per opening" />
+            <ul className="divide-y divide-brand-line/60">
+              {profile.applications.map((app) => (
+                <li key={app.id} className="px-5 py-3.5">
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                    {app.job_title ?? "an opening nobody can read"}
+                    <StageBadge stage={app.stage} />
+                    {app.archived_at && <Badge tone="neutral">filed away</Badge>}
+                    {app.opened && <Badge tone="gold">this URL</Badge>}
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/55">
+                    {app.company_name ?? "no company on the opening"} · {app.source.replace(/_/g, " ")}{" "}
+                    · applied {day(app.applied_at, zone)} · {app.tracking_code}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            {profile.clipped.applications && (
+              <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] text-brand-ink/55">
+                Only the newest {profile.applications.length} of their applications are read here.
+              </p>
+            )}
+          </Card>
+        </section>
 
-      <InterviewsCard interviews={profile.interviews} zone={zone} />
+        <section className="mt-6 space-y-6">
+          {profile.applications.map((app) => (
+            <ApplicationCard key={app.id} app={app} zone={zone} masked={profile.scores_masked} />
+          ))}
+        </section>
 
-      {profile.plans.length > 0 && <OnboardingCard plans={profile.plans} zone={zone} />}
+        <AssessmentsCard
+          attempts={profile.attempts}
+          zone={zone}
+          masked={profile.scores_masked}
+          clipped={profile.clipped.attempts}
+        />
 
-      <FilesCard files={profile.files} zone={zone} clipped={profile.clipped.files} />
+        <InterviewsCard interviews={profile.interviews} zone={zone} />
 
-      <MessagesCard messages={profile.messages} zone={zone} clipped={profile.clipped.messages} />
+        {profile.plans.length > 0 && <OnboardingCard plans={profile.plans} zone={zone} />}
 
-      <ChangesCard changes={profile.changes} zone={zone} />
+        <FilesCard files={profile.files} zone={zone} clipped={profile.clipped.files} />
 
-      <p className="mt-6 text-[11px] leading-relaxed text-brand-ink/50">
-        This page reads the record; it does not change it. Stages, AI screening, grading, test
-        links and file uploads are on{" "}
-        <Link
-          href={`/candidates?application=${person.opened_id}`}
-          className="font-semibold text-brand-gold-dark underline"
-        >
-          the candidate desk
-        </Link>
-        , which is where the buttons that write live.
-      </p>
-    </AdminShell>
+        <MessagesCard messages={profile.messages} zone={zone} clipped={profile.clipped.messages} />
+
+        <ChangesCard changes={profile.changes} zone={zone} />
+
+        <p className="mt-6 text-[11px] leading-relaxed text-brand-ink/50">
+          This page reads the record; it does not change it. Stages, AI screening, grading, test
+          links and file uploads are on{" "}
+          <Link
+            href={`/candidates?application=${person.opened_id}`}
+            className="font-semibold text-brand-gold-dark underline"
+          >
+            the candidate desk
+          </Link>
+          , which is where the buttons that write live.
+        </p>
+    </PageTransition>
   );
 }
 

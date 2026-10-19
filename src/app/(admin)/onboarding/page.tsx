@@ -9,9 +9,9 @@ import { PlanChecklist } from "./components/PlanChecklist";
 import { GeneratePlanButton } from "./components/GeneratePlanButton";
 import type { OnboardingRow, OnboardingSummary } from "./actions";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import {
   Badge,
   Card,
@@ -163,7 +163,7 @@ function OnboardingData({
 
 export default async function OnboardingPage() {
   await connection();
-  const user = await requireStaff("/onboarding");
+  await requireStaff("/onboarding");
 
   // Fetched in the page component rather than behind a <Suspense> boundary.
   // The page is already request-time (await connection() above), so the boundary
@@ -177,42 +177,42 @@ export default async function OnboardingPage() {
   ]);
 
   return (
-    <AdminShell user={user}>
-      <PageHeader
-        eyebrow="Post-hiring"
-        title="Onboarding"
-        description="Turn accepted offers into structured, measurable journeys — checklist progress and skill gaps per hire."
-      />
+    <PageTransition>
+    <PageHeader
+      eyebrow="Post-hiring"
+      title="Onboarding"
+      description="Turn accepted offers into structured, measurable journeys — checklist progress and skill gaps per hire."
+    />
 
-      <OnboardingData
-        plans={plans}
-        summary={summary}
-        unplanned={unplanned}
-        timeZone={timeZone}
-        canEdit={canEdit}
-      />
+    <OnboardingData
+      plans={plans}
+      summary={summary}
+      unplanned={unplanned}
+      timeZone={timeZone}
+      canEdit={canEdit}
+    />
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {CAPABILITIES.map(({ icon: Icon, title, copy, points }) => (
-          <Card key={title} className="flex flex-col gap-4 p-5 sm:p-6">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gold/15 text-brand-gold-dark">
-              <Icon className="h-5 w-5" aria-hidden />
-            </span>
-            <div>
-              <h3 className="font-display text-base font-bold">{title}</h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">{copy}</p>
-            </div>
-            <ul className="mt-auto space-y-1.5 border-t border-brand-line pt-4">
-              {points.map((point) => (
-                <li key={point} className="flex items-center gap-2 text-xs text-brand-ink/60">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-gold" aria-hidden />
-                  {point}
-                </li>
-              ))}
-            </ul>
-          </Card>
-        ))}
-      </div>
-    </AdminShell>
+    <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
+      {CAPABILITIES.map(({ icon: Icon, title, copy, points }) => (
+        <Card key={title} className="flex flex-col gap-4 p-5 sm:p-6">
+          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gold/15 text-brand-gold-dark">
+            <Icon className="h-5 w-5" aria-hidden />
+          </span>
+          <div>
+            <h3 className="font-display text-base font-bold">{title}</h3>
+            <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">{copy}</p>
+          </div>
+          <ul className="mt-auto space-y-1.5 border-t border-brand-line pt-4">
+            {points.map((point) => (
+              <li key={point} className="flex items-center gap-2 text-xs text-brand-ink/60">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-gold" aria-hidden />
+                {point}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ))}
+    </div>
+    </PageTransition>
   );
 }

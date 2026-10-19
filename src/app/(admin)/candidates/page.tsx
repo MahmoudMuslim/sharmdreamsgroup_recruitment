@@ -10,6 +10,7 @@ import {
 import { CandidateBrowser } from "./CandidateBrowser";
 import { NewCandidateDrawer } from "./NewCandidateDrawer";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import {
@@ -18,7 +19,6 @@ import {
   isPipelineStage,
   type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
 import { connection } from "next/server";
@@ -128,7 +128,7 @@ export default async function CandidatesPage({
 }) {
   // Admin content is per-session; stop the static shell before any rendering.
   await connection();
-  const user = await requireStaff("/candidates");
+  await requireStaff("/candidates");
 
   const params = await searchParams;
   const ref = {
@@ -175,7 +175,7 @@ export default async function CandidatesPage({
       : candidates;
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow={gradingView ? "Grading queue" : "Talent database"}
         title="Candidates"
@@ -236,6 +236,6 @@ export default async function CandidatesPage({
           </p>
         </Card>
       </div>
-    </AdminShell>
+    </PageTransition>
   );
 }

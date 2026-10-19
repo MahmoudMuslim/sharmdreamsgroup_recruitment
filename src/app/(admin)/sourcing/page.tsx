@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getOutreachCopy, getProspectJobs, getProspectPool } from "./actions";
 import { isProspectStage } from "./pool-model";
@@ -31,7 +31,7 @@ export default async function SourcingPage({
   searchParams: SearchParams;
 }) {
   await connection();
-  const user = await requireStaff("/sourcing");
+  await requireStaff("/sourcing");
 
   const params = await searchParams;
   const stage = isProspectStage(params.stage);
@@ -46,7 +46,7 @@ export default async function SourcingPage({
   ]);
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Talent pool"
         title="Sourcing"
@@ -64,6 +64,6 @@ export default async function SourcingPage({
         canDelete={canDelete}
         canSend={canSend}
       />
-    </AdminShell>
+    </PageTransition>
   );
 }

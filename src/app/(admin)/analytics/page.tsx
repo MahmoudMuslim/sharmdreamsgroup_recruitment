@@ -3,8 +3,8 @@ import { connection } from "next/server";
 import { getAnalyticsReport } from "./actions";
 import { AnalyticsView } from "./AnalyticsView";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { EXPORT_FORMATS } from "@/modules/analytics/domain/exportDocument";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
@@ -18,7 +18,7 @@ export const instant = false;
 
 export default async function AnalyticsPage() {
   await connection();
-  const user = await requireStaff("/analytics");
+  await requireStaff("/analytics");
 
   const [canExport, result] = await Promise.all([
     hasPermissionForUser("analytics.export"),
@@ -26,7 +26,7 @@ export default async function AnalyticsPage() {
   ]);
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Reporting"
         title="Analytics"
@@ -52,6 +52,6 @@ export default async function AnalyticsPage() {
       ) : (
         <AnalyticsView report={result.report} formats={EXPORT_FORMATS} canExport={canExport} />
       )}
-    </AdminShell>
+    </PageTransition>
   );
 }

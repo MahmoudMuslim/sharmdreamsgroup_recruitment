@@ -2,12 +2,14 @@
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronsLeft, ChevronsRight, Sparkles, X } from "lucide-react";
 import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import { AppBar } from "@/modules/shell/presentation/AppBar";
+import { navForward } from "@/modules/shell/domain/navTransition";
 import { LiveChrome } from "@/modules/live/presentation/Live";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
 import {
@@ -47,6 +49,20 @@ function CollapseToggle({
       )}
     </button>
   );
+}
+
+/**
+ * The "still reading" dot on a rail row.
+ *
+ * `useLinkStatus` only sees the pending phase of the `<Link>` it sits inside, so
+ * the wait is confirmed on the door that was opened — which is the honest place
+ * for it, because every admin page reads behind a live session and can genuinely
+ * take a second or more. The dot is always rendered and only changes opacity, so
+ * a row cannot jump when the wait begins.
+ */
+function PageHint() {
+  const { pending } = useLinkStatus();
+  return <span aria-hidden className={cn("nav-pending-dot", pending && "is-pending")} />;
 }
 
 /**
@@ -96,6 +112,7 @@ function NavLinks({
                   <Link
                     key={href}
                     href={href}
+                    transitionTypes={navForward}
                     onClick={onNavigate}
                     aria-current={active ? "page" : undefined}
                     aria-label={collapsed ? label : undefined}
@@ -140,6 +157,7 @@ function NavLinks({
                         )}
                       </span>
                     )}
+                    {!collapsed && <PageHint />}
                     {active && !collapsed && (
                       <span
                         className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-gold-light"
@@ -286,6 +304,7 @@ export function AdminShell({
     <div className="min-h-screen bg-brand-ivory text-brand-ink">
       {/* ---------- Desktop side panel ---------- */}
       <aside
+        style={{ viewTransitionName: "sdg-rail" }}
         className={cn(
           "rail-fold fixed inset-y-0 left-0 z-30 hidden w-[264px] flex-col border-r border-brand-line bg-brand-cream lg:flex",
           collapsed && "w-[76px]"

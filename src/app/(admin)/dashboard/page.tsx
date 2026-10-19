@@ -2,7 +2,7 @@ import { Zap } from "lucide-react";
 import { getDashboardAnalytics } from "./actions";
 import { DashboardView } from "./DashboardView";
 import { requireStaff } from "@/lib/auth/session";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import type { DashboardAnalytics } from "@/types";
 import { connection } from "next/server";
@@ -17,7 +17,7 @@ export const instant = false;
 
 export default async function DashboardPage() {
   await connection();
-  const user = await requireStaff("/dashboard");
+  await requireStaff("/dashboard");
 
   // Fetched in the page component rather than behind a <Suspense> boundary.
   // The page is already request-time (await connection() above), so the boundary
@@ -27,7 +27,7 @@ export default async function DashboardPage() {
   const analytics: DashboardAnalytics = await getDashboardAnalytics();
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Recruit intelligence"
         title="Hiring overview"
@@ -41,6 +41,6 @@ export default async function DashboardPage() {
       />
 
       <DashboardView analytics={analytics} />
-    </AdminShell>
+    </PageTransition>
   );
 }

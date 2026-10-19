@@ -3,8 +3,8 @@ import { connection } from "next/server";
 import { getGateConsoleData } from "./actions";
 import { GateQuestionBoard } from "./GateQuestionBoard";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 
 export const metadata = {
@@ -17,13 +17,13 @@ export const instant = false;
 
 export default async function ApplyQuestionsPage() {
   await connection();
-  const user = await requireStaff("/apply-questions");
+  await requireStaff("/apply-questions");
 
   const canManage = await hasPermissionForUser("jobs.manage");
   const data = canManage ? await getGateConsoleData() : null;
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Careers site"
         title="Apply form questions"
@@ -41,6 +41,6 @@ export default async function ApplyQuestionsPage() {
       ) : (
         <GateQuestionBoard questions={data.questions} jobs={data.jobs} canManage />
       )}
-    </AdminShell>
+    </PageTransition>
   );
 }

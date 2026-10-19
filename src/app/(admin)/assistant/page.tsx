@@ -1,7 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { AssistantConsole } from "./AssistantConsole";
 import { requireStaff } from "@/lib/auth/session";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { connection } from "next/server";
 
@@ -18,13 +18,13 @@ type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 export default async function AssistantPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
-  const user = await requireStaff("/assistant");
+  await requireStaff("/assistant");
 
   const params = await searchParams;
   const session = typeof params.session === "string" ? params.session : null;
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Operations assistant"
         title="Assistant"
@@ -38,6 +38,6 @@ export default async function AssistantPage({ searchParams }: { searchParams: Se
       />
 
       <AssistantConsole initialSessionId={session} />
-    </AdminShell>
+    </PageTransition>
   );
 }

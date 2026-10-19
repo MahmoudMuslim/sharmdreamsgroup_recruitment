@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getBoolSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { cronConfig } from "@/lib/config.server";
@@ -23,7 +23,7 @@ type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
 export default async function WhatsAppOutboxPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
-  const user = await requireStaff("/whatsapp");
+  await requireStaff("/whatsapp");
   const params = await searchParams;
   // The two rails the attention feed can point at. Read server-side, so what the
   // feed counts is what this render actually queries — not a client-side slice of
@@ -39,7 +39,7 @@ export default async function WhatsAppOutboxPage({ searchParams }: { searchParam
   ]);
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Candidate alerts"
         title="Candidate messaging"
@@ -76,6 +76,6 @@ export default async function WhatsAppOutboxPage({ searchParams }: { searchParam
           canManage={canManage}
         />
       </div>
-    </AdminShell>
+    </PageTransition>
   );
 }

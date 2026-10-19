@@ -9,9 +9,9 @@ import { countInterviewsOutsideAgenda, getInterviewAgenda } from "./actions";
 import { InterviewAgenda } from "./InterviewAgenda";
 import { listInterviewers } from "@/app/(admin)/candidates/interview-actions";
 import { requireStaff } from "@/lib/auth/session";
+import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
-import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { connection } from "next/server";
 
@@ -44,7 +44,7 @@ export default async function InterviewsPage({
   // the range rails measure from the same "now" the window was cut with.
   const readAt = new Date().toISOString();
 
-  const [user, interviews, timeZone, canWrite, outsideAgenda] = await Promise.all([
+  const [, interviews, timeZone, canWrite, outsideAgenda] = await Promise.all([
     requireStaff("/interviews"),
     getInterviewAgenda(),
     getOrganisationTimeZone(),
@@ -56,7 +56,7 @@ export default async function InterviewsPage({
   const interviewers = canWrite ? await listInterviewers() : [];
 
   return (
-    <AdminShell user={user}>
+    <PageTransition>
       <PageHeader
         eyebrow="Hiring calendar"
         title="Interviews"
@@ -93,6 +93,6 @@ export default async function InterviewsPage({
           </p>
         </div>
       </Card>
-    </AdminShell>
+    </PageTransition>
   );
 }
