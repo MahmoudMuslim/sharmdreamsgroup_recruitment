@@ -795,6 +795,24 @@ html[data-nav-animated] .rail-shift {
   }
 }
 
+/* The careers assistant's panel. It is mounted at the bottom edge of the page in
+   both writing systems, so it lifts rather than slides — a horizontal entry would
+   read as coming from off-screen on one side in Arabic and the other in English. */
+.pop-in {
+  animation: pop-in 220ms ease-out both;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+  }
+  to {
+    opacity: 1;
+    translate: 0;
+  }
+}
+
 /* Amiri is the only Arabic face in the build (Inter and Montserrat ship no
    Arabic subset), so right-to-left copy falls to it. Written as an attribute
    rule rather than a utility so a per-element class such as `font-mono` still

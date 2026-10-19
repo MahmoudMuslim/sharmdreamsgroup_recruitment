@@ -226,7 +226,7 @@ AS $function$
   returning ended_at;
 $function$;
 
-comment on function public.stop_time_entry(entry_id) is
+comment on function public.stop_time_entry(uuid) is
   'Ends a running entry with the database clock. Refuses a row that is already '
   'finished, and refuses another person''s row through the same UPDATE policy the console uses.';
 

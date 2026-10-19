@@ -156,6 +156,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Read a profile from a link, a pasted page or an uploaded export, then Structure the pasted page into fields.",
       "Convert to an application files the person on the pipeline under a role you choose.",
       "Select rows and Message to send one text to the whole selection.",
+      "Visitors who leave their details to the assistant on the public careers pages arrive here as new prospects, sourced by \"Careers assistant\", with the conversation in the notes — that is a lead, not an application, so the person is still yours to reach.",
     ],
     edges: [
       "One render carries 500 prospects. The rails still count the whole pool, and the page names what is counted above but not shown below.",

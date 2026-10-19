@@ -7,11 +7,14 @@ import { enumKeyFor, employmentLabel, sectorLabel } from "@/modules/careers/job-
 import {
   companyAtAGlance,
   companyOfJob,
+  groupProfile,
   splitParagraphs,
   type PublicCompany,
 } from "@/modules/careers/company-profile";
+import { starterKeys } from "@/modules/careers/chatbot/role-card";
 import { formatSalaryRange } from "@/lib/currency";
 import { ApplyForm } from "../ApplyForm";
+import { CareersChat } from "../CareersChat";
 import { Badge } from "@/modules/analytics/presentation/ui";
 import { PublicText } from "@/modules/shell/presentation/PublicChrome";
 
@@ -188,6 +191,8 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
     currency: job.salary_currency,
   });
 
+  const others = jobs.filter((each) => each.id !== job.id);
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
       <Link
@@ -329,6 +334,17 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
           <ApplyForm jobId={job.id} jobTitle={job.title} />
         </div>
       </div>
+
+      <CareersChat
+        jobId={job.id}
+        jobTitle={job.title}
+        starters={starterKeys({
+          job,
+          company,
+          group: groupProfile(companies),
+          otherRoleCount: others.length,
+        })}
+      />
     </div>
   );
 }

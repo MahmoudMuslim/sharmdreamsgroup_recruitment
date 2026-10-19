@@ -2,6 +2,8 @@ import Link from "next/link";
 import { ArrowRight, BriefcaseBusiness } from "lucide-react";
 import { getPublicCompanies, getPublicJobs } from "./actions";
 import { CareersBoard } from "./CareersBoard";
+import { CareersChat } from "./CareersChat";
+import { starterKeys } from "@/modules/careers/chatbot/role-card";
 import { enumKeyFor, sectorLabel } from "@/modules/careers/job-board";
 import { PublicText } from "@/modules/shell/presentation/PublicChrome";
 import {
@@ -230,6 +232,10 @@ export default async function CareersPage() {
           <ArrowRight className="h-4 w-4 shrink-0" aria-hidden />
         </Link>
       </aside>
+
+      <CareersChat
+        starters={starterKeys({ job: null, company: null, group, otherRoleCount: jobs.length })}
+      />
     </div>
   );
 }

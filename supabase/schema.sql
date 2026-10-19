@@ -100,6 +100,22 @@ create sequence if not exists public.application_tracking_seq;
 -- TABLES
 -- ============================================================================
 
+create table if not exists public.activity_log (
+  id uuid default gen_random_uuid(),
+  company_id uuid,
+  actor_id uuid,
+  actor_kind text not null,
+  actor_label text not null,
+  via text not null,
+  area text not null,
+  action text not null,
+  entity text not null,
+  entity_id text,
+  summary text not null,
+  detail jsonb,
+  created_at timestamp with time zone default now() not null,
+  PRIMARY KEY (id)
+);
 create table if not exists public.ai_model_config (
   capability text,
   primary_model text not null,
@@ -622,6 +638,22 @@ create table if not exists public.tenants_and_companies (
   is_group_profile boolean default false not null,
   PRIMARY KEY (id)
 );
+create table if not exists public.time_entries (
+  id uuid default gen_random_uuid(),
+  company_id uuid,
+  staff_id uuid not null,
+  category text not null,
+  task text not null,
+  job_id uuid,
+  application_id uuid,
+  note text,
+  started_at timestamp with time zone default now() not null,
+  ended_at timestamp with time zone,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
+  PRIMARY KEY (id)
+);
+comment on table public.time_entries is 'Worked time logged by staff: one row per span, with what it was spent on and which candidate or opening it belonged to. A row with no ended_at is the running timer.';
 create table if not exists public.user_invites (
   id uuid default gen_random_uuid(),
   email text not null,
@@ -648,6 +680,18 @@ create table if not exists public.user_profiles (
   created_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
+do $$ begin
+  alter table public.activity_log add constraint activity_log_actor_kind_check CHECK ((actor_kind = ANY (ARRAY['STAFF'::text, 'AI'::text, 'CANDIDATE'::text, 'SYSTEM'::text])));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.activity_log add constraint activity_log_actor_label_check CHECK ((char_length(actor_label) <= 160));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.activity_log add constraint activity_log_entity_id_check CHECK ((char_length(entity_id) <= 64));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.activity_log add constraint activity_log_summary_check CHECK (((char_length(summary) >= 1) AND (char_length(summary) <= 400)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.app_settings add constraint app_settings_scope_company_key_uniq UNIQUE NULLS NOT DISTINCT (scope, company_id, key);
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
@@ -733,7 +777,7 @@ do $$ begin
   alter table public.sourced_prospects add constraint sourced_prospects_full_name_check CHECK (((char_length(full_name) >= 2) AND (char_length(full_name) <= 160)));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
-  alter table public.sourced_prospects add constraint sourced_prospects_origin_check CHECK ((origin = ANY (ARRAY['LINKEDIN'::text, 'CSV'::text, 'MANUAL'::text])));
+  alter table public.sourced_prospects add constraint sourced_prospects_origin_check CHECK ((origin = ANY (ARRAY['LINKEDIN'::text, 'CSV'::text, 'MANUAL'::text, 'CHATBOT'::text])));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.sourced_prospects add constraint sourced_prospects_profile_source_check CHECK ((profile_source = ANY (ARRAY['URL'::text, 'PASTE'::text, 'FILE'::text])));
@@ -766,10 +810,28 @@ do $$ begin
   alter table public.tenants_and_companies add constraint tenants_and_companies_tagline_length CHECK (((tagline IS NULL) OR (char_length(btrim(tagline)) <= 160)));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
+  alter table public.time_entries add constraint time_entries_category_check CHECK ((category = ANY (ARRAY['SCREENING'::text, 'ASSESSMENT'::text, 'INTERVIEW'::text, 'ONBOARDING'::text, 'SOURCING'::text, 'ADMIN'::text, 'OTHER'::text])));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.time_entries add constraint time_entries_note_check CHECK (((note IS NULL) OR (char_length(note) <= 500)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.time_entries add constraint time_entries_span_check CHECK (((ended_at IS NULL) OR (ended_at > started_at)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.time_entries add constraint time_entries_task_check CHECK (((char_length(btrim(task)) >= 1) AND (char_length(btrim(task)) <= 160)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
   alter table public.user_profiles add constraint user_profiles_auth_user_id_key UNIQUE (auth_user_id);
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.user_profiles add constraint user_profiles_locale_check CHECK ((locale = ANY (ARRAY['en'::text, 'ar'::text, 'ru'::text, 'de'::text])));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.activity_log add constraint activity_log_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES user_profiles(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.activity_log add constraint activity_log_company_id_fkey FOREIGN KEY (company_id) REFERENCES tenants_and_companies(id) ON DELETE SET NULL;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.ai_model_config add constraint ai_model_config_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES user_profiles(id) ON DELETE SET NULL;
@@ -904,6 +966,18 @@ do $$ begin
   alter table public.sourced_prospects add constraint sourced_prospects_job_id_fkey FOREIGN KEY (job_id) REFERENCES job_openings(id) ON DELETE SET NULL;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
+  alter table public.time_entries add constraint time_entries_application_id_fkey FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.time_entries add constraint time_entries_company_id_fkey FOREIGN KEY (company_id) REFERENCES tenants_and_companies(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.time_entries add constraint time_entries_job_id_fkey FOREIGN KEY (job_id) REFERENCES job_openings(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.time_entries add constraint time_entries_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES user_profiles(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
   alter table public.user_invites add constraint user_invites_company_id_fkey FOREIGN KEY (company_id) REFERENCES tenants_and_companies(id) ON DELETE SET NULL;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
@@ -920,6 +994,7 @@ exception when duplicate_object or duplicate_table or undefined_object then null
 -- ROW LEVEL SECURITY
 -- ============================================================================
 
+alter table public.activity_log enable row level security;
 alter table public.ai_model_config enable row level security;
 alter table public.app_settings enable row level security;
 alter table public.applicants enable row level security;
@@ -957,6 +1032,7 @@ alter table public.settings_audit_log enable row level security;
 alter table public.skills enable row level security;
 alter table public.sourced_prospects enable row level security;
 alter table public.tenants_and_companies enable row level security;
+alter table public.time_entries enable row level security;
 alter table public.user_invites enable row level security;
 alter table public.user_profiles enable row level security;
 
@@ -1144,6 +1220,18 @@ begin
   new.updated_at := now();
   return new;
 end $function$;
+CREATE OR REPLACE FUNCTION public.stop_time_entry(entry_id uuid)
+ RETURNS timestamp with time zone
+ LANGUAGE sql
+ SET search_path TO 'public'
+AS $function$
+  update public.time_entries
+     set ended_at = now()
+   where id = entry_id
+     and ended_at is null
+  returning ended_at;
+$function$;
+comment on function public.stop_time_entry(entry_id uuid) is 'Ends a running entry with the database clock. Refuses a row that is already finished, and refuses another person''s row through the same UPDATE policy the console uses.';
 CREATE OR REPLACE FUNCTION public.user_tenant_id()
  RETURNS uuid
  LANGUAGE sql
@@ -1157,6 +1245,11 @@ $function$;
 -- INDEXES
 -- ============================================================================
 
+CREATE INDEX IF NOT EXISTS idx_activity_actor_created ON public.activity_log USING btree (actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_area_created ON public.activity_log USING btree (area, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_created ON public.activity_log USING btree (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_entity ON public.activity_log USING btree (entity, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_kind_created ON public.activity_log USING btree (actor_kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_app_settings_key ON public.app_settings USING btree (key);
 CREATE INDEX IF NOT EXISTS application_attachments_application_id_idx ON public.application_attachments USING btree (application_id);
 CREATE INDEX IF NOT EXISTS idx_gate_questions_active ON public.application_gate_questions USING btree (is_active);
@@ -1200,12 +1293,22 @@ CREATE INDEX IF NOT EXISTS idx_sourced_prospects_stage ON public.sourced_prospec
 CREATE UNIQUE INDEX IF NOT EXISTS sourced_prospects_linkedin_key ON public.sourced_prospects USING btree (lower(TRIM(BOTH FROM linkedin_url))) WHERE ((linkedin_url IS NOT NULL) AND (btrim(linkedin_url) <> ''::text));
 CREATE INDEX IF NOT EXISTS idx_companies_active ON public.tenants_and_companies USING btree (is_active, sort_order);
 CREATE UNIQUE INDEX IF NOT EXISTS tenants_and_companies_one_group_profile ON public.tenants_and_companies USING btree (is_group_profile) WHERE is_group_profile;
+CREATE INDEX IF NOT EXISTS time_entries_application_idx ON public.time_entries USING btree (application_id);
+CREATE INDEX IF NOT EXISTS time_entries_company_started_idx ON public.time_entries USING btree (company_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS time_entries_job_idx ON public.time_entries USING btree (job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS time_entries_one_running_idx ON public.time_entries USING btree (staff_id) WHERE (ended_at IS NULL);
+CREATE INDEX IF NOT EXISTS time_entries_staff_started_idx ON public.time_entries USING btree (staff_id, started_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS user_invites_pending_email_uniq ON public.user_invites USING btree (lower(email)) WHERE (status = 'PENDING'::invite_status);
 
 -- ============================================================================
 -- POLICIES
 -- ============================================================================
 
+drop policy if exists "activity_staff_read" on public.activity_log;
+create policy "activity_staff_read" on public.activity_log
+  for SELECT
+  to public
+  using (has_permission('settings.manage_platform'::text));
 drop policy if exists "ai_model_config_read" on public.ai_model_config;
 create policy "ai_model_config_read" on public.ai_model_config
   for SELECT
@@ -1634,6 +1737,27 @@ create policy "tenants_read" on public.tenants_and_companies
   for SELECT
   to public
   using (true);
+drop policy if exists "time_entries_company_read" on public.time_entries;
+create policy "time_entries_company_read" on public.time_entries
+  for SELECT
+  to authenticated
+  using ((is_staff() AND (is_super_admin() OR (user_tenant_id() IS NULL) OR (company_id IS NULL) OR (company_id = user_tenant_id()))));
+drop policy if exists "time_entries_own_add" on public.time_entries;
+create policy "time_entries_own_add" on public.time_entries
+  for INSERT
+  to authenticated
+  with check ((is_staff() AND has_permission('time.track'::text) AND (staff_id = current_user_profile_id())));
+drop policy if exists "time_entries_own_change" on public.time_entries;
+create policy "time_entries_own_change" on public.time_entries
+  for UPDATE
+  to authenticated
+  using ((is_staff() AND has_permission('time.track'::text) AND (staff_id = current_user_profile_id())))
+  with check ((is_staff() AND has_permission('time.track'::text) AND (staff_id = current_user_profile_id())));
+drop policy if exists "time_entries_own_remove" on public.time_entries;
+create policy "time_entries_own_remove" on public.time_entries
+  for DELETE
+  to authenticated
+  using ((is_staff() AND has_permission('time.track'::text) AND ((staff_id = current_user_profile_id()) OR is_super_admin())));
 drop policy if exists "user_invites_read" on public.user_invites;
 create policy "user_invites_read" on public.user_invites
   for SELECT
@@ -1732,6 +1856,8 @@ drop trigger if exists "trg_skills_updated" on public.skills;
 CREATE TRIGGER trg_skills_updated BEFORE UPDATE ON public.skills FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_sourced_prospects_updated" on public.sourced_prospects;
 CREATE TRIGGER trg_sourced_prospects_updated BEFORE UPDATE ON public.sourced_prospects FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+drop trigger if exists "trg_time_entries_updated" on public.time_entries;
+CREATE TRIGGER trg_time_entries_updated BEFORE UPDATE ON public.time_entries FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_user_invites_email" on public.user_invites;
 CREATE TRIGGER trg_user_invites_email BEFORE INSERT OR UPDATE OF email ON public.user_invites FOR EACH ROW EXECUTE FUNCTION normalise_invite_email();
 
@@ -1764,12 +1890,20 @@ comment on column public.tenants_and_companies.milestones is 'Ordered array of {
 comment on column public.tenants_and_companies.benefits is 'Array of {"title": …, "text": …} objects — the group''s own "Why join us" list. Rendered as cards, never promised as a contract.';
 comment on column public.tenants_and_companies.cover_url is 'A banner image for this company''s careers section: a path or an absolute URL. Blank shows no image.';
 comment on column public.tenants_and_companies.is_group_profile is 'The row whose profile is the whole group''s. Exactly one; read by the careers page for the group header, and excluded from the pickers a job or a suite is filed under.';
+comment on column public.time_entries.task is 'What the person was doing, in their own words, e.g. "Score the four sales pitch recordings". Free text so it can name the real work; the category is the part the reports can group.';
+comment on column public.time_entries.application_id is 'The candidate the time went to, when there is one. Set null if the application disappears: hours are not the candidate''s property and must not vanish with them.';
+comment on column public.time_entries.started_at is 'When the span began. Set by the database clock, never typed in as a duration, so a timer left running over the weekend reads as the 48 hours it is rather than as a guess.';
+comment on column public.time_entries.ended_at is 'When the span ended. Null means still running: the elapsed time is computed from started_at at read time, so the number is always the database''s, not the browser''s.';
 comment on index public.applications_one_live_per_job is 'Blocks duplicate live applications to the same job. Rejected, hired and archived applications are outside the index so re-applying is permitted.';
 
 -- ============================================================================
 -- GRANTS
 -- ============================================================================
 
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.activity_log to anon;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.activity_log to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.activity_log to postgres;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.activity_log to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.ai_model_config to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.ai_model_config to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.ai_model_config to postgres;
@@ -1982,10 +2116,17 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.sourced_prospects to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.sourced_prospects to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.sourced_prospects to service_role;
+grant execute on function public.stop_time_entry to anon;
+grant execute on function public.stop_time_entry to authenticated;
+grant execute on function public.stop_time_entry to postgres;
+grant execute on function public.stop_time_entry to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.tenants_and_companies to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.tenants_and_companies to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.tenants_and_companies to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.tenants_and_companies to service_role;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.time_entries to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.time_entries to postgres;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.time_entries to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.user_invites to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.user_invites to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.user_invites to postgres;
@@ -2144,6 +2285,7 @@ insert into public.permissions (key, label, group_name, description) values ('sc
 insert into public.permissions (key, label, group_name, description) values ('settings.manage_platform', 'Manage platform settings', 'Administration', 'Edit AI, integration and security settings') on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('settings.manage_roles', 'Manage roles', 'Administration', 'Change role permission grants') on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('settings.manage_users', 'Manage users', 'Administration', 'Invite, edit and disable staff accounts') on conflict (key) do nothing;
+insert into public.permissions (key, label, group_name, description) values ('time.track', 'Track time', 'Time', 'Start, stop and edit your own logged hours') on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('users.create', 'Create users', 'users', null) on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('users.manage', 'Manage users', 'users', null) on conflict (key) do nothing;
 insert into public.roles (id, key, label, description, is_system) values ('10cd5ce2-bb42-4bc3-982f-7e1a211994b2', 'HIRING_MANAGER', 'Hiring Manager', 'Review and interview candidates for assigned roles', true) on conflict (id) do nothing;
@@ -2169,6 +2311,7 @@ insert into public.role_permissions (role_key, permission_key, granted) values (
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUPER_ADMIN', 'settings.manage_platform', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUPER_ADMIN', 'settings.manage_roles', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUPER_ADMIN', 'settings.manage_users', true) on conflict (role_key, permission_key) do nothing;
+insert into public.role_permissions (role_key, permission_key, granted) values ('SUPER_ADMIN', 'time.track', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUPER_ADMIN', 'users.create', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUPER_ADMIN', 'users.manage', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'analytics.export', true) on conflict (role_key, permission_key) do nothing;
@@ -2184,6 +2327,7 @@ insert into public.role_permissions (role_key, permission_key, granted) values (
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'jobs.manage', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'messages.send', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'settings.manage_users', true) on conflict (role_key, permission_key) do nothing;
+insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'time.track', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'users.create', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('SUBSIDIARY_HR_MANAGER', 'users.manage', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('RECRUITER', 'analytics.view', true) on conflict (role_key, permission_key) do nothing;
@@ -2196,10 +2340,12 @@ insert into public.role_permissions (role_key, permission_key, granted) values (
 insert into public.role_permissions (role_key, permission_key, granted) values ('RECRUITER', 'interviews.schedule', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('RECRUITER', 'jobs.manage', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('RECRUITER', 'messages.send', true) on conflict (role_key, permission_key) do nothing;
+insert into public.role_permissions (role_key, permission_key, granted) values ('RECRUITER', 'time.track', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('HIRING_MANAGER', 'analytics.view', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('HIRING_MANAGER', 'candidates.read', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('HIRING_MANAGER', 'candidates.view_scores', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('HIRING_MANAGER', 'interviews.schedule', true) on conflict (role_key, permission_key) do nothing;
+insert into public.role_permissions (role_key, permission_key, granted) values ('HIRING_MANAGER', 'time.track', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('INTERVIEWER', 'candidates.read', true) on conflict (role_key, permission_key) do nothing;
 insert into public.role_permissions (role_key, permission_key, granted) values ('INTERVIEWER', 'interviews.schedule', true) on conflict (role_key, permission_key) do nothing;
 insert into public.currencies (id, code, symbol, label, is_active, sort_order) values ('229943e2-f358-448a-8b4d-ba9e79ed4891', 'TRY', '₺', 'Turkish Lira', true, '130') on conflict (id) do nothing;
@@ -2370,4 +2516,4 @@ insert into public.app_settings (id, scope, company_id, key, value, description,
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('e318c32b-c1da-471e-98f1-201675eb1a1b', 'GLOBAL', null, 'ai.bias_reduction', 'true', 'Strip demographic markers before sending CVs to models', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('e677f3b8-6fd5-4c53-9c4f-2cdcc9302b02', 'GLOBAL', null, 'organisation.enabled_locales', '["en", "ar"]', 'Languages offered to candidates', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('f60b515b-fd34-493b-acda-02ad08f06880', 'GLOBAL', null, 'organisation.locale', '"en"', 'Default interface language', false, null) on conflict (id) do nothing;
--- 221 reference rows above. Their order is load-bearing: parents before children.
+-- 226 reference rows above. Their order is load-bearing: parents before children.

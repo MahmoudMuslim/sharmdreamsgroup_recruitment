@@ -471,7 +471,12 @@ export async function importProspects(input: {
 
 export interface ProspectDraftInput extends Partial<ProspectFields> {
   id?: string;
-  origin?: "LINKEDIN" | "CSV" | "MANUAL";
+  /**
+   * `CHATBOT` is written by the public careers assistant at `/api/careers/lead`,
+   * never chosen here — but a recruiter editing one of those records saves the
+   * whole row, so the name of where it came from has to survive the round trip.
+   */
+  origin?: "LINKEDIN" | "CSV" | "MANUAL" | "CHATBOT";
 }
 
 function cleanFields(input: ProspectDraftInput): ProspectWriteResult & { fields?: ProspectFields } {

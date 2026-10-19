@@ -363,6 +363,7 @@ export const AI_CAPABILITIES: AiCapability[] = [
   { id: "interview_questions", label: "Interview questions", description: "Generate interview guides, scorecards and follow-up questions." },
   { id: "transcription", label: "Transcription", description: "Turn video pitches and interview audio into text." },
   { id: "assistant", label: "Admin assistant", description: "Run the in-app assistant chat that reads and changes records across the portal." },
+  { id: "chatbot", label: "Careers assistant", description: "Answer visitor questions on the public careers pages from the role and company facts that page publishes." },
 ];
 
 // ============================================================================

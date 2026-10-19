@@ -92,6 +92,19 @@ function initials(name: string) {
     .join("");
 }
 
+/**
+ * Where a record came from, in words a recruiter reads rather than the column
+ * value. `CHATBOT` is written by the careers assistant when a visitor leaves
+ * their details after a conversation, with the transcript in the notes.
+ */
+function originLabel(origin: string) {
+  if (origin === "CHATBOT") return "Careers assistant (public site)";
+  if (origin === "LINKEDIN") return "LinkedIn links";
+  if (origin === "CSV") return "CSV import";
+  if (origin === "MANUAL") return "Added by hand";
+  return origin;
+}
+
 /** What a message can still be edited with before it goes out. */
 function varsFor(prospect: ProspectRow, companyName = "Sharm Dreams Group") {
   return {
@@ -871,7 +884,14 @@ function ProspectFormDrawer({
     startTransition(async () => {
       const result = await saveProspect({
         id: prospect?.id,
-        origin: prospect?.origin === "LINKEDIN" || prospect?.origin === "CSV" ? prospect?.origin : "MANUAL",
+        // Whatever the record was actually sourced by survives the save — including
+        // CHATBOT, which the public assistant wrote and no control here offers.
+        origin:
+          prospect?.origin === "LINKEDIN" ||
+          prospect?.origin === "CSV" ||
+          prospect?.origin === "CHATBOT"
+            ? prospect.origin
+            : "MANUAL",
         full_name: form.full_name,
         headline: form.headline || null,
         company: form.company || null,
@@ -1109,7 +1129,7 @@ function ProfileDrawer({
         <Detail label="Phone" value={prospect.phone} href={prospect.phone ? `tel:${prospect.phone}` : undefined} />
         <Detail label="Linked opening" value={prospect.job_title} />
         <Detail label="Loaded" value={new Date(prospect.created_at).toLocaleDateString()} />
-        <Detail label="Source of the record" value={prospect.origin} />
+        <Detail label="Source of the record" value={originLabel(prospect.origin)} />
         <Detail
           label="Last touch"
           value={

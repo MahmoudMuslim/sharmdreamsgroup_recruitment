@@ -69,7 +69,8 @@ export type AiCapability =
   | "feedback"
   | "interview_questions"
   | "transcription"
-  | "assistant";
+  | "assistant"
+  | "chatbot";
 
 const PRIMARY = optional(process.env.AI_MODEL_PRIMARY, "google/gemma-4-31b-it:free");
 const FAST = optional(process.env.AI_MODEL_FAST, "nvidia/nemotron-3.5-lightning:free");
@@ -92,4 +93,8 @@ export const modelChains: Record<AiCapability, readonly string[]> = {
   // free OpenRouter ids it would otherwise inherit are the first to rate-limit,
   // so it defaults to Google's own endpoint and keeps the shared ids as backup.
   assistant: ["gemini-3-flash-preview", "gemini-3.1-flash-lite", PRIMARY, FALLBACK],
+  // The careers assistant is the one chain a stranger on a public page waits on,
+  // so it starts at the same Google ids the in-app chat uses — the free
+  // OpenRouter ids it would otherwise inherit are the first to rate-limit.
+  chatbot: ["gemini-3-flash-preview", "gemini-3.1-flash-lite", PRIMARY, FALLBACK],
 } as const;
