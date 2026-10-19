@@ -6,6 +6,7 @@ import { getSupabaseAnonClient } from "@/lib/supabase/anon";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasAiProvider } from "@/lib/config.server";
 import { extractCvText, type ExtractedCv as _ExtractedCv } from "@/modules/screening/infrastructure/cvParser";
+import { CV_TEXT_MIN_CHARS } from "@/modules/careers/cv-rules";
 import {
   getAiAutomationSettings,
   screenApplicationById,
@@ -278,7 +279,7 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   if (!EMAIL_PATTERN.test(email)) {
     return { ok: false, error: "Enter a valid email address." };
   }
-  if (cvText.length < 40 && !input.cvFilePath) {
+  if (cvText.length < CV_TEXT_MIN_CHARS && !input.cvFilePath) {
     return {
       ok: false,
       error: "Attach a CV or paste its text so we can review your application.",

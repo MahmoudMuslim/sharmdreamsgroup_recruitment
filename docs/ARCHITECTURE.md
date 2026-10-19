@@ -36,9 +36,10 @@ src/
 │   ├── layout.tsx            # Root layout, theme bootstrap, fonts
 │   ├── page.tsx              # Public landing
 │   ├── login/                # Staff sign-in
-│   ├── careers/              # Public job board + application form + chatbot
-│   │   ├── [id]/             # Single job + apply
-│   │   ├── ApplyForm.tsx · CareersBoard.tsx · actions.ts
+│   ├── careers/              # Public job board + chatbot
+│   │   ├── [id]/             # Single job, and the door to its application
+│   │   ├── apply/[id]/       # The application itself, one step per screen
+│   │   ├── CareersBoard.tsx · actions.ts
 │   ├── (admin)/              # 16 protected pages (see below)
 │   ├── (candidate)/          # Portal + tokenized test runner
 │   │   ├── portal/           # Candidate application tracker

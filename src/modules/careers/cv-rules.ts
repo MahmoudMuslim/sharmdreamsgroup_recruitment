@@ -1,7 +1,7 @@
 /**
  * What the career site accepts as a CV file.
  *
- * The apply form checks before sending, the upload route checks before storing
+ * The apply steps check before sending, the upload route checks before storing
  * and the prefill route checks before spending a model call on it. Those three
  * have to agree — a candidate whose file passes one gate and fails another reads
  * it as the site losing their CV — so the numbers live here once.
@@ -9,6 +9,14 @@
 
 export const CV_MAX_MB = 5;
 export const CV_MAX_BYTES = CV_MAX_MB * 1024 * 1024;
+
+/**
+ * The shortest pasted CV that counts as a CV, when no file is attached.
+ *
+ * The submission action is what refuses a shorter one, so the step that asks
+ * for the text quotes this number instead of keeping its own.
+ */
+export const CV_TEXT_MIN_CHARS = 40;
 
 /** `.doc` is accepted by the form and the bucket, but nothing parses it. */
 export const CV_ALLOWED_MIME_TYPES = [

@@ -13,13 +13,16 @@ import {
 } from "@/modules/careers/company-profile";
 import { starterKeys } from "@/modules/careers/chatbot/role-card";
 import { formatSalaryRange } from "@/lib/currency";
-import { ApplyForm } from "../ApplyForm";
 import { CareersChat } from "../CareersChat";
 import { Badge } from "@/modules/analytics/presentation/ui";
 import { PublicText } from "@/modules/shell/presentation/PublicChrome";
 
 /**
- * Public job detail and application form.
+ * Public job detail, and the door to its application.
+ *
+ * The role is described here; applying happens one click away, on the stepped
+ * page at `/careers/apply/[id]`, so a candidate reading the ad is not reading it
+ * beside a column of empty inputs.
  *
  * Draft and closed roles are invisible: `getPublicJob` filters on
  * `status = 'PUBLISHED'` and returns null, which renders a 404 rather than
@@ -164,6 +167,55 @@ function CompanyPanel({ company }: { company: PublicCompany }) {
           <ArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
         </a>
       )}
+    </section>
+  );
+}
+
+/**
+ * The one door to the application.
+ *
+ * The form used to sit here beside the ad, so a candidate read a role with a
+ * column of empty inputs next to it and the page shipped the whole form whether
+ * they applied or not. What stays is the invitation and the button; the steps
+ * live on their own page at `/careers/apply/[id]`, reached by one click.
+ */
+function ApplyPanel({ jobId }: { jobId: string }) {
+  return (
+    <section className="rounded-2xl border border-brand-line bg-white p-6 shadow-soft sm:p-7">
+      <h2 className="font-display text-xl font-bold">
+        <PublicText k="apply.ctaTitle" />
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-brand-ink/65">
+        <PublicText k="apply.ctaNote" />
+      </p>
+
+      <Link
+        href={`/careers/apply/${jobId}`}
+        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-ink px-6 py-3.5 text-sm font-bold text-brand-cream shadow-lift transition hover:bg-brand-ink/90"
+      >
+        <PublicText k="apply.ctaButton" />
+        <ArrowRight className="h-4 w-4 shrink-0 rtl:rotate-180" aria-hidden />
+      </Link>
+
+      <p className="mt-3 text-center text-[11px] leading-relaxed text-brand-ink/45">
+        <PublicText k="apply.ctaMinutes" />
+      </p>
+
+      <div className="mt-5 border-t border-brand-line pt-5">
+        <p className="text-xs font-bold text-brand-ink/70">
+          <PublicText k="careers.applied" />
+        </p>
+        <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/50">
+          <PublicText k="careers.appliedNote" />
+        </p>
+        <Link
+          href="/portal"
+          className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
+        >
+          <PublicText k="careers.trackMine" />
+          <ArrowRight className="h-3.5 w-3.5 shrink-0 rtl:rotate-180" aria-hidden />
+        </Link>
+      </div>
     </section>
   );
 }
@@ -329,11 +381,11 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
           )}
         </div>
 
-        {/* ---------------------------------------------------- the form */}
+        {/* --------------------------------------------------- the invitation */}
         {/* `panel-fold` — the film rule reads `.sticky`, which `lg:sticky` does not
             compile to, so a sidebar that only sticks from `lg` up names itself. */}
         <div className="panel-fold lg:sticky lg:top-24">
-          <ApplyForm jobId={job.id} jobTitle={job.title} />
+          <ApplyPanel jobId={job.id} />
         </div>
       </div>
 
