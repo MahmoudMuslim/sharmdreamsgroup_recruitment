@@ -93,21 +93,33 @@ const fold = (text: string): string => text.trim().toLocaleLowerCase();
 
 export type FacetField = "department" | "location" | "employment_type" | "sector";
 
+/**
+ * What the applicant has chosen, in their own words.
+ *
+ * A facet holds a list, because the board is a sidebar of ticked choices and
+ * "Cairo or Sharm" is a question an applicant legitimately asks — a single
+ * dropdown could only answer it by making them load the page twice. The values
+ * are the stored spellings, so a shared URL filters the same rows whatever
+ * language the board is read in.
+ */
 export interface BoardFilters {
   q: string;
-  department: string;
-  location: string;
-  employment_type: string;
-  sector: string;
+  department: string[];
+  location: string[];
+  employment_type: string[];
+  sector: string[];
 }
 
 export const EMPTY_FILTERS: BoardFilters = {
   q: "",
-  department: "",
-  location: "",
-  employment_type: "",
-  sector: "",
+  department: [],
+  location: [],
+  employment_type: [],
+  sector: [],
 };
+
+/** A query string is not a form; past that, the URL is only getting long. */
+const MAX_FACET_VALUES = 12;
 
 /**
  * Each facet, with the query-string key it is shared under.
@@ -204,26 +216,70 @@ export function filterJobs(jobs: PublicJob[], filters: BoardFilters): PublicJob[
   return jobs.filter(
     (job) =>
       matchesQuery(job, filters.q) &&
-      FACETS.every(
-        (facet) =>
-          !filters[facet.field] || fold(job[facet.field]) === fold(filters[facet.field])
-      )
+      FACETS.every((facet) => {
+        const chosen = filters[facet.field];
+        if (chosen.length === 0) return true;
+        const value = fold(job[facet.field]);
+        return chosen.some((each) => fold(each) === value);
+      })
   );
 }
 
-/** How many choices the applicant has actually narrowed by, keywords excluded. */
-export function activeFacetCount(filters: BoardFilters): number {
-  return FACETS.filter((facet) => filters[facet.field]).length;
+/** Whether a choice is already ticked, whatever spelling the link carried. */
+export function isTicked(chosen: string[], value: string): boolean {
+  const target = fold(value);
+  return chosen.some((each) => fold(each) === target);
 }
 
+/**
+ * One choice in, one choice out: a ticked box clicked again is unticked.
+ *
+ * The comparison is folded, so a pasted `?location=cairo` unticks the "Cairo"
+ * box rather than leaving a second folded-equal value sitting in the list.
+ */
+export function toggleFacet(
+  filters: BoardFilters,
+  field: FacetField,
+  value: string
+): BoardFilters {
+  const chosen = filters[field];
+  const next = isTicked(chosen, value)
+    ? chosen.filter((each) => fold(each) !== fold(value))
+    : [...chosen, value].slice(-MAX_FACET_VALUES);
+  return { ...filters, [field]: next };
+}
+
+/** How many choices the applicant has actually ticked, keywords excluded. */
+export function activeFacetCount(filters: BoardFilters): number {
+  return FACETS.reduce((sum, facet) => sum + filters[facet.field].length, 0);
+}
+
+/**
+ * The choices a shared link carries.
+ *
+ * A facet may repeat (`?location=Cairo&location=Sharm`), and an older link with
+ * one value per facet still reads. Spent values are dropped, duplicates
+ * collapsed, and the count capped — a URL that arrives with four hundred
+ * locations is a bug somewhere else, and the board should not inherit it.
+ */
 export function readFilters(search: string): BoardFilters {
   const params = new URLSearchParams(search);
+  const values = (param: string): string[] => {
+    const seen = new Set<string>();
+    for (const raw of params.getAll(param)) {
+      const value = raw.trim().slice(0, 120);
+      if (value) seen.add(value);
+      if (seen.size >= MAX_FACET_VALUES) break;
+    }
+    return [...seen];
+  };
+
   return {
     q: params.get("q")?.slice(0, 120) ?? "",
-    department: params.get("department") ?? "",
-    location: params.get("location") ?? "",
-    employment_type: params.get("type") ?? "",
-    sector: params.get("sector") ?? "",
+    department: values("department"),
+    location: values("location"),
+    employment_type: values("type"),
+    sector: values("sector"),
   };
 }
 
@@ -232,7 +288,7 @@ export function writeFilters(filters: BoardFilters): string {
   const params = new URLSearchParams();
   if (filters.q.trim()) params.set("q", filters.q.trim());
   for (const facet of FACETS) {
-    if (filters[facet.field]) params.set(facet.param, filters[facet.field]);
+    for (const value of filters[facet.field]) params.append(facet.param, value);
   }
   return params.toString();
 }

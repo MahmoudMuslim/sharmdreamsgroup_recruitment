@@ -330,7 +330,9 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
         </div>
 
         {/* ---------------------------------------------------- the form */}
-        <div className="lg:sticky lg:top-24">
+        {/* `panel-fold` — the film rule reads `.sticky`, which `lg:sticky` does not
+            compile to, so a sidebar that only sticks from `lg` up names itself. */}
+        <div className="panel-fold lg:sticky lg:top-24">
           <ApplyForm jobId={job.id} jobTitle={job.title} />
         </div>
       </div>

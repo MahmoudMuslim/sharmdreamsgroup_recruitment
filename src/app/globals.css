@@ -96,6 +96,9 @@ html[data-tone="dark"] {
  * Frost is put only where content actually passes behind a surface — the rail,
  * sticky bars, overlays, panels that announce themselves as dialogs — because
  * blurring a still backdrop costs a compositing layer and shows nothing.
+ * `.panel-fold` is in that list by hand, not by class: a public-page sidebar goes
+ * sticky only from `lg` up, so its compiled class is `lg:sticky` and the `.sticky`
+ * selector above never sees it.
  * `prefers-reduced-transparency` gets each tone's palette as opaque paint at the
  * end of this section.
  *
@@ -135,7 +138,7 @@ html[data-palette="glass"] body::before {
    only blurs what sits behind that ancestor's own box. They are the one
    floating surface a recruiter opens over a live list that the tag selector
    missed. Everything else carrying the role is already `.fixed`. */
-html[data-palette="glass"] :is(.rail-fold, .sticky, .fixed, dialog, [role="dialog"]) {
+html[data-palette="glass"] :is(.rail-fold, .panel-fold, .sticky, .fixed, dialog, [role="dialog"]) {
   -webkit-backdrop-filter: blur(16px) saturate(150%);
   backdrop-filter: blur(16px) saturate(150%);
 }
@@ -372,7 +375,7 @@ html[data-palette="glass"][data-tone="light"] .shadow-2xl {
     opacity: 0.4;
   }
 
-  html[data-palette="glass"] :is(.rail-fold, .sticky, .fixed, dialog, [role="dialog"]) {
+  html[data-palette="glass"] :is(.rail-fold, .panel-fold, .sticky, .fixed, dialog, [role="dialog"]) {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }

@@ -1,8 +1,15 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { ArrowRight, BriefcaseBusiness, MapPin, Search, SlidersHorizontal, X } from "lucide-react";
+import {
+  ArrowRight,
+  BriefcaseBusiness,
+  MapPin,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import {
   EMPTY_FILTERS,
   FACETS,
@@ -10,8 +17,10 @@ import {
   employmentLabel,
   facetOptions,
   filterJobs,
+  isTicked,
   readFilters,
   sectorLabel,
+  toggleFacet,
   writeFilters,
   type BoardFilters,
   type PublicJob,
@@ -27,10 +36,12 @@ import { formatSalaryRange } from "@/lib/currency";
 import { EmptyState } from "@/modules/analytics/presentation/ui";
 import { hasKey, translate } from "@/lib/i18n";
 import { usePublicLocale } from "@/modules/shell/presentation/PublicChrome";
+import { cn } from "@/lib/utils";
+import type { Locale } from "@/types";
 
 /**
- * The applicant-facing job board: search, filters, and the openings they narrow,
- * grouped by the company hiring for them.
+ * The applicant-facing job board: a sidebar of search, ticked filters and the
+ * group's companies, and the openings those choices leave in the column beside it.
  *
  * Filtering runs here rather than on the server because `getPublicJobs` already
  * returns every PUBLISHED opening — the read carries no limit — so the whole
@@ -167,7 +178,7 @@ function CompanyBlock({ section }: { section: CompanySection }) {
   return (
     <section
       id={anchorFor(section)}
-      className="mt-10 scroll-mt-24 first:mt-8"
+      className="mt-8 scroll-mt-24 first:mt-0"
       aria-label={`${name} — ${translate(lang, jobs.length === 1 ? "board.openRole" : "board.openRoles", { count: jobs.length })}`}
     >
       <h2 className="font-display text-2xl font-bold tracking-tight">{name}</h2>
@@ -248,7 +259,7 @@ function CompanyBlock({ section }: { section: CompanySection }) {
           count: jobs.length,
         })}
       </h3>
-      <ul className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <ul className="mt-3 grid grid-cols-1 gap-4 xl:grid-cols-2">
         {jobs.map((job) => (
           <li key={job.id}>
             <JobCard job={job} />
@@ -256,6 +267,60 @@ function CompanyBlock({ section }: { section: CompanySection }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+/**
+ * The board: a column of choices beside the openings they leave standing.
+ *
+ * Search, ticked facets and the companies on the board all live in the sidebar,
+ * so an applicant narrows the list without ever losing sight of what they have
+ * already chosen — the counts next to each box say how many roles each extra
+ * tick would cost them.
+ */
+
+/**
+ * How many of the board's openings the choices leave standing, and the one
+ * button that puts them all back.
+ *
+ * Rendered twice — in the phone toolbar and above the desktop results column —
+ * because on a phone the sidebar sits between this line and the list, and a
+ * count that only appears below the panel is a count you have to scroll past
+ * the filters to find. The one that is hidden for the current breakpoint is
+ * `display: none`, so a screen reader is only ever told the number once.
+ */
+function ResultSummary({
+  lang,
+  filters,
+  shown,
+  total,
+}: {
+  lang: Locale;
+  filters: BoardFilters;
+  shown: number;
+  total: number;
+}) {
+  const narrowed = Boolean(filters.q.trim()) || activeFacetCount(filters) > 0;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <p aria-live="polite" className="text-sm font-semibold text-brand-ink">
+        {translate(lang, narrowed ? "board.showingFiltered" : "board.showingAll", {
+          shown,
+          total,
+        })}
+      </p>
+      {narrowed && (
+        <button
+          type="button"
+          onClick={() => publish(EMPTY_FILTERS)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1 text-xs font-semibold text-brand-ink/65 transition hover:bg-brand-sand hover:text-brand-ink"
+        >
+          <X className="h-3 w-3" aria-hidden />
+          {translate(lang, "board.clearFilters")}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -273,15 +338,17 @@ export function CareersBoard({
     () => EMPTY_FILTERS
   );
 
+  // On a phone the choices would otherwise sit between the heading and the first
+  // role, so they are folded away until asked for; from `lg` up the column is
+  // beside the list and always open.
+  const [panelOpen, setPanelOpen] = useState(false);
+
   const shown = useMemo(() => filterJobs(jobs, filters), [jobs, filters]);
 
   // Grouped after filtering, not before: a company whose every opening the
   // applicant has just filtered out has no section on screen, so the page never
   // shows a heading over an empty list of roles.
-  const sections = useMemo(
-    () => sectionsForBoard(shown, companies),
-    [shown, companies]
-  );
+  const sections = useMemo(() => sectionsForBoard(shown, companies), [shown, companies]);
 
   // A facet offering one value filters nothing, so it is not offered at all; it
   // appears as soon as the board holds two kinds of role to tell apart.
@@ -294,137 +361,171 @@ export function CareersBoard({
     [jobs, lang]
   );
 
-  const narrowed = Boolean(filters.q.trim()) || activeFacetCount(filters) > 0;
+  const ticked = activeFacetCount(filters);
+
+  if (jobs.length === 0) {
+    return (
+      <EmptyState
+        icon={<BriefcaseBusiness className="h-8 w-8" aria-hidden />}
+        title={translate(lang, "board.emptyTitle")}
+        description={translate(lang, "board.emptyBody")}
+      />
+    );
+  }
 
   return (
     <>
-      {jobs.length > 0 && (
-        <section
-          aria-label={translate(lang, "board.searchAria")}
-          className="mt-10 rounded-2xl border border-brand-line bg-white p-4 shadow-soft sm:p-5"
+      <div className="flex items-start justify-between gap-3 lg:hidden">
+        <ResultSummary lang={lang} filters={filters} shown={shown.length} total={jobs.length} />
+        <button
+          type="button"
+          onClick={() => setPanelOpen((open) => !open)}
+          aria-expanded={panelOpen}
+          className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-line bg-white px-3 py-2 text-xs font-bold text-brand-ink/75 shadow-soft transition hover:bg-brand-sand hover:text-brand-ink"
         >
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <label className="relative flex-1">
-              <span className="sr-only">{translate(lang, "board.searchLabel")}</span>
+          <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
+          {translate(lang, panelOpen ? "board.hideFilters" : "board.filters")}
+          {ticked > 0 && (
+            <span className="rounded-full bg-brand-ink px-1.5 py-0.5 font-mono text-[10px] text-brand-cream">
+              {ticked}
+            </span>
+          )}
+        </button>
+      </div>
+
+      <div className="mt-3 lg:mt-0 lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+        {/* `panel-fold` is the glass marker: `lg:sticky` compiles to a
+            `lg\:sticky` class and the stylesheet frosts `.sticky`, so a sidebar
+            that only goes sticky at `lg` has to name itself for the film to be
+            drawn behind it. */}
+        <aside
+          aria-label={translate(lang, "board.searchAria")}
+          className={cn(
+            "panel-fold rounded-2xl border border-brand-line bg-white p-4 shadow-soft",
+            "lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto",
+            panelOpen ? "block" : "hidden lg:block"
+          )}
+        >
+          <label className="block">
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/40">
+              {translate(lang, "board.searchLabel")}
+            </span>
+            <span className="relative mt-1.5 block">
               <Search
-                className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/35 rtl:left-auto rtl:right-3.5"
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/35 rtl:left-auto rtl:right-3"
                 aria-hidden
               />
               <input
                 value={filters.q}
                 onChange={(event) => publish({ ...filters, q: event.target.value })}
                 placeholder={translate(lang, "board.searchPlaceholder")}
-                className="w-full rounded-xl border border-brand-line bg-brand-cream/40 py-2.5 pl-10 pr-9 text-sm outline-none transition placeholder:text-brand-ink/35 focus:border-brand-gold focus:bg-white rtl:pl-9 rtl:pr-10"
+                className="w-full rounded-xl border border-brand-line bg-brand-cream/40 py-2 pl-9 pr-8 text-sm outline-none transition placeholder:text-brand-ink/35 focus:border-brand-gold focus:bg-white rtl:pl-8 rtl:pr-9"
               />
               {filters.q && (
                 <button
                   type="button"
                   onClick={() => publish({ ...filters, q: "" })}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-brand-ink/40 transition hover:bg-brand-sand hover:text-brand-ink rtl:left-2.5 rtl:right-auto"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg p-1 text-brand-ink/40 transition hover:bg-brand-sand hover:text-brand-ink rtl:left-1.5 rtl:right-auto"
                   aria-label={translate(lang, "board.clearSearch")}
                 >
                   <X className="h-3.5 w-3.5" aria-hidden />
                 </button>
               )}
-            </label>
+            </span>
+          </label>
 
-            <div className="flex flex-wrap gap-2">
-              {facets.map((facet) => (
-                <label key={facet.field} className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-brand-ink/40">
-                    {translate(lang, facet.labelKey)}
-                  </span>
-                  <select
-                    value={filters[facet.field]}
-                    onChange={(event) =>
-                      publish({ ...filters, [facet.field]: event.target.value })
-                    }
-                    className="rounded-xl border border-brand-line bg-white px-2.5 py-2 text-xs font-semibold text-brand-ink/70 outline-none transition focus:border-brand-gold"
-                  >
-                    <option value="">{translate(lang, "board.any")}</option>
-                    {facet.options.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label} ({option.count})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ))}
+          {facets.length > 0 && (
+            <div className="mt-5 border-t border-brand-line pt-4">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/40">
+                {translate(lang, "board.filters")}
+              </p>
+
+              <div className="mt-3 space-y-4">
+                {facets.map((facet) => (
+                  <fieldset key={facet.field}>
+                    <legend className="text-xs font-bold text-brand-ink/70">
+                      {translate(lang, facet.labelKey)}
+                    </legend>
+                    <ul className="mt-1.5 space-y-1">
+                      {facet.options.map((option) => (
+                        <li key={option.value}>
+                          <label className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-xs transition hover:bg-brand-sand">
+                            <input
+                              type="checkbox"
+                              checked={isTicked(filters[facet.field], option.value)}
+                              onChange={() =>
+                                publish(toggleFacet(filters, facet.field, option.value))
+                              }
+                              className="h-3.5 w-3.5 shrink-0 accent-brand-gold"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-brand-ink/75">
+                              {option.label}
+                            </span>
+                            <span className="shrink-0 font-mono text-[11px] text-brand-ink/40">
+                              {option.count}
+                            </span>
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  </fieldset>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-brand-ink/55">
-            <p aria-live="polite" className="font-semibold text-brand-ink">
-              {translate(
-                lang,
-                narrowed ? "board.showingFiltered" : "board.showingAll",
-                { shown: shown.length, total: jobs.length }
-              )}
-            </p>
-            {narrowed ? (
-              <button
-                type="button"
-                onClick={() => publish(EMPTY_FILTERS)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line px-2.5 py-1 font-semibold text-brand-ink/65 transition hover:bg-brand-sand hover:text-brand-ink"
-              >
-                <SlidersHorizontal className="h-3 w-3" aria-hidden />
-                {translate(lang, "board.clearFilters")}
-              </button>
-            ) : (
-              facets.length > 0 && (
-                <span className="text-brand-ink/40">
-                  {translate(lang, "board.filterBy", {
-                    facets: facets
-                      .map((facet) => translate(lang, facet.labelKey).toLocaleLowerCase(lang))
-                      .join(", "),
-                  })}
-                </span>
-              )
-            )}
-          </div>
-        </section>
-      )}
-
-      {jobs.length === 0 ? (
-        <EmptyState
-          icon={<BriefcaseBusiness className="h-8 w-8" aria-hidden />}
-          title={translate(lang, "board.emptyTitle")}
-          description={translate(lang, "board.emptyBody")}
-        />
-      ) : shown.length === 0 ? (
-        <EmptyState
-          icon={<Search className="h-8 w-8" aria-hidden />}
-          title={translate(lang, "board.emptyMatchTitle")}
-          description={translate(lang, "board.emptyMatchBody", { count: jobs.length })}
-        />
-      ) : (
-        <>
-          {/* The board is one page per company now, so the names are offered as
-              links before the list: a candidate who knows which company they want
-              jumps there instead of scrolling through the others' openings. */}
+          {/* The board is one page per company, so the names are offered before the
+              list: a candidate who knows which company they want jumps there instead
+              of scrolling through the others' openings. */}
           {sections.length > 1 && (
             <nav
               aria-label={translate(lang, "board.companiesAria")}
-              className="mt-8 flex flex-wrap gap-2"
+              className="mt-5 border-t border-brand-line pt-4"
             >
-              {sections.map((section) => (
-                <a
-                  key={anchorFor(section)}
-                  href={`#${anchorFor(section)}`}
-                  className="rounded-full border border-brand-line bg-white px-3.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:border-brand-gold/50 hover:text-brand-ink"
-                >
-                  {section.name}
-                  <span className="ml-1.5 text-brand-ink/40">{section.jobs.length}</span>
-                </a>
-              ))}
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/40">
+                {translate(lang, "board.companies")}
+              </p>
+              <ul className="mt-2 space-y-0.5">
+                {sections.map((section) => (
+                  <li key={anchorFor(section)}>
+                    <a
+                      href={`#${anchorFor(section)}`}
+                      onClick={() => setPanelOpen(false)}
+                      className="flex items-center justify-between gap-2 rounded-lg px-1 py-1 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand hover:text-brand-ink"
+                    >
+                      <span className="min-w-0 truncate">{section.name}</span>
+                      <span className="shrink-0 font-mono text-[11px] text-brand-ink/40">
+                        {section.jobs.length}
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </nav>
           )}
+        </aside>
 
-          {sections.map((section) => (
-            <CompanyBlock key={anchorFor(section)} section={section} />
-          ))}
-        </>
-      )}
+        <div className="mt-6 min-w-0 lg:mt-0">
+          <div className="mb-4 hidden lg:block">
+            <ResultSummary
+              lang={lang}
+              filters={filters}
+              shown={shown.length}
+              total={jobs.length}
+            />
+          </div>
+
+          {shown.length === 0 ? (
+            <EmptyState
+              icon={<Search className="h-8 w-8" aria-hidden />}
+              title={translate(lang, "board.emptyMatchTitle")}
+              description={translate(lang, "board.emptyMatchBody", { count: jobs.length })}
+            />
+          ) : (
+            sections.map((section) => <CompanyBlock key={anchorFor(section)} section={section} />)
+          )}
+        </div>
+      </div>
     </>
   );
 }
