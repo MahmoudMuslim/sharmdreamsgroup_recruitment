@@ -85,7 +85,7 @@ export function MemberEditPanel({ member, onClose, onSaved }: MemberEditPanelPro
         type="button"
         aria-label="Close panel"
         onClick={onClose}
-        className="absolute inset-0 bg-brand-ink/50 backdrop-blur-sm"
+        className="scrim-in absolute inset-0 bg-brand-ink/50 backdrop-blur-sm"
       />
 
       <form
@@ -93,7 +93,7 @@ export function MemberEditPanel({ member, onClose, onSaved }: MemberEditPanelPro
         onSubmit={handleSubmit}
         className={cn(
           "absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-brand-line bg-white shadow-2xl",
-          "animate-in slide-in-from-right duration-200 motion-reduce:animate-none"
+          "panel-in"
         )}
       >
         <header className="flex items-start justify-between gap-3 border-b border-brand-line p-5">

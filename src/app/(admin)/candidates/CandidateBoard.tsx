@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, GripVertical, Loader2 } from "lucide-react";
@@ -25,6 +25,27 @@ function attemptTone(status: string) {
 const humanize = (stage: string) => stage.replace("_", " ").toLowerCase();
 
 /**
+ * How long the card that just landed keeps its settle animation's class.
+ *
+ * The animation itself is 620ms in globals.css; the extra time is the gap
+ * between the class being applied and the frame that starts it. The class is
+ * dropped afterwards because a CSS animation restarts on any element the browser
+ * has to create anew — a later refresh that happened to rebuild this card's row
+ * would otherwise flash a stage change nobody just made.
+ */
+const SETTLE_MS = 900;
+
+/**
+ * How long a written move stays worth flashing before the board forgets it.
+ *
+ * A rail can filter out the stage a card just moved into, so the re-read may never
+ * draw it here at all. The arm is dropped on a deadline rather than left to
+ * survive until some unrelated refresh happens to rebuild that row and present a
+ * stage change nobody made.
+ */
+const ARM_GIVE_UP_MS = 10_000;
+
+/**
  * One card per application, in the column for the stage it is actually at.
  *
  * A card is a `CandidateRow` — the same object the table draws — and the columns
@@ -41,6 +62,7 @@ function BoardCard({
   selected,
   busy,
   dragging,
+  settled,
   onDragStart,
   onDragEnd,
   onMove,
@@ -54,6 +76,8 @@ function BoardCard({
   selected: boolean;
   busy: boolean;
   dragging: boolean;
+  /** This card is the one the last successful write moved, so it lands with a flash. */
+  settled: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
   onMove: (stage: PipelineStage) => void;
@@ -73,7 +97,8 @@ function BoardCard({
         "space-y-2 rounded-xl border border-brand-line bg-white p-3 shadow-soft transition",
         canWrite && "cursor-grab active:cursor-grabbing",
         dragging && "opacity-40",
-        busy && "opacity-70"
+        busy && "opacity-70",
+        settled && "card-settle"
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -216,6 +241,33 @@ export function CandidateBoard({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<CandidateRow | null>(null);
+  /** A move that has been written but not yet drawn by the server's re-read. */
+  const [armed, setArmed] = useState<{ id: string; stage: PipelineStage } | null>(null);
+
+  // The flash is paid for by the data, not by the pointer. `router.refresh()`
+  // answers with nothing, so the only honest signal that a move is on screen is
+  // the row arriving in the stage it was written to — which is also the render in
+  // which React builds that card fresh, so the animation starts on the column it
+  // landed in rather than the one it left.
+  const settledId =
+    armed && rows.some((candidate) => candidate.id === armed.id && candidate.stage === armed.stage)
+      ? armed.id
+      : null;
+
+  // Once the flash has begun the arm is spent. Kept alive, it would keep the
+  // class on the card, and any later re-read that happened to rebuild this row
+  // would replay a stage change nobody just made.
+  useEffect(() => {
+    if (!settledId) return;
+    const timer = window.setTimeout(() => setArmed(null), SETTLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [settledId]);
+
+  useEffect(() => {
+    if (!armed) return;
+    const timer = window.setTimeout(() => setArmed(null), ARM_GIVE_UP_MS);
+    return () => window.clearTimeout(timer);
+  }, [armed]);
 
   async function moveTo(candidate: CandidateRow, stage: PipelineStage) {
     if (!canWrite || stage === candidate.stage) return;
@@ -230,6 +282,7 @@ export function CandidateBoard({
       const result = await updateApplicationStage({ applicationId: candidate.id, stage });
       if (result.ok) {
         setDone(`${candidate.full_name} moved to ${humanize(stage)}.`);
+        setArmed({ id: candidate.id, stage });
         router.refresh();
       } else {
         setError(result.error ?? `${candidate.full_name} did not move.`);
@@ -259,7 +312,7 @@ export function CandidateBoard({
       <FormMessage error={error} success={done} />
 
       <div
-        className="flex gap-3 overflow-x-auto pb-2"
+        className="board-cols flex gap-3 overflow-x-auto pb-2"
         tabIndex={0}
         aria-label="Pipeline board. Scroll sideways to see every stage."
       >
@@ -288,7 +341,7 @@ export function CandidateBoard({
                   : undefined
               }
               className={cn(
-                "flex w-[280px] shrink-0 flex-col gap-2 rounded-2xl border p-2.5 transition",
+                "board-in flex w-[280px] shrink-0 flex-col gap-2 rounded-2xl border p-2.5 transition",
                 over === stage
                   ? "border-brand-gold bg-brand-gold/10"
                   : "border-brand-line bg-brand-cream/60"
@@ -326,6 +379,7 @@ export function CandidateBoard({
                         selected={selected.has(candidate.id)}
                         busy={pending === candidate.id}
                         dragging={dragging === candidate.id}
+                        settled={settledId === candidate.id}
                         onDragStart={() => setDragging(candidate.id)}
                         onDragEnd={() => {
                           setDragging(null);
@@ -356,12 +410,16 @@ export function CandidateBoard({
             candidate={rejecting}
             onCancel={() => setRejecting(null)}
             onMoved={(autoFeedback) => {
+              const rejected = rejecting;
               setRejecting(null);
               setDone(
                 autoFeedback
-                  ? `${rejecting.full_name} rejected. A feedback draft is being written in the background.`
-                  : `${rejecting.full_name} rejected. Personalised feedback is switched off in Settings, so no draft was written.`
+                  ? `${rejected.full_name} rejected. A feedback draft is being written in the background.`
+                  : `${rejected.full_name} rejected. Personalised feedback is switched off in Settings, so no draft was written.`
               );
+              // The same rule as a drop: the card only flashes once the server's
+              // re-read actually draws it under "rejected".
+              setArmed({ id: rejected.id, stage: "REJECTED" });
               router.refresh();
             }}
           />

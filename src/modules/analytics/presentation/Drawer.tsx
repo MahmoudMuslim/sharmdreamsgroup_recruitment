@@ -13,6 +13,13 @@ import { cn } from "@/lib/utils";
  *
  * Replaces the full-page modal because a modal hides the list the user is
  * working from — the drawer keeps it visible.
+ *
+ * "Slide-in" is the `.panel-in` animation in globals.css, and it runs on the way
+ * in only: the caller drops `open` and this component returns null, so there is
+ * no element left to carry an exit. Four settings panels used to ask for it with
+ * `animate-in slide-in-from-right`, a class pair this build never generates —
+ * Tailwind v4 ships those names through a plugin that is not installed — so the
+ * panels appeared, they did not slide.
  */
 export function Drawer({
   open,
@@ -94,13 +101,13 @@ export function Drawer({
         type="button"
         aria-label="Close panel"
         onClick={onClose}
-        className="absolute inset-0 bg-brand-ink/50 backdrop-blur-sm"
+        className="scrim-in absolute inset-0 bg-brand-ink/50 backdrop-blur-sm"
       />
 
       <div
         ref={panelRef}
         className={cn(
-          "absolute inset-y-0 right-0 flex w-full flex-col border-l border-brand-line bg-white shadow-2xl",
+          "panel-in absolute inset-y-0 right-0 flex w-full flex-col border-l border-brand-line bg-white shadow-2xl",
           width
         )}
       >

@@ -818,7 +818,7 @@ export function MasterDataConsole({
             type="button"
             aria-label="Close panel"
             onClick={close}
-            className="absolute inset-0 bg-brand-ink/50 backdrop-blur-sm"
+            className="scrim-in absolute inset-0 bg-brand-ink/50 backdrop-blur-sm"
           />
 
           <form
@@ -833,7 +833,7 @@ export function MasterDataConsole({
               // narrow drawer.
               "absolute inset-y-0 right-0 flex w-full flex-col border-l border-brand-line bg-white shadow-2xl",
               tab === "companies" ? "max-w-2xl" : "max-w-md",
-              "animate-in slide-in-from-right duration-200 motion-reduce:animate-none"
+              "panel-in"
             )}
           >
             <header className="flex items-start justify-between gap-3 border-b border-brand-line p-5">

@@ -535,6 +535,122 @@ html[data-nav-animated] .rail-shift {
   }
 }
 
+/* --------------------------------------------------------------------------
+ * Motion *inside* a page: the panel a recruiter opens and the card they move.
+ *
+ * This is deliberately not a page-arrival animation. The route slide owns the
+ * arrival, and the two cannot share a screen: the incoming page's view-transition
+ * snapshot is taken before any mount-time CSS animation has progressed, so a page
+ * whose blocks rise from below is captured with those blocks still invisible, and
+ * the slide drags a half-empty column across the viewport. So nothing here starts
+ * when a page appears — only when a drawer is asked for, a board is switched on,
+ * or a card lands in a new stage.
+ *
+ * The reduced-motion block at the end of this file collapses every animation here
+ * to a single frame, and each element's final state is held by `both`, so a
+ * recruiter who asked for no motion still gets the panel, the board and the card
+ * — just without the travel.
+ * ------------------------------------------------------------------------ */
+
+/* The dimming behind a slide-over. Four settings panels spelled this as
+   `animate-in slide-in-from-right`, which no stylesheet in this build defines —
+   Tailwind v4 ships those names only through the animate plugin, and it is not
+   installed — so the promise in the markup produced nothing on screen. These are
+   the same moves, written where they actually exist. */
+.scrim-in {
+  animation: scrim-in 150ms ease-out both;
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A panel enters; it does not leave. The parent unmounts it the moment `open`
+   goes false, so there is no element left to animate out, and keeping one alive
+   for its own exit would be a rule every one of the ~30 callers has to follow. */
+.panel-in {
+  animation: panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    translate: 100%;
+  }
+  to {
+    opacity: 1;
+    translate: 0;
+  }
+}
+
+/* Board columns lift in, left to right, when the board replaces the table.
+   Seven stages exist today; the eighth rule is the ceiling a wider pipeline
+   would stop at rather than delay a column past half a second. */
+.board-in {
+  animation: board-in 240ms ease-out both;
+}
+
+.board-cols > :nth-child(2) {
+  animation-delay: 40ms;
+}
+.board-cols > :nth-child(3) {
+  animation-delay: 80ms;
+}
+.board-cols > :nth-child(4) {
+  animation-delay: 120ms;
+}
+.board-cols > :nth-child(5) {
+  animation-delay: 160ms;
+}
+.board-cols > :nth-child(6) {
+  animation-delay: 200ms;
+}
+.board-cols > :nth-child(7) {
+  animation-delay: 240ms;
+}
+.board-cols > :nth-child(n + 8) {
+  animation-delay: 280ms;
+}
+
+@keyframes board-in {
+  from {
+    opacity: 0;
+    translate: 0 12px;
+  }
+  to {
+    opacity: 1;
+    translate: 0;
+  }
+}
+
+/* The card that just moved is the one answer a drag gets: the column it landed in
+   is drawn by the server's re-read, not by the pointer, so without this the card
+   simply appears somewhere else between one frame and the next. The gold ring is
+   the same one the drop target wears, so the flash reads as "the move you made",
+   not as a repaint. Only the moved card carries this class, and only until the
+   animation has run — see `CandidateBoard`. */
+.card-settle {
+  animation: card-settle 620ms ease-out both;
+}
+
+@keyframes card-settle {
+  from {
+    box-shadow: 0 0 0 2px var(--color-brand-gold);
+    opacity: 0.55;
+    translate: 0 -6px;
+  }
+  to {
+    box-shadow: 0 0 0 0 rgba(179, 143, 111, 0);
+    opacity: 1;
+    translate: 0;
+  }
+}
+
 /* Amiri is the only Arabic face in the build (Inter and Montserrat ship no
    Arabic subset), so right-to-left copy falls to it. Written as an attribute
    rule rather than a utility so a per-element class such as `font-mono` still
@@ -552,6 +668,12 @@ html[data-nav-animated] .rail-shift {
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    /* The stagger's delays go too, not only its duration. Left standing, a
+       `both` animation would hold its opening frame — opacity 0 for a board
+       column, off-screen for a drawer — for as long as the delay lasts, so the
+       reduced-motion version of a stagger would be content that arrives late
+       and blank rather than content that simply appears. */
+    animation-delay: 0s !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
