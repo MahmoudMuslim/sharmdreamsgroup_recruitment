@@ -9,6 +9,7 @@ import { SignOutButton } from "@/modules/analytics/presentation/SignOutButton";
 import { SdgLockup } from "@/modules/analytics/presentation/BrandLogo";
 import { NAV, ROLE_LABEL, navSections } from "@/modules/analytics/presentation/nav";
 import { AppBar } from "@/modules/shell/presentation/AppBar";
+import { NavigationPending } from "@/modules/shell/presentation/NavigationPending";
 import { navForward } from "@/modules/shell/domain/navTransition";
 import { LiveChrome } from "@/modules/live/presentation/Live";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
@@ -389,6 +390,7 @@ export function AdminShell({
       {/* ---------- Content ---------- */}
       <div className={cn("rail-shift lg:pl-[264px]", collapsed && "lg:pl-[76px]")}>
         <AppBar user={user} onOpenNavigation={() => setOpen(true)} />
+        <NavigationPending collapsed={collapsed} />
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
           {current && (
             <p className="mb-1 text-[11px] font-bold uppercase tracking-[0.18em] text-brand-gold-dark lg:hidden">

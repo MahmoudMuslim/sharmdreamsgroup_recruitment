@@ -493,6 +493,48 @@ html[data-nav-animated] .rail-shift {
   }
 }
 
+/* The line across the top of the content column while the router is reading the
+   screen a recruiter asked for. The dot above can only sit inside the row that
+   was clicked — `useLinkStatus` stops at the edge of that `<Link>` — and a rail
+   row is a small thing to watch when the answer is a whole page away. This is the
+   same wait, told where the eye already is. No percentage, no ETA: it sweeps for
+   as long as the request is in flight and is gone the moment the address changes.
+   The track is drawn in CSS so a reduced-motion visitor keeps a steady line
+   rather than nothing at all. */
+.nav-wait {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+/* The wait has to outlast this delay before anything is painted: a navigation the
+   router cache answers at once must not flash a line across the top of the portal.
+   The reveal is held 150ms, the fade-out on arrival starts at once. */
+.nav-wait.is-waiting {
+  opacity: 1;
+  transition: opacity 120ms ease-in 150ms;
+}
+
+.nav-wait-sweep {
+  width: 25%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-brand-gold) 45%,
+    var(--color-brand-gold) 55%,
+    transparent
+  );
+  animation: nav-wait-sweep 1.15s ease-in-out infinite;
+}
+
+@keyframes nav-wait-sweep {
+  from {
+    translate: -100%;
+  }
+  to {
+    translate: 400%;
+  }
+}
+
 /* Amiri is the only Arabic face in the build (Inter and Montserrat ship no
    Arabic subset), so right-to-left copy falls to it. Written as an attribute
    rule rather than a utility so a per-element class such as `font-mono` still
@@ -523,5 +565,12 @@ html[data-nav-animated] .rail-shift {
   ::view-transition-group(*) {
     animation-duration: 0s !important;
     animation-delay: 0s !important;
+  }
+
+  /* The wait is still real, so the line stays — it simply stops sweeping and
+     fills the track instead of freezing wherever the animation left it. */
+  .nav-wait-sweep {
+    width: 100%;
+    animation: none;
   }
 }

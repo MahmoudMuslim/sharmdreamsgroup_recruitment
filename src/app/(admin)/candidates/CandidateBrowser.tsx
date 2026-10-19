@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import { navForward } from "@/modules/shell/domain/navTransition";
+import { signalNavigationPending } from "@/modules/shell/presentation/NavigationPending";
 import {
   DrawerActions,
   Field,
@@ -334,6 +335,19 @@ export function CandidateBrowser({
   }
 
   /**
+   * Ask the server for the same page under a different query.
+   *
+   * A rail, a view or the board/table switch is a real read — the rows change, not
+   * just the address — and because no anchor is involved the shell's own click
+   * listener cannot see it. So the wait is announced here, the one place that
+   * knows a push is about to happen.
+   */
+  function pushScreen(href: string) {
+    signalNavigationPending();
+    router.push(href);
+  }
+
+  /**
    * Table or board — the same rails, the same rows, a different drawing.
    *
    * Kept in the URL rather than local state so a link can name the surface the
@@ -349,15 +363,15 @@ export function CandidateBrowser({
     if (railCompany) search.set("company", railCompany);
     if (board) search.set("view", "board");
     const qs = search.toString();
-    router.push(`/candidates${qs ? `?${qs}` : ""}`);
+    pushScreen(`/candidates${qs ? `?${qs}` : ""}`);
   }
 
   /** The two views never mix, so switching one clears the other's selection. */
   function openView(archived: boolean) {
     setSelected(new Set());
     setArchiveNote(null);
-    if (archived) router.push(boardView ? "/candidates?archived=1&view=board" : "/candidates?archived=1");
-    else router.push(boardView ? "/candidates?view=board" : "/candidates");
+    if (archived) pushScreen(boardView ? "/candidates?archived=1&view=board" : "/candidates?archived=1");
+    else pushScreen(boardView ? "/candidates?view=board" : "/candidates");
   }
 
   /**
@@ -383,7 +397,7 @@ export function CandidateBrowser({
     if (next.company) search.set("company", next.company);
     if (boardView) search.set("view", "board");
     const qs = search.toString();
-    router.push(`/candidates${qs ? `?${qs}` : ""}`);
+    pushScreen(`/candidates${qs ? `?${qs}` : ""}`);
   }
 
   /**
