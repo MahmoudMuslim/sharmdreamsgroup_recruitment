@@ -187,21 +187,38 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
   },
 
-  "/apply-questions": {
-    purpose: "The viability gate — what every applicant must answer on the public form, and which answers rule them out.",
+  "/questions": {
+    purpose:
+      "The question bank — every question the portal stores, in one list or on a board of the places that ask it, with the writing that used to sit in two separate consoles.",
     shows: [
-      "The questions grouped under Every open role and then under each published role, with a line saying how many are live on the form.",
+      "Two tabs over one set: the no-points questions a candidate answers on the apply form, and the marked ones inside an assessment suite. Nothing else is here — interview questions are never stored, and a CV screening prompt is not asked of a candidate.",
+      "A toolbar: a search over the question, its guidance, its answers and the role or suite it belongs to; rails by the kind of answer and by whether anything asks it now; a Where picker listing only the places that actually hold a question; and a group-by control — by place, surface, kind, live state, or one list. Beside it, List and Board.",
+      "Each row carries its surface, its kind, its marks when it has them, and whether anything asks it right now; then the wording, the guidance, and every answer with what that answer does — keeps them in the running or rules them out, right answer or wrong.",
+      "The board is one tab's places: a column per open role, or per switched-on suite, with a shared-scoped column beside the roles. Its cards are the same questions, shown small.",
+      "The count beside every tab, rail and place is the whole bank, not what the current view left standing, so a chip never promises rows the list below cannot show.",
     ],
     use: [
-      "Add question, choose whether it applies to every open role or to one, and write the question, the guidance and the answers.",
-      "Mark each answer Accepts or Rules out; at least one answer has to keep an application in the running.",
-      "Move up / down to set the order applicants see them. Stop asking retires a question without deleting it.",
+      "Ask a question on a form writes a real apply-form row: the question, its guidance, whether it is asked of every open role or one, and two to twelve answers each marked Accepts or Rules out — at least one answer has to keep an application in the running.",
+      "Edit, Stop asking and Delete act on the row a question is. A test question's Edit opens that suite's own editor, because its answer set, its marks, its brief or its spreadsheet grid are columns only that editor writes.",
+      "Move up / down sets the order applicants see the form questions. The arrows are held while the list is filtered or grouped another way, because a move swaps a question with the one the form asks next in its own scope, which that view may be hiding.",
+      "On the apply-form tab, dropping a card into another column moves it — the same row, now asked by that role. Use it here does the same for one row from the list, and offers only destinations that will accept the question.",
+      "On the suite tab, a drop copies. A test question cannot change which paper it belongs to, because every link already issued re-reads its suite live, so the board writes a new row in the destination suite and leaves the original where it was.",
+      "Use it here also crosses between the two stores where the answer set allows it: a form question turns into a quiz question only when exactly one of its answers is accepted, because that is the answer the quiz marks correct — and it arrives worth 10 marks. A quiz question turns into a form question when it has one right option, which becomes the answer that keeps an application in the running.",
+      "Where a destination is missing, the row or the column says why: the account cannot write there, the place is no longer on file, the kind has no answer to gate with, or nothing else is open to receive it.",
+      "Group by the live state, or light the Nothing asks it now rail, to find the wording worth keeping but asked by nobody: a switched-off form question, a role no longer published, a paused suite.",
     ],
     edges: [
-      "Scoring happens on the server: an unanswered or unoffered answer stops the submission, and one failing answer files the application as Rejected with a reason only recruiters read. The applicant sees a plain not-accepted message and never reaches AI screening.",
-      "The applicant is never told which answer passed or failed.",
-      "Two to twelve answers per question. Deleting a question leaves the answers already submitted on applications.",
-      "Editing follows the Manage jobs permission, in the console and in the database.",
+      "This page owns no table. Every control writes a row in one of the two stores that hold questions, through the action that owns that store, so the validation, the permission and the change trail are the same whichever door was used — and there is no third copy to keep in step by hand.",
+      "Changing one question changes every role or suite that asks it, because it is the same row. To ask the same words somewhere else without sharing them, copy: the copy is a new row that can be reworded, switched off and deleted on its own.",
+      "For the apply-form questions: an unanswered or unoffered answer stops the submission, and one failing answer files the application as Rejected with a reason only recruiters read. The applicant sees a plain not-accepted message and never reaches AI screening, and is never told which answer passed or failed.",
+      "Deleting a form question leaves the answers already submitted on applications — those are stored as text on the application, not as a link to the question.",
+      "Only four ids travel to the server for a copy or a move; every word of what is written is re-read from the database there, so a board left open since a colleague edited the question cannot write stale text.",
+      "Reading needs a staff session and nothing more — both question tables are readable by every staff role. Writing follows the permission that owns the store: Manage jobs for an apply form, Create assessments for a suite.",
+      "A question placed onto a role that is not published, or copied into a suite that is paused, is refused: nobody would be asked it. A destination that already asks the question is refused too.",
+      "A row the readers cannot make a question out of — fewer than two answers a candidate could pick, or a suite that has since been deleted — is left off the list rather than shown broken.",
+      "The whole bank is read in one pass, with no page limit; it is authored text, so it stays small while a candidate list would not.",
+      "The board's own reordering is not offered: a form question's place on its form is set from the list's arrows, and a suite's order belongs to its editor. The board changes where a question is asked, never where it sits in the paper.",
+      "The Live badge on this page refreshes on the apply-form half only: the channel watches application_gate_questions, and assessment_questions carries no created or updated stamp to watch, so a suite's questions arrive on reload.",
     ],
   },
 

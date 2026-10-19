@@ -34,7 +34,7 @@ export const STAFF_ROUTES = [
   "/candidates",
   "/sourcing",
   "/jobs",
-  "/apply-questions",
+  "/questions",
   "/assessments",
   "/interviews",
   "/onboarding",

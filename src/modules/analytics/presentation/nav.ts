@@ -7,7 +7,7 @@ import {
   FolderOpen,
   History,
   LayoutDashboard,
-  ListChecks,
+  Library,
   MessageCircle,
   Settings,
   Sparkles,
@@ -46,7 +46,7 @@ export type NavSection = "Overview" | "Hiring" | "Records" | "Portal";
  * after a different one started is where a new page lands.
  *
  * This table, the page directories under `src/app/(admin)` and `STAFF_ROUTES`
- * have to hold the same sixteen paths, and `scripts/check-staff-routes.mjs`
+ * have to hold the same paths, and `scripts/check-staff-routes.mjs`
  * (which `npm run build` runs as `prebuild`) is what makes that a build failure
  * instead of a comment. `npx next build` straight does not run it.
  */
@@ -59,7 +59,7 @@ export const NAV: readonly NavItem[] = [
   { href: "/candidates", label: "Candidates", icon: Users, hint: "Pipeline & AI scores", section: "Hiring" },
   { href: "/sourcing", label: "Sourcing", icon: UserRoundSearch, hint: "Outbound talent pool", section: "Hiring" },
   { href: "/jobs", label: "Jobs", icon: BriefcaseBusiness, hint: "Open positions", section: "Hiring" },
-  { href: "/apply-questions", label: "Apply Questions", icon: ListChecks, hint: "Viability gate on the form", section: "Hiring" },
+  { href: "/questions", label: "Question Bank", icon: Library, hint: "Form & test questions, one CRUD", section: "Hiring" },
   { href: "/assessments", label: "Assessments", icon: ClipboardCheck, hint: "Test suite builder", section: "Hiring" },
   { href: "/interviews", label: "Interviews", icon: CalendarDays, hint: "Scheduled panels", section: "Hiring" },
   { href: "/onboarding", label: "Onboarding", icon: UserRoundPlus, hint: "New-hire checklists", section: "Hiring" },

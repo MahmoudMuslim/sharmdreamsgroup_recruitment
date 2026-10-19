@@ -138,7 +138,11 @@ export function parseGateAnswers(value: unknown): GateAnswer[] {
   return answers;
 }
 
-/** Strips the passing flags before anything reaches a browser. */
+/**
+ * Turns the stored row into the shape the public form renders.
+ *
+ * Strips the passing flags before anything reaches a browser.
+ */
 export function publicGateQuestions(
   questions: readonly GateQuestion[]
 ): PublicGateQuestion[] {
@@ -148,6 +152,60 @@ export function publicGateQuestions(
     helpText: question.helpText,
     options: question.options.map((option) => option.label),
   }));
+}
+
+/* -------------------------------------------------------------------------- */
+/* What an answer set does, and the console's search                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The effect a question's answers have on the application that answers it.
+ *
+ * `saveGateQuestion` refuses to write a `BLOCKED` set — an answer with nothing
+ * accepted in it is never what a recruiter means — so that rail exists to catch
+ * a row that arrived some other way, edited in the database or left by an older
+ * build. It is worth a chip precisely because such a question rejects every
+ * single applicant who is asked it.
+ */
+export type GateEffect = "HARD" | "SOFT" | "BLOCKED";
+
+export function gateEffect(options: readonly GateOption[]): GateEffect {
+  const accepted = options.reduce((count, option) => count + (option.passes ? 1 : 0), 0);
+  if (accepted === 0) return "BLOCKED";
+  return accepted === options.length ? "SOFT" : "HARD";
+}
+
+/** What the console's search box promises to read, in the recruiter's words. */
+export function gateSearchWords(): string {
+  return "question, guidance, answer or role";
+}
+
+/**
+ * Keep the questions whose own text, guidance or answers hold the words.
+ *
+ * `scopeOf` resolves the role a question is asked on to its title before the
+ * match runs, because a recruiter searches "night reception" rather than a uuid,
+ * and the words have to find the question sitting under that heading. Same
+ * case-insensitive substring as every other search box in the portal, and an
+ * empty box filters nothing.
+ */
+export function searchGateQuestions(
+  questions: readonly GateQuestion[],
+  query: string,
+  scopeOf: (question: GateQuestion) => string
+): GateQuestion[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...questions];
+
+  return questions.filter((question) => {
+    const haystack = [
+      question.question,
+      question.helpText ?? "",
+      scopeOf(question),
+      ...question.options.map((option) => option.label),
+    ];
+    return haystack.some((value) => value.toLowerCase().includes(q));
+  });
 }
 
 /* -------------------------------------------------------------------------- */

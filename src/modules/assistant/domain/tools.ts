@@ -179,7 +179,7 @@ import {
   moveGateQuestion,
   saveGateQuestion,
   setGateQuestionActive,
-} from "@/app/(admin)/apply-questions/actions";
+} from "@/app/(admin)/questions/actions";
 import { deleteStoredFile, getFileBrowserData, openFolder } from "@/app/(admin)/files/actions";
 import {
   fileSearchWords,

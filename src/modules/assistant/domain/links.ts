@@ -573,7 +573,7 @@ export function linkForTool(
     case "set_gate_question_active":
     case "move_gate_question":
     case "delete_gate_question":
-      return { href: "/apply-questions", label: "Open the gate questions" };
+      return { href: "/questions?store=gate", label: "Open the apply-form questions" };
     case "list_team":
     case "edit_staff_member":
     case "set_staff_active":

@@ -97,7 +97,10 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     area: "gate questions",
     table: "application_gate_questions",
     stamp: "updated_at",
-    paths: ["/apply-questions"],
+    // The bank lists these too. A suite's questions are not watched at all —
+    // `assessment_questions` carries no created or updated stamp to watch — so
+    // the bank's Live badge only ever refreshes on its apply-form half.
+    paths: ["/questions"],
   },
   {
     area: "files",

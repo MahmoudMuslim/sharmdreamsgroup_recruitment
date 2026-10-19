@@ -439,7 +439,7 @@ export function recordHref(
     "onboarding plan": { href: "/onboarding", label: "Onboarding" },
     "onboarding task": { href: "/onboarding", label: "Onboarding" },
     prospect: { href: "/sourcing", label: "Sourcing pool" },
-    "gate question": { href: "/apply-questions", label: "Gate questions" },
+    "gate question": { href: "/questions?store=gate", label: "Question bank — apply form" },
     attachment: { href: "/files", label: "File manager" },
     message: { href: "/whatsapp", label: "Outbox" },
     "scheduled message": { href: "/whatsapp", label: "Outbox" },

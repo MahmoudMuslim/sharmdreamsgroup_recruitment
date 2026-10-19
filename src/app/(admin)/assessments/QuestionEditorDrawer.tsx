@@ -160,6 +160,7 @@ export function QuestionEditorDrawer({
   questions,
   editable,
   onChanged,
+  openAtId,
 }: {
   open: boolean;
   onClose: () => void;
@@ -168,8 +169,29 @@ export function QuestionEditorDrawer({
   questions: EditableQuestion[];
   editable: boolean;
   onChanged: () => void;
+  /**
+   * Open the editor on one of the suite's questions instead of on its list.
+   *
+   * The question bank reaches the suite editor from a single row, and an editor
+   * that only ever opened on the list would make the recruiter find the same
+   * question again by hand.
+   */
+  /**
+   * Open the editor on one of the suite's questions instead of on its list.
+   *
+   * The question bank reaches the suite editor from a single row, and an editor
+   * that only ever opened on the list would make the recruiter find the same
+   * question again by hand. Read once, on mount: the bank mounts a fresh editor
+   * per row, and a later re-read of the suite must not reopen the form over a
+   * draft the recruiter has already typed into.
+   */
+  openAtId?: string;
 }) {
-  const [editing, setEditing] = useState<Draft | null>(null);
+  const [editing, setEditing] = useState<Draft | null>(() => {
+    if (!openAtId) return null;
+    const target = questions.find((question) => question.id === openAtId);
+    return target ? toDraft(target) : null;
+  });
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, setPending] = useState(false);

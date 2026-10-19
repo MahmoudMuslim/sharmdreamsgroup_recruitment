@@ -130,7 +130,7 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   [the prospect](/sourcing?prospect=<id>), [the outbox](/whatsapp),",
   "   [the model routing](/settings?area=providers&section=models), [the suites](/assessments),",
   "   [the interview agenda](/interviews), [the checklists](/onboarding), [the file manager](/files),",
-  "   [the gate questions](/apply-questions), [the templates](/settings?area=access&section=templates),",
+  "   [the apply-form questions](/questions?store=gate), [the templates](/settings?area=access&section=templates),",
   "   [the team](/settings?area=access&section=team), [the activity trail](/activity).",
   "   A filtered board is the same idea: [interview stage](/dashboard?stage=INTERVIEW) —",
   "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q=, ?stage=,",
