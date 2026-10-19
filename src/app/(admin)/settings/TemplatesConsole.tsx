@@ -225,7 +225,11 @@ function Editor({
           <div className="w-full rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5">
             <p className="text-xs leading-relaxed text-rose-800">{deleteNote}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={remove} className="bg-rose-700 text-white hover:bg-rose-800">
+              <Button
+                size="sm"
+                onClick={remove}
+                className="bg-rose-700 text-brand-on-accent hover:bg-rose-800"
+              >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden />
                 Delete template
               </Button>

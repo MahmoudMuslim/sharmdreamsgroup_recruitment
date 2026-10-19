@@ -529,7 +529,7 @@ function ApprovalCard({
               "mt-2 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-bold transition",
               "disabled:cursor-not-allowed disabled:opacity-50",
               approval.destructive
-                ? "bg-rose-600 text-white hover:bg-rose-700"
+                ? "bg-rose-600 text-brand-on-accent hover:bg-rose-700"
                 : "bg-brand-gold text-brand-ink hover:bg-brand-gold/70"
             )}
           >
