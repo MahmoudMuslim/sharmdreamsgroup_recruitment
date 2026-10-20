@@ -1,4 +1,8 @@
-import { getAuthPool } from "./db";
+// The extension is load-bearing, not stylistic. This module is imported by a
+// plain-Node probe (Task 8's note on probe resolution: an explicit `.ts`
+// specifier, a relative path, no loader), and Node's ESM resolver refuses an
+// extensionless `./db`. Step 4 enables the matching TypeScript option.
+import { getAuthPool } from "./db.ts";
 
 export type PasswordCheck =
   | { ok: true; userId: string }
