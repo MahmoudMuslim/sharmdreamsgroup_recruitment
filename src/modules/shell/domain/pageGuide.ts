@@ -346,7 +346,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
     edges: [
       "A delivered message is history: it cannot be edited, and retrying it would message the candidate twice.",
-      "When that letter cannot be written the email says the documents follow in a separate email, so it never promises an attachment that is missing.",
+      "The promise only travels with the file: a portal notice never claims an attachment it cannot carry, and when the letter cannot be written the email says the documents follow in a separate email.",
       "Only emails are relayed from here — a portal notice is already in the candidate's inbox.",
       "The queue holds the newest 200 jobs and the log the newest 60 rows of each channel, while the bucket chips count all time.",
       "A hand-written message has no placeholders substituted; rendered copy comes from the templates in Settings.",
