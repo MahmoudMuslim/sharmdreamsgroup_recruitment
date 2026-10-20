@@ -342,9 +342,11 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Edit the copy or the time, Retry or Bump to now a parked job, or Cancel one that has not gone.",
       "Filter the queue by All / Due now / Scheduled / Delivered / Parked, sort it, and search it.",
       "Show every send or Undelivered only on the log. Retry re-sends a failed email exactly as the candidate would receive it.",
+      "An offer email goes out with a PDF letter attached, written from the same offer copy the candidate reads in the message.",
     ],
     edges: [
       "A delivered message is history: it cannot be edited, and retrying it would message the candidate twice.",
+      "When that letter cannot be written the email says the documents follow in a separate email, so it never promises an attachment that is missing.",
       "Only emails are relayed from here — a portal notice is already in the candidate's inbox.",
       "The queue holds the newest 200 jobs and the log the newest 60 rows of each channel, while the bucket chips count all time.",
       "A hand-written message has no placeholders substituted; rendered copy comes from the templates in Settings.",

@@ -452,8 +452,8 @@ export function MessagePanel({
         </p>
         <p className="text-xs text-brand-ink/60">
           Email sends the moment a stage or interview changes, so there is no queue here. Retry re-sends a failed
-          message from the copy stored on this row; a delivered email can never be re-sent, so a candidate is never
-          mailed twice by an admin click.
+          message from the copy stored on this row, and an offer row gets its letter PDF rebuilt and attached again;
+          a delivered email can never be re-sent, so a candidate is never mailed twice by an admin click.
         </p>
         {!canManage && (
           <p className="rounded-xl border border-brand-line bg-white px-3.5 py-2.5 text-xs text-brand-ink/60">

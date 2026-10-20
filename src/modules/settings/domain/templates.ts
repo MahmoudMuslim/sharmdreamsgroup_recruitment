@@ -280,7 +280,8 @@ Object.assign(TEMPLATE_PURPOSE, {
   interview_cancelled: "Sent when a booked panel is cancelled",
   assessment_invite: "Sent when a recruiter issues a test — carries the start link",
   application_received: "Sent when a candidate submits an application",
-  offer_letter: "Sent when a candidate moves to the offer stage",
+  offer_letter:
+    "Sent when a candidate moves to the offer stage — the emailed body is also attached as a PDF letter",
   prospect_outreach_email:
     "First-touch email to a LinkedIn-sourced prospect, from the Sourcing board",
   prospect_outreach_whatsapp:
