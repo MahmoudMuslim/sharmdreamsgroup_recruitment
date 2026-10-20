@@ -229,6 +229,7 @@ import {
   updateStaffRole,
 } from "@/modules/settings/application/user-actions";
 import { TASK_CATEGORIES, TASK_OWNERS } from "@/app/(admin)/onboarding/checklist";
+import { searchWeb, readWebPage } from "@/modules/assistant/infrastructure/webLookup";
 import type { GateOption } from "@/modules/careers/gate-questions";
 import type { AssignableStaffRole, MasterEntity, MasterPayload } from "@/modules/settings/domain/types";
 import type { QuestionConfig, QuestionType } from "@/types";
@@ -258,6 +259,14 @@ export interface AssistantTool {
   args: Record<string, string>;
   /** Refused unless the operator has switched destructive changes on. */
   destructive?: boolean;
+  /**
+   * Refused unless the recruiter has the web switch on.
+   *
+   * These two leave the portal, so they are gated separately from a permission:
+   * no recruiter role grants or withholds the public internet here, only the
+   * switch in the panel does.
+   */
+  web?: boolean;
   run: (args: ToolArgs) => Promise<unknown>;
 }
 
@@ -3151,6 +3160,32 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
       report(await setStaffActive(str(args, "profile_id"), bool(args, "active", true))),
   },
 
+  /* ------------------------------- Web -------------------------------- */
+  {
+    name: "search_web",
+    label: "Searching the public web",
+    web: true,
+    description:
+      "Search the public internet for anything this portal's records cannot answer — a pay band, a tax rule, a framework's release notes, a company, a competitor's own ad, a visa requirement. Subject is unrestricted. Returns the pages that were found, each with its host and the words the page itself carried at the moment of the lookup, so a figure can only be quoted with its source named. It reads nothing in this portal and changes nothing. When it comes back with no sources, say so and give no number: a remembered figure is not a search result.",
+    args: {
+      query: "string — the words to search for, in any subject",
+      max_results: "number — optional, how many pages to bring back (up to 6)",
+    },
+    run: async (args) => {
+      const wanted = Number(args.max_results);
+      return searchWeb(str(args, "query"), Number.isFinite(wanted) && wanted > 0 ? wanted : undefined);
+    },
+  },
+  {
+    name: "read_web_page",
+    label: "Reading a web page",
+    web: true,
+    description:
+      "Fetch one public page and return its own text, so a figure can be read from the source rather than from a search snippet. Use the URL search_web returned. Private, loopback and link-local addresses are refused, as is anything that is not an http or https page, and a long page is cut with the cut named. Nothing is sent to the host but the request for the page.",
+    args: { url: "string — the page to read, from search_web" },
+    run: async (args) => readWebPage(str(args, "url")),
+  },
+
   /* --------------------------- Destructive ---------------------------- */
   {
     name: "delete_job",
@@ -3302,9 +3337,15 @@ export function toolByName(name: string): AssistantTool | undefined {
  * - `draft_interview_guide` generates text and stores nothing (`stored: false`);
  * - `read_candidate_cv` sounds like a read and is NOT listed, because it writes
  *   the parsed text onto the candidate row.
+ *
+ * `search_web` and `read_web_page` are listed even though they leave the building:
+ * an approval card exists to stop a record being changed without a person, and a
+ * lookup changes no record. What guards those two is the web switch itself.
  */
 export const READ_ONLY_TOOLS: readonly string[] = [
   "ask_question",
+  "search_web",
+  "read_web_page",
   "dashboard_analytics",
   "get_report",
   "get_analytics_report",

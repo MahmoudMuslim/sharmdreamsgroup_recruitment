@@ -131,6 +131,34 @@ function writeStoredEngine(value: AssistantEngine): void {
   }
 }
 
+/* ------------------------------- Web search ------------------------------- */
+
+const WEB_KEY = "sdg-assistant-web";
+
+/**
+ * Whether this browser's assistant may leave the portal to look something up.
+ *
+ * A preference, like the engine, so it lives in `localStorage` and survives a new
+ * conversation: switching it on to ask about pay bands should not have to be
+ * re-clicked tomorrow. It is still never applied to a write — the switch only
+ * opens the two read-only lookups, and the deletion switch is separate.
+ */
+function readStoredWeb(): boolean {
+  try {
+    return window.localStorage.getItem(WEB_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeStoredWeb(value: boolean): void {
+  try {
+    window.localStorage.setItem(WEB_KEY, value ? "1" : "0");
+  } catch {
+    // Storage blocked — the choice applies to this panel only.
+  }
+}
+
 /* ----------------------------- Model override ----------------------------- */
 
 const MODEL_KEY = "sdg-assistant-model";
@@ -799,9 +827,9 @@ export function AssistantChat({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [allowDestructive, setAllowDestructive] = useState(false);
   /**
-   * Lets the Qoder engine reach the public internet for one turn. It is not
-   * remembered, and it is not sent while the conversation is pinned to an engine
-   * that cannot search — see `webAvailable`.
+   * Lets this assistant leave the portal for a lookup. Remembered in
+   * `localStorage`, and sent whichever engine or model answers the turn — the
+   * search is the portal's own tool, not a capability one engine happens to have.
    */
   const [allowWeb, setAllowWeb] = useState(false);
   /** The approval card being applied, so its button cannot fire twice. */
@@ -822,16 +850,6 @@ export function AssistantChat({
   const [attachment, setAttachment] = useState<AssistantAttachment | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [opening, setOpening] = useState(sessionId !== null);
-
-  /**
-   * Whether a web switch turned on right now would buy a search.
-   *
-   * Only the Qoder engine has a way to reach the network, and naming a model
-   * pins the conversation to the gateway, which has none — so under either the
-   * control is inert and is not sent, rather than left promising a lookup that
-   * would silently not happen.
-   */
-  const webAvailable = engine !== "gateway" && !model;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -949,6 +967,7 @@ export function AssistantChat({
 
     const load = async () => {
       setModel(readStoredModel());
+      setAllowWeb(readStoredWeb());
 
       try {
         const result = await getAssistantModelChoices();
@@ -1076,7 +1095,7 @@ export function AssistantChat({
         history,
         prompt,
         allowDestructive,
-        allowWeb: allowWeb && webAvailable,
+        allowWeb,
         engine,
         model: model || null,
         attachment: attached ?? undefined,
@@ -1509,36 +1528,26 @@ export function AssistantChat({
               </span>
             </label>
 
-            <label
-              className={cn(
-                "mb-2 flex items-start gap-2 text-[11px] leading-snug",
-                webAvailable ? "text-brand-ink/55" : "text-brand-ink/35"
-              )}
-            >
+            <label className="mb-2 flex items-start gap-2 text-[11px] leading-snug text-brand-ink/55">
               <input
                 type="checkbox"
                 checked={allowWeb}
-                disabled={!webAvailable}
-                onChange={(event) => setAllowWeb(event.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark disabled:cursor-not-allowed"
-                title={
-                  webAvailable
-                    ? "Let this turn search the public internet"
-                    : "Only the Qoder engine can search — clear the model choice or pick the Qoder engine above"
-                }
+                onChange={(event) => {
+                  setAllowWeb(event.target.checked);
+                  writeStoredWeb(event.target.checked);
+                }}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark"
+                title="Let this assistant look up anything outside this portal"
               />
               <span>
-                Allow web search — lets me look up what is outside this portal: a market salary band,
-                a pay survey, an industry benchmark. Each lookup shows as a chip so you can see what
-                was searched, and what comes back is advice with its source named — I never write a
-                fetched figure into an opening. Runs on the Qoder engine only, and is never
-                remembered between conversations.
-                {!webAvailable && (
-                  <span className="mt-0.5 block font-semibold text-brand-ink/45">
-                    Off while {model ? `${model} answers this conversation` : "the engine is set to Gateway"}:
-                    the model gateway has no way to reach the network.
-                  </span>
-                )}
+                Allow web search — lets me look up what is outside this portal, about any subject: a
+                pay band, a law, a competitor&apos;s ad, a release note, a company. Each lookup shows
+                as a chip naming the words searched and the pages it read, and what comes back is
+                advice with its source named — I never write a fetched figure into a record. The
+                search belongs to this portal, not to one engine, so it works whichever engine or
+                model answers, and this switch is remembered in this browser. It runs on the
+                OpenRouter key in Settings → API keys: without one, a lookup refuses and its chip says
+                why.
               </span>
             </label>
 

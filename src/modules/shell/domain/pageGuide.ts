@@ -346,7 +346,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     use: [
       "Ask in words: it reads candidates, openings, tests, the outbox, settings and the change trails, and answers with a table or a chart drawn by the portal from the figures it read.",
       "Instruct a change and nothing happens until you press Approve & run on the card. A delete also needs the Allow deletions switch. Ignoring the card leaves the record exactly as it is.",
-      "Allow web search lets the Qoder engine look up what is outside the portal — a market salary band, a pay survey, a competitor's ad — on the Qoder account the stored token pays for. Every lookup shows as a chip, the figure arrives as advice with its source named, and nothing it reads is written into a record. The switch is inert while a model is chosen or the engine is Gateway, because neither can reach the network.",
+      "Allow web search opens two lookups that leave the portal — search_web and read_web_page — about any subject: a pay band, a law, a competitor's ad, a release note, a company. The search belongs to this portal rather than to one engine, so it works whichever engine or model answers the turn, and the choice is remembered in this browser. Every lookup shows as a chip naming the words searched and the pages read; what comes back is advice with its source named and nothing it reads is written into a record. Lookups run on the OpenRouter key in Settings → API keys, so without one each chip refuses with the reason.",
       "Attach a PDF, Word or text file for it to read, pick the engine and model, and Rename, Delete or Reload a conversation.",
       "Edit and send again re-runs a turn you were not happy with.",
     ],

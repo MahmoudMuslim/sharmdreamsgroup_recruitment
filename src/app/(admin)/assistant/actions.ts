@@ -220,11 +220,11 @@ export async function sendAssistantMessage(input: {
   prompt: string;
   allowDestructive: boolean;
   /**
-   * Hands the Qoder runtime its own search and page-reader for this turn. The
-   * gateway engine has no equivalent, so a turn it answers cannot reach the
-   * network and the reply says which engine had no way to search.
+   * Opens the two lookups that leave the portal. They are the portal's own —
+   * search_web and read_web_page — so whichever engine answers the turn, the
+   * Qoder runtime's own WebSearch and WebFetch are lifted as well.
    */
-  allowWeb?: boolean;
+  allowWeb: boolean;
   engine?: AssistantEngine;
   /**
    * A model chosen for this conversation, tried on its own instead of through
@@ -278,8 +278,6 @@ export async function sendAssistantMessage(input: {
   try {
     let turn: AssistantTurn | null = null;
     let note: string | undefined = modelNote ?? undefined;
-    /** Which engine answered, because that decides whether any searching happened. */
-    let servedByQoder = false;
 
     if (engine !== "gateway") {
       const status = await qoderEngineStatus();
@@ -299,7 +297,6 @@ export async function sendAssistantMessage(input: {
           turn = await withActivityContext({ via: "assistant" }, () =>
             runQoderAssistantTurn(history, allowDestructive, allowWeb, staff.profileId)
           );
-          servedByQoder = true;
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
           if (engine === "qoder") {
@@ -313,7 +310,7 @@ export async function sendAssistantMessage(input: {
     if (!turn) {
       try {
         turn = await withActivityContext({ via: "assistant" }, () =>
-          runAssistantTurn(history, allowDestructive, staff.profileId, model)
+          runAssistantTurn(history, allowDestructive, staff.profileId, model, allowWeb)
         );
       } catch (error) {
         // The gateway's own message already names the models it tried and why each
@@ -324,12 +321,10 @@ export async function sendAssistantMessage(input: {
       }
     }
 
-    // The switch the recruiter turned on buys a search on the Qoder engine only.
-    // Saying nothing here would leave them believing the answer they got was
-    // looked up, when the engine that answered has no way to reach the network.
-    if (allowWeb && !servedByQoder) {
-      note = `${note ? `${note} ` : ""}The web switch runs on the Qoder engine only — the model gateway has no way to reach the network, so this answer came from the portal's own tools.`;
-    }
+    // Nothing is said here about the web switch, because there is nothing left to
+    // warn about: the lookups are the portal's own, so whichever engine answered
+    // could search. A search that could not run refuses in its own chip, with the
+    // provider's reason in it, and the rules make the assistant report that refusal.
 
     const saved = await saveAssistantTurn({
       sessionId: typeof input.sessionId === "string" ? input.sessionId : null,

@@ -212,8 +212,10 @@ export const ASSISTANT_RULES: readonly string[] = [
   "    change on top of it, because the one you asked for has not happened.",
 ];
 
-function toolCatalogue(allowDestructive: boolean): string {
-  return ASSISTANT_TOOLS.filter((tool) => allowDestructive || !tool.destructive)
+function toolCatalogue(allowDestructive: boolean, allowWeb: boolean): string {
+  return ASSISTANT_TOOLS.filter(
+    (tool) => (allowDestructive || !tool.destructive) && (allowWeb || !tool.web)
+  )
     .map((tool) => {
       const args = Object.entries(tool.args)
         .map(([name, spec]) => `${name}: ${spec}`)
@@ -238,7 +240,34 @@ function destructiveNote(allowDestructive: boolean): string {
     : "DESTRUCTIVE TOOLS ARE DISABLED for this session. If the user asks you to delete something, reply that they need to switch on “Allow deletions” in the assistant panel first.";
 }
 
-function systemPrompt(allowDestructive: boolean): string {
+/**
+ * What the web switch buys, said the same way to both engines.
+ *
+ * The rule that matters is the one a model will otherwise break: a page read
+ * from the internet is advice, and this portal's own records are data. Without
+ * the sentence, a fetched figure arrives in a reply as though the opening carried it.
+ */
+function webNote(allowWeb: boolean): string {
+  return allowWeb
+    ? [
+        "THE WEB IS AVAILABLE for this turn through search_web and read_web_page. They are the portal's own",
+        "lookups, not this model's, so the subject is unrestricted — a pay band, a law, a product, a company,",
+        "a competitor's ad, a release note. Every lookup you make shows the recruiter as a chip naming the",
+        "query. Quote a fetched figure with its source: the host, the URL, and the market, currency and date it",
+        "describes. Give a range when the pages disagree, and say which page each number came from. Never write",
+        "a fetched figure into a job opening or any other record — those fields belong on the record's own",
+        "screen, typed by a person who has read the source. If a search returns nothing usable, say that:",
+        "a figure you remember is not a search result, and never claim a lookup you did not run.",
+      ].join("\n")
+    : [
+        "THE WEB IS NOT AVAILABLE for this turn. If the recruiter asks for something outside these records — a",
+        "market band, a survey, a rule, a competitor's page — reply that they need to switch on “Allow web",
+        "search” in the assistant panel first, and never invent the figure or present one you remember as though",
+        "you had looked it up.",
+      ].join("\n");
+}
+
+function systemPrompt(allowDestructive: boolean, allowWeb: boolean): string {
   return [
     ...ASSISTANT_RULES,
     "",
@@ -249,8 +278,10 @@ function systemPrompt(allowDestructive: boolean): string {
     "",
     destructiveNote(allowDestructive),
     "",
+    webNote(allowWeb),
+    "",
     "TOOLS",
-    toolCatalogue(allowDestructive),
+    toolCatalogue(allowDestructive, allowWeb),
   ].join("\n");
 }
 
@@ -313,7 +344,9 @@ async function runTool(
   args: ToolArgs,
   allowDestructive: boolean,
   /** The recruiter this write is held for, so only their click can release it. */
-  profileId: string
+  profileId: string,
+  /** The panel's web switch — the only thing that lets a lookup leave the portal. */
+  allowWeb: boolean
 ): Promise<{ step: AssistantStep; result: string }> {
   const tool = toolByName(name);
 
@@ -331,6 +364,17 @@ async function runTool(
     return {
       step: { tool: tool.name, label: tool.label, ok: false, detail },
       result: `{"ok":false,"error":"${detail} Ask the user to enable “Allow deletions”."}`,
+    };
+  }
+
+  // Refused here rather than left out of the catalogue alone, because a model that
+  // has learned this tool from an earlier turn in the same conversation will still
+  // ask for it after the recruiter switches the panel back off.
+  if (tool.web && !allowWeb) {
+    const detail = "Web search is switched off in the assistant panel.";
+    return {
+      step: { tool: tool.name, label: tool.label, ok: false, detail },
+      result: `{"ok":false,"error":"${detail} Ask the user to enable “Allow web search”."}`,
     };
   }
 
@@ -355,6 +399,39 @@ async function runTool(
   return executeTool(tool, args);
 }
 
+/**
+ * A lookup's own chip line, shared by both engines so the same search draws the
+ * same words on screen whichever answered.
+ *
+ * A web answer is a list of pages, so the JSON clip would show the recruiter a
+ * brace and a truncated host. What they need on the chip is the query that ran and
+ * whose pages came back — the same words the answer has to name anyway.
+ */
+export function webChip(value: unknown): string {
+  const read = value as {
+    query?: string;
+    url?: string;
+    host?: string;
+    error?: string | null;
+    sources?: { host: string }[];
+  };
+  if (read?.error) return read.error.slice(0, 200);
+  if (read?.query) {
+    const hosts = (read.sources ?? []).map((source) => source.host).slice(0, 3).join(", ");
+    return `Searched “${read.query}” — ${(read.sources?.length ?? 0)} pages${hosts ? `: ${hosts}` : ""}`;
+  }
+  if (read?.url) return `Read ${read.host ?? hostOfUrl(read.url)}`;
+  return "Web lookup finished.";
+}
+
+function hostOfUrl(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "a web page";
+  }
+}
+
 /** Runs one registry tool and shapes its answer for the chip and the model. */
 async function executeTool(
   tool: AssistantTool,
@@ -368,7 +445,7 @@ async function executeTool(
         tool: tool.name,
         label: tool.label,
         ok: typeof value === "object" && value !== null && (value as { ok?: boolean }).ok !== false,
-        detail: detail.slice(0, 220),
+        detail: tool.web ? webChip(value) : detail.slice(0, 220),
         link: linkForTool(tool.name, args, value) ?? undefined,
         ask: tool.name === "ask_question" ? asQuestion(value) ?? undefined : undefined,
         chart: chartForTool(tool.name, value) ?? undefined,
@@ -416,11 +493,20 @@ export async function runAssistantTurn(
   /** `user_profiles.id` of the signed-in recruiter, who must approve any write. */
   profileId: string,
   /** A model the recruiter chose for this conversation, or nothing to route as usual. */
-  modelOverride?: string | null
+  modelOverride?: string | null,
+  /**
+   * The panel's web switch.
+   *
+   * This belongs to the portal, not to either engine: `search_web` and
+   * `read_web_page` do their own fetching through OpenRouter's web search, so the
+   * model answering this conversation is free to be Gemini, DeepSeek or whatever
+   * the routing table names while the lookup still happens.
+   */
+  allowWeb = false
 ): Promise<AssistantTurn> {
   const chosen = modelOverride?.trim() || undefined;
   const messages: ChatCompletionMessage[] = [
-    { role: "system", content: systemPrompt(allowDestructive) },
+    { role: "system", content: systemPrompt(allowDestructive, allowWeb) },
     ...history,
   ];
   const steps: AssistantStep[] = [];
@@ -459,7 +545,13 @@ export async function runAssistantTurn(
       };
     }
 
-    const { step, result } = await runTool(answer.name, answer.args, allowDestructive, profileId);
+    const { step, result } = await runTool(
+      answer.name,
+      answer.args,
+      allowDestructive,
+      profileId,
+      allowWeb
+    );
     steps.push(step);
 
     // A question is an answer as far as this turn is concerned: the choices go on

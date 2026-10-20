@@ -30,6 +30,7 @@ import { chartForTool } from "@/modules/assistant/domain/charts";
 import { fitResult } from "@/modules/assistant/domain/resultBudget";
 import {
   ASSISTANT_RULES,
+  webChip,
   type AssistantProvider,
   type AssistantStep,
   type AssistantTurn,
@@ -205,7 +206,9 @@ function definitionFor(
         tool: tool.name,
         label: tool.label,
         ok,
-        detail: detail.slice(0, 220),
+        // A lookup's answer is a page list, so the chip carries the query and the
+        // hosts instead of the JSON the model is handed below.
+        detail: (tool.web ? webChip(value) : detail).slice(0, 220),
         link: linkForTool(tool.name, input, value) ?? undefined,
         ask: ask ?? undefined,
         chart: chartForTool(tool.name, value) ?? undefined,
@@ -323,9 +326,12 @@ function systemPromptFor(allowDestructive: boolean, allowWeb: boolean): string {
     "You have no file or shell tools. Your only way to read or change a record here is the portal tools.",
     allowWeb
       ? [
-          "WebSearch and WebFetch are ON for this turn. They reach the public internet, which is outside this",
-          "portal and is paid for by the organisation's Qoder account — so use them for what the records cannot",
-          "answer: a market salary band, a pay survey, an industry benchmark, a competitor's job ad.",
+          "Web search is ON for this turn. Two ways reach the public internet here: the portal's own",
+          "search_web and read_web_page — the same two the model gateway is given, so an answer a recruiter",
+          "gets from another engine would look up the same pages — and the runtime's WebSearch and WebFetch.",
+          "Subject is unrestricted — a pay",
+          "band, a law, a product, a company, a competitor's ad, a release note. Every lookup shows the",
+          "recruiter as a chip naming what was searched.",
           "What you fetch is advice, never data: name the source, its domain and the date or page it came from,",
           "say which market, currency and seniority the figure describes, and give a range rather than one",
           "number when the sources disagree. Never write a fetched figure into a job opening or any other",
@@ -396,7 +402,9 @@ export async function runQoderAssistantTurn(
     );
   }
 
-  const tools = ASSISTANT_TOOLS.filter((tool) => allowDestructive || !tool.destructive);
+  const tools = ASSISTANT_TOOLS.filter(
+    (tool) => (allowDestructive || !tool.destructive) && (allowWeb || !tool.web)
+  );
   const steps: AssistantStep[] = [];
   const enders: TurnEnder[] = [];
   const definitions = tools.map((tool) => definitionFor(sdk, tool, steps, enders, profileId));
