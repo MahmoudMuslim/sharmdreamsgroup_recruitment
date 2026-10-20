@@ -89,8 +89,14 @@ export async function mintServiceToken(ttlSeconds = 60): Promise<string> {
   return mintSessionToken({ sub: "00000000-0000-0000-0000-000000000000", role: "service_role" }, ttlSeconds);
 }
 
-export async function verifySessionToken(token: string | undefined | null): Promise<Claims | null> {
-  if (!token) return null;
+export async function verifySessionToken(token: unknown): Promise<Claims | null> {
+  // `unknown`, not `string | undefined | null`, because the contract is that a bad
+  // token is a `null` and NEVER an exception — and `token.split` sits outside the
+  // `try` below. A truthy non-string (a number, a Buffer, an object that came
+  // through a value this app did not write) would throw a `TypeError` straight out
+  // of the caller in Task 13's proxy, which is a 500 on the whole portal. The type
+  // test is the first guard for the running program, not a courtesy to TypeScript.
+  if (typeof token !== "string" || token.length === 0) return null;
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   const [header, body, signature] = parts;
