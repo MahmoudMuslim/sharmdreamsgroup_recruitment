@@ -895,7 +895,7 @@ git commit -m "fix(rls): lock the unreferenced jobs and applicants tables to ser
 - Modify: `docker/.env.example` (add `LOCAL_STAFF_PASSWORD`)
 
 **Interfaces:**
-- Produces: three `auth.users` rows with `crypt()`-hashed passwords and matching `user_profiles` rows (`SUPER_ADMIN`, `RECRUITER`, `CANDIDATE`), a fixed `tenant_id`, and `role_permissions` for the two staff roles. Task 7's gate signs in as the SUPER_ADMIN; Task 9's `passwords.ts` verifies against exactly these hashes.
+- Produces: three `auth.users` rows with `crypt()`-hashed passwords and matching `user_profiles` rows (`SUPER_ADMIN`, `RECRUITER`, `CANDIDATE`), a fixed `tenant_id`. Task 7's gate signs in as the SUPER_ADMIN; Task 9's `passwords.ts` verifies against exactly these hashes. The `role_permissions` the two staff roles need are **already seeded by `supabase/schema.sql`** — measured on the local stack: `SUPER_ADMIN` 20 granted rows, `RECRUITER` 11 rows of which 10 are granted — so this script writes none and must not start inventing them.
 - Consumes: Task 4's `auth.users`, Task 5's locked-down tables.
 
 - [ ] **Step 1: Add the local fixture password name** to `docker/.env.example` and `docker/.env`:
@@ -915,10 +915,14 @@ LOCAL_STAFF_PASSWORD=sdg-local-fixture-pw
  *
  *   node scripts/seed-local-staff.mjs
  *
- * Passwords go in as pgcrypto bcrypt, i.e. `crypt(pw, gen_salt('bf', 10))`, so
- * they are byte-compatible with the hashes a restored live dump carries and
- * Task 9 can verify both the same way. The password is read from docker/.env and
- * is never printed.
+ * Passwords go in as pgcrypto bcrypt, i.e. `extensions.crypt(pw,
+ * extensions.gen_salt('bf', 10))`, so they are byte-compatible with the hashes a
+ * restored live dump carries and Task 9 can verify both the same way. The
+ * `extensions.` prefix is not decoration: Task 3 installs pgcrypto `with schema
+ * extensions`, and a `pg` client's default search_path is `"$user", public`, so
+ * an unqualified `gen_salt(...)` raises
+ * `function gen_salt(unknown, integer) does not exist` (measured). The password
+ * is read from docker/.env and is never printed.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -949,7 +953,11 @@ const STAFF = [
 ];
 
 const c = new Client({
-  connectionString: `postgresql://postgres:${local.LOCAL_DB_PASSWORD}@localhost:${local.LOCAL_DB_PORT || 54320}/sharm_dreams`,
+  user: "postgres",
+  password: local.LOCAL_DB_PASSWORD,
+  host: "localhost",
+  port: Number(local.LOCAL_DB_PORT) || 54320,
+  database: "sharm_dreams",
   connectionTimeoutMillis: 15000,
 });
 await c.connect();
@@ -964,7 +972,7 @@ for (const s of STAFF) {
   const { rows } = await c.query(
     `with up as (
        insert into auth.users (email, role, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data)
-       values ($1, 'authenticated', crypt($2, gen_salt('bf', 10)), now(),
+       values ($1, 'authenticated', extensions.crypt($2, extensions.gen_salt('bf', 10)), now(),
                jsonb_build_object('provider','email','providers',array['email'],
                                   'tenant_id', $3::uuid),
                jsonb_build_object('full_name', $4))
@@ -990,22 +998,14 @@ await c.end();
 
 ```bash
 node scripts/seed-local-staff.mjs
-node -e "
-const fs=require('fs'), {Client}=require('pg');
-const e=Object.fromEntries(fs.readFileSync('docker/.env','utf8').split(/\r?\n/)
-  .map(l=>l.match(/^([A-Z0-9_]+)=(.*)$/)?[l.split('=')[0],l.slice(l.indexOf('=')+1).trim()]:null).filter(Boolean));
-const c=new Client({connectionString:'postgresql://postgres:'+e.LOCAL_DB_PASSWORD+'@localhost:54320/sharm_dreams'});
-c.connect().then(()=>c.query(
-  \"select email, left(encrypted_password,7) prefix, \" +
-  \"crypt('sdg-local-fixture-pw', encrypted_password)=encrypted_password as good, \" +
-  \"crypt('wrong-pw', encrypted_password)=encrypted_password as wrong_passes \" +
-  \"from auth.users order by email\"
-)).then(r=>{console.table(r.rows); return c.end()})
- .catch(er=>{console.error('FAIL', er.message); process.exit(1)});
-"
+docker exec sharm-dreams-local-db-1 psql -U postgres -d sharm_dreams -c "
+select email, left(encrypted_password,7) as prefix,
+       extensions.crypt('sdg-local-fixture-pw', encrypted_password) = encrypted_password as good,
+       extensions.crypt('wrong-pw', encrypted_password) = encrypted_password as wrong_passes
+  from auth.users order by email;"
 ```
 
-Expected: three rows, `prefix` = `$2a$10$`, `good: true`, `wrong_passes: false`. The `prefix` is the whole point — Supabase stores `$2a$` hashes, so a restored dump will verify through the identical path.
+Expected: three rows, `prefix` = `$2a$10$`, `good: t`, `wrong_passes: f`. The `prefix` is the whole point — Supabase stores `$2a$` hashes, so a restored dump will verify through the identical path. Use `docker exec … psql` rather than a `node -e` one-liner so the DB password never appears in a command line or in a connection URI; in-container `psql` reaches the cluster over the local socket as the `postgres` OS user and needs no credential at all.
 
 If `user_profiles` has no unique constraint on `auth_user_id`, the `on conflict` clause errors — read the constraint off the applied database (`psql \d public.user_profiles`) and match it; do not invent one. This is why the script must run against the real local stack rather than a mocked schema.
 
@@ -1439,9 +1439,12 @@ export type PasswordCheck =
 /**
  * Verifies a staff password against the migrated bcrypt hash.
  *
- * `crypt(submitted, stored) = stored` is pgcrypto's own comparison: it re-salts
- * the submitted password with the stored hash's salt, so the comparison is a
- * string equality on a derived value and never touches the secret itself.
+ * `extensions.crypt(submitted, stored) = stored` is pgcrypto's own comparison: it
+ * re-salts the submitted password with the stored hash's salt, so the comparison
+ * is a string equality on a derived value and never touches the secret itself.
+ * Both calls are schema-qualified because pgcrypto is installed `with schema
+ * extensions` and this pool's default search_path is `"$user", public` — an
+ * unqualified `crypt(...)` raises "function does not exist" (measured).
  *
  * The unknown-user case runs a comparison against a fixed hash anyway. That is
  * deliberate: without it, a missing account answers faster than a wrong
@@ -1460,7 +1463,7 @@ export async function verifyStaffPassword(email: string, password: string): Prom
   const { rows } = await getAuthPool().query(
     `select id,
              (encrypted_password is not null
-               and crypt($2, encrypted_password) = encrypted_password) as password_ok,
+               and extensions.crypt($2, encrypted_password) = encrypted_password) as password_ok,
              banned_until is not null and banned_until > now() as is_banned
        from auth.users
       where lower(email) = $1
@@ -1469,7 +1472,7 @@ export async function verifyStaffPassword(email: string, password: string): Prom
   );
 
   if (!rows.length) {
-    await getAuthPool().query("select crypt($1, $2) as x", [password, TIMING_SAFE_DUMMY]);
+    await getAuthPool().query("select extensions.crypt($1, $2) as x", [password, TIMING_SAFE_DUMMY]);
     return { ok: false, reason: "unknown_user" };
   }
   const row = rows[0] as { id: string; password_ok: boolean; is_banned: boolean };
@@ -1513,7 +1516,7 @@ node --experimental-strip-types scripts/prove-password-verify.mjs
 ./node_modules/.bin/eslint src/lib/auth/db.ts src/lib/auth/passwords.ts
 ```
 
-Expected: the PASS line with a real uuid. A `crypt()` failure mentioning `$2a$` means the image's pgcrypto is older than the hash format — report the `select extversion from pg_extension where extname='pgcrypto'` value rather than switching to a Node library.
+Expected: the PASS line with a real uuid. A `function extensions.crypt(...) does not exist` means pgcrypto was not installed in the `extensions` schema — check `select extname, extnamespace::regnamespace from pg_extension where extname='pgcrypto'` before changing the call. A failure that *mentions* `$2a$` means the image's pgcrypto is older than the hash format — report the `select extversion from pg_extension where extname='pgcrypto'` value rather than switching to a Node library.
 
 - [ ] **Step 5: Commit.**
 
@@ -2805,7 +2808,7 @@ export const authAdmin = {
     const { rows, error } = await run(
       `insert into auth.users
          (aud, role, email, encrypted_password, email_confirmed_at, raw_user_meta_data, created_at, updated_at)
-       values ('authenticated', 'authenticated', lower($1), crypt($2, gen_salt('bf', 10)),
+       values ('authenticated', 'authenticated', lower($1), extensions.crypt($2, extensions.gen_salt('bf', 10)),
                case when $3 then now() else null end, $4::jsonb, now(), now())
        returning id`,
       [input.email, input.password, input.email_confirm ?? false, JSON.stringify(input.user_metadata ?? {})],
@@ -2826,7 +2829,7 @@ export const authAdmin = {
     }
     if (patch.password) {
       values.push(patch.password);
-      sets.push(`encrypted_password = crypt($${values.length}, gen_salt('bf', 10))`);
+      sets.push(`encrypted_password = extensions.crypt($${values.length}, extensions.gen_salt('bf', 10))`);
     }
     if (patch.ban_duration !== undefined) {
       values.push(banUntil(patch.ban_duration));
