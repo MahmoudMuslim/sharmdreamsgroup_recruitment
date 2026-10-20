@@ -1649,7 +1649,10 @@ export function getAuthPool(): Pool {
     max: 6,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
-    ssl: url.includes("localhost") ? undefined : { rejectUnauthorized: false },
+    // No `ssl` option at all. TLS here is the connection string's business
+    // (`?sslmode=…`), and a default of `{ rejectUnauthorized: false }` would
+    // silently turn certificate verification off the first time this points at
+    // anything other than loopback — which is exactly what KVM2 will be.
   });
   return pool;
 }
@@ -1674,18 +1677,15 @@ export type PasswordCheck =
  * extensions` and this pool's default search_path is `"$user", public` — an
  * unqualified `crypt(...)` raises "function does not exist" (measured).
  *
- * The unknown-user case runs a comparison against a fixed hash anyway. That is
- * deliberate: without it, a missing account answers faster than a wrong
- * password, and the login form becomes an email-enumeration oracle.
+ * The unknown-user case still pays for a bcrypt round anyway. That is deliberate:
+ * without it, a missing account answers faster than a wrong password, and the
+ * login form becomes an email-enumeration oracle. The round is generated inside
+ * the database (`gen_salt('bf', 10)` — the same cost factor the fixtures were
+ * seeded with), because a hand-written hash literal in this file would be a fake
+ * credential: it cannot be proven to be real bcrypt output, it goes stale the
+ * moment `seed-local-staff` re-hashes with a fresh salt, and a secret-shaped
+ * string in source is what a secret scanner (and the next reviewer) flags first.
  */
-const TIMING_SAFE_DUMMY = crypt_dummy();
-
-function crypt_dummy() {
-  // Any real $2a$ hash of a password nobody will submit. Kept as a literal so
-  // the module never reaches for the database while it is being imported.
-  return "$2a$10$7GOZ0l7k5jz4Q2yQq0hLyeJ9sZ3o6Gx1u4DP9Uv3pQe6Gx1u4DP9Uv";
-}
-
 export async function verifyStaffPassword(email: string, password: string): Promise<PasswordCheck> {
   const normalized = email.trim().toLowerCase();
   const { rows } = await getAuthPool().query(
@@ -1700,7 +1700,7 @@ export async function verifyStaffPassword(email: string, password: string): Prom
   );
 
   if (!rows.length) {
-    await getAuthPool().query("select extensions.crypt($1, $2) as x", [password, TIMING_SAFE_DUMMY]);
+    await getAuthPool().query("select extensions.crypt($1, extensions.gen_salt('bf', 10)) as x", [password]);
     return { ok: false, reason: "unknown_user" };
   }
   const row = rows[0] as { id: string; password_ok: boolean; is_banned: boolean };
