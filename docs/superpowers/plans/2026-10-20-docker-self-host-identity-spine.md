@@ -647,6 +647,10 @@ $$ select string_to_array(name, '/') $$;
 grant usage on schema storage to anon, authenticated, service_role;
 grant all on storage.buckets, storage.objects to service_role;
 grant execute on function storage.foldername(text) to anon, authenticated, service_role;
+
+-- Deliberately no `create publication supabase_realtime` here, unlike the
+-- throwaway stub. schema.sql's two realtime DO-blocks catch undefined_object,
+-- so with no publication they are no-ops; standing one up here would hide that.
 ```
 
 - [ ] **Step 3: Make `supabase/schema.sql` applyable on a vanilla image.** Two lines go, and a marker goes in. Read the note below before touching anything else in the file.
@@ -657,7 +661,7 @@ Delete lines 30–31 (`create schema if not exists vault;` and `create extension
 grep -n 'vault' supabase/schema.sql
 ```
 
-Expected before the edit: lines 30 and 31 (plus the header comment at line 19 does not mention vault, so it stays). After the edit: no matches.
+Expected before the edit: lines 30 and 31 (plus the header comment at line 19 does not mention vault, so it stays). After the edit: exactly one match, the `AUTHORITATIVE:` marker prose added below — so grep for the *statements*, not the word: `grep -n 'create schema if not exists vault\|supabase_vault' supabase/schema.sql` must return nothing.
 
 Add the marker as the second line of the file's opening comment block, directly after ` * Sharm Dreams Talent Cloud — schema of record.`:
 
@@ -667,7 +671,7 @@ Add the marker as the second line of the file's opening comment block, directly 
  * policies). A re-dump must re-apply them, not silently restore them.
 ```
 
-**Note on the realtime lines.** Spec §5 also asks that the two `alter publication supabase_realtime …` DO-blocks be deleted. Leave them: each is wrapped in `exception when undefined_object then null`, so with no publication present they are proven no-ops (the throwaway proof in §13 ran with them in place), and deleting them creates drift that the next `dump-schema.mjs` re-creates from live. One unavoidable hand edit is worth a marker; two optional ones is not.
+**Note on the realtime lines.** Spec §5 also asks that the two `alter publication supabase_realtime …` DO-blocks be deleted. Leave them: each is wrapped in `exception when undefined_object then null`, and deleting them creates drift that the next `dump-schema.mjs` re-creates from live. One unavoidable hand edit is worth a marker; two optional ones is not. **The no-op claim was NOT proven by §13** — the old stub ran `create publication supabase_realtime`, so the exception path never fired there. Task 4's stand-ins deliberately create no publication, so Step 5/Step 6's applies are the first real evidence; confirm with `select count(*) from pg_publication;` (read-only) that it is 0 and the apply still succeeded, and say so in the report.
 
 - [ ] **Step 4: Write `scripts/apply-local-schema.mjs`.** `apply-schema.mjs` cannot be reused as-is: it reads `.env.local` unconditionally and aims at the vendor pooler unless `ZZ_DB_URL` is set. This wrapper is the local path, and it refuses to run if the vault line came back.
 
