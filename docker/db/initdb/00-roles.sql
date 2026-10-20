@@ -8,7 +8,8 @@
 -- that aborts partway leaves a half-built cluster this file never sees again,
 -- and that case still needs `npm run docker:wipe`.
 --
--- The `else` branches re-assert every attribute, not just existence, so a
+-- The `else` branches re-assert every attribute this file itself sets — LOGIN
+-- or NOLOGIN, NOINHERIT, BYPASSRLS, the password — not just existence, so a
 -- drifted role converges back on a manual re-run. The one that matters is
 -- NOINHERIT on `authenticator`: if that login role ever became inheriting it
 -- would hold `service_role`'s BYPASSRLS without any `SET ROLE`, and a request
