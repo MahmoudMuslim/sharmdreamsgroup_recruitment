@@ -1319,28 +1319,53 @@ Options actually passed: `{ count: "exact" }` ×36, `{ head: true }` ×29, `{ on
 
 Deviation from spec §6, deliberate: the claim is **`sub`**, not `uid`, because `sub` is what the 80 ported policies reach through `auth.uid()` (Task 4 Step 1), and rewriting `auth.uid()` to read `uid` would mean rewriting the dump instead of standing beside it. The token carries `{ sub, role, aud, iss, iat, exp }` and nothing else — role here means the *Postgres* role for RLS, never the staff role, which is read from `user_profiles` (spec §6).
 
+**What this module does not and cannot enforce — measured on the gateway while Task 8 was reviewed, so the later slices know where the duty falls.** The `role` claim only decides which Postgres role `authenticator` switches into; it is not an authorization check, because the RLS predicates key off `auth.uid()` and `is_staff()`, and `is_staff()` is `SECURITY DEFINER`. So an `anon`-role token carrying a staff `sub` reads exactly the rows an `authenticated` one does (`user_profiles`, `roles`), while a `service_role` token bypasses RLS entirely and reaches `jobs` — the table a staff token is refused with `403`. Two consequences, both binding on later tasks, neither fixable here: **Task 12 mints `authenticated` and nothing else** (a login never hands out an `anon` or `service_role` token), and **Task 13's proxy refuses any verified token whose `role` is not `authenticated`** before it reads the rest of the claims. `mintServiceToken` exists for Task 16's cron container, which calls it in-process and never puts the result in a cookie or a response body; if a `service_role` token is ever seen on a request, that is the bug, not this file.
+
 - [ ] **Step 1: Write the failing probe first.**
 
 ```js
-/* scripts/prove-token-shape.mjs — Run: node scripts/prove-token-shape.mjs */
+/* scripts/prove-token-shape.mjs — Run: node --env-file=docker/.env scripts/prove-token-shape.mjs */
 import { mintSessionToken, verifySessionToken } from "../src/lib/auth/token.ts";
 
-const t = await mintSessionToken({ sub: "11111111-1111-1111-1111-111111111111", role: "authenticated" });
+const UID = "11111111-1111-1111-1111-111111111111";
+const t = await mintSessionToken({ sub: UID, role: "authenticated" });
 const c = await verifySessionToken(t);
-if (!c || c.sub !== "11111111-1111-1111-1111-111111111111" || c.role !== "authenticated")
-  throw new Error("round trip failed");
+if (!c || c.sub !== UID || c.role !== "authenticated") throw new Error("round trip failed");
+if (c.exp - c.iat !== 900) throw new Error(`default lifetime is ${c.exp - c.iat}, expected 900`);
 if (await verifySessionToken(t.slice(0, -2) + "xx")) throw new Error("tampered token accepted");
 if (await verifySessionToken(null)) throw new Error("null accepted");
-console.log("PASS token round trip, tamper refusal, null refusal");
+const unsigned = t.split(".");
+if (await verifySessionToken(`${unsigned[0]}.${unsigned[1]}`)) throw new Error("two-part token accepted");
+
+// A misread lifetime must fail HERE, loudly. `Number("abc")` is NaN and
+// `JSON.stringify({exp: now + NaN})` is `"exp":null`, which PostgREST reads as
+// *no expiry at all* — measured: a null-exp token signed with the real secret
+// is accepted and the staff rows come back. Every value below is a plausible
+// typo in AUTH_TOKEN_TTL_SECONDS, so the guard is asserted through the env var
+// rather than only through the explicit argument.
+for (const bad of ["", "abc", "0", "-5", "1.5", "Infinity", "1e18"]) {
+  process.env.AUTH_TOKEN_TTL_SECONDS = bad;
+  let threw = false;
+  try {
+    await mintSessionToken({ sub: UID, role: "authenticated" });
+  } catch (e) {
+    threw = e instanceof Error && /lifetime/.test(e.message);
+  }
+  if (!threw) throw new Error(`ttl ${JSON.stringify(bad)} minted a token instead of throwing`);
+}
+delete process.env.AUTH_TOKEN_TTL_SECONDS;
+console.log("PASS token round trip, tamper refusal, null refusal, lifetime guards");
 ```
 
 - [ ] **Step 2: Run it and watch it fail.**
 
 ```bash
-node --experimental-strip-types scripts/prove-token-shape.mjs
+node --env-file=docker/.env scripts/prove-token-shape.mjs
 ```
 
 Expected: cannot resolve `../src/lib/auth/token.ts` — the file does not exist yet.
+
+The `--env-file=docker/.env` half of that command is load-bearing, not decoration: the module refuses to sign without `AUTH_JWT_SECRET`, which lives only in that git-ignored file, and this shell carries no copy of it. Passing it as a file keeps the secret off the command line and out of any transcript. (Measured: without it the run dies on the module's own config guard, which is the correct failure but a misleading one to read as "the probe is wrong".)
 
 Two facts about this probe command, both measured on this device (Node v24.21.0) before the plan was written, so nobody has to re-derive them: a `.mjs` file **can** import a `.ts` file with no flag and no loader at all — type stripping is unflagged in this Node major — and `--experimental-strip-types` is still accepted and harmless. The import specifier must carry the explicit `.ts` extension, and it must be a **relative** path: this repo configures no import loader (`package.json` and `scripts/*.mjs` contain no loader, `register`, or alias hook), so the `@/` alias will not resolve outside Next. That is why every probe in this plan reaches source by relative path, and why `src/lib/auth/token.ts` below imports only `node:crypto`. Do not add `tsx`, `ts-node`, or `esbuild-register` — that violates the no-new-dependency constraint.
 
@@ -1361,6 +1386,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 const ISSUER = "sharm-dreams-local";
 const AUDIENCE = "sdg_local";
+
+/** The longest lifetime this module will sign. A staff session is bounded by the
+ * idle-timeout layer, so a token that outlives a day is not a legitimate request,
+ * it is a misread `AUTH_TOKEN_TTL_SECONDS` — and the misread is silent unless the
+ * minter refuses it. See `validTtl`. */
+const MAX_TTL_SECONDS = 86_400;
 
 export type TokenRole = "anon" | "authenticated" | "service_role";
 
@@ -1390,10 +1421,29 @@ const b64 = (value: object) => Buffer.from(JSON.stringify(value)).toString("base
 const sign = (payload: string) =>
   createHmac("sha256", secret()).update(payload).digest("base64url");
 
+/**
+ * `AUTH_TOKEN_TTL_SECONDS` arrives as a string, so a typo is not a smaller
+ * session, it is no session limit at all: `Number("abc")` is NaN, and a claims
+ * object with `exp: now + NaN` serialises to `"exp":null`, which PostgREST
+ * accepts as a token that never expires (measured on the gateway — a null-`exp`
+ * token signed with the real secret reads back the staff rows). Nothing else in
+ * this module can notice, because a null `exp` is a perfectly well-signed token.
+ */
+function validTtl(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_TTL_SECONDS) {
+    throw new TokenConfigError(
+      `token lifetime must be a whole number of seconds from 1 to ${MAX_TTL_SECONDS}, got ${String(value)}`
+    );
+  }
+  return n;
+}
+
 export async function mintSessionToken(
   input: { sub: string; role: TokenRole },
   ttlSeconds = Number(process.env.AUTH_TOKEN_TTL_SECONDS ?? 900)
 ): Promise<string> {
+  const ttl = validTtl(ttlSeconds);
   const now = Math.floor(Date.now() / 1000);
   const header = b64({ alg: "HS256", typ: "JWT" });
   const body = b64({
@@ -1402,7 +1452,7 @@ export async function mintSessionToken(
     aud: AUDIENCE,
     iss: ISSUER,
     iat: now,
-    exp: now + ttlSeconds,
+    exp: now + ttl,
   });
   return `${header}.${body}.${sign(`${header}.${body}`)}`;
 }
@@ -1419,43 +1469,54 @@ export async function verifySessionToken(token: string | undefined | null): Prom
   if (parts.length !== 3) return null;
   const [header, body, signature] = parts;
 
-  let claims: Claims;
   try {
     // Reject an algorithm swap before trusting anything in the header: a token
     // that says alg=none is not a token, it is a request to be let in.
     const head = JSON.parse(Buffer.from(header, "base64url").toString("utf8")) as { alg?: string };
     if (head.alg !== "HS256") return null;
 
+    // Compared as the base64url TEXT it arrived in, not as decoded bytes, and
+    // that is the stricter choice: decoding both sides would accept non-canonical
+    // signatures (`+`, `/`, a padding char) that re-encode to the same 32 bytes,
+    // making this verifier looser than the PostgREST it has to agree with. Do not
+    // "fix" this to compare bytes.
     const expected = Buffer.from(sign(`${header}.${body}`));
     const actual = Buffer.from(signature);
     // Without this length guard, timingSafeEqual throws on a short signature.
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
 
-    claims = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Claims;
+    const claims = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Claims;
+    const now = Math.floor(Date.now() / 1000);
+    // Every check is inside the try on purpose. This function's contract is that
+    // a bad token is a `null` and never an exception — Task 13's proxy calls it on
+    // every request, and a throw there is a 500 on the whole portal. A body that
+    // decodes to `null` would make the reads below throw, so they are caught here
+    // instead of guarded one by one. `Number.isInteger` is what kills both a null
+    // `exp` (a never-expiring token) and `Infinity` (the same thing wearing a
+    // number), which a `typeof === "number"` test passes.
+    if (!Number.isInteger(claims.exp) || claims.exp <= now) return null;
+    if (!Number.isInteger(claims.iat)) return null;
+    if (claims.aud !== AUDIENCE || claims.iss !== ISSUER) return null;
+    if (claims.role !== "authenticated" && claims.role !== "anon" && claims.role !== "service_role") {
+      return null;
+    }
+    if (typeof claims.sub !== "string" || claims.sub.length === 0) return null;
+    return claims;
   } catch {
     return null;
   }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (typeof claims.exp !== "number" || claims.exp <= now) return null;
-  if (claims.aud !== AUDIENCE || claims.iss !== ISSUER) return null;
-  if (claims.role !== "authenticated" && claims.role !== "anon" && claims.role !== "service_role") {
-    return null;
-  }
-  if (typeof claims.sub !== "string" || claims.sub.length === 0) return null;
-  return claims;
 }
 ```
 
 - [ ] **Step 4: Re-run the probe, then the repo gates.**
 
 ```bash
-node --experimental-strip-types scripts/prove-token-shape.mjs
+node --env-file=docker/.env scripts/prove-token-shape.mjs
 ./node_modules/.bin/tsc --noEmit -p tsconfig.json
 ./node_modules/.bin/eslint src/lib/auth/token.ts scripts/prove-token-shape.mjs
 ```
 
-Expected: `PASS token round trip, tamper refusal, null refusal`, then both gates silent.
+Expected: `PASS token round trip, tamper refusal, null refusal, lifetime guards`, then both gates silent.
 
 - [ ] **Step 5: Prove PostgREST accepts what `mintSessionToken` produced** — the assertion that ties this file to Task 2's `PGRST_JWT_SECRET`.
 
@@ -2677,7 +2738,16 @@ export async function guardRequest(request: NextRequest): Promise<NextResponse> 
 
   const bearer = request.cookies.get(SESSION_COOKIE)?.value;
   // Local HMAC verify — this replaced a network call to the auth service.
-  const claims = bearer ? await verifySessionToken(bearer) : null;
+  const verified = bearer ? await verifySessionToken(bearer) : null;
+  // A signature that checks is not yet a session. `role` only picks which
+  // Postgres role `authenticator` switches into, and the RLS predicates key off
+  // `auth.uid()` and `is_staff()` — measured in Task 8's review, an `anon`-role
+  // token carrying a staff `sub` reads the same rows as an `authenticated` one,
+  // while a `service_role` token reaches `jobs` outright, where a staff token is
+  // refused with 403. This app mints `authenticated` at sign-in and nothing else,
+  // so any other role on a request is a hand-made jar and is dropped exactly like
+  // an expired one. Task 16's cron token never reaches this code path.
+  const claims = verified?.role === "authenticated" ? verified : null;
 
   if (isStaffPath(pathname) && !claims) {
     const loginUrl = request.nextUrl.clone();
