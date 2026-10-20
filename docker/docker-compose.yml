@@ -35,6 +35,46 @@ services:
       timeout: 3s
       retries: 30
 
+  rest:
+    image: postgrest/postgrest:v16.5   # the tag confirmed in Task 1 Step 1; do not take a tag from memory
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${LOCAL_PGRST_PASSWORD}@db:5432/sharm_dreams
+      PGRST_DB_SCHEMAS: public
+      # Correction #1 vs spec §5: a tokenless request must get the LEAST
+      # privileged role, so is_staff() is false without a JWT.
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${AUTH_JWT_SECRET}
+      PGRST_JWT_AUD: sdg_local
+      PGRST_SERVER_PORT: 3000
+      # No `pgrst` schema config here; PostgREST reads env only.
+      PGRST_DB_CONFIG: false
+      # Brief wrote `PGRST_OPENAPI_SERVER_PROXY_URL`; the v16.5 binary contains
+      # only `openapi-server-proxy-uri` (measured by grep of /bin/postgrest) and
+      # silently ignores the _URL spelling, so this is the registry-confirmed name.
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:54321/rest/v1
+    # Deliberately no `ports:` - nothing may bypass the gateway.
+
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - rest
+    # Brief said `caddyfile_adapt`; caddy v2.11.7 rejects that name
+    # ("unrecognized config adapter"), and `caddy validate --adapter caddyfile`
+    # reports "Valid configuration" — measured against the registry image.
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      # Loopback, like `db`: this port fronts a REST API whose only credential is
+      # a repo-known dev password, and on KVM2 the public front is Caddy's TLS
+      # listener on 80/443, never this host mapping.
+      - "127.0.0.1:${LOCAL_GATEWAY_PORT:-54321}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
 volumes:
   # A named volume, NOT a bind-mount into the repo: a restored live dump lives in
   # here and must never be picked up by `git add .` (spec §10).
