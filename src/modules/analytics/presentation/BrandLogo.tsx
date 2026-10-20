@@ -7,23 +7,26 @@ import { cn } from "@/lib/utils";
  * (the same asset used on sharmdreamsgroup.com).
  *
  * `tone` controls the backdrop behind the mark:
- *  - `ink`   gold mark on the group's near-black (default)
- *  - `cream` gold mark on ivory, for light surfaces
+ *  - `transparent` no backdrop at all — the mark sits directly on whatever
+ *                  is behind it (default; the asset carries its own spacing)
+ *  - `ink`         gold mark on the group's near-black
+ *  - `cream`       gold mark on ivory, for light surfaces
  */
 export function SdgMark({
   size = 36,
-  tone = "ink",
+  tone = "transparent",
   className,
 }: {
   size?: number;
-  tone?: "ink" | "cream";
+  tone?: "ink" | "cream" | "transparent";
   className?: string;
 }) {
   return (
     <span
       className={cn(
         "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-xl",
-        tone === "ink" ? "bg-brand-ink" : "border border-brand-line bg-white",
+        tone === "ink" && "bg-brand-ink",
+        tone === "cream" && "border border-brand-line bg-white",
         className
       )}
       style={{ width: size, height: size }}
@@ -49,16 +52,18 @@ export function SdgLockup({
   subtitle = "Sharm Dreams Group",
   className,
   markClassName,
+  markTone = "transparent",
   compact = false,
 }: {
   subtitle?: string;
   className?: string;
   markClassName?: string;
+  markTone?: "ink" | "cream" | "transparent";
   compact?: boolean;
 }) {
   return (
     <div className={cn("flex min-w-0 items-center gap-3", className)}>
-      <SdgMark size={compact ? 34 : 38} className={markClassName} />
+      <SdgMark size={compact ? 34 : 38} tone={markTone} className={markClassName} />
       {!compact && (
         <span className="min-w-0">
           <span className="block truncate font-display text-[15px] font-bold leading-tight">

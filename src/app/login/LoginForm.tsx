@@ -55,7 +55,7 @@ export function LoginForm() {
 
       <div className="relative w-full max-w-md">
         <div className="mb-7 text-center">
-          <SdgMark size={56} className="mx-auto mb-4 shadow-lift" />
+          <SdgMark size={56} className="mx-auto mb-4" />
           <h1 className="font-display text-2xl font-extrabold tracking-tight">Recruiter sign-in</h1>
           <p className="mt-1 text-sm text-brand-ink/55">
             Sharm Dreams Talent Cloud — authorised staff only
