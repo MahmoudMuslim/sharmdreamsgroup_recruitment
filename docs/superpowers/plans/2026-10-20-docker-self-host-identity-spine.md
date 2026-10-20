@@ -1037,7 +1037,7 @@ git commit -m "test(docker): seed a local staff directory with pgcrypto bcrypt h
 - Produces: a pass/fail gate any later task re-runs; `mintToken(claims)` reused conceptually by Task 8's `token.ts` (this script signs inline with `node:crypto` so it can prove PostgREST before any app code exists).
 - Consumes: Task 2's gateway, Task 4's stand-ins, Task 6's seeded staff row.
 
-- [ ] **Step 1: Write the gate.** Read the three assertions in the `CHECKS` list before changing anything — assertion 3 is the one that makes the other two worth running.
+- [ ] **Step 1: Write the gate.** Read the numbered comments in the fence before changing anything — comment 3 is the assertion that makes the other seven worth running.
 
 ```js
 /*
