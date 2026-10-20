@@ -1,108 +1,105 @@
 # Sharm Dreams Group — AI-Driven HRMS, ATS & Skill Assessment Platform
 
-[![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19-blue?logo=react)](https://react.dev/)
+[![Next.js](https://img.shields.io/badge/Next.js-16.4-black?logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19.3-blue?logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL_17-green?logo=supabase)](https://supabase.com/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4-38B2AC?logo=tailwind-css)](https://tailwindcss.com/)
 [![License](https://img.shields.io/badge/License-Private-lightgrey)](#)
 
-An enterprise-grade, **AI-Driven Omnichannel HRMS, ATS, & Skill Assessment Platform** serving multi-company groups (Hospitality, Real Estate, Commercial Development, Corporate Shared Services). A standalone hybrid of Canditech + Greenhouse + Lever + AI Recruiter.
+An enterprise-grade, **AI-Driven Omnichannel HRMS, ATS & Skill Assessment Platform** for multi-company groups (Hospitality, Real Estate, Commercial Development, Corporate Shared Services). A standalone hybrid of Canditech + Greenhouse + Lever + AI Recruiter.
+
+> Production URL: **https://hrms.sharmdreams.com**
 
 ---
 
-## 🎯 Features Overview
+## 📚 Documentation
 
-### 🔐 Authentication & RBAC
-- **Supabase Auth** with Email/Password, Magic Link, OAuth 2.0
-- **Roles**: `SUPER_ADMIN`, `RECRUITER`, `HIRING_MANAGER`, `CANDIDATE`
-- **Granular Permissions**: `candidates.read`, `assessments.create`, `settings.manage_users`, `scores.view_unmasked`
-- **Middleware Protection** on all `/(admin)/*` routes
-- **RLS Policies** enforcing tenant isolation
+This README is the entry point. Detailed, verified documentation lives in [`docs/`](docs/):
 
-### 📊 Admin Dashboard (`/dashboard`)
-- Real-time pipeline funnel with conversion rates
-- Channel effectiveness (LinkedIn, WhatsApp, Job Board, Career Site, Referral)
-- AI fit score distribution (0–49, 50–79, 80–100)
-- Top candidates ranked by AI match score
-- Time-to-hire trends (6-month rolling)
-- Application velocity (last 14 days)
-
-### 💼 Job Management (`/jobs`)
-- Multi-company job openings across 4 sectors
-- Draft/Published/Paused/Closed statuses
-- Salary ranges with multi-currency support
-- Applicant counts per role
-- `NewJobDrawer` for rapid creation
-
-### 👥 Candidate Database (`/candidates`)
-- Searchable, filterable candidate table (name, email, role, tracking code)
-- Stage filter: `NEW` → `AI_SCREENING` → `ASSESSMENT` → `INTERVIEW` → `OFFER` → `HIRED`/`REJECTED`
-- **Bulk WhatsApp** messaging with template placeholders
-- **Profile Drawer** showing:
-  - AI match score with meter
-  - Screening summary
-  - Strengths & Gaps
-  - Soft skills radar (Emotional Intelligence, Communication, Leadership, Cultural Fit)
-  - Personalized feedback
-  - Rejection reason (if applicable)
-
-### 🧪 Assessment Engine (`/assessments`)
-- **Templates** per role family (Finance, Operations, Investments)
-- **Question Types**:
-  - **Excel Model** — Handsontable financial modeling (NPV, IRR, DCF)
-  - **Video Pitch** — MediaRecorder with preview, review, Supabase Storage upload
-  - **Case Study** — Long-form with word count validation
-  - **Multiple Choice** — Configurable options with correct answers
-- **Question Editor Drawer** with live preview
-- Time limits (5–300 minutes)
-
-### ⚙️ Settings (`/settings`)
-| Section | Purpose |
-|---------|---------|
-| **Credentials Console** | Multi-API key management per provider with priority failover, AES-256 encryption, audit log |
-| **Model Routing Console** | Per-capability model selection (primary + fallback), cost-tier grouping, search |
-| **Team** | User management, company assignment, role matrix |
-| **Master Data** | Companies, departments, locations, currencies, skills |
-| **Onboarding** | AI-generated checklist plans |
-
-### 🤖 AI Screening & Assessment Runner
-- **Multi-Provider Gateway**: OpenRouter (100+ models), Google AI Studio (Gemini), OpenCode
-- **Failover Chain**: Priority 1 key → Priority 2 key → … → Environment variable
-- **Free Tier Models**: Gemma 4 (31B/26B MoE), Llama 3.1 8B, Phi-3 Mini 128K
-- **Paid Fallbacks**: GPT-4o Mini, Claude 3.5 Haiku, Gemini 1.5 Flash
-- **Candidate Portal** (`/test/[token]`): Token validation, timed session, auto-submit
+| Doc | What it covers |
+|-----|----------------|
+| [Architecture](docs/ARCHITECTURE.md) | Clean-architecture module layout, request lifecycle, data flow |
+| [API Reference](docs/API.md) | Every route handler (`/api/*`) and server action |
+| [Database](docs/DATABASE.md) | All tables, relationships, RLS policies, storage buckets |
+| [Authentication & RBAC](docs/AUTHENTICATION.md) | Supabase Auth, roles, granular permissions, credential store |
+| [AI Integration](docs/AI_INTEGRATION.md) | Multi-provider gateway, model failover, capabilities, routing |
+| [Deployment](docs/DEPLOYMENT.md) | Vercel & Docker, environment variables, cron jobs |
+| [Testing](docs/TESTING.md) | Verification strategy and manual test flows |
+| [Contributing](CONTRIBUTING.md) | Developer guide, scripts, conventions |
+| [Changelog](CHANGELOG.md) | Release history |
 
 ---
 
-## 🏗 Architecture
+## ✨ Core Features
+
+- **Recruiter portal** (16 protected pages) — dashboard, analytics, reports, candidates, jobs, assessments, interviews, onboarding, sourcing, WhatsApp outbox, files, time tracking, activity audit, AI assistant, settings. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#-the-admin-portal--16-routed-pages).
+- **Public careers site** — job board, application intake with CV parsing, gate questions, and a grounded **careers chatbot** that captures leads.
+- **Candidate portal** — application tracker and a tokenized, timed **assessment runner** (Excel model, video pitch, case study, multiple choice) with an anti-cheating integrity monitor.
+- **AI screening & grading** — multi-provider gateway (OpenRouter, Google AI Studio, OpenCode, Qoder, Cloudflare Workers AI, NVIDIA NIM) with model + key failover and per-capability routing.
+- **RBAC** — Supabase Auth with 4 roles and granular, DB-driven permissions enforced by Row Level Security.
+
+### Authentication & RBAC
+- Supabase Auth (Email/Password, Magic Link, OAuth)
+- Roles: `SUPER_ADMIN`, `RECRUITER`, `HIRING_MANAGER`, `CANDIDATE`
+- Permissions such as `candidates.read`, `candidates.write`, `assessments.create`, `assessments.grade`, `jobs.manage`, `messages.send`, `scores.view_unmasked`, `settings.manage_users` (full list in [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md))
+- Edge middleware (`src/lib/supabase/middleware.ts`) + page-level `requireStaff()` on all admin routes
+- Details: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)
+
+### Analytics & Insights
+- Pipeline funnel + conversion rates, channel effectiveness, AI fit-score distribution, time-to-hire, application velocity
+- Live change watch streamed to the shell (`/api/live`)
+- CSV/Excel/PDF export (`/api/reports/export`, `/api/time/export`, `/api/activity/export`)
+
+### Job & Candidate Management
+- Multi-company job openings: Draft/Published/Paused/Closed, multi-currency salary
+- Candidate pipeline stages: `NEW → AI_SCREENING → ASSESSMENT → INTERVIEW → OFFER → HIRED/REJECTED`, with archive/restore and a profile drawer (AI meter, screening summary, strengths & gaps, activity trail)
+
+### Assessment Engine
+- Templates per role family; question types: **Excel Model** (Handsontable + HyperFormula), **Video Pitch** (MediaRecorder → Supabase Storage), **Case Study** (word-count validated), **Multiple Choice**
+- Time limits (5–300 min), scheduled auto-grading (`/api/cron/grading`)
+- Integrity monitor (tab-switch / copy-paste → `integrity_events`)
+- AI question authoring; the **Question Bank** (`/questions`, `modules/questions/`) is one CRUD surface over both stores — apply-form gate questions and suite questions — with tabs, rails, groups and a Kanban board
+
+### Omnichannel & Sourcing
+- WhatsApp + email + in-app templates (`communication_logs`, `notification_templates`), scheduled WhatsApp dispatch (`/api/cron/whatsapp`)
+- LinkedIn prospect sourcing with AI profile extraction into `sourced_prospects`
+
+---
+
+## 🏗 Architecture at a Glance
+
+Clean-architecture domains under `src/modules/`, thin route/action layer under `src/app/`, shared infrastructure under `src/lib/`:
 
 ```
 src/
-├── app/                          # Next.js App Router
-│   ├── (auth)/                   # Login, Forgot Password, Unauthorized
-│   ├── (admin)/                  # Protected Admin Portal
-│   │   ├── dashboard/            # Analytics Dashboard
-│   │   ├── settings/             # Credentials, Model Routing, Team, Master Data
-│   │   ├── assessments/          # Assessment Builder
-│   │   ├── candidates/           # Candidate Browser + Profile
-│   │   ├── jobs/                 # Job Openings
-│   │   └── onboarding/           # AI Onboarding Plans
-│   ├── (candidate)/              # Public Candidate Portal
-│   │   ├── portal/               # Application Tracker
-│   │   └── test/[token]/         # Timed Assessment Runner
-│   └── api/                      # Webhooks, Auth Callbacks, Cron
-├── modules/                      # Clean Architecture Domains
-│   ├── auth/                     # RBAC, Session, Permissions
-│   ├── assessment/               # Excel, Video, Quiz, Case Study
-│   ├── screening/                # AI Gateway, CV Parsing, Scoring
-│   ├── omnichannel/              # WhatsApp, Email
-│   ├── analytics/                # Dashboard Metrics, Pipeline
-│   └── onboarding/               # Checklist Generation
-├── lib/                          # Supabase Clients, Config, Crypto
-├── stores/                       # Zustand (Auth, Assessment)
-└── types/                        # Shared TypeScript Interfaces
+├── app/            # Route handlers, server actions, pages (App Router)
+│   ├── (admin)/    # 16 protected pages  ├── (candidate)/  # portal + test/[token]
+│   ├── careers/    # public board + apply├── api/          # 20 route handlers
+│   └── login/
+├── modules/        # 15 domains: assessment, assistant, analytics, careers,
+│                   # screening, settings, shell, sourcing, timelog, live, …
+├── lib/            # supabase clients, auth/session, crypto, config, i18n, theme
+├── stores/         # Zustand (assessment runner state)
+└── types/          # Shared TypeScript interfaces
 ```
+
+Full walkthrough (data flow, read/write path, module boundaries): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · Supabase (PostgreSQL 17, `@supabase/ssr` + `@supabase/server`) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
+
+---
+
+## 🎨 UI Kit & Design System
+
+A hand-rolled, dependency-light library (no component framework) in `modules/analytics/presentation` + `modules/shell/presentation`, themed via CSS custom properties in `app/globals.css`.
+
+**Primitives** (`ui.tsx`): `PageHeader`, `Card`/`CardHeader`, `Button` (`primary`/`outline`/`ghost`), `Badge` (5 tones), `Meter`, `StatTile`, `FilterRail`, `EmptyState`.
+**Overlays & forms**: `Drawer` (Escape-close, focus capture, scroll lock), `Field`/`TextInput`/`TextArea`/`Select`, `FormMessage`, `DrawerActions`.
+**Shell**: `AppBar` (grouped nav rail, `/` command search, per-route Guide, alerts, theme + language toggle), `AdminShell`, typed `NAV` table, `SdgMark`/`SdgLockup` brand.
+**Feedback**: `LiveChrome`/`LiveBadge`/`useLive`, Recharts `ReplyChart`, assistant `RichReply`, assessment runners.
+
+**Theming** (`lib/theme.ts`): two palette parents × two tones — Base (opaque) and Liquid glass (translucent film over a moving backdrop), each in Light/Dark. Persisted in `localStorage`, applied pre-paint to avoid flash. `scripts/check-themes.mjs` fails the build if a theme maps to no CSS.
 
 ---
 
@@ -110,234 +107,57 @@ src/
 
 ### Prerequisites
 - Node.js 20+
-- pnpm (recommended) or npm
-- Supabase CLI (for local development)
-
-### Installation
+- npm (or pnpm)
+- A Supabase project (PostgreSQL 17)
 
 ```bash
-# Clone and install
 git clone <repository-url>
 cd sharm_dreams_group
-pnpm install
-
-# Generate encryption key for credential storage
-node scripts/generate-encryption-key.mjs
-
-# Copy environment template
-cp .env.example .env.local
-# Edit .env.local with your credentials
+npm install
+node scripts/generate-encryption-key.mjs   # AES-256-GCM key for credential storage
+cp .env.example .env.local                 # then fill in your values
 ```
 
-### Environment Variables
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL | ✅ |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key | ✅ |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role secret (server-only) | ✅ |
-| `SETTINGS_ENCRYPTION_KEY` | 32-byte base64 key for AES-256-GCM | ✅ |
-| `OPENROUTER_API_KEY` | OpenRouter API key (fallback) | ⚠️ |
-| `GOOGLE_AI_STUDIO_API_KEY` | Google AI Studio key (fallback) | ⚠️ |
-| `WHATSAPP_TOKEN` | Meta WhatsApp access token | ⚠️ |
-
-> **Note**: Most API keys are managed in **Settings → API Keys** panel with encrypted storage. Environment variables serve as fallbacks only.
-
-### Database Setup
+Required env: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SETTINGS_ENCRYPTION_KEY`, and `CRON_SECRET` (the cron routes fail closed without it). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete, code-verified list — including which provider keys are optional fallbacks and the known `.env.example` drift.
 
 ```bash
-# Option 1: Use Supabase Dashboard (recommended)
-# 1. Go to https://supabase.com/dashboard/project/lbxdeceropsxwohnzinl
-# 2. Run schema.sql in SQL Editor
-# 3. Run seed.sql for demo data
-
-# Option 2: Local development with Supabase CLI
-supabase start
-supabase db reset --linked
+npm run dev          # dev server (Turbopack) → http://localhost:3001
+npx tsc --noEmit     # type check
+npm run build        # production build (prebuild runs route + theme checks)
 ```
 
-### Development
-
-```bash
-# Start dev server with Turbopack
-pnpm dev
-
-# Type check
-pnpm tsc --noEmit
-
-# Build for production
-pnpm build
-
-# Start production server
-pnpm start
-```
-
----
-
-## 🗄 Database Schema
-
-### Core Tables
-- `tenants_and_companies` — 4 group entities (Hospitality, Real Estate, Commercial, Corporate)
-- `user_profiles` — Staff & candidates linked to `auth.users`
-- `job_openings` — Multi-tenant job requisitions
-- `applications` — Candidate applications with AI screening fields
-- `assessment_templates` / `assessment_questions` — Configurable test batteries
-- `candidate_attempts` — Timed assessment sessions with secure tokens
-- `candidate_responses` — Answers per question (spreadsheet, video, text, choices)
-- `ats_integrations` — reserved table, no longer read by the app (the ATS/calendar connectors were removed)
-- `communication_logs` — WhatsApp, Email, In-app message history
-- `interview_schedules` — Interview slots with meeting links, sent over WhatsApp and email
-- `onboarding_plans` — AI-generated checklists & skill gaps
-
-### RLS Policies
-- **Candidates** access ONLY their attempt via `attempt_token` JWT claim
-- **Staff** access ONLY data within their `tenant_id` (unless `SUPER_ADMIN`)
-- **Public** can INSERT applications (career site), READ published jobs
-
-### Storage Buckets
-- `candidate-videos` (50MB, video/webm, video/mp4)
-- `candidate-audio` (20MB, audio/webm, audio/mpeg)
-- `resumes` (10MB, PDF, Docx)
-
----
-
-## 🤖 AI Provider Configuration
-
-### Adding a New Provider
-```typescript
-// src/modules/settings/domain/providers.ts
-providerRegistry.register({
-  id: "my_provider",
-  displayName: "My Provider",
-  group: "ai",
-  envVar: "MY_PROVIDER_API_KEY",
-  description: "Description for UI",
-  docsUrl: "https://docs.example.com",
-  verify: { url: "https://api.example.com/health", method: "GET", header: "Authorization" },
-  fields: [
-    { key: "api_key", label: "API Key", kind: "text", required: true, secret: true },
-  ],
-});
-```
-
-### Model Cost Tiers
-Models auto-grouped in Model Routing Console:
-- **Free** — $0/M tokens
-- **Low Cost** — <$0.50/M
-- **Medium Cost** — $0.50–$2/M
-- **High Cost** — $2–$10/M
-- **Premium** — >$10/M
-
----
-
-## 📱 Candidate Assessment Flow
-
-```
-1. Recruiter schedules assessment → Creates candidate_attempts row with access_token
-2. WhatsApp dispatcher sends link: https://domain.com/test/demo-attempt-token-fin01
-3. Candidate opens link → Server validates token & link_expires_at
-4. First access → Sets started_at, expires_at = started_at + time_limit_minutes
-5. Client timer starts (validated server-side on each action)
-6. Candidate completes questions → Responses saved to candidate_responses
-7. Timer expires OR manual submit → Status = SUBMITTED, auto-grade triggered
-8. Results appear in Candidate Browser with AI evaluation
-```
+### Database
+Apply `supabase/schema.sql` (consolidated DDL) or the migrations in `supabase/migrations/` (001–029), then `supabase/seed.sql` for demo data. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
 
 ---
 
 ## 🔧 Key Scripts
 
 ```bash
-# Type checking
-pnpm tsc --noEmit
+npm run dev                 # dev server (Turbopack)
+npm run build               # build (prebuild: check-staff-routes + check-themes)
+npm run lint                # ESLint
+npm run check:routes        # validate staff route / permission coverage
+npm run check:themes        # validate theme token coverage
 
-# Linting
-pnpm lint
-
-# Build
-pnpm build
-
-# Supabase migration helpers
-supabase migration new <name>
-supabase db push
-supabase db reset
-
-# Generate encryption key (run once)
-node scripts/generate-encryption-key.mjs
-
-# Generate TypeScript types from Supabase
-supabase gen types typescript --project-id lbxdeceropsxwohnzinl > src/types/database.ts
+node scripts/generate-encryption-key.mjs   # AES key (run once)
+node scripts/apply-migration.mjs <file>    # apply one SQL migration
+node scripts/dump-schema.mjs               # dump live DB schema to schema.sql
+node scripts/verify-schema.mjs             # verify schema against expectations
+node scripts/create-staff.mjs              # bootstrap a staff account
+node scripts/audit-secrets.mjs             # scan the repo for leaked secrets
 ```
 
 ---
 
-## 📦 Deployment
+## 🛡 Security (summary)
 
-### Vercel (Recommended)
-1. Connect GitHub repository
-2. Add environment variables from `.env.local`
-3. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SETTINGS_ENCRYPTION_KEY`
-4. Deploy
-
-### Docker
-```dockerfile
-# Dockerfile.example
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --production
-COPY . .
-RUN npm run build
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
----
-
-## 🧪 Testing
-
-```bash
-# Unit tests (when added)
-pnpm test
-
-# E2E tests (when added)
-pnpm test:e2e
-
-# Manual assessment test
-# 1. Go to /test/demo-attempt-token-fin01
-# 2. Complete Excel model, video pitch, case study, quiz
-# 3. Verify auto-submit on timer expiry
-```
-
----
-
-## 📚 Documentation
-
-- [Prompt & Project Spec](prompt.md) — Complete requirements & architecture
-- [Database Schema](supabase/schema.sql) — Full DDL + RLS + Seed
-- [API Types](src/types/index.ts) — All TypeScript interfaces
-- [Provider Registry](src/modules/settings/domain/providers.ts) — Dynamic provider system
-
----
-
-## 🛡 Security
-
-- **Encryption**: AES-256-GCM for all stored API keys (`SETTINGS_ENCRYPTION_KEY`)
-- **RLS**: Row Level Security on every table with custom PostgreSQL functions
-- **Tokens**: 128-bit unguessable `access_token` for candidate attempts
-- **Secrets**: Never logged, never sent to browser, decrypted only at request time
-- **Audit Log**: All credential changes tracked with actor, action, detail
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/amazing-feature`
-3. Ensure `pnpm tsc --noEmit` passes
-4. Commit: `git commit -m 'Add amazing feature'`
-5. Push: `git push origin feature/amazing-feature`
-6. Open Pull Request
+- AES-256-GCM encryption for stored API keys (`SETTINGS_ENCRYPTION_KEY`)
+- Row Level Security on every table with custom PostgreSQL helper functions
+- 128-bit unguessable `access_token` per candidate attempt
+- Secrets decrypted only at request time, never sent to the browser; `scripts/audit-secrets.mjs` guards the repo
+- Full audit trail (`activity_log`, `credential_audit_log`, `settings_audit_log`)
+- Details: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) · [docs/DATABASE.md](docs/DATABASE.md#rls-policies)
 
 ---
 
@@ -347,13 +167,4 @@ Private proprietary software. All rights reserved — Sharm Dreams Group.
 
 ---
 
-## 🙋 Support
-
-- **Issues**: GitHub Issues (internal)
-- **Architecture Questions**: See `prompt.md` for complete specification
-- **Database Changes**: Create migration in `supabase/migrations/`
-- **New Providers**: Register in `src/modules/settings/domain/providers.ts`
-
----
-
-**Built with ❤️ for Sharm Dreams Group** — Hospitality, Real Estate, Commercial Development & Corporate Shared Services
+**Built for Sharm Dreams Group** — Hospitality, Real Estate, Commercial Development & Corporate Shared Services
