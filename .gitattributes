@@ -1,0 +1,12 @@
+# The self-host stack's env contract and compose files are read byte-exact by
+# Docker and by Node interpolating a secret; a CR appended to AUTH_JWT_SECRET
+# makes PostgREST and the app disagree about who is signed in.
+#
+# The Caddyfile, initdb SQL and cron script paths are listed before Tasks 2, 3
+# and 16 create them; a rule for a path that does not exist yet is inert.
+docker/.env.example text eol=lf
+docker/*.yml text eol=lf
+docker/**/*.yml text eol=lf
+docker/Caddyfile text eol=lf
+docker/db/initdb/*.sql text eol=lf
+docker/cron/*.sh text eol=lf

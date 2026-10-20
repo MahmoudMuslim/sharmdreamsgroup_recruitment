@@ -24,7 +24,8 @@ services:
       - -c
       - pg_stat_statements.track=top
     ports:
-      - "${LOCAL_DB_PORT:-54320}:5432"
+      # 127.0.0.1 only: `rest` reaches `db` by service name on the compose network, so this published port exists purely for host probes and must never be LAN-routable with the repo-known dev password.
+      - "127.0.0.1:${LOCAL_DB_PORT:-54320}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./db/initdb:/docker-entrypoint-initdb.d:ro
