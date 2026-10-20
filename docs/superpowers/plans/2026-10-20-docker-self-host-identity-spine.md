@@ -521,6 +521,8 @@ git commit -m "feat(docker): create the Supabase roles and extensions the schema
 - Produces: `auth.users` (with `encrypted_password`), `auth.uid()`, `auth.jwt()`, `auth.role()`, `storage.buckets`, `storage.objects`, `storage.foldername(text)`; a local database holding the 41 tables and 94 policies; `npm run db:apply-local`.
 - Consumes: Task 3 roles. Task 9's `passwords.ts` reads `auth.users.encrypted_password`; Task 7's parity gate reads the policies.
 
+**Read `scripts/local-supabase-stub.sql` before writing Step 1 and Step 2.** That stub — not these two files — is what §13's throwaway proof actually applied: `apply-proof-schema.mjs` runs the stub, then `supabase/schema.sql` with only the `supabase_vault` line regexed out, and its PASS is where the `tables: 41, policies: 94, functions: 15, triggers: 15, buckets: 4` figures in Step 5 come from. So the stub is the empirically proven surface and these two files are a rewrite of it from the spec. Anything the stub has that Step 1/Step 2 omit — a column `schema.sql` inserts into, a grant one of the 94 policies needs, a helper function a policy calls — turns Step 5 into a hard error or a silently lower count. Where this plan is deliberately narrower (no `auth.identities`, no `auth.sessions`, no `supabase_vault`), prove `schema.sql` never touches it; where it is accidentally narrower, carry the missing object over and say so in the report.
+
 - [ ] **Step 1: Write `docker/db/initdb/02-auth-users.sql`.** The two `auth` helpers are the whole reason this migration is a re-point, so read the comments before changing anything.
 
 ```sql
