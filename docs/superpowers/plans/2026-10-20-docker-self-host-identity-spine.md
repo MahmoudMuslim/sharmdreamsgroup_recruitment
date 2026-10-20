@@ -708,12 +708,21 @@ if (!local.LOCAL_DB_PASSWORD) {
   process.exit(1);
 }
 
-const url = `postgresql://postgres:${local.LOCAL_DB_PASSWORD}@localhost:${local.LOCAL_DB_PORT || 54320}/sharm_dreams`;
 const sql = readFileSync(join(root, "supabase", "schema.sql"), "utf8");
 
-const c = new Client({ connectionString: url, connectionTimeoutMillis: 15000 });
+// Field-based, not a URL: a URI would need the password percent-encoded, and a
+// rotated password containing @, / or % silently misparses into the wrong
+// database name.
+const c = new Client({
+  user: "postgres",
+  password: local.LOCAL_DB_PASSWORD,
+  host: "localhost",
+  port: Number(local.LOCAL_DB_PORT) || 54320,
+  database: "sharm_dreams",
+  connectionTimeoutMillis: 15000,
+});
 await c.connect();
-if (/create extension if not exists "supabase_vault"/.test(sql)) {
+if (/^create extension if not exists "supabase_vault"/m.test(sql)) {
   await c.end();
   console.error(
     "supabase/schema.sql still creates supabase_vault, which a vanilla image\n" +
