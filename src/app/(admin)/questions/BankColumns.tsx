@@ -69,7 +69,7 @@ function BankCard({
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        "space-y-2 rounded-xl border border-brand-line bg-white p-3 shadow-soft transition",
+        "min-w-0 space-y-2 rounded-xl border border-brand-line bg-white p-3 shadow-soft transition",
         canWrite && "cursor-grab active:cursor-grabbing",
         dragging && "opacity-40",
         busy && "opacity-70",
@@ -78,18 +78,20 @@ function BankCard({
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 flex-1 text-[13px] font-semibold leading-snug">{question.text}</p>
+        <p className="min-w-0 flex-1 break-words text-[13px] font-semibold leading-snug">
+          {question.text}
+        </p>
         {canWrite && <GripVertical className="h-4 w-4 shrink-0 text-brand-ink/25" aria-hidden />}
       </div>
 
       {question.guidance && (
-        <p className="line-clamp-2 text-[11px] leading-relaxed text-brand-ink/55">
+        <p className="line-clamp-2 break-words text-[11px] leading-relaxed text-brand-ink/55">
           {question.guidance}
         </p>
       )}
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <Badge>{KIND_LABELS[question.kind]}</Badge>
+        <Badge className="max-w-full">{KIND_LABELS[question.kind]}</Badge>
         {question.points !== null && <Badge>{question.points} marks</Badge>}
         {question.isLive ? (
           <Badge tone="success">Asked</Badge>
@@ -104,6 +106,11 @@ function BankCard({
             <span className="sr-only">
               {dropVerb(store)} “{question.text}” to another {store === "gate" ? "role" : "suite"}
             </span>
+            {/* `min-w-0 flex-1` is what keeps the card inside its column. A select
+                sizes itself to its widest option, and the options here are job and
+                suite titles a recruiter wrote — one long name used to push the row
+                past the card's border and over the column beside it. The dropdown
+                still shows every title in full. */}
             <select
               value=""
               disabled={busy}
@@ -111,7 +118,7 @@ function BankCard({
                 const next = event.target.value;
                 if (next) onDrop(next);
               }}
-              className="rounded-lg border border-brand-line bg-white px-2 py-1 text-[11px] font-semibold text-brand-ink/65 focus:border-brand-gold focus:outline-none disabled:opacity-60"
+              className="min-w-0 flex-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[11px] font-semibold text-brand-ink/65 focus:border-brand-gold focus:outline-none disabled:opacity-60"
             >
               <option value="">{dropVerb(store)}…</option>
               {others.map((column) => (
@@ -122,12 +129,12 @@ function BankCard({
             </select>
           </label>
         ) : (
-          <span className="text-[11px] text-brand-ink/35">
+          <span className="min-w-0 flex-1 break-words text-[11px] text-brand-ink/35">
             {canWrite ? "Nowhere else to drop it" : "Read only"}
           </span>
         )}
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-brand-gold-dark" aria-hidden />}
           <button
             type="button"
@@ -302,7 +309,7 @@ export function BankColumns({
                   {column.state}
                 </p>
                 <p
-                  className="text-[11px] leading-relaxed text-brand-ink/45"
+                  className="break-words text-[11px] leading-relaxed text-brand-ink/45"
                   title={column.refuse ? `${column.note} ${column.refuse}` : column.note}
                 >
                   {column.refuse ?? column.note}
