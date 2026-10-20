@@ -112,7 +112,7 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
   return (
     <div className="grid gap-5 lg:grid-cols-[19rem_minmax(0,1fr)]">
       <aside className="min-w-0">
-        <Card className="flex max-h-[34rem] flex-col overflow-hidden lg:max-h-[calc(100vh-12rem)]">
+        <Card className="flex max-h-[34rem] flex-col overflow-hidden lg:max-h-[calc(100vh-8rem)]">
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-brand-line px-4 py-3">
             <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
               <History className="h-3.5 w-3.5" aria-hidden />
@@ -272,7 +272,12 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
         </p>
       </aside>
 
-      <Card className="flex h-[calc(100vh-12rem)] min-h-[34rem] flex-col overflow-hidden">
+      {/*
+        The conversation is the tall half of this page: the messages scroll inside
+        the box and the composer stays at its foot. The rail above carries the same
+        offset, so the two columns end level.
+      */}
+      <Card className="flex h-[calc(100vh-8rem)] min-h-[42rem] flex-col overflow-hidden">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-brand-line bg-brand-cream px-5 py-3">
           <p className="min-w-0 truncate font-display text-sm font-bold text-brand-ink">
             {active ? active.title : "New conversation"}
