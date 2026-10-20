@@ -583,11 +583,15 @@ create table if not exists auth.users (
 -- Correction #2 vs the old stub: modern PostgREST sets only the JSON
 -- `request.jwt.claims` GUC. The stub's `request.jwt.claim.sub` (singular) never
 -- exists, which is why the proof passed without ever proving evaluation.
--- The `::uuid` cast is inside nullif-safe SQL so a malformed claim cannot abort
--- a policy; a bad claim must fail closed, i.e. return no rows, not 500.
+-- The cast must wrap the WHOLE expression: `(… ->> 'sub')::uuid`. A SQL function
+-- declared `returns uuid` cannot simply SELECT a text value — measured on
+-- postgres:17-alpine, that shape fails at CREATE FUNCTION with `return type
+-- mismatch in function declared to return uuid / Actual return type is text`,
+-- because pg_cast has no text→uuid row (castcontext would have to be 'i' or
+-- 'a'). The explicit cast is an I/O conversion, which is legal here.
 create or replace function auth.uid() returns uuid
 language sql stable as
-$$ select nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub' $$;
+$$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
 
 create or replace function auth.jwt() returns jsonb
 language sql stable as
@@ -647,7 +651,7 @@ grant execute on function storage.foldername(text) to anon, authenticated, servi
 
 - [ ] **Step 3: Make `supabase/schema.sql` applyable on a vanilla image.** Two lines go, and a marker goes in. Read the note below before touching anything else in the file.
 
-Delete lines 30–31 (`create schema if not exists vault;` and `create extension if not exists "supabase_vault" with schema extensions;`) — nothing in `src/` uses Vault (spec §12), and the `create extension` is a hard error on `postgres:17-alpine`, which is why [scripts/apply-proof-schema.mjs:29](file:///D:/Nextjs%20Projects/sharm_dreams_group/scripts/apply-proof-schema.mjs#L29) had to regex it out.
+Delete lines 30–31 (`create schema if not exists vault;` and `create extension if not exists "supabase_vault" with schema vault;`) — nothing in `src/` uses Vault (spec §12), and the `create extension` is a hard error on `postgres:17-alpine` (the `.control` file is not in the image, and `IF NOT EXISTS` does not cover a missing extension), which is why [scripts/apply-proof-schema.mjs:29](file:///D:/Nextjs%20Projects/sharm_dreams_group/scripts/apply-proof-schema.mjs#L29) had to regex it out. Line 30 goes with it because line 31 is the only thing that ever populated `vault`.
 
 ```bash
 grep -n 'vault' supabase/schema.sql
