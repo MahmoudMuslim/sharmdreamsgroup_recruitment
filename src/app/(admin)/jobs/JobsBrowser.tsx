@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { BriefcaseBusiness, CalendarClock, MapPin, Search, Users } from "lucide-react";
 import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
-import { isHireable } from "@/modules/jobs/domain/hireable";
+import { gridWindowNote, isHireable } from "@/modules/jobs/domain/hireable";
+import { Pagination } from "@/modules/analytics/presentation/Pagination";
+import { PAGE_PARAM, PAGE_ROWS, clampPage, pageFromParams, pageSlice, pageWindow } from "@/lib/paging";
 import { JobCardActions } from "./JobCardActions";
 import { JobApplicantsDrawer } from "./JobApplicantsDrawer";
 import type { JobForEdit, JobFormOptions } from "./JobFormDrawer";
@@ -82,11 +84,17 @@ function closingLabel(closingAt: string | null) {
  */
 export function JobsBrowser({
   jobs,
+  scopeTotal,
   options,
   canManage,
   canDecide,
 }: {
   jobs: JobRow[];
+  /**
+   * Every opening the scope holds, including the ones this bounded read did not
+   * carry. The strip counts this; the rails and the search count `jobs`.
+   */
+  scopeTotal: number;
   options: JobFormOptions;
   canManage: boolean;
   /** `candidates.write` — who may move an applicant between stages from the drawer. */
@@ -103,6 +111,12 @@ export function JobsBrowser({
    */
   const status = railToken(params.get("status"));
   const company = params.get("company") ?? "";
+  const page = pageFromParams(params);
+
+  // `?job=` is where the assistant's "View the opening" link lands. The opening
+  // is ringed and brought into view rather than filtered to, so the recruiter
+  // still sees where it sits among the rest.
+  const focusId = params.get("job");
 
   // `?q=` seeds the box, so an assistant answer that searched for a role links to
   // a grid showing the same openings. The words stay local while they are typed:
@@ -110,6 +124,8 @@ export function JobsBrowser({
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
   const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
+  /** Which `?job=` link this grid has already turned a page for. */
+  const jumpedFor = useRef<string | null>(null);
 
   // Arriving on the same route with different words — a chat link clicked while
   // the grid is already open — re-renders this component rather than remounting
@@ -124,42 +140,53 @@ export function JobsBrowser({
   }
 
   /**
-   * Move a rail and put the view into the URL.
+   * Put the view into the URL.
    *
    * `history.replaceState` is enough here and is chosen over a router push on
    * purpose: this Next build patches those calls into the router, so
    * `useSearchParams` re-renders with the new query while the openings the
    * client already holds do the filtering — a rail on this grid is a view of
-   * rows already loaded, not a fresh question to the database. A rail click
-   * replaces the history entry, so Back leaves the page instead of replaying
-   * chips, and it carries the search words along because both filters are the
-   * grid's own. `?job=` goes, and with it the applicants drawer: a rail is a
+   * rows already loaded, not a fresh question to the database. It replaces the
+   * history entry, so Back leaves the page instead of replaying chips, and it
+   * carries the search words and the page along because all three are the grid's
+   * own. A rail drops `?job=`, and with it the applicants drawer: a rail is a
    * question about the set, not about one opening, and the ring or the open
-   * drawer may be pointing at a row the new rail no longer shows.
+   * drawer may be pointing at a row the new rail no longer shows. A new word or a
+   * page keeps it, because the reader is still looking for that one role.
+   *
+   * Omitting `page` is not "keep the page" — it is page 1, which is what a rail
+   * click or a new word means. The pager is the only caller that names one.
    */
-  function openRail(rail: { status?: string; company?: string }) {
-    setApplicantsJob(null);
+  function writeView(
+    view: {
+      status?: string;
+      company?: string;
+      query?: string;
+      page?: number;
+      /** `null` drops the ringed opening; omitted means the link stays. */
+      job?: string | null;
+    } = {}
+  ) {
+    const statusToken = "status" in view ? (view.status ?? "") : status;
+    const companyToken = "company" in view ? (view.company ?? "") : company;
+    const words = "query" in view ? (view.query ?? "") : query;
+    const target = "page" in view ? (view.page ?? 1) : 1;
     const next = new URLSearchParams();
-    const statusToken = "status" in rail ? (rail.status ?? "") : status;
-    const companyToken = "company" in rail ? (rail.company ?? "") : company;
     if (statusToken) next.set("status", statusToken);
     if (companyToken) next.set("company", companyToken);
-    if (query.trim()) next.set("q", query);
+    if (words.trim()) next.set("q", words);
+    if (target > 1) next.set(PAGE_PARAM, String(target));
+    const ringed = "job" in view ? view.job : focusId;
+    if (ringed) next.set("job", ringed);
     const search = next.toString();
     window.history.replaceState(null, "", search ? `${pathname}?${search}` : pathname);
   }
 
-  // `?job=` is where the assistant's "View the opening" link lands. The opening
-  // is ringed and brought into view rather than filtered to, so the recruiter
-  // still sees where it sits among the rest.
-  const focusId = params.get("job");
-
-  useEffect(() => {
-    if (!focusId) return;
-    document
-      .getElementById(`opening-${focusId}`)
-      ?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [focusId]);
+  /** A rail is a question about the set, so it starts at page 1 and drops the ring. */
+  function openRail(rail: { status?: string; company?: string }) {
+    setApplicantsJob(null);
+    writeView({ ...rail, job: null });
+  }
 
   const companyNames = useMemo(() => {
     const map = new Map(options.companies.map((c) => [c.id, c.name]));
@@ -191,17 +218,62 @@ export function JobsBrowser({
    * find by title must not be one the grid finds seconds later. A company is
    * resolved to its name first, because that is what a recruiter types.
    */
-  const visible = useMemo(() => {
-    const rows = searchOpenings(
-      jobs
-        .filter((job) => onRail(job, status) && (!company || job.tenant_id === company))
-        .map((job) => ({ ...job, company_name: companyNames(job.tenant_id) })),
-      query
-    );
-    if (sortBy === "applicants") rows.sort((a, b) => applicantsOf(b) - applicantsOf(a));
-    else if (sortBy === "title") rows.sort((a, b) => a.title.localeCompare(b.title));
-    return rows;
-  }, [jobs, status, company, query, sortBy, companyNames]);
+  /*
+   * No `useMemo` here: the compiler memoizes this on its own, and the manual
+   * memo could not be preserved once the page arithmetic below read the array —
+   * a grid of at most a few hundred rows is not the thing worth guarding.
+   */
+  const visible = searchOpenings(
+    jobs
+      .filter((job) => onRail(job, status) && (!company || job.tenant_id === company))
+      .map((job) => ({ ...job, company_name: companyNames(job.tenant_id) })),
+    query
+  );
+  if (sortBy === "applicants") visible.sort((a, b) => applicantsOf(b) - applicantsOf(a));
+  else if (sortBy === "title") visible.sort((a, b) => a.title.localeCompare(b.title));
+
+  /**
+   * One page of whatever the rails and the words match.
+   *
+   * The shared page size, because the grid is a wall of cards and 25 of them is
+   * already a long scroll. A `?page=` past the end of the filtered set comes back
+   * as the last page that has openings — an address a recruiter copied from an
+   * older, wider view should show rows, not an empty grid with a pager on it.
+   */
+  const shownPage = clampPage(page, visible.length);
+  const pageRows = pageSlice(visible, shownPage);
+  const pager = pageWindow(shownPage, visible.length, pageRows.length);
+  const windowNote = gridWindowNote(scopeTotal, jobs.length);
+
+  /**
+   * Which page of the matched set the ringed opening sits on, 0 when the link
+   * names a row this view does not hold. A number rather than the row, so the
+   * effect below depends on arithmetic and not on the grid's own array.
+   */
+  const focusIndex = focusId ? visible.findIndex((job) => job.id === focusId) : -1;
+  const focusPage = focusIndex < 0 ? 0 : Math.floor(focusIndex / PAGE_ROWS) + 1;
+
+  useEffect(() => {
+    if (!focusId) return;
+    const target = document.getElementById(`opening-${focusId}`);
+    if (target) {
+      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      return;
+    }
+    /*
+     * The ringed opening is in the set but not on this page — new since the grid
+     * was paginated, and the one case where a link has to move the view rather
+     * than point at it. Jump once: `jumpedFor` keeps the pager usable afterwards,
+     * so a reader who clicks "Older" is not pulled back onto the linked row.
+     */
+    if (jumpedFor.current === focusId || !focusPage || focusPage === shownPage) return;
+    jumpedFor.current = focusId;
+    writeView({ page: focusPage });
+    // `writeView` is a plain closure over this render's address bar, and the jump
+    // is guarded by `jumpedFor`, so it runs once per link — naming it as a
+    // dependency would re-run the effect on every render and re-scroll the grid.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, focusPage, shownPage]);
 
   if (jobs.length === 0) {
     return (
@@ -220,12 +292,15 @@ export function JobsBrowser({
       {/* Summary strip */}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-brand-line bg-white px-5 py-3.5 shadow-soft">
         <span className="text-sm text-brand-ink/60">
-          <strong className="font-display text-lg text-brand-ink">{jobs.length}</strong> openings
+          <strong className="font-display text-lg text-brand-ink">
+            {scopeTotal.toLocaleString()}
+          </strong>{" "}
+          openings
         </span>
         <span className="inline-flex items-center gap-1.5 text-sm text-brand-ink/60">
           <Users className="h-4 w-4 text-brand-gold-dark" aria-hidden />
           <strong className="font-display text-base text-brand-ink">{totalApplicants}</strong>{" "}
-          applicants in total
+          {windowNote ? "applicants in the rows here" : "applicants in total"}
         </span>
         {STATUSES.map((s) =>
           (statusCounts.get(s) ?? 0) > 0 ? (
@@ -235,6 +310,14 @@ export function JobsBrowser({
           ) : null
         )}
       </div>
+
+      {/* The strip's own asterisk: the total above is the database's, the chips
+          under it are the newest rows this browser holds, and when those are two
+          different sets the grid has to say so rather than let the reader find
+          out by searching for a role that is not on the page. */}
+      {windowNote && (
+        <p className="text-[11px] leading-relaxed text-brand-ink/50">{windowNote}</p>
+      )}
 
       {/* Toolbar */}
       <div className="space-y-2.5">
@@ -247,7 +330,13 @@ export function JobsBrowser({
             <input
               type="search"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                // A deep page belongs to the words that produced it. New words
+                // are a new front of the list, so the page goes back in the URL
+                // with them — once, on the keystroke that leaves a page behind.
+                if (shownPage > 1) writeView({ query: e.target.value });
+              }}
               placeholder={`Search ${openingSearchWords()}`}
               aria-label="Search openings"
               className="w-full rounded-xl border border-brand-line bg-white py-2.5 pl-10 pr-3 text-sm focus:border-brand-gold focus:outline-none"
@@ -263,7 +352,7 @@ export function JobsBrowser({
             <option value="applicants">Most applicants</option>
             <option value="title">Title A–Z</option>
           </select>
-          <span className="text-xs text-brand-ink/50">
+          <span className="text-xs text-brand-ink/50" title={`Of ${jobs.length} in this browser`}>
             {visible.length} of {jobs.length}
           </span>
         </div>
@@ -318,7 +407,7 @@ export function JobsBrowser({
         </Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {visible.map((job) => {
+          {pageRows.map((job) => {
             const applicants = applicantsOf(job);
             const closes = job.status === "PUBLISHED" ? closingLabel(job.closing_at) : null;
             const salary = formatSalaryRange(
@@ -411,6 +500,16 @@ export function JobsBrowser({
           })}
         </div>
       )}
+
+      {/* The pager sits outside that choice on purpose: an empty set has no page
+          to turn, and `Pagination` answers a one-page scope by drawing nothing —
+          so the same line serves the grid and stays out of the way of the empty
+          state above it. */}
+      <Pagination
+        window={pager}
+        noun="openings"
+        onChange={(next) => writeView({ page: next })}
+      />
 
       {applicantsJob && (
         <JobApplicantsDrawer

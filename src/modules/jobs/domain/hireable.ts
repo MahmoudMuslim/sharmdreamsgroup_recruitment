@@ -26,6 +26,17 @@ export const HIREABLE_STATUSES: readonly JobStatus[] = ["DRAFT", "PUBLISHED", "P
 export const PICKER_LIMIT = 200;
 
 /**
+ * How many openings the /jobs grid may hold in the browser at once.
+ *
+ * The grid filters its rails and its search box over the rows it already has,
+ * because the counts on the chips are the information and a rail that costs a
+ * round trip per click would not answer instantly. So the read is bounded instead
+ * of open-ended: the newest `GRID_ROW_LIMIT` openings come back with the exact
+ * size of the scope beside them, and `gridWindowNote` says what is not in hand.
+ */
+export const GRID_ROW_LIMIT = 200;
+
+/**
  * How many openings one read answers with.
  *
  * Smaller than a picker on purpose: a list of openings goes into the assistant's
@@ -81,6 +92,21 @@ export function pickerWindowNote(total: number, loaded: number): string | null {
 }
 
 /**
+ * Said out loud when the grid could not carry every opening in the scope.
+ *
+ * The grid's chips, its applicant total and its search box all work over the rows
+ * it holds, so a truncated read has to say so: otherwise a recruiter who is told
+ * "3 draft openings" has no way to know the fourth is not in the browser.
+ */
+export function gridWindowNote(total: number, loaded: number): string | null {
+  if (total <= loaded) return null;
+  const dropped = total - loaded;
+  return `The grid carries the newest ${loaded.toLocaleString()} of the ${total.toLocaleString()} openings — one read holds ${GRID_ROW_LIMIT.toLocaleString()}, so ${dropped.toLocaleString()} older ${
+    dropped === 1 ? "role is" : "roles are"
+  } not in this browser, and the counts on the rails and the applicant total cover only the rows here.`;
+}
+
+/**
  * What an openings read is allowed to claim about its own scope.
  *
  * `scope` is the noun phrase the query asked for — "openings", "openings in
@@ -89,10 +115,11 @@ export function pickerWindowNote(total: number, loaded: number): string | null {
  *
  * `shown` and `search` are the two numbers a text search moves: the read still
  * carries `loaded`, but the answer now names fewer rows than that, and the words
- * only ever reached the rows in hand. The grid holds every opening the group has
- * and can therefore answer "there is no such role"; a chat answer searches the
- * newest `OPENING_READ_LIMIT` and says so, pointing at `/jobs` as the door that
- * can answer for the whole set.
+ * only ever reached the rows in hand. The grid reaches further than an answer does
+ * — it holds the newest `GRID_ROW_LIMIT` openings rather than the whole set — so
+ * `/jobs` is named as the door for the rows this read could not see, never as a
+ * place that can answer "there is no such role" about a set it also stopped short
+ * of. A chat answer searches the newest `OPENING_READ_LIMIT` and says so.
  */
 export function openingReadNote(
   total: number,
@@ -115,7 +142,7 @@ export function openingReadNote(
   }
   const window = `This answer names the newest ${loaded.toLocaleString()} of the ${total.toLocaleString()} ${scope} — one read carries ${OPENING_READ_LIMIT.toLocaleString()}, so ${dropped.toLocaleString()} older ${
     dropped === 1 ? "role is" : "roles are"
-  } not in it. /jobs lists them all.`;
+  } not in it. The Jobs grid reads deeper (${GRID_ROW_LIMIT.toLocaleString()} of them) and paginates them.`;
   if (!search) return window;
   const hits =
     shown === 0

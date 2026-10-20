@@ -171,6 +171,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     purpose: "The openings, who applied to each, and what they submitted.",
     shows: [
       "A summary strip, status rails and a Still hiring rail, a company rail, and one card per opening carrying its live applicant count.",
+      "Newer and Older under the cards — 25 openings to a page, and the page is in the address bar, so a copied link shows the same cards.",
     ],
     use: [
       "New opening, then Edit, Publish, Pause or Close. Close is how you stop a role that already has applicants.",
@@ -183,6 +184,8 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "A closed opening cannot be filed onto: linking, importing, converting or recording someone under it is refused until it reopens.",
       "Departments and locations come from Settings → Organisation. A retired or misspelt value is refused on a new write, and the drift desk there names the openings already carrying one.",
       "A card's count is live; the drawer lists the newest 200 applicants.",
+      "The grid holds the newest 200 openings in the browser — its rails, its search box and its page count those, while the strip's figure is the whole scope. When the two differ, a line under the strip names what is not here.",
+      "A rail, new search words or the assistant's link to one opening moves you to the page that holds it; anything else starts you back at the front.",
       "Writes need Manage jobs; a stage move inside the drawer needs Edit candidates.",
     ],
   },
