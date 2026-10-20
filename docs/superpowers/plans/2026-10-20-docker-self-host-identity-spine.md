@@ -1602,6 +1602,7 @@ git commit -m "feat(auth): mint and verify the HS256 session token that replaces
 **Files:**
 - Create: `src/lib/auth/db.ts`
 - Create: `src/lib/auth/passwords.ts`
+- Modify: `tsconfig.json`
 - Test: `scripts/prove-password-verify.mjs`
 
 **Interfaces:**
@@ -1661,7 +1662,11 @@ export function getAuthPool(): Pool {
 - [ ] **Step 3: Write `src/lib/auth/passwords.ts`.**
 
 ```ts
-import { getAuthPool } from "./db";
+// The extension is load-bearing, not stylistic. This module is imported by a
+// plain-Node probe (Task 8's note on probe resolution: an explicit `.ts`
+// specifier, a relative path, no loader), and Node's ESM resolver refuses an
+// extensionless `./db`. Step 4 enables the matching TypeScript option.
+import { getAuthPool } from "./db.ts";
 
 export type PasswordCheck =
   | { ok: true; userId: string }
@@ -1710,7 +1715,20 @@ export async function verifyStaffPassword(email: string, password: string): Prom
 }
 ```
 
-- [ ] **Step 4: Write and run `scripts/prove-password-verify.mjs`.**
+- [ ] **Step 4: Enable `.ts` import specifiers in `tsconfig.json`.**
+
+Add one line next to `"noEmit": true`:
+
+```jsonc
+"noEmit": true,
+"allowImportingTsExtensions": true,
+```
+
+Why the compiler needs this at all: Step 3's specifier is what lets `node scripts/prove-password-verify.mjs` load `passwords.ts`, and `tsc` answers `TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled` to it (measured — with the specifier changed and the flag absent, the project reports **3** `error TS` lines instead of the accepted 2). The option is legal precisely because this project has `"noEmit": true`: TypeScript refuses the pair of `.ts` specifiers plus emit, and this repo never emits from `tsc` — Next transpiles with its own bundler, which resolves `./db.ts` as a literal path.
+
+The option only *permits*: every existing extensionless specifier in `src/` keeps compiling, and the measured baseline after the change is the same two generated-artifact errors as before (`validator.ts(58,39) TS2307`, `validator.ts(66,69) TS2344` plus its one indented continuation). Remember the exit-code rule from Task 8: the first `tsc` run after a source edit exits **2**, an unchanged re-run exits **1**, with byte-identical diagnostics — read the gate on the output, never on the exit code.
+
+- [ ] **Step 5: Write and run `scripts/prove-password-verify.mjs`.**
 
 ```js
 /* scripts/prove-password-verify.mjs — Run: node scripts/prove-password-verify.mjs
@@ -1743,17 +1761,19 @@ console.log("  seeded user id:", good.userId);
 ```
 
 ```bash
-node --experimental-strip-types scripts/prove-password-verify.mjs
+node scripts/prove-password-verify.mjs
 ./node_modules/.bin/tsc --noEmit -p tsconfig.json
 ./node_modules/.bin/eslint src/lib/auth/db.ts src/lib/auth/passwords.ts
 ```
 
+No `--experimental-strip-types`: type stripping is unflagged in this Node major (measured on v24.21.0), and the flag is only accepted-and-redundant. Node will print `MODULE_TYPELESS_PACKAGE_JSON` because the repo's `package.json` has no `"type"` field; that warning is not a failure and the field must not be added — Next's own files and the repo's CommonJS-era scripts assume the default.
+
 Expected: the PASS line with a real uuid. A `function extensions.crypt(...) does not exist` means pgcrypto was not installed in the `extensions` schema — check `select extname, extnamespace::regnamespace from pg_extension where extname='pgcrypto'` before changing the call. A failure that *mentions* `$2a$` means the image's pgcrypto is older than the hash format — report the `select extversion from pg_extension where extname='pgcrypto'` value rather than switching to a Node library.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
-git add src/lib/auth/db.ts src/lib/auth/passwords.ts scripts/prove-password-verify.mjs docker/.env.example
+git add src/lib/auth/db.ts src/lib/auth/passwords.ts scripts/prove-password-verify.mjs docker/.env.example tsconfig.json
 git commit -m "feat(auth): verify staff passwords with pgcrypto over the local pool"
 ```
 
@@ -2938,7 +2958,7 @@ The admin surface is *not* a PostgREST problem — `auth` is deliberately outsid
 - Modify: the 6 other files that import `type { SupabaseClient }` — [question-actions.ts:4](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/app/%28admin%29/assessments/question-actions.ts#L4), `suite-authoring-actions.ts:4`, `cv-actions.ts:4`, `questions/actions.ts:4`, `changeWatch.ts:4`, `permissions.ts:5`
 
 **Interfaces:**
-- Consumes: `verifySessionToken()` (Task 8), `getPool()` (Task 9), `createRestClient()` (Task 11), the cookie jar.
+- Consumes: `verifySessionToken()` (Task 8), `getAuthPool()` (Task 9), `createRestClient()` (Task 11), the cookie jar.
 - Produces: `getSessionUser()` — **unchanged signature and unchanged `cache()` wrapper** — and `authAdmin` with `listUsers({ page, perPage })`, `createUser({ email, password, email_confirm, user_metadata })`, `updateUserById(id, patch)`, `deleteUser(id)`, each returning `{ data, error }` in supabase-js's shape so the 13 sites compile without restructuring.
 
 - [ ] **Step 1: Rewrite `getSessionUser`.** The `cache()` wrapper stays — task #327 exists precisely because one admin page asked half a dozen times and each `getUser()` was a network call. Verify is local now, but the *profile read is still a round trip*, so the wrapper still earns its keep.
@@ -3008,7 +3028,10 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
 
 ```ts
 import "server-only";
-import { getPool } from "@/lib/auth/db";
+// The `@/` alias is safe in this file and only in this file: `server-only`
+// means Next loads it, so no plain-Node probe has to resolve the specifier
+// (contrast Task 9's `./db.ts`, which a probe does import).
+import { getAuthPool } from "@/lib/auth/db";
 
 export interface AdminUserRow {
   id: string;
@@ -3101,7 +3124,7 @@ export const authAdmin = {
 
 async function run(text: string, values: unknown[]) {
   try {
-    return { rows: (await getPool().query(text, values)).rows, error: null };
+    return { rows: (await getAuthPool().query(text, values)).rows, error: null };
   } catch (cause) {
     const e = cause as { message?: string; code?: string };
     return { rows: [], error: { message: e.message ?? "Database error", code: e.code } };
