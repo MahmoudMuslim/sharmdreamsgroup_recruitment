@@ -1,6 +1,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
-import type { AssistantStep } from "@/modules/assistant/infrastructure/agent";
+import { MAX_HISTORY_ATTACHMENT_CHARS } from "@/modules/assistant/domain/attachments";
+import { withoutStepFileBytes, type AssistantStep } from "@/modules/assistant/infrastructure/agent";
 
 /**
  * Saved assistant conversations.
@@ -41,8 +42,6 @@ export type SaveTurnResult = { ok: true; sessionId: string } | { ok: false; erro
 
 /** Session titles are a label in a list, not a copy of the question. */
 const MAX_TITLE_CHARS = 80;
-/** Matches the clip the model was allowed to read, so a restore cannot exceed it. */
-const MAX_STORED_ATTACHMENT_CHARS = 12_000;
 
 type Row = Record<string, unknown>;
 
@@ -145,8 +144,10 @@ export async function saveAssistantTurn(input: {
       provider: null,
       note: null,
       attachment_name: input.attachment?.name ?? null,
+      // The same number an earlier turn's file still contributes to a live
+      // question, so reopening a thread gives the model what it was given then.
       attachment_text: input.attachment
-        ? input.attachment.text.slice(0, MAX_STORED_ATTACHMENT_CHARS)
+        ? input.attachment.text.slice(0, MAX_HISTORY_ATTACHMENT_CHARS)
         : null,
       created_at: askedAt.toISOString(),
     },
@@ -155,7 +156,7 @@ export async function saveAssistantTurn(input: {
       owner_id: ownerId,
       role: "assistant",
       content: input.reply,
-      steps: input.steps ?? [],
+      steps: withoutStepFileBytes(input.steps ?? []),
       model: input.model,
       provider: input.provider,
       note: input.note ?? null,

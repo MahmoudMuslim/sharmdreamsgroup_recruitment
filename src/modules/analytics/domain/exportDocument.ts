@@ -196,8 +196,14 @@ function printable(text: string): string {
   return out;
 }
 
-/** True when anything in this document loses characters to the PDF font. */
-function needsFontNote(doc: ExportDocument): boolean {
+/**
+ * True when anything in this document loses characters to the PDF font.
+ *
+ * Exported because the assistant's own file writer has to warn the recruiter on the
+ * download card, not only inside the file: a hiring report printed with `?` for
+ * every Arabic name should say so before somebody hands it to a client.
+ */
+export function needsFontNote(doc: ExportDocument): boolean {
   const changed = (value: string) => printable(value) !== value.trim();
   if (changed(doc.title) || changed(doc.description)) return true;
   for (const entry of doc.meta) {

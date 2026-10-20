@@ -1,4 +1,15 @@
 import { STAFF_ROUTES, type StaffRoute } from "@/lib/auth/staffRoutes";
+import {
+  ATTACHMENT_INPUT_ACCEPT,
+  MAX_HISTORY_ATTACHMENT_CHARS,
+  MAX_MATERIAL_CHARS,
+  MAX_UPLOAD_MB,
+} from "@/modules/assistant/domain/attachments";
+import {
+  GENERATED_FORMAT_LABEL,
+  MAX_FILE_BYTES,
+  formatBytes,
+} from "@/modules/assistant/domain/generatedFiles";
 
 /**
  * The page-by-page half of the app bar's Guide panel.
@@ -350,7 +361,9 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Ask in words: it reads candidates, openings, tests, the outbox, settings and the change trails, and answers with a table or a chart drawn by the portal from the figures it read.",
       "Instruct a change and nothing happens until you press Approve & run on the card. A delete also needs the Allow deletions switch, behind the Settings button. Ignoring the card leaves the record exactly as it is.",
       "Allow web search opens two lookups that leave the portal — search_web and read_web_page — about any subject: a pay band, a law, a competitor's ad, a release note, a company. The search belongs to this portal rather than to one engine, so it works whichever engine or model answers the turn, and the choice is remembered in this browser. Every lookup shows as a chip naming the words searched and the pages read; what comes back is advice with its source named and nothing it reads is written into a record. Lookups run on the OpenRouter key in Settings → API keys, so without one each chip refuses with the reason.",
-      "Attach a PDF, Word or text file for it to read, choose the answering engine at the top of the panel and the model behind Settings, and Rename, Delete or Reload a conversation.",
+      `Attach a file and it is read: ${ATTACHMENT_INPUT_ACCEPT.split(",").join(", ")}, up to ${MAX_UPLOAD_MB} MB. Ask a follow-up and the same text is still in front of the assistant for that conversation, as far back as the 12 turns it reads.`,
+      `Ask for a file — “put those rows in an Excel workbook” — and a card appears under the answer naming what is in it, with a Download button. It writes: ${GENERATED_FORMAT_LABEL}.`,
+      "Choose the answering engine at the top of the panel and the model behind Settings, and Rename, Delete or Reload a conversation.",
       "Edit and send again re-runs a turn you were not happy with.",
     ],
     edges: [
@@ -358,7 +371,10 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Never type a secret into this chat. The credential tool edits only non-secret fields, because your words are sent to the inference provider.",
       "Approvals live in the server's memory, so on a host that starts a fresh isolate per request the card answers that it is gone — and nothing changed.",
       "The Time Tracker and the activity trail have no tools while their tables stay unapplied.",
-      "Attachments are read, not stored: the first 12,000 characters reach the model.",
+      `Attachments are read, not stored: ${MAX_MATERIAL_CHARS.toLocaleString("en-GB")} characters of the file attached to your question reach the model and ${MAX_HISTORY_ATTACHMENT_CHARS.toLocaleString("en-GB")} of a file from an earlier turn, and the text the model is handed says how much of it was left out.`,
+      "The 97-2003 Office files (.doc, .xls, .ppt) and pictures are refused, with the door that works named: Save As .docx, .xlsx or .pptx, or paste the words. A file that opens but holds no text, like a scanned page, is refused the same way.",
+      `A built file is handed to your browser and nowhere else: it is not stored, so after a reload the card offers Build again and makes the file once more from the same rows. Its own size ceiling is ${formatBytes(MAX_FILE_BYTES)}.`,
+      "A file is made of rows a read tool returned in that conversation or lines from a file you attached — never of figures the model worked out — and whatever a ceiling cut short is printed on the card.",
     ],
   },
 

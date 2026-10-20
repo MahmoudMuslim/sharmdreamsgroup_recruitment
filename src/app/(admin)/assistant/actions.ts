@@ -23,15 +23,31 @@ import {
   type StoredAssistantMessage,
 } from "@/modules/assistant/infrastructure/transcriptStore";
 import { isAssistantEngine, type AssistantEngine } from "@/modules/assistant/domain/engine";
+import {
+  MAX_MATERIAL_CHARS,
+  MAX_UPLOAD_BYTES,
+  MATERIAL_NOTE_ROOM,
+  MIN_MATERIAL_CHARS,
+  READABLE_FORMAT_LABEL,
+  attachmentMatch,
+  clipMaterial,
+  materialFence,
+  uploadTooLarge,
+} from "@/modules/assistant/domain/attachments";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
 import { requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
 import { resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { getModelCatalogue } from "@/modules/settings/application/credential-actions";
 import {
-  CvExtractionError,
-  describeExtractionFailure,
-  extractCvText,
-} from "@/modules/screening/infrastructure/cvParser";
+  DocumentReadError,
+  readAssistantDocument,
+} from "@/modules/assistant/infrastructure/documentReader";
+import {
+  GeneratedFileError,
+  rebuildFileSpec,
+  type GeneratedFileManifest,
+} from "@/modules/assistant/domain/generatedFiles";
+import { writeAssistantFile } from "@/modules/assistant/infrastructure/fileWriter";
 import type { ChatCompletionMessage } from "@/types";
 
 /**
@@ -93,6 +109,8 @@ export type { AssistantEngine, AssistantSessionSummary, StoredAssistantMessage }
 export interface AssistantAttachment {
   name: string;
   text: string;
+  /** What the shared table calls the format, so the fence can name it. */
+  label?: string;
 }
 
 /** Turns kept from the client's transcript — enough for context, not for a novel. */
@@ -108,28 +126,6 @@ const MAX_MODEL_ID_CHARS = 160;
 const MODEL_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
 /** An approval id is a `randomUUID`, so anything else was never issued by this server. */
 const APPROVAL_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** An attached document is read, not stored; this is the part the model sees. */
-const MAX_ATTACHMENT_CHARS = 12_000;
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-
-const ATTACHMENT_MIME_TYPES = new Set([
-  "application/pdf",
-  "application/x-pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "text/plain",
-]);
-
-function normalizeMimeType(name: string, declared: string): string {
-  const kind = declared.trim().toLowerCase();
-  // The parser speaks PDF, Word and plain text. A .md file is plain text under a
-  // different label, and browsers are inconsistent about which label they send
-  // for one, so markdown is folded onto text/plain here rather than in the
-  // shared CV parser, which the screening path depends on.
-  if (kind === "text/markdown" || /\.(md|txt)$/i.test(name)) return "text/plain";
-  if (kind && ATTACHMENT_MIME_TYPES.has(kind)) return kind;
-  return kind || "";
-}
 
 /**
  * The recruiter's question, with the attached document's text underneath it.
@@ -141,13 +137,14 @@ function composePrompt(prompt: string, attachment?: AssistantAttachment): string
   const text = typeof attachment?.text === "string" ? attachment.text.trim() : "";
   if (!text) return prompt;
 
-  const clipped = text.slice(0, MAX_ATTACHMENT_CHARS);
-  const omitted =
-    text.length > clipped.length
-      ? `\n[… ${attachment?.name ?? "file"}: ${text.length - clipped.length} more characters not shown]`
-      : "";
+  const name = attachment?.name ?? "file";
+  // A file is clipped once, when it is read, and its "… N characters not shown"
+  // note travels with it. This cut exists for a transcript stuffed past the
+  // budget, so it leaves room for a note it did not write rather than chopping
+  // the one that is already there and quoting a number that no longer matches.
+  const clipped = clipMaterial(text, name, MAX_MATERIAL_CHARS + MATERIAL_NOTE_ROOM);
 
-  return `${prompt}\n\nAttached file “${attachment?.name ?? "file"}” — extracted text:\n"""\n${clipped}${omitted}\n"""`;
+  return `${prompt}\n\n${materialFence(name, clipped, attachment?.label)}`;
 }
 
 function sanitize(history: unknown): ChatCompletionMessage[] {
@@ -168,49 +165,71 @@ function sanitize(history: unknown): ChatCompletionMessage[] {
     .map((message) => ({
       role: message.role as "user" | "assistant",
       // A user turn that carried an attachment arrives with that text in it.
-      content: message.content.slice(0, MAX_MESSAGE_CHARS + MAX_ATTACHMENT_CHARS),
+      content: message.content.slice(0, MAX_MESSAGE_CHARS + MAX_MATERIAL_CHARS + MATERIAL_NOTE_ROOM),
     }))
     .filter((message) => message.content.trim().length > 0);
 }
 
 /**
- * Reads a file the recruiter attached and returns the text the model will see.
+ * Reads a file the recruiter attached and returns the material the model will see.
  *
- * Extraction is the same PDF/Word/plain-text path the screening engine uses, so
- * a CV parsed here reads the same as one parsed on apply. Nothing is stored —
- * the text lives in this request and in the chat history the next turn sends.
+ * The formats accepted are the ones this portal can read, decided by the table the
+ * file box was built from — so nothing the composer offered is refused here for
+ * being the wrong shape. PDF, Word and plain text go through the screening engine's
+ * own parser, so a CV says the same thing here as it does on the desk that scores
+ * it; a workbook, a CSV and a deck are printed as structure, because "which of
+ * these rows has no phone number" is a question about columns, not prose.
+ *
+ * Nothing is stored — the text lives in this request and in the chat history the
+ * next turn sends, each clipped to the number the shared table names.
  */
 export async function extractAssistantAttachmentText(
   formData: FormData
-): Promise<{ ok: boolean; error?: string; name?: string; text?: string }> {
+): Promise<{ ok: boolean; error?: string; name?: string; label?: string; text?: string }> {
   await requireStaff("/dashboard");
 
   const entry = formData.get("file");
   if (!(entry instanceof File)) return { ok: false, error: "No file was received." };
   if (entry.size === 0) return { ok: false, error: "That file is empty." };
-  if (entry.size > MAX_UPLOAD_BYTES) return { ok: false, error: "That file is larger than 8 MB." };
+  if (entry.size > MAX_UPLOAD_BYTES) return { ok: false, error: uploadTooLarge() };
 
-  const mimeType = normalizeMimeType(entry.name, entry.type);
-  if (!ATTACHMENT_MIME_TYPES.has(mimeType)) {
-    return { ok: false, error: "Attach a PDF, Word document, .txt or .md file." };
+  const match = attachmentMatch(entry.name, entry.type);
+  const kind = match.format?.kind;
+  if (!match.readable || !kind) {
+    return { ok: false, error: match.refusal ?? `Attach ${READABLE_FORMAT_LABEL}.` };
   }
 
   try {
-    const extracted = await extractCvText(Buffer.from(await entry.arrayBuffer()), mimeType);
-    const text = extracted.text.trim().slice(0, MAX_ATTACHMENT_CHARS);
-    if (text.length < 40) {
+    const document = await readAssistantDocument({
+      name: entry.name,
+      kind,
+      buffer: Buffer.from(await entry.arrayBuffer()),
+    });
+    const material = document.text.trim();
+    if (document.empty || material.length < MIN_MATERIAL_CHARS) {
       return {
         ok: false,
         error:
-          "No readable text could be taken from that file — a scanned PDF has no text layer, " +
-          "so paste the important parts into the chat instead.",
+          `That ${document.label} opens but holds no text the assistant can work with. ` +
+          "A scanned page has no text layer, so paste the important parts into the chat instead.",
       };
     }
-    return { ok: true, name: entry.name, text };
+    return {
+      ok: true,
+      name: entry.name,
+      label: document.label,
+      text: clipMaterial(material, entry.name),
+    };
   } catch (error) {
+    // The reader's own refusals are written for recruiters — a lying extension, an
+    // encrypted workbook. Anything else is reported as the format it was offered as,
+    // because that is the only part a recruiter can check.
     return {
       ok: false,
-      error: error instanceof CvExtractionError ? error.message : describeExtractionFailure(error),
+      error:
+        error instanceof DocumentReadError
+          ? error.message
+          : `That ${match.format?.label ?? "file"} could not be read. It may be damaged or encrypted.`,
     };
   }
 }
@@ -264,11 +283,11 @@ export async function sendAssistantMessage(input: {
   const history: ChatCompletionMessage[] = [
     ...sanitize(input.history),
     {
+      // Both halves are bounded where they are read — the question at the check
+      // above, the file inside `composePrompt` — so clipping the sentence that
+      // joins them here would only ever cut off the fence that closes it.
       role: "user",
-      content: composePrompt(prompt, input.attachment).slice(
-        0,
-        MAX_MESSAGE_CHARS + MAX_ATTACHMENT_CHARS
-      ),
+      content: composePrompt(prompt, input.attachment),
     },
   ];
 
@@ -354,6 +373,36 @@ export async function sendAssistantMessage(input: {
     return {
       ok: false,
       error: error instanceof Error ? error.message : "The assistant could not be reached.",
+    };
+  }
+}
+
+/**
+ * Builds a file again from the description its card kept.
+ *
+ * A built file's bytes are never stored anywhere, so reopening a conversation
+ * shows the card without a download. The card does keep the document description
+ * the writer was given, and rebuilding from that is what makes the button real a
+ * second time — the alternative is asking the model to re-read rows it may not be
+ * able to reach again. `rebuildFileSpec` sends the browser's copy back through the
+ * same ceilings the model's own request went through, so a stuffed one cannot skip
+ * a cap or name a format the writer does not know. Like the tool, this writes no
+ * record and needs no approval.
+ */
+export async function rebuildAssistantFile(
+  spec: unknown
+): Promise<{ ok: true; file: GeneratedFileManifest } | { ok: false; error: string }> {
+  await requireStaff("/assistant");
+
+  try {
+    return { ok: true, file: await writeAssistantFile(rebuildFileSpec(spec)) };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof GeneratedFileError
+          ? error.message
+          : "That file could not be built again. Ask for it in a new message.",
     };
   }
 }

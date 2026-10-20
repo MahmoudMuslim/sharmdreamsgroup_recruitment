@@ -27,6 +27,7 @@ import {
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool } from "@/modules/assistant/domain/charts";
+import { fileChipLine, splitFilePayload } from "@/modules/assistant/domain/generatedFiles";
 import { fitResult } from "@/modules/assistant/domain/resultBudget";
 import {
   ASSISTANT_RULES,
@@ -191,7 +192,8 @@ function definitionFor(
     }
 
     try {
-      const value = await tool.run(input);
+      const built = splitFilePayload(await tool.run(input));
+      const value = built.forModel;
       const ask = tool.name === "ask_question" ? asQuestion(value) : null;
       if (ask) enders.push({ kind: "ask", question: ask });
       const detail = ask
@@ -207,11 +209,15 @@ function definitionFor(
         label: tool.label,
         ok,
         // A lookup's answer is a page list, so the chip carries the query and the
-        // hosts instead of the JSON the model is handed below.
-        detail: (tool.web ? webChip(value) : detail).slice(0, 220),
+        // hosts instead of the JSON the model is handed below. A built file's chip
+        // carries its name and size, because the JSON it made is not on screen.
+        detail: (
+          built.file ? fileChipLine(built.file) : tool.web ? webChip(value) : detail
+        ).slice(0, 220),
         link: linkForTool(tool.name, input, value) ?? undefined,
         ask: ask ?? undefined,
         chart: chartForTool(tool.name, value) ?? undefined,
+        file: built.file,
       });
       return { content: [{ type: "text", text: detail }], isError: !ok };
     } catch (error) {

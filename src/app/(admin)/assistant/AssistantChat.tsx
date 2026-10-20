@@ -7,6 +7,7 @@ import {
   Check,
   Clock,
   CornerUpLeft,
+  Download,
   ExternalLink,
   FileText,
   History,
@@ -15,6 +16,7 @@ import {
   Loader2,
   Paperclip,
   Plus,
+  RotateCcw,
   Send,
   ShieldCheck,
   Sparkles,
@@ -30,6 +32,24 @@ import type { AssistantChart } from "@/modules/assistant/domain/charts";
 import type { AssistantLink } from "@/modules/assistant/domain/links";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import type { AssistantApproval } from "@/modules/assistant/domain/approvals";
+import {
+  ATTACHMENT_INPUT_ACCEPT,
+  MATERIAL_NOTE_ROOM,
+  MAX_HISTORY_ATTACHMENT_CHARS,
+  MAX_MATERIAL_CHARS,
+  MAX_UPLOAD_BYTES,
+  MAX_UPLOAD_MB,
+  READABLE_FORMAT_LABEL,
+  clipMaterial,
+  materialFence,
+  uploadTooLarge,
+} from "@/modules/assistant/domain/attachments";
+import {
+  formatBytes,
+  isGeneratedFile,
+  GENERATED_FORMAT_LABEL,
+  type GeneratedFileManifest,
+} from "@/modules/assistant/domain/generatedFiles";
 import type { AssistantStep } from "@/modules/assistant/infrastructure/agent";
 import type { AssistantQuestion } from "@/modules/assistant/domain/tools";
 import {
@@ -39,6 +59,7 @@ import {
   getAssistantModelChoices,
   getAssistantSessions,
   openAssistantSession,
+  rebuildAssistantFile,
   sendAssistantMessage,
   type AssistantAttachment,
   type AssistantCapability,
@@ -75,6 +96,8 @@ export interface ChatMessage {
   note?: string;
   /** Held so later turns can still read the file the recruiter attached. */
   attachmentName?: string;
+  /** What the shared table calls the format, so a replayed turn names it. */
+  attachmentLabel?: string;
   attachmentText?: string;
 }
 
@@ -102,10 +125,12 @@ const ENGINES: readonly { id: AssistantEngine; label: string; hint: string }[] =
 
 const ENGINE_KEY = "sdg-assistant-engine";
 
-/** Matches the server's own clip, so history never arrives carrying more. */
-const MAX_ATTACHMENT_IN_HISTORY = 12_000;
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-const ACCEPTED_FILES = ".pdf,.doc,.docx,.txt,.md";
+/*
+ * The file box, its size line and the clip an old turn's attachment is replayed at
+ * all come from `domain/attachments` — the same table the server reads the file
+ * through. They used to be three numbers written again here, and they had already
+ * drifted: the box offered `.doc`, which the reader refuses.
+ */
 
 function nextId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -508,6 +533,135 @@ function chartOf(steps: AssistantStep[] | undefined): AssistantChart | null {
     if (chart) return chart;
   }
   return null;
+}
+
+/** Every file this turn built, in the order they were made — a turn can build two. */
+function filesOf(steps: AssistantStep[] | undefined): GeneratedFileManifest[] {
+  if (!steps) return [];
+  return steps.map((step) => step.file).filter(isGeneratedFile);
+}
+
+/**
+ * Hand the bytes to the browser.
+ *
+ * The file exists only as base64 carried inside this answer, so the download is
+ * made here: decode, wrap in a Blob under the content type the server named, and
+ * click an anchor on the user's behalf. The object URL is revoked after a delay
+ * rather than at once — Safari cancels a download whose URL is gone before it
+ * starts — and nothing here is a link anybody could open later.
+ */
+function saveGeneratedFile(manifest: GeneratedFileManifest) {
+  const binary = atob(manifest.data ?? "");
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: manifest.contentType }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = manifest.fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/**
+ * The card for a file the assistant built.
+ *
+ * It says what is inside (`contents`), names every ceiling the writer applied
+ * (`notes`), and offers exactly one of two honest buttons: Download while the
+ * bytes are still on the page, Build again once a reload has dropped them. A
+ * rebuilt file is handed over in the same click — it is not stored anywhere
+ * either, so a card that said "built, find it in the file manager" would be
+ * describing a row that does not exist.
+ */
+function GeneratedFileCard({ file }: { file: GeneratedFileManifest }) {
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  async function buildAgain() {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const result = await rebuildAssistantFile(file.spec);
+      if (result.ok) {
+        saveGeneratedFile(result.file);
+        setStatus(`Built again just now as ${result.file.fileName}.`);
+      } else {
+        setStatus(result.error);
+      }
+    } catch {
+      setStatus("That file could not be built again. Ask for it in a new message.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const held = file.contents.length;
+  const unit = file.spec.format.shape === "table" ? "sheet" : "section";
+
+  return (
+    <div className="mt-1.5 rounded-xl border border-brand-gold bg-brand-gold/10 px-3 py-2.5">
+      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs font-bold text-brand-ink">
+        <FileText className="h-3.5 w-3.5 shrink-0 self-center text-brand-gold-dark" aria-hidden />
+        <span className="min-w-0 break-all">{file.fileName}</span>
+        <span className="font-semibold text-brand-ink/55">
+          {file.label} · {formatBytes(file.bytes)} · {held} {held === 1 ? unit : `${unit}s`}
+        </span>
+      </p>
+
+      <ul className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-brand-ink/65">
+        {file.contents.map((line, index) => (
+          <li key={`${line}-${index}`}>· {line}</li>
+        ))}
+      </ul>
+
+      {file.notes.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-amber-700">
+          {file.notes.map((note, index) => (
+            <li key={`${note}-${index}`}>· {note}</li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {file.data ? (
+          <button
+            type="button"
+            onClick={() => saveGeneratedFile(file)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-ink px-2.5 py-1.5 text-[11px] font-bold text-brand-cream transition hover:bg-brand-ink/85"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden />
+            Download {file.fileName}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void buildAgain()}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-ink/25 bg-white px-2.5 py-1.5 text-[11px] font-bold text-brand-ink transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Build again
+          </button>
+        )}
+        <p className="text-[10px] leading-snug text-brand-ink/45">
+          {file.data
+            ? "This file is not stored anywhere — the download is the whole of it."
+            : "Its bytes were not kept when this conversation was saved, so this rebuilds it from the same rows."}
+        </p>
+      </div>
+
+      {status && (
+        <p className="mt-1.5 text-[11px] leading-snug text-brand-ink/65">{status}</p>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -1000,8 +1154,10 @@ export function AssistantChat({
   }, []);
 
   async function attachFile(file: File) {
+    // The size line and the format list come from the table the server reads the
+    // file through, so a refusal in this panel is the refusal that code would give.
     if (file.size > MAX_UPLOAD_BYTES) {
-      setError("That file is larger than 8 MB.");
+      setError(uploadTooLarge());
       return;
     }
     setError(null);
@@ -1011,25 +1167,39 @@ export function AssistantChat({
       body.append("file", file);
       const result = await extractAssistantAttachmentText(body);
       if (!result.ok || !result.text) {
-        setError(result.error ?? "That file could not be read.");
+        setError(result.error ?? `Attach ${READABLE_FORMAT_LABEL}.`);
         return;
       }
-      setAttachment({ name: result.name ?? file.name, text: result.text });
+      setAttachment({
+        name: result.name ?? file.name,
+        label: result.label,
+        text: result.text,
+      });
     } catch {
-      setError("The file could not be read. Check it is a PDF, Word document, .txt or .md.");
+      setError("The file could not be read.");
     } finally {
       setExtracting(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   }
 
-  /** The turn as the model sees it: the question with any attached text under it. */
+  /**
+   * The turn as the model sees it: the question with any attached text under it.
+   *
+   * A file from an earlier turn is replayed at the history limit, so reopening a
+   * thread gives the model the same amount it was given live and no more. The cut
+   * allows for `MATERIAL_NOTE_ROOM` because the text it clips already carries the
+   * note from the first cut at the end of it: without the room, this clip would
+   * chop that note in half and leave a number that no longer matches the file.
+   */
   function contentOf(message: ChatMessage): string {
     if (message.role !== "user" || !message.attachmentText) return message.text;
-    return `${message.text}\n\nAttached file “${message.attachmentName ?? "file"}” — extracted text:\n"""\n${message.attachmentText.slice(
-      0,
-      MAX_ATTACHMENT_IN_HISTORY
-    )}\n"""`;
+    const name = message.attachmentName ?? "file";
+    return `${message.text}\n\n${materialFence(
+      name,
+      clipMaterial(message.attachmentText, name, MAX_HISTORY_ATTACHMENT_CHARS + MATERIAL_NOTE_ROOM),
+      message.attachmentLabel
+    )}`;
   }
 
   /**
@@ -1041,7 +1211,11 @@ export function AssistantChat({
   function reuse(message: ChatMessage) {
     setDraft(message.text);
     if (message.attachmentName && message.attachmentText) {
-      setAttachment({ name: message.attachmentName, text: message.attachmentText });
+      setAttachment({
+        name: message.attachmentName,
+        label: message.attachmentLabel,
+        text: message.attachmentText,
+      });
     }
     setError(null);
     requestAnimationFrame(() => {
@@ -1070,6 +1244,7 @@ export function AssistantChat({
         role: "user",
         text: prompt,
         attachmentName: attached?.name,
+        attachmentLabel: attached?.label,
         attachmentText: attached?.text,
       },
     ]);
@@ -1273,11 +1448,16 @@ export function AssistantChat({
                   above lists every one.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
-                  Attach a CV and I read it — PDF, Word or plain text, through the same parser the
-                  apply form uses, so it reads the way it did when it arrived. Only the first 12,000
-                  characters reach the model and the file is not stored. Anything I change comes back
-                  with a link to where you can see it: the record when the page opens one, the page
-                  itself otherwise.
+                  Attach a file and I read it — {READABLE_FORMAT_LABEL}, up to {MAX_UPLOAD_MB} MB. Ask
+                  me about it afterwards and I keep answering from what I read: {MAX_MATERIAL_CHARS.toLocaleString("en-GB")}{" "}
+                  characters reach me on the turn you send it, and {MAX_HISTORY_ATTACHMENT_CHARS.toLocaleString("en-GB")}{" "}
+                  on every turn after, with the text telling me where it was cut. A Word or Excel file
+                  saved in the 1997-2003 format, an image or a scanned PDF I cannot read at all, and
+                  the file is never stored — only its text sits in this conversation. Say the word and
+                  I can build one back for you in {GENERATED_FORMAT_LABEL}; the download is the whole
+                  of it, so a rebuilt file after a reload is the same rows, not a saved link.
+                  Anything I change comes back with a link to where you can see it: the record when
+                  the page opens one, the page itself otherwise.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/45">
                   <Sparkles className="mr-1 inline h-3 w-3 text-brand-gold" aria-hidden />
@@ -1322,6 +1502,7 @@ export function AssistantChat({
                     {message.attachmentName && (
                       <p className="flex items-center justify-end gap-1.5 pr-1 text-[11px] font-semibold text-brand-ink/50">
                         <FileText className="h-3 w-3" aria-hidden />
+                        {message.attachmentLabel ? `${message.attachmentLabel} · ` : ""}
                         {message.attachmentName}
                       </p>
                     )}
@@ -1368,6 +1549,12 @@ export function AssistantChat({
                       </>
                     )}
                   </div>
+                  {filesOf(message.steps).map((file, fileIndex) => (
+                    <GeneratedFileCard
+                      key={`${file.fileName}-${fileIndex}`}
+                      file={file}
+                    />
+                  ))}
                   {cards.map((step, cardIndex) =>
                     step.ask ? (
                       <QuestionChoices
@@ -1440,7 +1627,9 @@ export function AssistantChat({
               <p className="mb-2 flex items-center gap-2 rounded-xl border border-brand-gold bg-brand-gold/15 px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink">
                 <FileText className="h-3.5 w-3.5 shrink-0 text-brand-gold-dark" aria-hidden />
                 <span className="min-w-0 flex-1 truncate">
-                  {attachment.name} — {attachment.text.length.toLocaleString()} characters ready
+                  {attachment.label ? `${attachment.label} · ` : ""}
+                  {attachment.name} — {attachment.text.length.toLocaleString("en-GB")} characters the
+                  assistant will read
                 </span>
                 <button
                   type="button"
@@ -1484,7 +1673,7 @@ export function AssistantChat({
               <input
                 ref={fileRef}
                 type="file"
-                accept={ACCEPTED_FILES}
+                accept={ATTACHMENT_INPUT_ACCEPT}
                 className="hidden"
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -1495,8 +1684,8 @@ export function AssistantChat({
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={pending || extracting}
-                aria-label="Attach a document"
-                title="Attach a CV or document to read"
+                aria-label="Attach a file for the assistant to read"
+                title={`Attach ${ATTACHMENT_INPUT_ACCEPT} — up to ${MAX_UPLOAD_MB} MB`}
                 className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-brand-line text-brand-ink/60 transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {extracting ? (

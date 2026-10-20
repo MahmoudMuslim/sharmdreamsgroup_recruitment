@@ -21,6 +21,12 @@ import {
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
+import {
+  fileChipLine,
+  splitFilePayload,
+  withoutFileBytes,
+  type GeneratedFileManifest,
+} from "@/modules/assistant/domain/generatedFiles";
 import { fitResult } from "@/modules/assistant/domain/resultBudget";
 import { SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import {
@@ -76,6 +82,23 @@ export interface AssistantStep {
    * and they never travel back into the model's context.
    */
   chart?: AssistantChart;
+  /**
+   * A file this call built, with its bytes. The download button lives on this
+   * step; `withoutStepFileBytes` removes the bytes on the way to the transcript,
+   * so a reloaded conversation still names the file and can build it again.
+   */
+  file?: GeneratedFileManifest;
+}
+
+/**
+ * The transcript copy of a turn's steps: every card intact, no file bytes.
+ *
+ * A stored base64 string is replayed into the panel on every load of that
+ * conversation and bought nobody anything — the file it holds was downloadable
+ * once, from the answer that built it.
+ */
+export function withoutStepFileBytes(steps: AssistantStep[]): AssistantStep[] {
+  return steps.map((step) => (step.file ? { ...step, file: withoutFileBytes(step.file) } : step));
 }
 
 /** Which engine actually served the turn, shown in the chat footer. */
@@ -210,6 +233,11 @@ export const ASSISTANT_RULES: readonly string[] = [
   "    as an approval card and runs only if they click Approve. Reads answer immediately. So after a write",
   "    say what is waiting for approval and stop — never report it as applied, and never chain another",
   "    change on top of it, because the one you asked for has not happened.",
+  "16. A file built with create_file is made of rows a read tool returned in this conversation or lines from",
+  "    a file the recruiter attached — never of figures you worked out yourself. Building one changes no",
+  "    record, so it waits for no approval card and the recruiter can download it from your answer. There is",
+  "    no link, stored path or expiry date to quote: the button on that answer is the whole of it. Say out",
+  "    loud whatever a ceiling cut short — the tool's `notes` names what was left out.",
 ];
 
 function toolCatalogue(allowDestructive: boolean, allowWeb: boolean): string {
@@ -438,17 +466,21 @@ async function executeTool(
   args: ToolArgs
 ): Promise<{ step: AssistantStep; result: string }> {
   try {
-    const value = await tool.run(args);
+    const built = splitFilePayload(await tool.run(args));
+    const value = built.forModel;
     const detail = detailFor(value);
     return {
       step: {
         tool: tool.name,
         label: tool.label,
         ok: typeof value === "object" && value !== null && (value as { ok?: boolean }).ok !== false,
-        detail: tool.web ? webChip(value) : detail.slice(0, 220),
+        detail: (
+          built.file ? fileChipLine(built.file) : tool.web ? webChip(value) : detail
+        ).slice(0, 220),
         link: linkForTool(tool.name, args, value) ?? undefined,
         ask: tool.name === "ask_question" ? asQuestion(value) ?? undefined : undefined,
         chart: chartForTool(tool.name, value) ?? undefined,
+        file: built.file,
       },
       result: detail,
     };
