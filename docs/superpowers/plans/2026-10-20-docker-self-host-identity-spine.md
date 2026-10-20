@@ -420,9 +420,15 @@ end $$;
 -- The login role. This password must equal LOCAL_PGRST_PASSWORD in docker/.env.
 -- It is a local dev credential by design; KVM2 replaces the whole file from a
 -- secret that never enters the repo.
+--
+-- No `nologin` here: Postgres does NOT let the last keyword win — `create role
+-- authenticator nologin … login …` raises `ERROR: conflicting or redundant
+-- options` and aborts the whole initdb pass, leaving a half-built volume.
+-- `login` alone is what this role needs; `alter role … with login` in the
+-- else-branch is the way to re-assert it on a re-run.
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'authenticator') then
-    create role authenticator nologin noinherit login password 'sdg_pgrst_local';
+    create role authenticator noinherit login password 'sdg_pgrst_local';
   else
     alter role authenticator with login password 'sdg_pgrst_local';
   end if;
@@ -453,6 +459,7 @@ grant usage on schema extensions to anon, authenticated, service_role;
 
 ```bash
 npm run docker:wipe
+npm run docker:up
 node -e "
 const fs=require('fs'), {Client}=require('pg');
 const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.+?)\r?$/m)[1];
@@ -471,12 +478,26 @@ Expected: four rows, `service_role` with `rolbypassrls: true`, `authenticator` w
 
 - [ ] **Step 4: Prove PostgREST can switch into `anon` and answer without a token.**
 
+`npm run docker:wipe` is `down -v` and nothing more, which is why `docker:up` sits on its own line above — without it the stack stays torn down and the `pg` probe cannot connect.
+
+Do NOT probe `pg_roles` here. `PGRST_DB_SCHEMAS` is `public`, PostgREST only serves relations it finds in `public`, `pg_roles` is a `pg_catalog` view, and `public` has no tables until Task 4 — so the request dies at relation lookup, not at authorization. Measured in Task 3:
+
 ```bash
 curl -s -H "Accept: application/json" \
   "http://localhost:54321/rest/v1/pg_roles?select=rolname&id=eq.nonexistent" -w "\n%{http_code}\n"
 ```
 
-Expected: `[]` and `200`. A `401` here means `PGRST_DB_ANON_ROLE` is wrong or `authenticator` is not a member of `anon`. Note this proves the *switch* works; it does not yet prove RLS, because `public` has no tables.
+```
+{"code":"PGRST205","details":null,"hint":null,"message":"Could not find the table 'public.pg_roles' in the schema cache"}
+HTTP 404
+```
+
+Prove the switch with the two things that actually turn on it instead:
+
+1. **The tokenless OpenAPI root.** `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:54321/rest/v1/` → `200`. PostgREST connected to `db`, switched into `PGRST_DB_ANON_ROLE`, and rendered its schema against an empty `public`. A wrong anon role or a missing membership shows as `401`/`403`, and an unreadable DB as `502`/`503` — never `200`. This is also the `502 → 200` flip Task 2 predicted.
+2. **The `SET ROLE` mechanism itself, at the DB.** Connect as `authenticator` over the published loopback port (read `LOCAL_PGRST_PASSWORD` out of `docker/.env` the same way Step 3 reads `LOCAL_DB_PASSWORD` — never print it) and show `session_authorization` stays `authenticator` while `current_user` becomes each target role, plus `pg_has_role('authenticator', 'anon'|'authenticated'|'service_role', 'MEMBER')` all true. That is exactly the model PostgREST uses, and it is the half the HTTP probe cannot see under `NOINHERIT`: membership is what permits `SET ROLE` when inherit is off.
+
+Expected: `200` from the root, and both `SET ROLE` flips landing on `anon` and `authenticated`. **Do not create a table or view to make a relation query return rows** — that is Task 4's deliverable, and an empty `public` is the correct state to leave this task in. Read `npm run docker:logs` for the `rest` service and report the PostgREST error verbatim rather than guessing.
 
 - [ ] **Step 5: Commit.**
 
