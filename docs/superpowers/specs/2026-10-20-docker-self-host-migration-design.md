@@ -108,7 +108,7 @@ this and already pass.
 - **`auth` schema**: `auth.users` carrying the migrated `encrypted_password`
   (bcrypt), plus `auth.uid()` reading our own claim —
   `nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'uid'`.
-  That single function is the door 80 of the 94 policies reach identity through
+  That single function is the door 80 of the 88 policies reach identity through
   (via `is_staff()` 66, `has_permission()` 41, `is_super_admin()` 12,
   `current_user_profile_id()` 12, `user_tenant_id()` 11).
 - **`storage` schema** shimmed so its 8 policies parse, then replaced in §7.
@@ -123,7 +123,7 @@ this and already pass.
 - PostgREST config: `db-uri`, `db-schemas = public`, `jwt-secret = <our secret>`,
   expose the 2 RPC names.
 
-**Definition of done:** the throwaway proof still passes (41 tables / 94 policies
+**Definition of done:** the throwaway proof still passes (41 tables / 88 policies
 atomic + idempotent), and a signed request against the local PostgREST returns the
 same rows an equivalent Supabase request returns for the same `uid`.
 

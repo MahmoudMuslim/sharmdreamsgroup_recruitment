@@ -1332,21 +1332,6 @@ create policy "app_settings_write" on public.app_settings
   to public
   using (has_permission('settings.manage_platform'::text))
   with check (has_permission('settings.manage_platform'::text));
-drop policy if exists "Allow authenticated insert applicants" on public.applicants;
-create policy "Allow authenticated insert applicants" on public.applicants
-  for INSERT
-  to public
-  with check (true);
-drop policy if exists "Allow authenticated update applicants" on public.applicants;
-create policy "Allow authenticated update applicants" on public.applicants
-  for UPDATE
-  to public
-  using (true);
-drop policy if exists "Allow public read applicants" on public.applicants;
-create policy "Allow public read applicants" on public.applicants
-  for SELECT
-  to public
-  using (true);
 drop policy if exists "attachments_staff_add" on public.application_attachments;
 create policy "attachments_staff_add" on public.application_attachments
   for INSERT
@@ -1588,21 +1573,6 @@ create policy "jobs_staff_write" on public.job_openings
   to public
   using (is_staff())
   with check (is_staff());
-drop policy if exists "Allow authenticated insert jobs" on public.jobs;
-create policy "Allow authenticated insert jobs" on public.jobs
-  for INSERT
-  to public
-  with check (true);
-drop policy if exists "Allow authenticated update jobs" on public.jobs;
-create policy "Allow authenticated update jobs" on public.jobs
-  for UPDATE
-  to public
-  using (true);
-drop policy if exists "Allow public read jobs" on public.jobs;
-create policy "Allow public read jobs" on public.jobs
-  for SELECT
-  to public
-  using (true);
 drop policy if exists "locations_read" on public.locations;
 create policy "locations_read" on public.locations
   for SELECT
@@ -1913,8 +1883,6 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.app_settings to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.app_settings to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.app_settings to service_role;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to anon;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_attachments to authenticated;
@@ -2037,8 +2005,6 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to service_role;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to anon;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.locations to anon;
