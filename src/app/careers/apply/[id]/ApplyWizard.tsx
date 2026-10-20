@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -16,10 +16,12 @@ import {
 } from "lucide-react";
 import { submitApplication, type ApplyResult } from "../../actions";
 import {
+  ABOUT_ME_MAX_CHARS,
   CV_MAX_BYTES,
   CV_MAX_MB,
   CV_TEXT_MIN_CHARS,
   isAcceptedCvType,
+  profileLink,
 } from "@/modules/careers/cv-rules";
 import type { CvDetails } from "@/modules/careers/cv-details";
 import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
@@ -91,6 +93,7 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [cvText, setCvText] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState<string>("CAREER_SITE");
 
@@ -98,6 +101,8 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [pending, setPending] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  /** The About-you step's own picker, so a CV can be chosen where it is used. */
+  const aboutFileInput = useRef<HTMLInputElement>(null);
 
   const [questions, setQuestions] = useState<PublicGateQuestion[] | null>(null);
   const [questionsError, setQuestionsError] = useState<string | null>(null);
@@ -106,8 +111,10 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
 
   const [filling, setFilling] = useState(false);
   const [fillNote, setFillNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
-  /** Which contact fields the candidate has typed in themselves. */
-  const touched = useRef(new Set<"name" | "email" | "phone">());
+  const [writing, setWriting] = useState(false);
+  const [writeNote, setWriteNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
+  /** Which fields the candidate has typed in themselves. */
+  const touched = useRef(new Set<"name" | "email" | "phone" | "about">());
 
   /* --------------------------------------------------------------- the steps */
 
@@ -176,21 +183,30 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
 
   /* --------------------------------------------------------------- the CV file */
 
-  function pickFile(selected: File | null) {
+  /**
+   * Take a chosen CV, or refuse it in the words this form already uses.
+   *
+   * Returns the file it accepted, because the About-you step needs to write from
+   * the file the second it is chosen — `setFile` has not landed by then, and a
+   * draft request built from the stale state would go out with no file in it.
+   */
+  function pickFile(selected: File | null): File | null {
     setError(null);
     setStepError(null);
     setFillNote(null);
-    if (!selected) return;
+    setWriteNote(null);
+    if (!selected) return null;
 
     if (!isAcceptedCvType(selected.type)) {
       setStepError(t("apply.err.fileType"));
-      return;
+      return null;
     }
     if (selected.size > CV_MAX_BYTES) {
       setStepError(t("apply.err.fileSize", { mb: CV_MAX_MB }));
-      return;
+      return null;
     }
     setFile(selected);
+    return selected;
   }
 
   /**
@@ -270,6 +286,94 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
     }
   }
 
+  /* ------------------------------------------------------------ About me box */
+
+  /**
+   * Ask for a draft of the "About me" box, from the profile link or the CV.
+   *
+   * Both of those already say who the candidate is, so the one field of this form
+   * with no answer sitting in it need not be written from scratch. What comes back
+   * goes into the box and stays there for them to read: their own words are never
+   * written over, and nothing is filed until they submit it themselves.
+   *
+   * `attachment` is the file chosen on this step, handed over before `setFile`
+   * lands. Without it the draft uses the CV attached on the CV step.
+   */
+  async function fillAboutMe(attachment?: File | null) {
+    setWriting(true);
+    setWriteNote(null);
+
+    try {
+      const body = new FormData();
+      body.append("jobId", job.id);
+      if (linkedinUrl.trim()) body.append("link", linkedinUrl.trim());
+      const source = attachment ?? file;
+      if (source) body.append("file", source);
+
+      const response = await fetch("/api/careers/about-me", { method: "POST", body });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: unknown; hint?: unknown; aboutMe?: unknown; sources?: unknown }
+        | null;
+
+      if (!response.ok || typeof payload?.aboutMe !== "string") {
+        const reason =
+          typeof payload?.error === "string" ? payload.error : t("apply.about.failed");
+        const hint = typeof payload?.hint === "string" ? ` ${payload.hint}` : "";
+        setWriteNote({ tone: "bad", text: `${reason}${hint}` });
+        return;
+      }
+
+      // Read at the moment the draft lands, not when the request started: a
+      // candidate who wrote while the model was thinking keeps what they wrote.
+      if (touched.current.has("about")) {
+        setWriteNote({ tone: "bad", text: t("apply.about.kept") });
+        return;
+      }
+
+      setCvText(payload.aboutMe.slice(0, ABOUT_ME_MAX_CHARS));
+
+      const from = (Array.isArray(payload.sources) ? payload.sources : [])
+        .filter((name): name is "LINKEDIN" | "CV" => name === "LINKEDIN" || name === "CV")
+        .map((name) => t(name === "LINKEDIN" ? "apply.word.linkedin" : "apply.word.cv"));
+
+      setWriteNote({
+        tone: "ok",
+        text: from.length
+          ? `${t("apply.about.written", { sources: joinWords(locale, from) })} ${t("apply.about.check")}`
+          : t("apply.about.check"),
+      });
+    } catch {
+      setWriteNote({ tone: "bad", text: t("apply.about.unreachable") });
+    } finally {
+      setWriting(false);
+    }
+  }
+
+  /* ------------------------------------------------- the About-you draft door */
+
+  /**
+   * One button, two doors, chosen by what is already on the screen.
+   *
+   * A link in the LinkedIn field is something the candidate already pointed at, so
+   * it is what gets read. With that field empty and no CV attached there is nothing
+   * here to write from, so the same press opens the file picker rather than sitting
+   * greyed out under a heading that promises a CV. The file chosen there *is* the
+   * CV this application carries — the CV step shows the same one, not a second copy.
+   */
+  function askAboutMe() {
+    if (linkedinUrl.trim() || file) {
+      void fillAboutMe();
+      return;
+    }
+    aboutFileInput.current?.click();
+  }
+
+  /** Choose the CV on this step, then write from it straight away. */
+  function pickForAbout(selected: File | null) {
+    const accepted = pickFile(selected);
+    if (accepted) void fillAboutMe(accepted);
+  }
+
   /* -------------------------------------------------------------- submitting */
 
   async function onSubmit() {
@@ -305,6 +409,7 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
         email,
         phone,
         cvText,
+        linkedinUrl,
         cvFilePath,
         source,
         gateAnswers: answers,
@@ -348,6 +453,9 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
       case "about":
         if (fullName.trim().length < 2) return t("apply.err.name");
         if (!EMAIL_PATTERN.test(email.trim())) return t("apply.err.email");
+        // The same predicate the reader and the submit action apply, so a link the
+        // step lets through is never refused further down.
+        if (linkedinUrl.trim() && !profileLink(linkedinUrl)) return t("apply.err.link");
         return null;
       case "cv":
         // The same rule the action applies: a file, or enough pasted text to read.
@@ -446,7 +554,13 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
             fullName={fullName}
             email={email}
             phone={phone}
+            linkedinUrl={linkedinUrl}
+            aboutMe={cvText}
             source={source}
+            writing={writing}
+            writeNote={writeNote}
+            hasFile={file !== null}
+            aboutFileInput={aboutFileInput}
             onName={(value) => {
               touched.current.add("name");
               setFullName(value);
@@ -459,6 +573,16 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
               touched.current.add("phone");
               setPhone(value);
             }}
+            onLink={(value) => {
+              setLinkedinUrl(value);
+              setWriteNote(null);
+            }}
+            onAboutMe={(value) => {
+              touched.current.add("about");
+              setCvText(value);
+            }}
+            onAsk={askAboutMe}
+            onPickForAbout={pickForAbout}
             onSource={setSource}
           />
         )}
@@ -467,11 +591,10 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
           <CvStep
             t={t}
             file={file}
-            cvText={cvText}
+            hasAbout={cvText.trim().length >= CV_TEXT_MIN_CHARS}
             filling={filling}
             fillNote={fillNote}
             fileInput={fileInput}
-            onText={setCvText}
             onPick={pickFile}
             onClear={() => {
               setFile(null);
@@ -502,6 +625,7 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
             fullName={fullName}
             email={email}
             phone={phone}
+            linkedinUrl={linkedinUrl}
             source={source}
             file={file}
             cvText={cvText}
@@ -576,12 +700,35 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   );
 }
 
-function StepHead({ title, note }: { title: string; note: string }) {
-  return (
+/**
+ * A step's heading, with the one control that belongs to the whole step sitting on
+ * its right. The About-you draft button lives here because it writes from anything
+ * on the step, not from the box under it — and a candidate looking for the CV door
+ * finds it at the top, beside the words they are being asked to fill.
+ */
+function StepHead({
+  title,
+  note,
+  action,
+}: {
+  title: string;
+  note: string;
+  action?: ReactNode;
+}) {
+  const head = (
     <>
       <h2 className="font-display text-xl font-bold">{title}</h2>
       <p className="mt-1 text-sm text-brand-ink/55">{note}</p>
     </>
+  );
+
+  if (!action) return head;
+
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+      <div className="min-w-0 flex-1">{head}</div>
+      <div className="shrink-0">{action}</div>
+    </div>
   );
 }
 
@@ -590,25 +737,89 @@ function AboutStep({
   fullName,
   email,
   phone,
+  linkedinUrl,
+  aboutMe,
   source,
+  writing,
+  writeNote,
+  hasFile,
+  aboutFileInput,
   onName,
   onEmail,
   onPhone,
+  onLink,
+  onAboutMe,
+  onAsk,
+  onPickForAbout,
   onSource,
 }: {
   t: T;
   fullName: string;
   email: string;
   phone: string;
+  linkedinUrl: string;
+  aboutMe: string;
   source: string;
+  writing: boolean;
+  writeNote: { tone: "ok" | "bad"; text: string } | null;
+  hasFile: boolean;
+  aboutFileInput: React.RefObject<HTMLInputElement | null>;
   onName: (value: string) => void;
   onEmail: (value: string) => void;
   onPhone: (value: string) => void;
+  onLink: (value: string) => void;
+  onAboutMe: (value: string) => void;
+  onAsk: () => void;
+  onPickForAbout: (file: File | null) => void;
   onSource: (value: string) => void;
 }) {
+  // The same predicate the reader and the submit action use, so the sentence under
+  // the field cannot promise a read of a link nothing will fetch.
+  const readableLink = profileLink(linkedinUrl);
+  const canWrite = readableLink !== null || hasFile;
+
   return (
     <div>
-      <StepHead title={t("apply.aboutTitle")} note={t("apply.aboutNote")} />
+      <StepHead
+        title={t("apply.aboutTitle")}
+        note={t("apply.aboutNote")}
+        action={
+          <>
+            <button
+              type="button"
+              onClick={onAsk}
+              disabled={writing}
+              title={t("apply.aboutFillNote", { mb: CV_MAX_MB })}
+              className="inline-flex items-center gap-2 rounded-xl border border-brand-gold/60 bg-brand-sand/60 px-3.5 py-2 text-xs font-bold text-brand-ink transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {writing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
+              )}
+              {writing ? t("apply.aboutFilling") : t("apply.aboutFill")}
+            </button>
+
+            {/* Driven by the button above, so it stays out of the tab order — but it
+                is still named, because the picker the operating system draws shows
+                nothing but this label. */}
+            <input
+              ref={aboutFileInput}
+              type="file"
+              accept=".pdf,.doc,.docx,.txt"
+              aria-label={t("apply.aboutPick")}
+              tabIndex={-1}
+              className="sr-only"
+              onChange={(event) => {
+                const selected = event.target.files?.[0] ?? null;
+                // Cleared so the same file can be chosen again after a refusal.
+                event.target.value = "";
+                onPickForAbout(selected);
+              }}
+            />
+          </>
+        }
+      />
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="sm:col-span-2">
@@ -656,6 +867,63 @@ function AboutStep({
         </div>
 
         <div className="sm:col-span-2">
+          <Label htmlFor="apply-linkedin">
+            {t("apply.linkedin")}{" "}
+            <span className="ml-1 font-normal text-brand-ink/40">{t("apply.optional")}</span>
+          </Label>
+          <input
+            id="apply-linkedin"
+            type="url"
+            inputMode="url"
+            autoComplete="url"
+            value={linkedinUrl}
+            onChange={(event) => onLink(event.target.value)}
+            className={FIELD}
+            placeholder={t("apply.linkedinPlaceholder")}
+          />
+          <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">
+            {t("apply.linkedinNote")}
+          </p>
+        </div>
+
+        <div className="sm:col-span-2">
+          <Label htmlFor="apply-about">{t("apply.aboutMe")}</Label>
+          <textarea
+            id="apply-about"
+            rows={7}
+            maxLength={ABOUT_ME_MAX_CHARS}
+            value={aboutMe}
+            onChange={(event) => onAboutMe(event.target.value)}
+            className={cn(FIELD, "resize-y")}
+            placeholder={t("apply.aboutMePlaceholder")}
+          />
+
+          <div className="mt-2">
+            {writeNote && (
+              <p
+                role={writeNote.tone === "bad" ? "alert" : "status"}
+                className={cn(
+                  "mt-2 text-[11px] leading-relaxed",
+                  writeNote.tone === "ok" ? "text-emerald-800" : "text-amber-800"
+                )}
+              >
+                {writeNote.text}
+              </p>
+            )}
+
+            {!canWrite && !writeNote && (
+              <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">
+                {t("apply.about.noSource")}
+              </p>
+            )}
+
+            <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">
+              {t("apply.aboutMeNote")}
+            </p>
+          </div>
+        </div>
+
+        <div className="sm:col-span-2">
           <Label htmlFor="apply-source">{t("apply.source")}</Label>
           <select
             id="apply-source"
@@ -678,22 +946,21 @@ function AboutStep({
 function CvStep({
   t,
   file,
-  cvText,
+  hasAbout,
   filling,
   fillNote,
   fileInput,
-  onText,
   onPick,
   onClear,
   onFill,
 }: {
   t: T;
   file: File | null;
-  cvText: string;
+  /** Whether the About-you box already holds enough to review them by. */
+  hasAbout: boolean;
   filling: boolean;
   fillNote: { tone: "ok" | "bad"; text: string } | null;
   fileInput: React.RefObject<HTMLInputElement | null>;
-  onText: (value: string) => void;
   onPick: (file: File | null) => void;
   onClear: () => void;
   onFill: () => void;
@@ -773,20 +1040,9 @@ function CvStep({
         )}
       </div>
 
-      <div className="mt-5">
-        <Label htmlFor="apply-cv">{t("apply.cvOrPaste")}</Label>
-        <textarea
-          id="apply-cv"
-          rows={7}
-          value={cvText}
-          onChange={(event) => onText(event.target.value)}
-          className={cn(FIELD, "resize-y")}
-          placeholder={t("apply.cvPlaceholder")}
-        />
-        <p className="mt-1 text-[11px] text-brand-ink/45">
-          {t("apply.err.cv")} {t("apply.cvNote")}
-        </p>
-      </div>
+      <p className="mt-5 text-[11px] leading-relaxed text-brand-ink/45">
+        {hasAbout ? t("apply.cvHasAbout") : t("apply.cvNoAbout")}
+      </p>
     </div>
   );
 }
@@ -919,6 +1175,7 @@ function ReviewStep({
   fullName,
   email,
   phone,
+  linkedinUrl,
   source,
   file,
   cvText,
@@ -932,6 +1189,7 @@ function ReviewStep({
   fullName: string;
   email: string;
   phone: string;
+  linkedinUrl: string;
   source: string;
   file: File | null;
   cvText: string;
@@ -941,7 +1199,7 @@ function ReviewStep({
   onEdit: (index: number) => void;
 }) {
   const sourceKey = SOURCES.find((option) => option.value === source)?.key;
-  const pasted = cvText.trim().length;
+  const written = cvText.trim().length;
 
   return (
     <div>
@@ -967,21 +1225,35 @@ function ReviewStep({
           editLabel={t("apply.edit")}
         />
         <ReviewRow
+          label={t("apply.reviewLink")}
+          value={linkedinUrl.trim() || t("apply.notSet")}
+          onEdit={() => onEdit(0)}
+          editLabel={t("apply.edit")}
+        />
+        <ReviewRow
           label={t("apply.reviewSource")}
           value={sourceKey ? t(sourceKey) : source}
           onEdit={() => onEdit(0)}
           editLabel={t("apply.edit")}
         />
         <ReviewRow
+          label={t("apply.reviewAbout")}
+          value={
+            written
+              ? t("apply.reviewWritten", { count: written.toLocaleString(locale) })
+              : t("apply.notSet")
+          }
+          onEdit={() => onEdit(0)}
+          editLabel={t("apply.edit")}
+        />
+        <ReviewRow
           label={t("apply.reviewCv")}
           value={
-            file && pasted >= CV_TEXT_MIN_CHARS
-              ? t("apply.reviewBoth")
-              : file
-                ? t("apply.reviewFile", { name: file.name })
-                : pasted
-                  ? t("apply.reviewText", { count: pasted.toLocaleString(locale) })
-                  : t("apply.notSet")
+            file
+              ? t("apply.reviewFile", { name: file.name })
+              : written
+                ? t("apply.reviewCvFromAbout")
+                : t("apply.notSet")
           }
           onEdit={() => onEdit(1)}
           editLabel={t("apply.edit")}

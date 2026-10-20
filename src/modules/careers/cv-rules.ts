@@ -1,5 +1,5 @@
 /**
- * What the career site accepts as a CV file.
+ * What the career site accepts from a candidate.
  *
  * The apply steps check before sending, the upload route checks before storing
  * and the prefill route checks before spending a model call on it. Those three
@@ -17,6 +17,41 @@ export const CV_MAX_BYTES = CV_MAX_MB * 1024 * 1024;
  * for the text quotes this number instead of keeping its own.
  */
 export const CV_TEXT_MIN_CHARS = 40;
+
+/** The most the "About you" box on the first step can hold. */
+export const ABOUT_ME_MAX_CHARS = 1_200;
+
+/**
+ * The candidate's profile link, in the one form the rest of the app can use.
+ *
+ * A LinkedIn URL arrives with a campaign tag or a shared-from fragment
+ * (`?trk=public_profile`), which is noise on a record a recruiter will read. Only
+ * linkedin.com or linkedin.cn is accepted, because the field is labelled as that
+ * link and a record that calls another site's page a LinkedIn profile would
+ * mislead whoever reads it.
+ *
+ * Returns the cleaned link, or null for anything that is not one. The step, the
+ * public reader and the submit action all ask this same function, so a link the
+ * candidate was allowed to leave cannot be refused at the door — and it is pure,
+ * so the browser can check it too.
+ */
+export function profileLink(raw: string): string | null {
+  const value = raw.trim();
+  if (!value || value.length > 300) return null;
+
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "https:" || url.username || url.password) return null;
+  if (!/(^|\.)linkedin\.(com|cn)$/i.test(url.hostname)) return null;
+  if (url.pathname === "/" || url.pathname.length < 2) return null;
+
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
 
 /** `.doc` is accepted by the form and the bucket, but nothing parses it. */
 export const CV_ALLOWED_MIME_TYPES = [

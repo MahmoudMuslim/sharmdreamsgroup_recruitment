@@ -255,8 +255,33 @@ const en: Dictionary = {
   "apply.source.site": "This careers site",
   "apply.source.board": "A job board",
   "apply.source.referral": "A referral",
+  "apply.optional": "Optional",
+  "apply.linkedin": "LinkedIn profile",
+  "apply.linkedinPlaceholder": "https://www.linkedin.com/in/your-name",
+  "apply.linkedinNote":
+    "Optional. Your link is filed with your application text, where the hiring team reads it. With a link here, the button at the top of this step can draft your About me from your profile — LinkedIn refuses most automated reads, so if nothing comes back, choose your CV instead or write those lines yourself.",
+  "apply.aboutMe": "About me",
+  "apply.aboutMePlaceholder":
+    "A few lines about who you are and what you do — or use the button at the top of this step to draft them from your LinkedIn profile or your CV.",
+  "apply.aboutMeNote":
+    "This text, along with any CV file you attach, is what our screening step reads. It is sent as your own words, so change anything that is not you.",
+  "apply.aboutFill": "Write it from my LinkedIn or CV",
+  "apply.aboutFilling": "Writing…",
+  "apply.aboutPick": "Choose your CV to write from",
+  "apply.aboutFillNote":
+    "With a LinkedIn link on this step, it drafts from that link. With the field empty and no CV attached, it opens your file picker — PDF, Word or text, up to {mb} MB. The CV you choose here is the same one attached on the CV step.",
+  "apply.about.noSource":
+    "No link and no CV yet, so this button opens your file picker for you to choose the CV to draft from — or add a LinkedIn link above and it reads that instead.",
+  "apply.about.written": "Drafted from your {sources}.",
+  "apply.about.check": "Read it and change anything that is not you.",
+  "apply.about.kept": "You had already written your About me, so it stayed as you wrote it.",
+  "apply.about.failed": "We could not write an About me from that just now.",
+  "apply.about.unreachable":
+    "We could not reach the writing helper just now. Write a few lines yourself — the rest of your application is unaffected.",
+  "apply.word.linkedin": "LinkedIn profile",
+  "apply.word.cv": "CV",
   "apply.cvTitle": "Your CV",
-  "apply.cvNote": "Attach a file, or paste its text. This is what our screening step reads.",
+  "apply.cvNote": "Attach your CV file. This is what our screening step reads.",
   "apply.cvAttach": "Attach your CV",
   "apply.cvChoose": "Choose a file",
   "apply.cvTypes": "PDF, Word or text — up to {mb} MB",
@@ -266,8 +291,10 @@ const en: Dictionary = {
   "apply.cvFillNote":
     "Your CV text is read to fill those three fields. Nothing is submitted until the last step, and every field stays editable.",
   "apply.cvFillCheck": "Use Back to check them before you continue.",
-  "apply.cvOrPaste": "Or paste your CV text",
-  "apply.cvPlaceholder": "Paste the text of your CV here…",
+  "apply.cvHasAbout":
+    "Your About-me text is on the first step — that, together with this file, is what our screening step reads. Press the button there to draft it from this CV.",
+  "apply.cvNoAbout":
+    "Without a file, our screening step reads the About-me text from the first step. Attach your CV here, or write those lines there.",
   "apply.fill.written": "Filled in your {fields}.",
   "apply.fill.kept": "You had already typed your {fields}, so that stayed as you wrote it.",
   "apply.fill.absent": "Your CV did not state your {fields}.",
@@ -294,10 +321,13 @@ const en: Dictionary = {
   "apply.reviewEmail": "Email",
   "apply.reviewPhone": "Phone",
   "apply.reviewSource": "Heard about us",
+  "apply.reviewLink": "LinkedIn",
+  "apply.reviewAbout": "About me",
+  "apply.reviewWritten": "{count} characters of text",
   "apply.reviewCv": "CV",
   "apply.reviewFile": "Attached — {name}",
-  "apply.reviewText": "Pasted text — {count} characters",
-  "apply.reviewBoth": "Attached file and pasted text — the file is read first.",
+  "apply.reviewCvFromAbout":
+    "No file attached — our screening step reads your About me from the first step.",
   "apply.reviewQuestions": "This role's questions",
   "apply.privacy":
     "We store your details to process this application only. You get a tracking code on the next screen.",
@@ -311,7 +341,9 @@ const en: Dictionary = {
   "apply.doneBack": "Back to all roles",
   "apply.err.name": "Enter your full name.",
   "apply.err.email": "Enter a valid email address.",
-  "apply.err.cv": "Attach a CV or paste its text so we can review your application.",
+  "apply.err.link": "Enter your linkedin.com profile link, or leave the field empty.",
+  "apply.err.cv":
+    "Attach your CV file, or write a few lines about yourself on the first step, so we can review your application.",
   "apply.err.questions": "Please answer every question before continuing.",
   "apply.err.fileType": "Attach a PDF, Word document or plain-text CV.",
   "apply.err.fileSize": "That file is larger than {mb} MB. Please attach a smaller CV.",
@@ -561,8 +593,33 @@ const ar: Dictionary = {
   "apply.source.site": "موقع التوظيف هذا",
   "apply.source.board": "موقع إعلانات وظيفية",
   "apply.source.referral": "ترشيح من شخص",
+  "apply.optional": "اختياري",
+  "apply.linkedin": "حساب لينكدإن",
+  "apply.linkedinPlaceholder": "https://www.linkedin.com/in/your-name",
+  "apply.linkedinNote":
+    "اختياري. يُحفظ رابطك مع نص طلبك حيث يقرؤه فريق التوظيف. بوجود رابط هنا يستطيع الزر أعلى هذه الخطوة صياغة نبذتك من حسابك — لكن لينكدإن يرفض أغلب القراءة الآلية، فإذا لم يرجع شيء فاختر سيرتك الذاتية أو اكتب النبذة بنفسك.",
+  "apply.aboutMe": "نبذة عنك",
+  "apply.aboutMePlaceholder":
+    "بضع سطور عن من أنت وماذا تعمل — أو استخدم الزر أعلى هذه الخطوة لصياغتها من حساب لينكدإن أو من سيرتك الذاتية.",
+  "apply.aboutMeNote":
+    "هذا النص مع أي ملف سيرة ذاتية مرفق هو ما تقرأه خطوة الفرز. يُرسل كأنه كلماتك أنت، فصحّح كل لا يشبهك.",
+  "apply.aboutFill": "اكتبها من حسابي أو من سيرتي",
+  "apply.aboutFilling": "نكتب النبذة…",
+  "apply.aboutPick": "اختر سيرتك الذاتية لتُكتب منها",
+  "apply.aboutFillNote":
+    "بوجود رابط لينكدإن على هذه الخطوة تُكتب النبذة من ذلك الرابط. وبفارغ الحقل وبدون سيرة مرفقة يفتح الزر نافذة اختيار ملف — PDF أو Word أو نص، حتى {mb} ميغابايت. السيرة التي تختارها هنا هي نفسها المرفقة في خطوة السيرة الذاتية.",
+  "apply.about.noSource":
+    "لا رابط ولا سيرة بعد، لذا يفتح هذا الزر نافذة اختيار الملف لتنتقي السيرة التي تُكتب منها — أو أضف رابط لينكدإن في الأعلى ليقرأ منه بدل ذلك.",
+  "apply.about.written": "صاغتها من {sources}.",
+  "apply.about.check": "اقرأها وغيّر كل ما لا يشبهك.",
+  "apply.about.kept": "كنت قد كتبت نبذتك بنفسك، فبقيت كما كتبتها.",
+  "apply.about.failed": "لم نتمكن من كتابة نبذة من هذا الآن.",
+  "apply.about.unreachable":
+    "لم نتمكن من الوصول إلى أداة الكتابة الآن. اكتب بضع سطور بنفسك — بقية طلبك لم تتأثر.",
+  "apply.word.linkedin": "حساب لينكدإن",
+  "apply.word.cv": "السيرة الذاتية",
   "apply.cvTitle": "سيرتك الذاتية",
-  "apply.cvNote": "أرفق ملفاً أو الصق نصّه. هذا ما تقرأه خطوة الفرز.",
+  "apply.cvNote": "أرفق ملف سيرتك الذاتية. هذا ما تقرأه خطوة الفرز.",
   "apply.cvAttach": "أرفق سيرتك الذاتية",
   "apply.cvChoose": "اختر ملفاً",
   "apply.cvTypes": "PDF أو Word أو نص — حتى {mb} ميغابايت",
@@ -572,8 +629,10 @@ const ar: Dictionary = {
   "apply.cvFillNote":
     "يُقرأ نص سيرتك لملء تلك الحقول الثلاثة. لا يُرسل شيء قبل الخطوة الأخيرة، وتبقى كل الحقول قابلة للتعديل.",
   "apply.cvFillCheck": "اضغط السابق لمراجعتها قبل المتابعة.",
-  "apply.cvOrPaste": "أو الصق نص سيرتك الذاتية",
-  "apply.cvPlaceholder": "الصق نص سيرتك الذاتية هنا…",
+  "apply.cvHasAbout":
+    "نبذتك موجودة في الخطوة الأولى، وهي مع هذا الملف ما تقرأه خطوة الفرز. اضغط الزر هناك لصياغتها من هذه السيرة.",
+  "apply.cvNoAbout":
+    "بدون ملف مرفق، تقرأ خطوة الفرز نبذتك من الخطوة الأولى. أرفق سيرتك هنا أو اكتب تلك السطور هناك.",
   "apply.fill.written": "تم ملء {fields}.",
   "apply.fill.kept": "كنت قد كتبت {fields} بنفسك، فبقيت كما كتبتها.",
   "apply.fill.absent": "لم تذكر سيرتك الذاتية {fields}.",
@@ -599,10 +658,12 @@ const ar: Dictionary = {
   "apply.reviewEmail": "البريد الإلكتروني",
   "apply.reviewPhone": "الهاتف",
   "apply.reviewSource": "كيف سمعت عنا",
+  "apply.reviewLink": "لينكدإن",
+  "apply.reviewAbout": "نبذة عنك",
+  "apply.reviewWritten": "{count} حرفاً من النص",
   "apply.reviewCv": "السيرة الذاتية",
   "apply.reviewFile": "مرفق — {name}",
-  "apply.reviewText": "نص ملصوق — {count} حرفاً",
-  "apply.reviewBoth": "ملف مرفق ونص ملصوق — يُقرأ الملف أولاً.",
+  "apply.reviewCvFromAbout": "لا ملف مرفق — تقرأ خطوة الفرز نبذتك من الخطوة الأولى.",
   "apply.reviewQuestions": "أسئلة هذه الوظيفة",
   "apply.privacy": "نحفظ بياناتك لمعالجة هذا الطلب فقط. وستحصل على رمز تتبّع في الشاشة التالية.",
   "apply.doneTitle": "وصلنا طلبك",
@@ -615,7 +676,8 @@ const ar: Dictionary = {
   "apply.doneBack": "العودة إلى كل الوظائف",
   "apply.err.name": "أدخل اسمك الكامل.",
   "apply.err.email": "أدخل بريداً إلكترونياً صحيحاً.",
-  "apply.err.cv": "أرفق سيرة ذاتية أو الصق نصّها حتى نتمكن من مراجعة طلبك.",
+  "apply.err.link": "أدخل رابط حسابك على linkedin.com أو اترك الحقل فارغاً.",
+  "apply.err.cv": "أرفق ملف سيرتك الذاتية أو اكتب بضع سطور عن نفسك في الخطوة الأولى حتى نتمكن من مراجعة طلبك.",
   "apply.err.questions": "أجب عن كل الأسئلة قبل المتابعة.",
   "apply.err.fileType": "أرفق ملف PDF أو Word أو نصاً عادياً.",
   "apply.err.fileSize": "هذا الملف أكبر من {mb} ميغابايت. أرفق ملفاً أصغر.",
@@ -1064,9 +1126,63 @@ const de: Dictionary = {
 
 const dictionaries: Record<Locale, Dictionary> = { en, ar, ru, de };
 
+/**
+ * Wording an admin wrote in Settings, on top of the dictionaries this build
+ * ships.
+ *
+ * It lives in module state for the same reason the visitor's chosen language
+ * does: `translate` is called from server components and from client components,
+ * and both have to read the same words during the same render. `TranslationsSeed`
+ * fills it from the `app_settings` rows before either runs, so a prerendered page
+ * and its hydrated copy agree.
+ *
+ * Empty until a page renders that seed, which is what keeps this additive: a
+ * surface nobody wired reads exactly the words it read before the console existed.
+ */
+export type TranslationOverrides = Partial<Record<Locale, Dictionary>>;
+
+let overrides: TranslationOverrides = {};
+
+export function setTranslationOverrides(next: TranslationOverrides): void {
+  overrides = next;
+}
+
 /** Narrow an untrusted string (a settings row) to a locale we ship a dictionary for. */
 export function isLocale(value: unknown): value is Locale {
   return typeof value === "string" && (locales as readonly string[]).includes(value);
+}
+
+/** Every key the shipped English dictionary defines, in the order it defines them. */
+export function translationKeys(): string[] {
+  return Object.keys(dictionaries.en);
+}
+
+/**
+ * The words this build ships for a key, ignoring any stored override.
+ *
+ * `undefined` means the language has no shipped text of its own — an Arabic row
+ * nobody translated yet, which the console draws as an empty field rather than as
+ * the English it falls back to on screen, so the gap stays visible.
+ */
+export function shippedText(locale: Locale, key: string): string | undefined {
+  return dictionaries[locale]?.[key];
+}
+
+/**
+ * The `{name}` placeholders a phrase substitutes.
+ *
+ * A translation that drops one is a sentence a candidate reads with a hole in it,
+ * and nothing downstream can notice: substitution replaces what it finds and
+ * leaves the rest alone. So the console compares the two lists before a save.
+ */
+export function placeholdersIn(text: string): string[] {
+  const found: string[] = [];
+  const pattern = /\{(\w+)\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (!found.includes(match[1])) found.push(match[1]);
+  }
+  return found;
 }
 
 /**
@@ -1092,15 +1208,22 @@ export function dirForLocale(locale: Locale): "rtl" | "ltr" {
 /**
  * Look a phrase up, substituting `{name}` placeholders.
  *
- * Missing keys fall back to English so a half-translated language still reads,
- * and a key nobody defined comes back verbatim rather than blank.
+ * A stored override wins over the shipped dictionary, because the whole point of
+ * the console is that the words an admin typed are the words a candidate reads.
+ * Below that, missing keys fall back to English so a half-translated language
+ * still reads, and a key nobody defined comes back verbatim rather than blank.
  */
 export function translate(
   locale: Locale,
   key: string,
   vars?: Record<string, string | number>
 ): string {
-  const text = dictionaries[locale][key] ?? dictionaries.en[key] ?? key;
+  const text =
+    overrides[locale]?.[key] ??
+    dictionaries[locale][key] ??
+    overrides.en?.[key] ??
+    dictionaries.en[key] ??
+    key;
   if (!vars) return text;
   return Object.entries(vars).reduce(
     (acc, [name, value]) => acc.split(`{${name}}`).join(String(value)),

@@ -6,7 +6,7 @@ import { getSupabaseAnonClient } from "@/lib/supabase/anon";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { hasAiProvider } from "@/lib/config.server";
 import { extractCvText, type ExtractedCv as _ExtractedCv } from "@/modules/screening/infrastructure/cvParser";
-import { CV_TEXT_MIN_CHARS } from "@/modules/careers/cv-rules";
+import { CV_TEXT_MIN_CHARS, profileLink } from "@/modules/careers/cv-rules";
 import {
   getAiAutomationSettings,
   screenApplicationById,
@@ -223,6 +223,8 @@ export interface ApplyInput {
   phone: string;
   /** Pasted CV text, used for AI screening when no file is attached. */
   cvText: string;
+  /** The candidate's own profile link, optional and validated before it is kept. */
+  linkedinUrl: string;
   /** Storage path of an uploaded CV, if one was attached. */
   cvFilePath: string | null;
   source: string;
@@ -274,6 +276,15 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   const email = input.email.trim().toLowerCase();
   const phone = input.phone.trim();
   const cvText = input.cvText.trim().slice(0, 20_000);
+
+  // The field is optional; a value in it has to be the thing the field is named,
+  // and it is cleaned the same way the step and the reader check it, so a link the
+  // candidate was allowed to leave is never refused here.
+  const typedLink = input.linkedinUrl?.trim() ?? "";
+  const linkedinUrl = typedLink ? profileLink(typedLink) : null;
+  if (typedLink && !linkedinUrl) {
+    return { ok: false, error: "Enter your linkedin.com profile link, or leave it empty." };
+  }
 
   if (fullName.length < 2) return { ok: false, error: "Enter your full name." };
   if (!EMAIL_PATTERN.test(email)) {
@@ -387,7 +398,14 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
       full_name: fullName,
       email,
       phone: phone || null,
-      cv_text: finalCvText || null,
+      // An application row has no link column, so the profile link is filed at the
+      // head of the application text — the one place the dossier and the applicants
+      // drawer already print what the candidate wrote. The form says this in the
+      // words under the field, rather than implying a record of its own.
+      cv_text: (linkedinUrl
+        ? `LinkedIn profile: ${linkedinUrl}\n\n${finalCvText}`
+        : finalCvText
+      ) || null,
       cv_file_path: input.cvFilePath,
       source,
       // A gated application is stored rather than discarded: a recruiter can
