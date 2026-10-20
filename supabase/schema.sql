@@ -1,5 +1,8 @@
 /*
  * Sharm Dreams Talent Cloud — schema of record.
+ * AUTHORITATIVE: this file carries hand edits that `node scripts/dump-schema.mjs`
+ * does not reproduce (the vault removal, the locked-down jobs/applicants
+ * policies). A re-dump must re-apply them, not silently restore them.
  *
  * Generated from the live project, so this file describes the database instead
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
@@ -27,8 +30,6 @@
 create schema if not exists extensions;
 create extension if not exists "pg_stat_statements" with schema extensions;
 create extension if not exists "pgcrypto" with schema extensions;
-create schema if not exists vault;
-create extension if not exists "supabase_vault" with schema vault;
 create extension if not exists "uuid-ossp" with schema extensions;
 
 -- ============================================================================
