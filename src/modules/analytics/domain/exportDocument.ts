@@ -185,7 +185,16 @@ const PDF_PRINTABLE = new Set<string>([
   ...codePoints(0xa0, 0xff),
 ]);
 
-function printable(text: string): string {
+/**
+ * Reduced to what the built-in PDF fonts can print.
+ *
+ * Exported because the offer letter attaches a PDF built the same way: two
+ * WinAnsi tables in one portal is how one of them drifts, and a document that
+ * renders `?` for an Arabic candidate name has to do it the same way as the
+ * report the recruiter already trusts. Callers that need their line breaks kept
+ * (a letter's paragraphs) split before calling, since this collapses whitespace.
+ */
+export function printable(text: string): string {
   let out = "";
   for (const character of text.replace(/\s+/g, " ")) {
     /* One marker per run of unprintable characters, so a mixed-script name

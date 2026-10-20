@@ -16,10 +16,24 @@ import { resolveConfig, resolveSecret } from "@/modules/settings/infrastructure/
  * only ever send WhatsApp, and it should not drag a mail client along.
  */
 
+/**
+ * A document that travels with a message.
+ *
+ * Field names follow nodemailer's own so nothing is lost in translation — the
+ * portal has exactly one place that talks to a relay, and an offer letter that
+ * arrives named wrongly is as confusing as one that arrives missing.
+ */
+export interface EmailAttachment {
+  filename: string;
+  contentType: string;
+  content: Uint8Array;
+}
+
 export interface EmailOutboundMessage {
   to: string;
   subject: string;
   text: string;
+  attachments?: EmailAttachment[];
 }
 
 interface SmtpSettings {
@@ -124,6 +138,18 @@ function toHtml(text: string): string {
 }
 
 /**
+ * nodemailer is told to base64 the bytes itself, and wants a Buffer for that —
+ * a `Uint8Array` reaches the relay as an empty attachment.
+ */
+function attachmentsOf(message: EmailOutboundMessage) {
+  return message.attachments?.map((file) => ({
+    filename: file.filename,
+    contentType: file.contentType,
+    content: Buffer.from(file.content),
+  }));
+}
+
+/**
  * Translates the failures an admin can actually fix. SMTP answers auth problems
  * with a code and a sentence that varies by relay, so the code is what we key on
  * and the provider text stays in the detail.
@@ -173,6 +199,7 @@ export class EmailConnector {
         subject: message.subject,
         text: message.text,
         html: toHtml(message.text),
+        attachments: attachmentsOf(message),
       });
       return { success: true };
     } catch (error) {
@@ -221,6 +248,7 @@ export class EmailConnector {
           subject: message.subject,
           text: message.text,
           html: toHtml(message.text),
+          attachments: attachmentsOf(message),
         });
         results.push({ to: message.to, success: true });
       } catch (error) {

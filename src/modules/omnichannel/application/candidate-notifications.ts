@@ -2,8 +2,14 @@ import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { assessmentUrl } from "@/lib/public-url";
-import { getBoolSetting, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
-import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { formatInZone } from "@/lib/timezone";
+import {
+  getBoolSetting,
+  getOrganisationTimeZone,
+  getStringSetting,
+} from "@/modules/settings/infrastructure/settingsReader";
+import { EmailConnector, type EmailAttachment } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { buildOfferLetter } from "@/modules/omnichannel/domain/offerLetter";
 import {
   enqueueAssessmentInvite,
   enqueueInterviewNotice,
@@ -22,6 +28,7 @@ import {
   TEMPLATE_DEFAULTS,
   humanizeStage,
   renderTemplate,
+  withoutAttachmentClaim,
   type TemplateVars,
 } from "@/modules/settings/domain/templates";
 
@@ -158,6 +165,49 @@ async function buildVars(
   };
 }
 
+/**
+ * The PDF an offer email promises, or null when it could not be written.
+ *
+ * It is built from the same rendered text that goes into the message, so the
+ * attached letter and the email body cannot state different terms to the same
+ * candidate. Exported because the outbox re-send needs it too: a retried offer
+ * email repeats the attachment sentence, so it has to repeat the document.
+ *
+ * A failure is returned as `null` rather than thrown — a stage move must not be
+ * undone by a PDF — and the caller swaps the promise for the honest sentence.
+ */
+export async function offerLetterAttachment(input: {
+  candidateName: string;
+  jobTitle: string;
+  body: string;
+}): Promise<EmailAttachment[] | null> {
+  try {
+    const [companyName, timeZone] = await Promise.all([
+      getStringSetting("organisation.name", "Sharm Dreams Group"),
+      getOrganisationTimeZone(),
+    ]);
+
+    const letter = await buildOfferLetter({
+      companyName,
+      candidateName: input.candidateName,
+      jobTitle: input.jobTitle,
+      body: input.body,
+      issuedOn: formatInZone(new Date().toISOString(), timeZone, {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      }),
+    });
+
+    return [
+      { filename: letter.filename, contentType: letter.contentType, content: letter.bytes },
+    ];
+  } catch (error) {
+    console.error("[offers] offer letter could not be generated:", error);
+    return null;
+  }
+}
+
 /** One history row per attempt — the outbox reads this table, so it stays terse. */
 async function record(input: {
   applicationId: string;
@@ -207,8 +257,19 @@ export async function notifyStageChange(
   if (!copy) return { ...report, email: "off", inApp: "off" };
 
   const vars = await buildVars(candidate, humanizeStage(stage));
-  const body = renderTemplate(copy.body, vars).trim();
+  const letter = renderTemplate(copy.body, vars).trim();
   const subject = renderTemplate(copy.subject, vars).trim();
+
+  /**
+   * The text that goes out, and the document that goes with it.
+   *
+   * The offer copy promises attached formal documents while nothing was ever
+   * attached to anything, so the promise is taken out up front and only put back
+   * once a PDF is actually in the message. `body` is what both channels and the
+   * outbox row then carry, so a recruiter reading the log sees the sentence the
+   * candidate really got.
+   */
+  let body = stage === "OFFER" ? withoutAttachmentClaim(letter) : letter;
 
   if (!notifyOnStageChange) {
     report.email = "off";
@@ -220,7 +281,22 @@ export async function notifyStageChange(
     report.email = "off";
     report.error = "Email is switched on but no SMTP relay is configured (Settings → API keys).";
   } else {
-    const outcome = await EmailConnector.send({ to: candidate.email, subject, text: body });
+    const attachment =
+      stage === "OFFER"
+        ? await offerLetterAttachment({
+            candidateName: candidate.full_name,
+            jobTitle: candidate.job_title,
+            body: letter,
+          })
+        : null;
+    if (attachment) body = letter;
+
+    const outcome = await EmailConnector.send({
+      to: candidate.email,
+      subject,
+      text: body,
+      attachments: attachment ?? undefined,
+    });
     report.email = outcome.success ? "sent" : "failed";
     if (!outcome.success) report.error = outcome.error;
     await record({

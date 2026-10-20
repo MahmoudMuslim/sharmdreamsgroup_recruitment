@@ -238,6 +238,28 @@ export const PROSPECT_OUTREACH_DEFAULTS: Record<
  */
 export const CANDIDATE_FEEDBACK_SUBJECT = "Feedback on your application — {{job_title}}";
 
+/**
+ * The promise an offer letter makes, and the honest version of it.
+ *
+ * `offer_letter` has always closed with the first line while the mailer carried
+ * no attachments at all, so the dispatch path now sends the second whenever the
+ * document could not be written. The match is exact, not fuzzy: a recruiter who
+ * rewrote that sentence owns the wording, and there is nothing here to correct.
+ */
+export const OFFER_ATTACHMENT_CLAIM = "The formal documents are attached.";
+export const OFFER_ATTACHMENT_FALLBACK =
+  "Your formal offer documents will follow in a separate email.";
+
+/** True when this copy promises a document the sender then has to attach. */
+export function promisesAttachment(body: string): boolean {
+  return body.includes(OFFER_ATTACHMENT_CLAIM);
+}
+
+/** The same letter with its attachment promise told honestly. */
+export function withoutAttachmentClaim(body: string): string {
+  return body.split(OFFER_ATTACHMENT_CLAIM).join(OFFER_ATTACHMENT_FALLBACK);
+}
+
 /** INTERVIEW -> "interview", AI_SCREENING -> "AI screening". */
 export function humanizeStage(stage: string): string {
   const words = stage.toLowerCase().split("_").join(" ");

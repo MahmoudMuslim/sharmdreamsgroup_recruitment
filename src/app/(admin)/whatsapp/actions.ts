@@ -7,7 +7,14 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { EmailConnector, missingSmtpFields } from "@/modules/omnichannel/infrastructure/emailConnector";
-import { humanizeStage, renderTemplate, type TemplateVars } from "@/modules/settings/domain/templates";
+import {
+  humanizeStage,
+  promisesAttachment,
+  renderTemplate,
+  withoutAttachmentClaim,
+  type TemplateVars,
+} from "@/modules/settings/domain/templates";
+import { offerLetterAttachment } from "@/modules/omnichannel/application/candidate-notifications";
 import { assessmentUrl } from "@/lib/public-url";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase } from "@/modules/activity/domain/trail";
@@ -739,14 +746,33 @@ export async function resendEmailMessage(id: string): Promise<OutboxResult> {
   const subject = renderTemplate(row.subject?.trim() || "An update on your application", vars).trim();
   const body = renderTemplate(row.body, vars).trim();
 
-  const outcome = await EmailConnector.send({ to: row.recipient, subject, text: body });
+  /* A re-send repeats exactly what this row promised, so a row that promises
+   * the offer documents has to repeat the document with them — and say so
+   * honestly when the letter cannot be written again. `vars` already holds the
+   * candidate and the role, so nothing here needs a second read. */
+  const withoutClaim = promisesAttachment(body) ? withoutAttachmentClaim(body) : null;
+  const attachment = withoutClaim
+    ? await offerLetterAttachment({
+        candidateName: vars.candidate_name ?? "the candidate",
+        jobTitle: vars.job_title ?? "the role",
+        body,
+      })
+    : null;
+  const text = withoutClaim && !attachment ? withoutClaim : body;
+
+  const outcome = await EmailConnector.send({
+    to: row.recipient,
+    subject,
+    text,
+    attachments: attachment ?? undefined,
+  });
 
   // The row is rewritten with what actually went out, so a legacy campaign row
   // that stored the template stops showing placeholders in the outbox after one
   // retry — and the next re-send has the real copy to work from.
   const { error } = await supabase
     .from("communication_logs")
-    .update({ subject, body, delivered: outcome.success, error_message: outcome.error ?? null })
+    .update({ subject, body: text, delivered: outcome.success, error_message: outcome.error ?? null })
     .eq("id", id);
 
   if (error) {
