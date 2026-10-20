@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/modules/analytics/presentation/ui";
+import { usePanelFocus } from "@/modules/analytics/presentation/usePanelFocus";
 import { updateStaffDetails } from "@/modules/settings/application/user-actions";
 import { cn } from "@/lib/utils";
 import type { StaffMember } from "@/modules/settings/domain/types";
@@ -33,15 +34,9 @@ export function MemberEditPanel({ member, onClose, onSaved }: MemberEditPanelPro
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  useEffect(() => {
-    const first = formRef.current?.querySelector<HTMLInputElement>("input");
-    first?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // The panel is only mounted while a member is being edited, so it is open for
+  // as long as it exists.
+  usePanelFocus(formRef, true, onClose);
 
   const dirty =
     draft.full_name.trim() !== member.full_name ||

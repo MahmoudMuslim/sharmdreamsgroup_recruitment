@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, UserPlus, X } from "lucide-react";
 import { createUser } from "@/modules/settings/application/user-actions";
 import { Button } from "@/modules/analytics/presentation/ui";
+import { usePanelFocus } from "@/modules/analytics/presentation/usePanelFocus";
 import { CredentialReveal } from "./CredentialReveal";
 import { ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
 import { cn } from "@/lib/utils";
@@ -38,16 +39,7 @@ export function UserCreatePanel({
   const [pending, setPending] = useState(false);
   const [credential, setCredential] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const first = formRef.current?.querySelector<HTMLInputElement>("input");
-    first?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  usePanelFocus(formRef, open, onClose);
 
   function editField(name: string, value: string) {
     setDraft((d) => ({ ...d, [name]: value }));

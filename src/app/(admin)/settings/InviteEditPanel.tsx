@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { Button } from "@/modules/analytics/presentation/ui";
+import { usePanelFocus } from "@/modules/analytics/presentation/usePanelFocus";
 import { ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
 import { updateStaffInvite } from "@/modules/settings/application/user-actions";
 import { cn } from "@/lib/utils";
@@ -41,15 +42,9 @@ export function InviteEditPanel({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  useEffect(() => {
-    const first = formRef.current?.querySelector<HTMLInputElement>("input");
-    first?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // The panel is only mounted while an invite is being corrected, so it is open
+  // for as long as it exists.
+  usePanelFocus(formRef, true, onClose);
 
   const dirty =
     draft.email.trim().toLowerCase() !== invite.email.toLowerCase() ||

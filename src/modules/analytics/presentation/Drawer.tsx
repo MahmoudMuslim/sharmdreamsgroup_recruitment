@@ -3,6 +3,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePanelFocus } from "./usePanelFocus";
 
 /**
  * Right-hand slide-in drawer.
@@ -49,29 +50,19 @@ export function Drawer({
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
+  usePanelFocus(panelRef, open, onClose);
+
   useEffect(() => {
     if (!open) return;
-
-    // Move focus in so keyboard and screen-reader users land inside the drawer.
-    const first = panelRef.current?.querySelector<HTMLElement>(
-      "input:not([type=hidden]), textarea, select, button"
-    );
-    first?.focus();
-
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
 
     // Prevent the page behind from scrolling under the drawer.
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -106,6 +97,9 @@ export function Drawer({
 
       <div
         ref={panelRef}
+        // Focusable but not tabbable: a drawer with nothing to type into still
+        // has to hold focus, or it stays on the page behind the scrim.
+        tabIndex={-1}
         className={cn(
           "panel-in absolute inset-y-0 right-0 flex w-full flex-col border-l border-brand-line bg-white shadow-2xl",
           width
