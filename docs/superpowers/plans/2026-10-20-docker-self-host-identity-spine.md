@@ -1747,17 +1747,38 @@ process.env.AUTH_DB_URL = env.AUTH_DB_URL;
 const pw = env.LOCAL_STAFF_PASSWORD;
 
 const good = await verifyStaffPassword("owner.local@sharmdreams.test", pw);
-const bad = await verifyStaffPassword("owner.local@sharmdreams.test", pw + "-nope");
+// Mixed case because that is what a typing human produces, and because this is
+// the only call that exercises normalisation: deleting `.trim().toLowerCase()`
+// makes this call answer `unknown_user` and the probe goes red (measured). It
+// deliberately does *not* cover the SQL `lower(email)` — every fixture email is
+// stored in lower case, so losing only that half still passes. The two guards
+// are redundant on purpose; say so instead of letting the PASS line imply a
+// coverage the fixtures cannot give (adding a mixed-case fixture is Plan 2 work).
+const badStart = performance.now();
+const bad = await verifyStaffPassword("Owner.Local@SharmDreams.test", pw + "-nope");
+const badMs = performance.now() - badStart;
+const ghostStart = performance.now();
 const ghost = await verifyStaffPassword("nobody@sharmdreams.test", pw);
+const ghostMs = performance.now() - ghostStart;
 
 if (!good.ok) throw new Error(`correct password rejected: ${JSON.stringify(good)}`);
 if (bad.ok || bad.reason !== "wrong_password") throw new Error(`wrong password accepted: ${JSON.stringify(bad)}`);
 if (ghost.ok || ghost.reason !== "unknown_user") throw new Error(`bad unknown-user path: ${JSON.stringify(ghost)}`);
+// The unknown-user path only defends against email enumeration while it
+// actually pays for a hash round, and its return value cannot show that: with
+// the equalising query deleted the path still answers `unknown_user`. Measured
+// through this pool on the local container — one cost-10 bcrypt round takes a
+// call to ~50 ms and the bare lookup answers in ~4 ms — so the unknown path is
+// compared against *the same run's* wrong-password path. A fixed millisecond
+// threshold would only mis-time a loaded machine; this ratio absorbs it.
+if (ghostMs < badMs / 3) {
+  throw new Error(`unknown-user path answered in ${ghostMs.toFixed(1)}ms against a ${badMs.toFixed(1)}ms hash round — the timing-equalising round is gone`);
+}
 // Close the pool or this script sits on the pool's 30s idle timeout after
 // printing its result — a probe that finishes but does not exit reads as a hang.
 await getAuthPool().end();
-console.log("PASS correct/wrong/unknown all answered correctly, and case-insensitively");
-console.log("  seeded user id:", good.userId);
+console.log("PASS correct/wrong/unknown answered correctly, a mixed-case login normalised to the right row, and the unknown-user path paid for a hash round");
+console.log(`  seeded user id: ${good.userId} | wrong-password ${badMs.toFixed(1)}ms, unknown-user ${ghostMs.toFixed(1)}ms`);
 ```
 
 ```bash
@@ -1768,7 +1789,7 @@ node scripts/prove-password-verify.mjs
 
 No `--experimental-strip-types`: type stripping is unflagged in this Node major (measured on v24.21.0), and the flag is only accepted-and-redundant. Node will print `MODULE_TYPELESS_PACKAGE_JSON` because the repo's `package.json` has no `"type"` field; that warning is not a failure and the field must not be added — Next's own files and the repo's CommonJS-era scripts assume the default.
 
-Expected: the PASS line with a real uuid. A `function extensions.crypt(...) does not exist` means pgcrypto was not installed in the `extensions` schema — check `select extname, extnamespace::regnamespace from pg_extension where extname='pgcrypto'` before changing the call. A failure that *mentions* `$2a$` means the image's pgcrypto is older than the hash format — report the `select extversion from pg_extension where extname='pgcrypto'` value rather than switching to a Node library.
+Expected: the PASS line with a real uuid and two millisecond figures, where the unknown-user figure is not less than a third of the wrong-password figure. A `function extensions.crypt(...) does not exist` means pgcrypto was not installed in the `extensions` schema — check `select extname, extnamespace::regnamespace from pg_extension where extname='pgcrypto'` before changing the call. A failure that *mentions* `$2a$` means the image's pgcrypto is older than the hash format — report the `select extversion from pg_extension where extname='pgcrypto'` value rather than switching to a Node library. A `timing-equalising round is gone` failure means the unknown-user path answered in well under a third of the same run's wrong-password path — check that `passwords.ts` still issues its `extensions.crypt($1, extensions.gen_salt('bf', 10))` query before touching the ratio.
 
 - [ ] **Step 6: Commit.**
 
@@ -3421,6 +3442,8 @@ node -e "const p=require('./package.json');console.log(Object.keys(p.dependencie
 ```
 
 Expected: `[ '@supabase/supabase-js', 'pg' ]`. If `@supabase/ssr` is still listed, Task 13's file deletion did not happen.
+
+Carry one forward note while you are in the toolchain (Task 9's review found it): `tsconfig.json` now sets `"allowImportingTsExtensions": true` for a single import specifier, and that option is only legal beside `"noEmit": true`. This task must **not** add a `tsc` emit step, a build script that compiles with `tsc`, or an `outDir`. If any later plan wants the repo to emit, that pairing has to be replaced with `rewriteRelativeImportExtensions` or the literal `./db.ts` specifier dies at runtime instead of at the compiler.
 
 - [ ] **Step 5: `@vercel/speed-insights` stays.** It is a third-party script tag, not a platform binding, and removing it changes what the owner sees in analytics while nothing else is being decided. Note it as Plan 2's item, with `NEXT_PUBLIC_*` cleanup and the rest of the vendor's environment surface.
 
