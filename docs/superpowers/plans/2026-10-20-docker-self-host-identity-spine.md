@@ -67,7 +67,7 @@ New — data plane, all under `docker/` so the whole stack is one directory:
 
 Modified: `supabase/schema.sql` (vault removal, `AUTHORITATIVE:` marker), `package.json` (`pg` promotion, `docker:*` and `db:apply-local` scripts), `.gitignore` (`docker/data/`), `src/lib/config.ts` (port 3000 default, `candidate-cvs` bucket), `src/proxy.ts`, `src/lib/auth/session.ts`, `src/app/login/LoginForm.tsx`, `src/modules/settings/application/user-actions.ts` (its 13 `auth.admin.*` sites keep their call shape but gain the shim's `Result` handling — Task 14), `scripts/create-staff.mjs`. Deleted: `src/lib/supabase/middleware.ts` (Task 13) and `src/lib/supabase/rest.ts`, `src/lib/supabase/client.ts` (Task 17).
 
-**Out of scope for Plan 1** (Plan 2 owns it): the `files` table + `/data/uploads` volume, dropping `storage.objects` and `src/lib/supabase/vendor.ts`, removing `@supabase/*` and `@vercel/speed-insights`, and the KVM2 cut-over script.
+**Out of scope for Plan 1** (Plan 2 owns it): the `files` table + `/data/uploads` volume, dropping `storage.objects` and the vendor delegation inside `src/lib/files/store.ts` (Task 10 creates the seam; the three `src/lib/supabase/{server,service,anon}.ts` clients it delegates through go away with it), removing `@supabase/*` and `@vercel/speed-insights`, and the KVM2 cut-over script.
 
 ---
 
@@ -1804,39 +1804,65 @@ git commit -m "feat(auth): verify staff passwords with pgcrypto over the local p
 
 **Files:**
 - Create: `src/lib/files/store.ts`
-- Create: `src/lib/supabase/vendor.ts`
-- Modify: the 14 files that currently call `supabase.storage.from(bucket)` — find them with `grep -rn "\.storage\.from(" src/`
+- Modify: the 14 files that currently call `supabase.storage` — find them with `grep -rln "supabase\.storage" src/` (the plan's earlier pattern, `"\.storage\.from("`, finds only 5 of the 16: 11 sites break the line between `storage` and `.from(`, and a line-anchored grep cannot see them)
 - Modify: `src/lib/config.ts:48-52` (add the missing `candidateCvs` bucket)
 
 **Interfaces:**
 - Produces:
 
 ```ts
-export interface FileStore {
-  upload(input: { bucket: string; path: string; body: BodyInit; contentType?: string; upsert?: boolean }): Promise<{ ok: boolean; error?: string }>;
-  signedUrl(input: { bucket: string; path: string; seconds: number }): Promise<{ url: string | null }>;
-  download(input: { bucket: string; path: string }): Promise<{ bytes: Uint8Array | null; contentType: string | null }>;
-  remove(input: { bucket: string; paths: string[] }): Promise<{ ok: boolean; failed: string[] }>;
-  list(input: { bucket: string; prefix: string; limit?: number }): Promise<{ paths: string[] }>;
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/** A file entry as the portal needs it: the storage key, whether it is a folder,
+ *  and the three metadata columns the File Manager renders. A folder is what
+ *  storage reports as an entry with no object id. */
+export interface FileStoreEntry {
+  path: string;
+  name: string;
+  isFolder: boolean;
+  bytes: number | null;
+  mimeType: string | null;
+  updatedAt: string | null;
 }
-export function getFileStore(): Promise<FileStore>;      // the only entry call sites use
-export async function createVendorStorageClient();        // in vendor.ts, deleted by Plan 2
+
+export interface FileStore {
+  upload(input: { bucket: string; path: string; body: Blob | ArrayBuffer | string; contentType?: string; upsert?: boolean }): Promise<{ ok: boolean; error?: string }>;
+  signedUrl(input: { bucket: string; path: string; seconds: number; download?: string }): Promise<{ url: string | null; error?: string }>;
+  download(input: { bucket: string; path: string }): Promise<{ bytes: Uint8Array | null; contentType: string | null; error?: string }>;
+  remove(input: { bucket: string; paths: string[] }): Promise<{ ok: boolean; failed: string[]; error?: string }>;
+  list(input: { bucket: string; prefix: string; limit?: number; sortBy?: { column: "name" | "created_at" | "updated_at"; order: "asc" | "desc" } }): Promise<{ entries: FileStoreEntry[]; error?: string }>;
+}
+
+/** The caller hands over the client it already holds, so opening this seam can
+ *  never change *who* is allowed to touch the byte. Structural, not
+ *  `SupabaseClient`, because `createSupabaseServerClient()` returns the `@supabase/ssr`
+ *  flavour and a seam that forced a cast at every call site is not a seam. */
+export function getFileStore(client: { storage: SupabaseClient["storage"] }): Promise<FileStore>;
 ```
 
 Task 11 does not touch storage because of this task; Plan 2 adds a disk-backed `FileStore` and changes one `return` inside `getFileStore()`.
 
-Why `vendor.ts` exists: during Plan 1 the *reads* move to the local stack while *bytes* stay with the vendor, because the local `storage.objects` shim holds rows, not files. So the port genuinely runs two clients at once, and that has to be a named, dated decision in the tree rather than an accident spread across 16 files. Plan 2 deletes this file along with `storage.objects`.
+**Why `getFileStore` takes a client, and why there is no `vendor.ts`.** An earlier draft of this task created `src/lib/supabase/vendor.ts` returning *one* service-key client, and had all 16 sites go through it. Measured against the tree, that would have quietly escalated privileges on 11 of the 16 sites while claiming to change no behaviour — the current authorities are:
+
+| authority today | sites | where |
+| --- | --- | --- |
+| request-bound staff client (`createSupabaseServerClient()`, anon key + the signed-in staff JWT, RLS enforced) | 8 | `(admin)/assessments/actions.ts:477`, `(admin)/candidates/assessment-actions.ts:171`, `(admin)/candidates/attachment-actions.ts:37`, `(admin)/candidates/cv-actions.ts:223`, `(admin)/files/actions.ts:128`, `api/files/link/route.ts:51`, `api/files/upload/route.ts:104`, `api/files/upload/route.ts:140` |
+| service-role client (`getSupabaseServiceClient()`, `bypassrls`) | 4 | `api/attempt/[token]/video/route.ts:38`, `app/careers/actions.ts:361`, `modules/assessment/application/gradeAttempt.ts:477`, `modules/screening/application/screen-application.ts:210` |
+| anon client (`getSupabaseAnonClient()`, no identity — used on a **public** upload route) | 1 | `api/careers/upload/route.ts:83` |
+| client received as a function parameter | 3 | `(admin)/files/storage-list.ts:26` (`Supabase`), `modules/careers/cv-links.ts:51` and `:52` (`StaffClient`) |
+
+A single service-key store would have made an anonymous applicant's CV upload, and every staff file read, run as `service_role`. The bucket policies in `supabase/schema.sql` (1763-1798) are the second gate behind the portal's own checks, and dropping them is a decision for whoever replaces the bytes — Plan 2 — not a side effect of a refactor. So: no new client, no new file, and the dated two-backends decision lives in `store.ts`'s header comment instead. Task 17 and Plan 2 delete the three `src/lib/supabase/{server,service,anon}.ts` factories that this seam still delegates through.
 
 - [ ] **Step 1: Re-derive the site list before editing.**
 
 ```bash
-grep -rn "\.storage\.from(" src/ | tee /tmp/storage-sites.txt
-grep -rc "\.storage\.from(" src/ | grep -v ':0$' | wc -l
+grep -rn "supabase\.storage" src/ | tee /d/tmp/storage-sites.txt
+grep -rln "supabase\.storage" src/ | wc -l
 ```
 
-Expected: **16 accessor call sites across 14 files** (correction #3). Paste the list into your commit message body so the next reader can check the count instead of trusting it. If the number differs, stop and reconcile the difference with the tree — the tree wins.
+Expected: **16 accessor call sites across 14 files** (correction #3). Do not use the pattern `"\.storage\.from("` — it finds only **5**, because 11 of the 16 sites break the line between `storage` and `.from(`, and a line-anchored grep cannot see a call that spans lines. (The spec's §2 "accessor lines | **5**" and §7 "5 `.storage.from(bucket)` lines" are that artifact; Task 18 corrects them.) Paste the list into your commit message body so the next reader can check the count instead of trusting it. If the number differs, stop and reconcile the difference with the tree — the tree wins.
 
-- [ ] **Step 2: Add the bucket `config.ts` omits.** [src/lib/config.ts:48-52](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/config.ts#L48-L52) lists three buckets while `supabase/schema.sql` seeds four, including `candidate-cvs`. Add the line so a Plan 2 writer is not pointed at a bucket that already exists:
+- [ ] **Step 2: Add the bucket `config.ts` omits.** [src/lib/config.ts:48-52](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/config.ts#L48-L52) lists three buckets while `supabase/schema.sql` seeds four, including `candidate-cvs` (line 2162). Add the line so a Plan 2 writer is not pointed at a bucket that already exists:
 
 ```ts
   buckets: {
@@ -1847,48 +1873,44 @@ Expected: **16 accessor call sites across 14 files** (correction #3). Paste the 
   },
 ```
 
-- [ ] **Step 3: Write `src/lib/supabase/vendor.ts`, then `src/lib/files/store.ts`.**
+- [ ] **Step 3: Write `src/lib/files/store.ts`.**
 
 ```ts
-/* src/lib/supabase/vendor.ts
- * The vendor storage client, kept separate from the query seam on purpose:
- * Plan 1 moves reads to the local stack while bytes stay here. Plan 2 deletes
- * this file along with storage.objects (spec §7).
+/* src/lib/files/store.ts
+ * One interface for every byte the portal touches, so the storage *backend* is
+ * decided once instead of sixteen times.
+ *
+ * The dated decision this file exists to record: during Plan 1 the *rows* move
+ * to the local Postgres/PostgREST stack while the *bytes* stay with the vendor,
+ * because the local `storage.objects` shim holds metadata and no file. So the
+ * port runs two backends at once, and every method here still talks to the
+ * client it is handed. Plan 2 replaces the body of `getFileStore` with a
+ * disk-backed store over `/data/uploads` and a `files` table (spec §7); no call
+ * site changes, and the `client` parameter stops being read rather than being
+ * cast away.
  */
-import { createClient } from "@supabase/supabase-js";
-import { supabaseConfig } from "@/lib/config";
-
-/** File *metadata* lives in storage.objects and is served by RLS, so this client
- * carries the service key rather than the request's anon token: the byte-level
- * bucket policies are being replaced in Plan 2, not reproduced here. */
-export async function createVendorStorageClient() {
-  return createClient(supabaseConfig.url, supabaseConfig.anonKey, {
-    global: { headers: { Authorization: `Bearer ${supabaseConfig.serviceRoleKey}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-}
-```
-
-```ts
-/* src/lib/files/store.ts */
 import "server-only";
-import { createVendorStorageClient } from "@/lib/supabase/vendor";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-/**
- * Every file the portal touches goes through this interface, so the storage
- * backend is decided once instead of sixteen times.
- */
+export interface FileStoreEntry {
+  path: string;
+  name: string;
+  isFolder: boolean;
+  bytes: number | null;
+  mimeType: string | null;
+  updatedAt: string | null;
+}
+
 export interface FileStore {
-  upload(input: { bucket: string; path: string; body: BodyInit; contentType?: string; upsert?: boolean }): Promise<{ ok: boolean; error?: string }>;
-  signedUrl(input: { bucket: string; path: string; seconds: number }): Promise<{ url: string | null }>;
-  download(input: { bucket: string; path: string }): Promise<{ bytes: Uint8Array | null; contentType: string | null }>;
-  remove(input: { bucket: string; paths: string[] }): Promise<{ ok: boolean; failed: string[] }>;
-  list(input: { bucket: string; prefix: string; limit?: number }): Promise<{ paths: string[] }>;
+  upload(input: { bucket: string; path: string; body: Blob | ArrayBuffer | string; contentType?: string; upsert?: boolean }): Promise<{ ok: boolean; error?: string }>;
+  signedUrl(input: { bucket: string; path: string; seconds: number; download?: string }): Promise<{ url: string | null; error?: string }>;
+  download(input: { bucket: string; path: string }): Promise<{ bytes: Uint8Array | null; contentType: string | null; error?: string }>;
+  remove(input: { bucket: string; paths: string[] }): Promise<{ ok: boolean; failed: string[]; error?: string }>;
+  list(input: { bucket: string; prefix: string; limit?: number; sortBy?: { column: "name" | "created_at" | "updated_at"; order: "asc" | "desc" } }): Promise<{ entries: FileStoreEntry[]; error?: string }>;
 }
 
 /** Plan 2 returns a disk-backed store here; no call site changes. */
-export async function getFileStore(): Promise<FileStore> {
-  const client = await createVendorStorageClient();
+export async function getFileStore(client: { storage: SupabaseClient["storage"] }): Promise<FileStore> {
   const { storage } = client;
   return {
     async upload({ bucket, path, body, contentType, upsert }) {
@@ -1897,56 +1919,89 @@ export async function getFileStore(): Promise<FileStore> {
         .upload(path, body, { contentType, upsert });
       return { ok: !error, error: error?.message };
     },
-    async signedUrl({ bucket, path, seconds }) {
-      const { data } = await storage.from(bucket).createSignedUrl(path, seconds);
-      return { url: data?.signedUrl ?? null };
+    async signedUrl({ bucket, path, seconds, download }) {
+      const { data, error } = await storage
+        .from(bucket)
+        .createSignedUrl(path, seconds, download === undefined ? undefined : { download });
+      return { url: data?.signedUrl ?? null, error: error?.message };
     },
     async download({ bucket, path }) {
       const { data, error } = await storage.from(bucket).download(path);
-      if (error || !data) return { bytes: null, contentType: null };
+      if (error || !data) return { bytes: null, contentType: null, error: error?.message };
       const buffer = await data.arrayBuffer();
-      return { bytes: new Uint8Array(buffer), contentType: null };
+      // `type` is the blob's own content type, and gradeAttempt hands it to the
+      // transcriber. Returning null here would silently pin every recording to
+      // that call's "video/webm" fallback.
+      return { bytes: new Uint8Array(buffer), contentType: data.type || null, error: undefined };
     },
     async remove({ bucket, paths }) {
       const { error } = await storage.from(bucket).remove(paths);
-      return { ok: !error, failed: error ? paths : [] };
+      return { ok: !error, failed: error ? paths : [], error: error?.message };
     },
-    async list({ bucket, prefix, limit = 1000 }) {
-      const { data } = await storage.from(bucket).list(prefix, { limit });
+    async list({ bucket, prefix, limit = 1000, sortBy }) {
+      const { data, error } = await storage.from(bucket).list(prefix, { limit, sortBy });
       return {
-        paths: (data ?? []).map((entry) => (prefix ? `${prefix}/${entry.name}` : entry.name)),
+        // Storage keys are prefix + leaf, with the separator already inside the
+        // prefix ("applications/<id>/"). Joining with "/" here would turn an
+        // empty prefix into "/file.pdf" and a real prefix into a doubled slash.
+        entries: (data ?? []).map((entry) => ({
+          path: `${prefix}${entry.name}`,
+          name: entry.name,
+          isFolder: typeof entry.id !== "string",
+          bytes: typeof entry.metadata?.size === "number" ? entry.metadata.size : null,
+          mimeType: typeof entry.metadata?.mimetype === "string" ? entry.metadata.mimetype : null,
+          updatedAt: entry.updated_at ?? null,
+        })),
+        error: error?.message,
       };
     },
   };
 }
 ```
 
-Type note for the engineer writing this: `supabase-js`'s `upload()` accepts `File | Blob | ArrayBuffer | string`, not the wider `BodyInit`. If `tsc` complains, narrow `FileStore.upload.body` to `Blob | ArrayBuffer | string` — do **not** paper over it with `as never`, because the whole point of this seam is that its types describe what Plan 2 must reproduce.
+Type notes for the engineer writing this:
 
-Preserve each site's existing failure branch. If a site currently reads `error.message` into an activity-trail row, keep that message in the return value rather than swallowing it into a boolean.
+- `supabase-js`'s `upload()` accepts `File | Blob | ArrayBuffer | string`, not the wider `BodyInit`. That is why `body` above is already narrowed. If `tsc` still complains, narrow further — do **not** paper over it with `as never`, because the whole point of this seam is that its types describe what Plan 2 must reproduce.
+- If `tsc` rejects an entry field (the `storage-js` types vary by version on `metadata`, `id`, `updated_at`), cast *at that one property* with a comment naming what the vendor type got wrong; never widen `FileStoreEntry` to `Record<string, unknown>`, which would move the vendor's shape back into the call sites and defeat the task.
+- `getFileStore` is `async` even though this body awaits nothing, so Plan 2's disk store can open files without changing the call sites again.
 
-- [ ] **Step 4: Rewrite each of the 16 sites** to `const files = await getFileStore();` and then the matching method. Keep the surrounding error handling, logging and activity-trail writes exactly as they are; this task moves a call, it does not change a behaviour. For each file, re-read the site after editing and confirm the same three things survive: the bucket name, the path expression, and the failure branch.
+- [ ] **Step 4: Rewrite each of the 16 sites** to build the store from the client that site already had, then call the matching method:
+
+```ts
+const files = await getFileStore(supabase);   // same authority as before this line
+```
+
+  - The 8 staff sites, the 4 service sites and the 1 anon site keep their existing client call verbatim above it. Changing which client a site holds is **out of scope for this task and a finding if you do it**.
+  - `storage-list.ts` and `cv-links.ts` keep receiving their client as a parameter and call `getFileStore(supabase)` inside; their callers are unchanged.
+  - `storage-list.ts`'s `listObjects` now returns `FileStoreEntry[]` (or maps them into its own `ListOutcome`), and the four consumers that read `row.name` / `row.id` / `row.metadata.size` / `row.metadata.mimetype` / `row.updated_at` off untyped entries — `files/actions.ts:175`, `files/actions.ts:256` (the walk), `storage-list.ts:objectMetadata` and anything fed by them — switch to `entry.name`, `entry.isFolder`, `entry.bytes`, `entry.mimeType`, `entry.updatedAt`. The folder rule is `isFolder`, which is the same test the code used (`no object id`). Deleting the `asRecord`/`as unknown[]` casts in those loops is the point of doing it.
+  - `gradeAttempt.ts` keeps its fallback: `transcribeRecording(bytes, contentType ?? "video/webm")`.
+  - `api/files/link/route.ts:53` passes `download` **only when the response should be a download** — the inline branch must keep sending no disposition.
+  - `cv-links.ts:51,52` are two `signedUrl` calls, one with and one without `download`; they stay two calls, and the `null`s-without-throwing contract stays.
+
+Keep the surrounding error handling, logging and activity-trail writes exactly as they are; this task moves a call, it does not change a behaviour. For each file, re-read the site after editing and confirm the same four things survive: the bucket name, the path expression, the failure branch (including the message text a site quotes), and the client the site runs as.
 
 - [ ] **Step 5: Prove nothing regressed.**
 
 ```bash
-grep -rn "\.storage\.from(" src/ | grep -v "src/lib/files/store.ts" | grep -v "src/lib/supabase/vendor.ts" | wc -l
+grep -rn "supabase\.storage" src/ | grep -v "src/lib/files/store.ts" | wc -l
 ./node_modules/.bin/tsc --noEmit -p tsconfig.json
-./node_modules/.bin/eslint src/lib/files/store.ts src/lib/supabase/vendor.ts src/lib/config.ts
+./node_modules/.bin/eslint src
+node scripts/check-staff-routes.mjs
 node scripts/check-themes.mjs
 ```
 
-Expected: `0` storage accessors outside the two new modules, both gates silent. The live file paths cannot be proved on the local stack (no bytes behind the shim) — say so in the commit body rather than implying a proof you did not run.
+Expected: `0` storage accessors outside `store.ts`, `eslint src` silent (0 errors; one pre-existing warning in an untouched file is acceptable — quote it), and the two repo scripts pass. tsc is read on its **output**, not its exit code: the accepted baseline is 2 `error TS` lines + 1 indented continuation, all inside generated `.next/types/validator.ts`. The live file paths cannot be proved on the local stack (no bytes behind the shim) — say so in the commit body rather than implying a proof you did not run. Do not start the dev server.
 
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add src/lib/files/store.ts src/lib/supabase/vendor.ts src/lib/config.ts
+git add src/lib/files/store.ts src/lib/config.ts
 git add -u src
 git commit -m "refactor(files): route every storage accessor through one file store"
 ```
 
-Body: the 16 sites with their `file:line`, the count of files touched, and the explicit note that byte-level behaviour is unchanged — the store still delegates to the vendor client, so this is a seam, not a migration.
+Body: the 16 sites with their `file:line`, the count of files touched, the authority table showing which client each site kept, and the explicit note that byte-level behaviour is unchanged — the store still delegates to the caller's vendor client, so this is a seam, not a migration.
+
 
 ### Task 11: The PostgREST builder, and the one seam that adopts it
 
