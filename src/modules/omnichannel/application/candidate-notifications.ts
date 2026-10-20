@@ -27,6 +27,7 @@ import {
   STAGE_FALLBACK_TEMPLATE,
   TEMPLATE_DEFAULTS,
   humanizeStage,
+  promisesAttachment,
   renderTemplate,
   withoutAttachmentClaim,
   type TemplateVars,
@@ -264,12 +265,12 @@ export async function notifyStageChange(
    * The text that goes out, and the document that goes with it.
    *
    * The offer copy promises attached formal documents while nothing was ever
-   * attached to anything, so the promise is taken out up front and only put back
-   * once a PDF is actually in the message. `body` is what both channels and the
-   * outbox row then carry, so a recruiter reading the log sees the sentence the
-   * candidate really got.
+   * attached to anything, so any promise of a document is taken out up front and
+   * only put back once a PDF is actually in the message — whichever template it
+   * came from. `body` is what the email and its outbox row then carry, so a
+   * recruiter reading the log sees the sentence the candidate really got.
    */
-  let body = stage === "OFFER" ? withoutAttachmentClaim(letter) : letter;
+  let body = promisesAttachment(letter) ? withoutAttachmentClaim(letter) : letter;
 
   if (!notifyOnStageChange) {
     report.email = "off";
@@ -311,7 +312,11 @@ export async function notifyStageChange(
   }
 
   if (inAppEnabled && notifyOnStageChange) {
-    await record({ applicationId, channel: "IN_APP", recipient: candidate.email ?? "portal", subject, body, delivered: true });
+    /* A portal notice is a line of text in an inbox, not an envelope: it can
+     * never carry the file the email managed to attach, so it tells the reader
+     * the documents come by email instead of promising them from here. */
+    const notice = promisesAttachment(body) ? withoutAttachmentClaim(body) : body;
+    await record({ applicationId, channel: "IN_APP", recipient: candidate.email ?? "portal", subject, body: notice, delivered: true });
     report.inApp = "sent";
   }
 
