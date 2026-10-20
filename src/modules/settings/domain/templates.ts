@@ -159,6 +159,14 @@ export const EMAIL_TEMPLATE_DEFAULTS: Record<string, string> = {
     "Dear {{candidate_name}},\n\nWelcome aboard. The {{job_title}} team is looking forward to working with you, and your onboarding details will follow by email.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
   stage_rejected:
     "Dear {{candidate_name}},\n\nThank you for taking the time to apply for {{job_title}}. After careful review we will not be progressing your application on this occasion.\n\nWe appreciate the interest you have shown in {{company_name}} and wish you every success in your search.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
+  /**
+   * The offer had no shipped body, so the letter a candidate got was whatever the
+   * one database row said: blank or delete that row and the offer arrived as the
+   * generic status-update line. It closes with `OFFER_ATTACHMENT_CLAIM` exactly,
+   * which is what tells the dispatch path to build and attach the PDF.
+   */
+  offer_letter:
+    "Dear {{candidate_name}},\n\nCongratulations! We are pleased to offer you the position of {{job_title}}. The formal documents are attached.\n\nYour start date and the terms of the offer are confirmed with you directly.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
   interview_changed:
     "Dear {{candidate_name}},\n\nWe have moved your interview for {{job_title}} to {{interview_when}} (approximately {{interview_duration}} minutes).{{interview_link}}\n\nPlease let us know if the new time does not suit you.\n\nKind regards,\nTalent Acquisition, {{company_name}}",
   interview_cancelled:
