@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, Montserrat, Amiri } from "next/font/google";
 import { themeBootstrap } from "@/lib/theme";
+import { loadTranslationOverrides } from "@/modules/i18n/application/translationOverrides";
+import { TranslationsSeed } from "@/modules/i18n/presentation/TranslationsSeed";
 import "./globals.css";
 
 const inter = Inter({
@@ -40,7 +42,13 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // Read here rather than in each public layout, because wording an admin saved
+  // has to reach every surface the same way — including the candidate portal,
+  // whose own files this console does not edit. The read is cached and tagged, so
+  // it costs one shared query rather than one per route, and a save evicts it.
+  const overrides = await loadTranslationOverrides();
+
   return (
     // `data-palette` and `data-tone` are the theme the CSS ships with; the inline
     // script in <head> may already have replaced both before React hydrates,
@@ -57,7 +65,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>
-      <body className="min-h-full bg-brand-ivory text-brand-ink">{children}</body>
+      <body className="min-h-full bg-brand-ivory text-brand-ink">
+        {/* First in the body so the wording is in place before any child, server
+            or client, calls `translate` during this render. */}
+        <TranslationsSeed value={overrides} />
+        {children}
+      </body>
     </html>
   );
 }

@@ -70,7 +70,8 @@ export type AiCapability =
   | "interview_questions"
   | "transcription"
   | "assistant"
-  | "chatbot";
+  | "chatbot"
+  | "translation";
 
 const PRIMARY = optional(process.env.AI_MODEL_PRIMARY, "google/gemma-4-31b-it:free");
 const FAST = optional(process.env.AI_MODEL_FAST, "nvidia/nemotron-3.5-lightning:free");
@@ -97,4 +98,9 @@ export const modelChains: Record<AiCapability, readonly string[]> = {
   // so it starts at the same Google ids the in-app chat uses — the free
   // OpenRouter ids it would otherwise inherit are the first to rate-limit.
   chatbot: ["gemini-3-flash-preview", "gemini-3.1-flash-lite", PRIMARY, FALLBACK],
+  // Interface wording, translated a batch at a time from the Settings console.
+  // Its own chain rather than the chatbot's, so routing one does not silently
+  // reroute the other: a recruiter watching a translation stall has to be able to
+  // change its model without touching the page a candidate is waiting on.
+  translation: ["gemini-3-flash-preview", "gemini-3.1-flash-lite", PRIMARY, FALLBACK],
 } as const;
