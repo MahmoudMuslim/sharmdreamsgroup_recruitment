@@ -6,7 +6,7 @@
 
 **Architecture:** One Compose file owns the data plane; the app stays outside Docker (`next dev` on port 3000) and talks to PostgREST through a Caddy gateway that also strips `/rest/v1`. Everything Supabase hosted outside `public` (roles, `auth`, `storage`, `extensions`) is stood in by `docker/db/initdb/*.sql`, so `supabase/schema.sql` — including its policies — applies unchanged. Identity is a single re-pointed seam (`src/lib/supabase/server.ts`) plus a small `src/lib/auth/` module set; the 129 call sites that construct that client are not touched.
 
-**Tech Stack:** Docker Compose, `postgres:17-alpine`, `postgrest/postgrest:v13`, `caddy:2-alpine`, Node 24 + `pg` (moving from devDependency to dependency), `pgcrypto` `crypt()` for bcrypt verification, HS256 tokens signed with `node:crypto`, Next.js 16.4 App Router (`proxy` replaces `middleware`).
+**Tech Stack:** Docker Compose, `postgres:17-alpine`, `postgrest/postgrest:v16.5`, `caddy:2-alpine`, Node 24 + `pg` (moving from devDependency to dependency), `pgcrypto` `crypt()` for bcrypt verification, HS256 tokens signed with `node:crypto`, Next.js 16.4 App Router (`proxy` replaces `middleware`).
 
 **Spec:** [docs/superpowers/specs/2026-10-20-docker-self-host-migration-design.md](file:///D:/Nextjs%20Projects/sharm_dreams_group/docs/superpowers/specs/2026-10-20-docker-self-host-migration-design.md) — read it alongside this plan; §4–§6 and §9 are what Plan 1 implements.
 
@@ -16,6 +16,7 @@
 
 - **Verification vocabulary.** This repo has **no test runner** — do not invent `vitest`/`jest`. Every "run the tests" step is: `./node_modules/.bin/tsc --noEmit -p tsconfig.json`, then `./node_modules/.bin/eslint <changed paths>`, then `node scripts/check-staff-routes.mjs` when a route changed, then a live probe against the local stack. A task is not done until all four are green.
 - **Never kill the owner's dev server on `localhost:3001`.** The migration dev server is **port 3000**. `docker compose` must never publish a host port that collides with 3001.
+- **Every host port this stack publishes is bound to `127.0.0.1`.** `"127.0.0.1:${LOCAL_DB_PORT:-54320}:5432"`, `"127.0.0.1:${LOCAL_GATEWAY_PORT:-54321}:8080"` — an un-prefixed mapping binds `0.0.0.0` *and* `::`, and the credentials behind both ports are committed in `docker/.env.example`, so a LAN-reachable Postgres or REST API is a defect, not a convenience. Containers reach each other by service name on the compose network and need no published port; on KVM2 the public listener is Caddy's TLS front, and these mappings are dropped or loopback-bound there too.
 - **No new auth/storage vendors.** No `better-auth`, no GoTrue, no MinIO, no Redis. Allowed new runtime deps in Plan 1: `pg` (already installed as a devDependency). Everything else is `node:crypto`.
 - **PII.** A live `pg_dump` will be restored into the local `db`. Dump files live **only** under `docker/data/`, which must be git-ignored; the `db` data dir is a named Docker volume, never a bind-mount into the repo tree.
 - **Candidate portal is off-limits.** Zero edits to `src/app/(candidate)/**`, `NoticeInbox`, or the `communication_logs` read/dismiss design. Verified in Task 18.
@@ -77,21 +78,24 @@ Modified: `supabase/schema.sql` (vault removal, `AUTHORITATIVE:` marker), `packa
 **Files:**
 - Create: `docker/docker-compose.yml`
 - Create: `docker/.env.example`
-- Create: `docker/data/.gitkeep`
-- Modify: `.gitignore` (append `docker/data/` and `docker/.env`)
+- Create: `docker/data/.gitkeep` and `docker/db/initdb/.gitkeep`
+- Create: `.gitattributes` (six `eol=lf` rules guarding the interpolated secret)
+- Modify: `.gitignore` (append `docker/data/*` + its `.gitkeep` negation, `docker/.env` + the `docker/.env.example` negation)
 - Modify: `package.json` (add the `docker:*` scripts)
 
 **Interfaces:**
-- Produces: a `db` service reachable at `postgresql://postgres:${LOCAL_DB_PASSWORD}@localhost:54320/sharm_dreams`, and the `LOCAL_DB_PASSWORD` / `AUTH_JWT_SECRET` names every later task reads from `docker/.env`.
+- Produces: a `db` service reachable from the host at `postgresql://postgres:${LOCAL_DB_PASSWORD}@localhost:54320/sharm_dreams` and from sibling containers at `db:5432` by service name, plus the `LOCAL_DB_PASSWORD` / `AUTH_JWT_SECRET` names every later task reads from `docker/.env`.
 
 - [ ] **Step 1: Confirm the images before pinning them.** Never take a tag from memory.
 
 ```bash
 docker manifest inspect postgres:17-alpine >/dev/null && echo "pg17 ok"
-docker run --rm postgrest/postgrest --version
+MSYS_NO_PATHCONV=1 docker run --rm --entrypoint /bin/postgrest postgrest/postgrest --version
 ```
 
-Record the exact PostgREST version string printed; use it as the tag in Task 2. Expected: `PostgREST 13.x`.
+Record the exact PostgREST version string printed; use it as the tag in Task 2. Expected: `PostgREST 16.5`.
+
+Two facts about the second command, both learned the hard way on this device. The `postgrest/postgrest` image declares **no Entrypoint** and its CMD is the bare `/bin/postgrest` binary, so `docker run --rm postgrest/postgrest --version` appends `--version` to a CMD that does not parse flags and prints nothing useful. And on Git Bash an argument beginning with `-` is handed to MSYS path conversion, which mangles it — hence `MSYS_NO_PATHCONV=1`. Verified live: the form above printed `PostgREST 16.5`, and `docker manifest inspect postgrest/postgrest:v16.5` succeeds.
 
 - [ ] **Step 2: Create `docker/.env.example`.**
 
@@ -159,8 +163,11 @@ services:
       - shared_preload_libraries=pg_stat_statements
       - -c
       - pg_stat_statements.track=top
+    # Loopback only: `rest` reaches `db` by service name on the compose network,
+    # so the published port exists solely for host-side probes — and the
+    # superuser password it guards is committed in docker/.env.example.
     ports:
-      - "${LOCAL_DB_PORT:-54320}:5432"
+      - "127.0.0.1:${LOCAL_DB_PORT:-54320}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./db/initdb:/docker-entrypoint-initdb.d:ro
@@ -176,7 +183,7 @@ volumes:
   db-data:
 ```
 
-- [ ] **Step 5: Create the ignored PII directory and the initdb stub.**
+- [ ] **Step 5: Create the ignored PII directory, the initdb stub, and the line-ending guard.**
 
 ```bash
 mkdir -p docker/db/initdb docker/data
@@ -188,10 +195,31 @@ Append to `.gitignore`:
 
 ```
 # Local self-host stack: PII dumps and real secrets never enter the repo.
-docker/data/
+docker/data/*
 !docker/data/.gitkeep
 docker/.env
+!docker/.env.example
 ```
+
+**Do not write `docker/data/` here.** A rule with a trailing slash excludes the directory itself, and git never re-descends an excluded directory — so the `!docker/data/.gitkeep` re-inclusion is inert and Step 9's `git add docker/data/.gitkeep` fails with "The following paths are ignored by one of your .gitignore files". Reproduced in a throwaway repo; `docker/data/*` excludes the *contents* instead, which git can re-include one file at a time. Likewise the final negation is required, not decorative: this repo's pre-existing line 38 is an **unanchored** `.env*`, and `git check-ignore -v` confirms it matches `docker/.env.example` as well as `docker/.env`.
+
+Then create `.gitattributes` at the repo root — six targeted rules, nothing else:
+
+```
+# docker/.env is generated by copying docker/.env.example and interpolating
+# AUTH_JWT_SECRET into it. core.autocrlf is active on Windows and this repo had
+# no attribute file, so a CRLF checkout appends \r to the interpolated secret —
+# and PostgREST plus src/lib/auth/token.ts silently disagree about who is signed
+# in. LF is the only safe line ending for anything the stack reads byte-exact.
+docker/.env.example text eol=lf
+docker/*.yml text eol=lf
+docker/**/*.yml text eol=lf
+docker/Caddyfile text eol=lf
+docker/db/initdb/*.sql text eol=lf
+docker/cron/*.sh text eol=lf
+```
+
+`docker/Caddyfile`, `docker/db/initdb/*.sql` and `docker/cron/*.sh` do not exist yet — Tasks 2, 3 and 16 create them, and a rule for a path that is not there is inert, not stale. Say that in one comment line. **Never add `* text=auto`**: it would renormalise every file in the repo and rewrite every future diff, which is not this plan's business. `docker/.env` itself can never be covered (it is ignored), so its LF-ness depends on the template being LF at `cp` time plus a byte-preserving rewrite — which is why Step 3 reads it, and why hand-editing it in a CRLF editor reintroduces the hazard.
 
 - [ ] **Step 6: Add the npm scripts** to `package.json`, immediately after `"dev"`:
 
@@ -210,7 +238,7 @@ npm run docker:up
 docker compose -f docker/docker-compose.yml --env-file docker/.env ps
 node -e "
 const fs=require('fs'), {Client}=require('pg');
-const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.*)$/m)[1];
+const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.+?)\r?$/m)[1];
 const c=new Client({connectionString:'postgresql://postgres:'+pw+'@localhost:54320/sharm_dreams'});
 c.connect().then(()=>c.query(\"select current_setting('server_version')\"))
  .then(r=>{console.log('PG', r.rows[0].current_setting); return c.end();})
@@ -218,7 +246,7 @@ c.connect().then(()=>c.query(\"select current_setting('server_version')\"))
 "
 ```
 
-Expected: `db` reported `running (healthy)`, then `PG 17.x`. `pg` is already installed (as a devDependency) — install nothing.
+Expected: `db` reported `running (healthy)` — Compose v5 words it `Up (healthy)` — with `PORTS` exactly `127.0.0.1:54320->5432/tcp`, then `PG 17.x`. `pg` is already installed (as a devDependency) — install nothing. Read the password with `/^(?:export\s+)?LOCAL_DB_PASSWORD=(.+?)\r?$/m`: the optional `\r` is the whole point of the guard written in Step 5, and a probe that silently carries a trailing CR into the connection string reports "password authentication failed" instead of "your line endings are wrong".
 
 - [ ] **Step 8: Confirm nothing leaked into git.**
 
@@ -227,12 +255,12 @@ git status --short
 git check-ignore -v docker/.env docker/data/anything
 ```
 
-Expected: status lists `docker/docker-compose.yml`, `docker/.env.example`, `docker/data/.gitkeep`, `docker/db/initdb/.gitkeep`, `.gitignore`, `package.json` — **not** `docker/.env`. `check-ignore` prints a matching rule for both paths.
+Expected: status lists `docker/docker-compose.yml`, `docker/.env.example`, `docker/data/.gitkeep`, `docker/db/initdb/.gitkeep`, `.gitignore`, `.gitattributes`, `package.json` — **not** `docker/.env`. `check-ignore` prints a matching rule for both paths. Then confirm the guard resolved: `git check-attr text eol -- docker/.env.example docker/docker-compose.yml` prints `text: set / eol: lf` for both, while `git check-attr text eol -- src/app/page.tsx` still prints `unspecified` — proof the six rules are targeted and no repo-wide renormalisation crept in.
 
 - [ ] **Step 9: Commit.**
 
 ```bash
-git add docker/docker-compose.yml docker/.env.example docker/data/.gitkeep docker/db/initdb/.gitkeep .gitignore package.json
+git add docker/docker-compose.yml docker/.env.example docker/data/.gitkeep docker/db/initdb/.gitkeep .gitignore .gitattributes package.json
 git commit -m "feat(docker): stand up the local Postgres 17 dev database on 54320"
 ```
 
@@ -274,7 +302,7 @@ git commit -m "feat(docker): stand up the local Postgres 17 dev database on 5432
 
 ```yaml
   rest:
-    image: postgrest/postgrest:v13.0.7   # replace with the tag confirmed in Task 1 Step 1
+    image: postgrest/postgrest:v16.5   # the tag confirmed in Task 1 Step 1; do not take a tag from memory
     restart: unless-stopped
     depends_on:
       db:
@@ -300,7 +328,10 @@ git commit -m "feat(docker): stand up the local Postgres 17 dev database on 5432
       - rest
     command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile_adapt"]
     ports:
-      - "${LOCAL_GATEWAY_PORT:-54321}:8080"
+      # Loopback, like `db`: this port fronts a REST API whose only credential is
+      # a repo-known dev password, and on KVM2 the public front is Caddy's TLS
+      # listener on 80/443, never this host mapping.
+      - "127.0.0.1:${LOCAL_GATEWAY_PORT:-54321}:8080"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
 ```
@@ -405,7 +436,7 @@ grant usage on schema extensions to anon, authenticated, service_role;
 npm run docker:wipe
 node -e "
 const fs=require('fs'), {Client}=require('pg');
-const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.*)$/m)[1];
+const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.+?)\r?$/m)[1];
 const c=new Client({connectionString:'postgresql://postgres:'+pw+'@localhost:54320/sharm_dreams'});
 c.connect().then(()=>c.query(
   \"select r.rolname, r.rolbypassrls, r.rolcanlogin from pg_roles r \" +
@@ -738,7 +769,7 @@ Expected: exactly four matches (1915, 1916, 2039, 2040 before this task's edits)
 node scripts/apply-local-schema.mjs
 node -e "
 const fs=require('fs'), {Client}=require('pg');
-const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.*)$/m)[1];
+const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.+?)\r?$/m)[1];
 const c=new Client({connectionString:'postgresql://postgres:'+pw+'@localhost:54320/sharm_dreams'});
 c.connect().then(()=>c.query(
   \"select schemaname||'.'||tablename t, count(*) policies from pg_policies \" +
@@ -1223,7 +1254,7 @@ Expected: `PASS token round trip, tamper refusal, null refusal`, then both gates
 
 ```bash
 node --input-type=module -e "
-process.env.AUTH_JWT_SECRET=(await import('node:fs')).readFileSync('docker/.env','utf8').match(/^AUTH_JWT_SECRET=(.*)$/m)[1];
+process.env.AUTH_JWT_SECRET=(await import('node:fs')).readFileSync('docker/.env','utf8').match(/^AUTH_JWT_SECRET=(.+?)\r?$/m)[1];
 const { mintSessionToken } = await import('./src/lib/auth/token.ts');
 const t = await mintSessionToken({ sub:'11111111-1111-1111-1111-111111111111', role:'authenticated' });
 const r = await fetch('http://localhost:54321/rest/v1/user_profiles?select=id', { headers:{ Authorization:'Bearer '+t } });
@@ -2048,7 +2079,7 @@ node --experimental-strip-types scripts/prove-rest-builder.mjs
 node --input-type=module -e "
 process.env.SUPABASE_REST_BASE='http://localhost:54321/rest/v1';
 const fs=await import('node:fs');
-process.env.AUTH_JWT_SECRET=fs.readFileSync('docker/.env','utf8').match(/^AUTH_JWT_SECRET=(.*)$/m)[1];
+process.env.AUTH_JWT_SECRET=fs.readFileSync('docker/.env','utf8').match(/^AUTH_JWT_SECRET=(.+?)\r?$/m)[1];
 const { createRestClient } = await import('./src/lib/rest/client.ts');
 const { mintSessionToken } = await import('./src/lib/auth/token.ts');
 const token = await mintSessionToken({ sub:'11111111-1111-1111-1111-111111111111', role:'authenticated' });
