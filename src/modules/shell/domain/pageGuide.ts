@@ -341,13 +341,13 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   "/assistant": {
     purpose: "A chat that reads and changes the portal with exactly your account's permissions.",
     shows: [
-      "Your saved conversations on the left, the chat on the right, and a What can the assistant do? button listing its tools.",
+      "Your saved conversations on the left, the chat on the right, and a What can the assistant do? button listing its tools. Above the message box, a Settings button holds the model choice and the two switches, and its own label names the model that replies.",
     ],
     use: [
       "Ask in words: it reads candidates, openings, tests, the outbox, settings and the change trails, and answers with a table or a chart drawn by the portal from the figures it read.",
-      "Instruct a change and nothing happens until you press Approve & run on the card. A delete also needs the Allow deletions switch. Ignoring the card leaves the record exactly as it is.",
+      "Instruct a change and nothing happens until you press Approve & run on the card. A delete also needs the Allow deletions switch, behind the Settings button. Ignoring the card leaves the record exactly as it is.",
       "Allow web search opens two lookups that leave the portal — search_web and read_web_page — about any subject: a pay band, a law, a competitor's ad, a release note, a company. The search belongs to this portal rather than to one engine, so it works whichever engine or model answers the turn, and the choice is remembered in this browser. Every lookup shows as a chip naming the words searched and the pages read; what comes back is advice with its source named and nothing it reads is written into a record. Lookups run on the OpenRouter key in Settings → API keys, so without one each chip refuses with the reason.",
-      "Attach a PDF, Word or text file for it to read, pick the engine and model, and Rename, Delete or Reload a conversation.",
+      "Attach a PDF, Word or text file for it to read, choose the answering engine at the top of the panel and the model behind Settings, and Rename, Delete or Reload a conversation.",
       "Edit and send again re-runs a turn you were not happy with.",
     ],
     edges: [

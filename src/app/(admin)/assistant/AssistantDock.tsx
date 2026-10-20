@@ -20,11 +20,19 @@ import { AssistantChat } from "./AssistantChat";
  * them are listed on the Assistant page.
  */
 
-/** Dock sizing. The panel is anchored bottom-right, so a drag grows it up-left. */
+/**
+ * Dock sizing. The panel is anchored bottom-right, so a drag grows it up-left.
+ *
+ * The floor and the opening height are both generous because the transcript is
+ * what the panel is for: a dock shorter than it takes to read a question and its
+ * answer is a dock that spends the visit scrolling. A size dragged here is stored
+ * per browser, so this only sets where a panel starts — never the ceiling, which
+ * the `max-h-[calc(100vh-2.5rem)]` below keeps inside the window.
+ */
 const MIN_WIDTH = 26 * 16;
-const MIN_HEIGHT = 22 * 16;
-const DEFAULT_WIDTH = 27 * 16;
-const DEFAULT_HEIGHT = 38 * 16;
+const MIN_HEIGHT = 30 * 16;
+const DEFAULT_WIDTH = 28 * 16;
+const DEFAULT_HEIGHT = 50 * 16;
 
 const SIZE_KEY = "sdg-assistant-size";
 const MODE_KEY = "sdg-assistant-mode";
@@ -173,7 +181,7 @@ export function AssistantDock() {
             // applies from `sm`, where the drag handle and the composer need it.
             mode === "full"
               ? "inset-3"
-              : "bottom-5 right-5 max-h-[calc(100vh-2.5rem)] max-w-[calc(100vw-2.5rem)] sm:min-h-[22rem] sm:min-w-[26rem]"
+              : "bottom-5 right-5 max-h-[calc(100vh-2.5rem)] max-w-[calc(100vw-2.5rem)] sm:min-h-[30rem] sm:min-w-[26rem]"
           )}
         >
           {mode === "docked" && (

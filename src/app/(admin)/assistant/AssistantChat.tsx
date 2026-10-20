@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -45,6 +45,7 @@ import {
   type AssistantModelChoice,
   type AssistantSessionSummary,
 } from "./actions";
+import { AssistantSettings } from "./AssistantSettings";
 
 /**
  * The assistant's conversation: transcript, tool-step chips, cards awaiting a
@@ -998,16 +999,6 @@ export function AssistantChat({
     };
   }, []);
 
-  const modelGroups = useMemo(() => {
-    const groups: { provider: string; label: string; models: AssistantModelChoice[] }[] = [];
-    for (const entry of models ?? []) {
-      const last = groups[groups.length - 1];
-      if (last && last.provider === entry.provider) last.models.push(entry);
-      else groups.push({ provider: entry.provider, label: entry.providerLabel, models: [entry] });
-    }
-    return groups;
-  }, [models]);
-
   async function attachFile(file: File) {
     if (file.size > MAX_UPLOAD_BYTES) {
       setError("That file is larger than 8 MB.");
@@ -1462,94 +1453,32 @@ export function AssistantChat({
               </p>
             )}
 
-            <div className="mb-2">
-              <label className="flex items-center gap-2">
-                <span className="shrink-0 text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
-                  Model
-                </span>
-                {models === null ? (
-                  <span className="flex items-center gap-1.5 text-[11px] text-brand-ink/45" role="status">
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                    Reading the model list…
-                  </span>
-                ) : (
-                  <select
-                    value={model}
-                    onChange={(event) => chooseModel(event.target.value)}
-                    aria-label="Model for this conversation"
-                    title="Choose which provider answers this conversation. Nothing in Settings is changed."
-                    className="rail-scroll min-w-0 flex-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[11px] font-semibold text-brand-ink outline-none transition focus:border-brand-gold"
-                  >
-                    <option value="">
-                      {routedModel ? `Default routing — ${routedModel}` : "Default routing"}
-                    </option>
-                    {modelGroups.map((group) => (
-                      <optgroup key={group.provider} label={group.label}>
-                        {group.models.map((entry) => (
-                          <option key={entry.id} value={entry.id}>
-                            {entry.name}
-                            {entry.free ? " · free" : ""}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                )}
-              </label>
-              {modelListError && (
-                <div className="mt-1">
-                  <FailureNote
-                    tone="soft"
-                    message={modelListError}
-                    hint="Leave the choice on default routing and the model named in Settings → AI models answers — that route does not depend on this list."
-                  />
-                </div>
-              )}
-              {model && (
-                <p className="mt-1 text-[10px] leading-relaxed text-brand-ink/40">
-                  {model} answers this conversation through the model gateway, and this tab closes
-                  the choice away. Settings → AI models still routes every other screen, the rest of
-                  the portal and any other conversation.
-                </p>
-              )}
-            </div>
+            {/*
+              The model choice and the two switches used to sit above the box, and
+              their copy is long enough to push the transcript out of a short dock.
+              They are behind a button now — same controls, same words.
+            */}
+            <AssistantSettings
+              model={model}
+              routedModel={routedModel}
+              models={models}
+              onChooseModel={chooseModel}
+              allowWeb={allowWeb}
+              onAllowWeb={(next) => {
+                setAllowWeb(next);
+                writeStoredWeb(next);
+              }}
+              allowDestructive={allowDestructive}
+              onAllowDestructive={setAllowDestructive}
+            />
 
-            <label className="mb-2 flex items-start gap-2 text-[11px] leading-snug text-brand-ink/55">
-              <input
-                type="checkbox"
-                checked={allowDestructive}
-                onChange={(event) => setAllowDestructive(event.target.checked)}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark"
+            {modelListError && (
+              <FailureNote
+                tone="soft"
+                message={modelListError}
+                hint="Leave the choice on default routing and the model named in Settings → AI models answers — that route does not depend on this list."
               />
-              <span>
-                Allow deletions — lets me offer an opening, a prospect or a queued message for you to
-                approve when you name it. Every delete still waits for your click. It is never
-                remembered between conversations.
-              </span>
-            </label>
-
-            <label className="mb-2 flex items-start gap-2 text-[11px] leading-snug text-brand-ink/55">
-              <input
-                type="checkbox"
-                checked={allowWeb}
-                onChange={(event) => {
-                  setAllowWeb(event.target.checked);
-                  writeStoredWeb(event.target.checked);
-                }}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark"
-                title="Let this assistant look up anything outside this portal"
-              />
-              <span>
-                Allow web search — lets me look up what is outside this portal, about any subject: a
-                pay band, a law, a competitor&apos;s ad, a release note, a company. Each lookup shows
-                as a chip naming the words searched and the pages it read, and what comes back is
-                advice with its source named — I never write a fetched figure into a record. The
-                search belongs to this portal, not to one engine, so it works whichever engine or
-                model answers, and this switch is remembered in this browser. It runs on the
-                OpenRouter key in Settings → API keys: without one, a lookup refuses and its chip says
-                why.
-              </span>
-            </label>
+            )}
 
             <div className="flex items-end gap-2">
               <input
