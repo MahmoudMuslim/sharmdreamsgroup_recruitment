@@ -327,6 +327,33 @@ html[data-palette="glass"][data-tone="light"] .shadow-2xl {
     0 30px 60px -20px rgb(84 62 40 / 0.55);
 }
 
+/* The chat panel is deliberately NOT glass. `[role="dialog"]` is in the frost
+   list above, so as the footer and side content scroll behind this floating
+   panel the backdrop blur smears them — which reads as the page disappearing
+   under the widget. Here we opt the chat back out: no frost, and an ordinary
+   solid surface per tone, so it simply covers what is behind it like any card
+   instead of blurring it. The border and shadow (which the tone keeps) still
+   separate it from the page. */
+html[data-palette="glass"] .careers-chat {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: #ffffff;
+}
+
+html[data-palette="glass"][data-tone="dark"] .careers-chat {
+  background-color: #1c1b1a;
+}
+
+/* The chat's outer shell is only a positioning wrapper, but it carries Tailwind's
+   `fixed` utility — which is the `.fixed` class the frost rule above targets. Being
+   `inset-x-0 bottom-0`, its (transparent) box frosted the whole bottom strip of the
+   page, smearing the footer as it scrolled behind. Opt the shell out of the frost so
+   it stops blurring what sits behind it. */
+html[data-palette="glass"] .careers-chat-shell {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   html[data-palette="glass"] {
     --glass-ink-fill: var(--color-brand-ink);

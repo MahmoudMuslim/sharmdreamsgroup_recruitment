@@ -157,12 +157,12 @@ export function CareersChat({
   const canSave = name.trim().length >= 2 && (EMAIL.test(email.trim()) || phone.trim().length >= 6);
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-end gap-3 p-4 sm:items-end">
+    <div className="careers-chat-shell pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-end gap-3 p-4 sm:items-end">
       {open && (
         <section
           role="dialog"
           aria-label={t("chat.title")}
-          className="pop-in pointer-events-auto flex max-h-[min(34rem,72vh)] w-full flex-col overflow-hidden rounded-2xl border border-brand-line bg-white shadow-lift sm:w-[24rem]"
+          className="careers-chat pop-in pointer-events-auto flex max-h-[min(34rem,72vh)] w-full flex-col overflow-hidden rounded-2xl border border-brand-line bg-white shadow-lift sm:w-[24rem]"
         >
           <header className="flex items-start justify-between gap-3 border-b border-brand-line px-4 py-3">
             <div className="min-w-0">
