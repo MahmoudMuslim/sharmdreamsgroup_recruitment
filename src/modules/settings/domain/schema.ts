@@ -31,6 +31,13 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         help: "The address candidates are pointed to when they need help in the portal.",
       },
       {
+        kind: "text",
+        key: "organisation.public_url",
+        label: "Public site address",
+        help: "The address candidates open, with its protocol and no trailing slash. Every test link, interview notice and reminder is written with it, so this is what makes a link sent from here reachable on a phone or in an inbox somewhere else. Left empty, the address is guessed instead: on a development machine it becomes this computer's own network address, which only another device on the same network can open.",
+        placeholder: "https://careers.sharmdreams.com",
+      },
+      {
         kind: "select",
         key: "organisation.locale",
         label: "Default language",

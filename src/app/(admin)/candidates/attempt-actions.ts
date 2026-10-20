@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { assessmentUrl } from "@/lib/public-url";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
 import { notifyAssessmentInvite } from "@/modules/omnichannel/application/candidate-notifications";
@@ -15,8 +16,14 @@ import { recordActivity } from "@/modules/activity/application/record";
 export interface AttemptResult {
   ok: boolean;
   error?: string;
-  /** Present after a re-issue so the recruiter can copy the only working link. */
-  access_token?: string;
+  /**
+   * The whole address, present after a re-issue so the recruiter can copy the
+   * only working link. Built here rather than in the browser: the drawer runs on
+   * whatever host the recruiter typed, and a link pasted into WhatsApp has to be
+   * the one the candidate's phone can reach — the same address the invitation
+   * this action queues carries.
+   */
+  link?: string;
 }
 
 const OPEN = new Set(["NOT_STARTED", "IN_PROGRESS"]);
@@ -237,6 +244,8 @@ export async function reissueAttemptLink(attemptId: string): Promise<AttemptResu
   revalidatePath("/candidates");
 
   const applicationId = attempt.application_id;
+  const link = await assessmentUrl(accessToken);
+
   after(async () => {
     try {
       await notifyAssessmentInvite({ applicationId, accessToken });
@@ -246,7 +255,7 @@ export async function reissueAttemptLink(attemptId: string): Promise<AttemptResu
     await processDueWhatsAppJobs(1);
   });
 
-  return { ok: true, access_token: accessToken };
+  return { ok: true, link };
 }
 
 /**

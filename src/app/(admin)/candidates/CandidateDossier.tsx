@@ -129,8 +129,8 @@ function AttemptRow({
         setError(result.error ?? `Could not ${action.toLowerCase()}.`);
         return;
       }
-      if (result.access_token) {
-        setLink(`${window.location.origin}/test/${result.access_token}`);
+      if (result.link) {
+        setLink(result.link);
       }
       onChanged();
     } catch {
