@@ -975,7 +975,7 @@ for (const s of STAFF) {
        values ($1, 'authenticated', extensions.crypt($2, extensions.gen_salt('bf', 10)), now(),
                jsonb_build_object('provider','email','providers',array['email'],
                                   'tenant_id', $3::uuid),
-               jsonb_build_object('full_name', $4))
+               jsonb_build_object('full_name', $4::text))
        on conflict (email) do update
          set encrypted_password = excluded.encrypted_password
        returning id
@@ -1008,6 +1008,8 @@ select email, left(encrypted_password,7) as prefix,
 Expected: three rows, `prefix` = `$2a$10$`, `good: t`, `wrong_passes: f`. The `prefix` is the whole point — Supabase stores `$2a$` hashes, so a restored dump will verify through the identical path. Use `docker exec … psql` rather than a `node -e` one-liner so the DB password never appears in a command line or in a connection URI; in-container `psql` reaches the cluster over the local socket as the `postgres` OS user and needs no credential at all.
 
 If `user_profiles` has no unique constraint on `auth_user_id`, the `on conflict` clause errors — read the constraint off the applied database (`psql \d public.user_profiles`) and match it; do not invent one. This is why the script must run against the real local stack rather than a mocked schema.
+
+`$4::text` is not decoration either. `jsonb_build_object` is declared `VARIADIC "any"`, so Postgres has no type to infer a bare parameter from and answers `42P08 could not determine data type of parameter $4` (measured at position 419 — the `'full_name'` argument; `$3` survives because it is already cast to `uuid`). Any future writer of `raw_app_meta_data`/`raw_user_meta_data` must cast every parameter it hands to that function.
 
 - [ ] **Step 4: Commit.**
 
