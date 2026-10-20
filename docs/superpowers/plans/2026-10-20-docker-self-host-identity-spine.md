@@ -806,7 +806,7 @@ Nothing in Slice C is worth writing until this slice says the same `uid` gets th
 - Produces: `public.jobs` and `public.applicants` reachable only by `service_role`. Consumed by Task 7's gate, which asserts a staff token sees zero rows there.
 - Consumes: the applied schema from Task 4.
 
-Why this task exists: both tables carry `using (true)` policies and `grant … to anon`, and `src/` reads **`job_openings`**, never `jobs` or `applicants` (re-derived by `grep -rn 'from("jobs")\|from("applicants")' src/` → zero hits, against 24 `job_openings` call sites). This is the one place where "RLS on 41/41" does not mean "RLS protecting 41/41" — spec §5. Doing it while the schema is being re-founded is free; doing it after cut-over is an incident.
+Why this task exists: both tables carry `using (true)` policies and `grant … to anon`, and `src/` reads **`job_openings`**, never `jobs` or `applicants` (re-derived by `grep -rn 'from("jobs")\|from("applicants")' src/` → zero hits, against 37 `from("job_openings")` occurrences across 19 files). This is the one place where "RLS on 41/41" does not mean "RLS protecting 41/41" — spec §5. Doing it while the schema is being re-founded is free; doing it after cut-over is an incident.
 
 - [ ] **Step 1: Write the migration.** Note the gap in `supabase/migrations/`: files run 001–025 then 027–029, so **030** is the next number — not 026, and never a number a previous session guessed.
 
@@ -851,26 +851,33 @@ grep -n 'on table public.applicants to anon;\|on table public.applicants to auth
 
 Expected: exactly four matches (1915, 1916, 2039, 2040 before this task's edits). Delete those four lines only.
 
-- [ ] **Step 3: Re-apply and count what went away.**
+- [ ] **Step 3: Apply the lock-down to the running local stack, then re-apply the schema.**
+
+Deleting the six policies from `supabase/schema.sql` makes a *fresh* volume clean, but the cluster that is running right now already has them — `drop policy if exists` was only ever inside the blocks being deleted, so re-applying the schema file cannot remove a policy it no longer mentions. Run migration 030 against the local DB first, the same way the cut-over will run it against the vendor. Pipe it through stdin so the SQL never touches a password on a command line:
 
 ```bash
+docker compose -f docker/docker-compose.yml --env-file docker/.env ps   # confirm the db container name
+docker exec -i sharm-dreams-local-db-1 psql -U postgres -d sharm_dreams \
+  -v ON_ERROR_STOP=1 < supabase/migrations/030_lock_down_legacy_tables.sql
 node scripts/apply-local-schema.mjs
-node -e "
-const fs=require('fs'), {Client}=require('pg');
-const pw=fs.readFileSync('docker/.env','utf8').match(/^LOCAL_DB_PASSWORD=(.+?)\r?$/m)[1];
-const c=new Client({connectionString:'postgresql://postgres:'+pw+'@localhost:54320/sharm_dreams'});
-c.connect().then(()=>c.query(
-  \"select schemaname||'.'||tablename t, count(*) policies from pg_policies \" +
-  \"where tablename in ('jobs','applicants') group by 1 order by 1\"
-)).then(r=>{console.table(r.rows); return c.query(
-  \"select grantee, table_name from information_schema.role_table_grants \" +
-  \"where table_schema='public' and table_name in ('jobs','applicants') and grantee in ('anon','authenticated')\")
-}).then(r=>{console.log('anon/authenticated grants left:', r.rows.length); return c.end()})
- .catch(e=>{console.error('FAIL', e.message); process.exit(1)});
-"
 ```
 
-Expected: the two rows report `policies: 0`, and `anon/authenticated grants left: 0`. The reported total policy count from the apply script must now be **88**, not 94 — write 88 into the spec's §5 figure when you commit, because 94 is what the pre-lock-down tree held.
+Then count what went away — read-only, and note that in-container `psql` reaches the cluster over the local socket as the `postgres` OS user, so no credential is needed or printed:
+
+```bash
+docker exec sharm-dreams-local-db-1 psql -U postgres -d sharm_dreams -t -A -c "
+select tablename, count(*) from pg_policies
+ where tablename in ('jobs','applicants') group by 1 order by 1;"
+docker exec sharm-dreams-local-db-1 psql -U postgres -d sharm_dreams -t -A -c "
+select count(*) from information_schema.role_table_grants
+ where table_schema='public' and table_name in ('jobs','applicants')
+   and grantee in ('anon','authenticated');
+select count(*) from pg_policy;"
+```
+
+Expected: the first query returns **no rows at all** (both tables hold zero policies — a `GROUP BY` over no rows prints nothing, so zero rows *is* the pass condition), the second prints `0` grants remaining, and the apply script's total policy count is now **88**, not 94. The `service_role` grants on both tables must still be there — `revoke … from anon, authenticated` leaves them alone, and `service_role` keeps `BYPASSRLS`, so the app's service client still reads these tables even with no policies on them.
+
+Update the spec's §5 figures to match the tree this task produces: the definition-of-done line `41 tables / 94 policies` becomes **88**, and `80 of the 94 policies` becomes `80 of the 88` (the six deleted policies are all `with check (true)` / `using (true)` and never call `auth.uid()`, so the 80 does not move). Leave §1's and §2's headline `94` and §13's measured `94` alone — §13 records what the throwaway proof actually counted at the time it ran, and Task 18's clean-slate acceptance is where the remaining live claims get reconciled.
 
 - [ ] **Step 4: Commit.**
 
