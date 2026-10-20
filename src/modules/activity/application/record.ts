@@ -21,6 +21,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getSessionUser } from "@/lib/auth/session";
+import { pageCount, pageOffset, parsePage } from "@/lib/paging";
 import {
   clampActorLabel,
   redactDetail,
@@ -186,9 +187,11 @@ function likeTerm(value: string): string {
 
 export interface TrailReadResult {
   rows: ActivityRow[];
-  /** True when more matching rows exist than `limit` returned. */
+  /** True when matching rows exist *after* the page that was served. */
   more: boolean;
   total: number;
+  /** The page actually served — a page past the end is answered with the last one. */
+  page: number;
   /**
    * Why the trail could not be read, or null when it could.
    *
@@ -203,41 +206,87 @@ export interface TrailReadResult {
 /**
  * Reads the trail back through the caller's own session, so Row Level Security
  * — not this function — decides whether they may see it.
+ *
+ * One page at a time. `filters.limit` is how deep a page is and `filters.page`
+ * which one; a read that asked for the whole table would pull every row into
+ * memory to draw a screen that shows forty of them.
  */
 export async function readActivityTrail(filters: ActivityFilters): Promise<TrailReadResult> {
   const supabase = await createSupabaseServerClient();
 
-  let query = supabase
-    .from("activity_log")
-    .select("id, created_at, area, action, entity, entity_id, summary, detail, actor_kind, actor_label, via, company_id, actor_id, user_profiles(full_name)", {
-      count: "exact",
-    })
-    .order("created_at", { ascending: false });
+  /**
+   * The cut the reader asked for, rebuilt per read.
+   *
+   * A factory rather than one builder held in a variable, because a PostgREST
+   * builder is consumed by awaiting it: a page that turns out to run past the end
+   * has to be read again at the last page, and that needs a fresh chain.
+   */
+  const cut = () => {
+    let query = supabase
+      .from("activity_log")
+      .select("id, created_at, area, action, entity, entity_id, summary, detail, actor_kind, actor_label, via, company_id, actor_id, user_profiles(full_name)", {
+        count: "exact",
+      })
+      // `created_at` is not unique — a batch of writes shares one transaction
+      // timestamp — so ordering by it alone leaves the order of those rows up to
+      // the database. Adding `id` makes it a total order, which is what lets page
+      // N be a stable slice instead of one that repeats or skips a row.
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false });
 
-  if (filters.area) query = query.eq("area", filters.area);
-  if (filters.actorKind) query = query.eq("actor_kind", filters.actorKind);
-  if (filters.surface) query = query.eq("via", filters.surface);
-  if (filters.entity) query = query.eq("entity", filters.entity);
-  if (filters.entityId) query = query.eq("entity_id", filters.entityId);
-  if (filters.since) query = query.gte("created_at", filters.since);
+    if (filters.area) query = query.eq("area", filters.area);
+    if (filters.actorKind) query = query.eq("actor_kind", filters.actorKind);
+    if (filters.surface) query = query.eq("via", filters.surface);
+    if (filters.entity) query = query.eq("entity", filters.entity);
+    if (filters.entityId) query = query.eq("entity_id", filters.entityId);
+    if (filters.since) query = query.gte("created_at", filters.since);
 
-  const term = filters.query ? likeTerm(filters.query) : "";
-  if (term) query = query.or(`summary.ilike.%${term}%,actor_label.ilike.%${term}%`);
+    const term = filters.query ? likeTerm(filters.query) : "";
+    if (term) query = query.or(`summary.ilike.%${term}%,actor_label.ilike.%${term}%`);
+    return query;
+  };
 
   const limit = Math.min(Math.max(filters.limit ?? 120, 1), MAX_ROWS);
-  const { data, count, error } = await query.limit(limit);
+  const page = parsePage(filters.page);
+  const from = pageOffset(page, limit);
+  const listed = await cut().range(from, from + limit - 1);
 
-  if (error) {
-    console.error("[activity] trail read refused:", error.message);
-    const missing = /activity_log|does not exist|PGRST205/i.test(error.message);
+  if (listed.error) {
+    console.error("[activity] trail read refused:", listed.error.message);
+    const missing = /activity_log|does not exist|PGRST205/i.test(listed.error.message);
     return {
       rows: [],
       more: false,
       total: 0,
+      page,
       error: missing
         ? "The change trail has not been created yet. Apply supabase/migrations/024_activity_log.sql, then reload this page."
-        : `The change trail could not be read: ${error.message}`,
+        : `The change trail could not be read: ${listed.error.message}`,
     };
+  }
+
+  const total = listed.count ?? 0;
+  let data = listed.data ?? [];
+  let served = page;
+
+  // A bookmark for a page the trail has since outgrown is answered with its last
+  // page rather than with an empty feed: an empty list here reads as "nothing
+  // happened", which is a different statement from the truth.
+  const last = pageCount(total, limit);
+  if (data.length === 0 && total > 0 && page > last) {
+    served = last;
+    const again = await cut().range(pageOffset(served, limit), pageOffset(served, limit) + limit - 1);
+    if (again.error) {
+      console.error("[activity] trail re-read refused:", again.error.message);
+      return {
+        rows: [],
+        more: false,
+        total,
+        page: served,
+        error: `The change trail could not be read: ${again.error.message}`,
+      };
+    }
+    data = again.data ?? [];
   }
 
   const rows = (data ?? []).map((row) => {
@@ -251,7 +300,8 @@ export async function readActivityTrail(filters: ActivityFilters): Promise<Trail
     } as unknown as ActivityRow;
   });
 
-  return { rows, more: (count ?? 0) > rows.length, total: count ?? 0, error: null };
+  const offset = pageOffset(served, limit);
+  return { rows, more: total > offset + rows.length, total, page: served, error: null };
 }
 
 /** Counts the trail split by who caused it, for the console's own honesty check. */

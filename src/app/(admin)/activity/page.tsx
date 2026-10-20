@@ -1,6 +1,8 @@
 import { ShieldCheck } from "lucide-react";
 import { connection } from "next/server";
 import { getTrail } from "./actions";
+import type { TrailQuery } from "./actions";
+import { paramsToQuery } from "@/modules/activity/domain/trailQuery";
 import { ActivityView } from "./ActivityView";
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
@@ -19,14 +21,33 @@ export const instant = false;
 
 const DEFAULT_WINDOW = "30d" as const;
 
-export default async function ActivityPage() {
+/**
+ * The first cut the screen renders comes from the address bar, so a link a
+ * recruiter pastes into the chat lands on the rows it names — the page and the
+ * filters alike. Everything is re-coerced by `resolveTrailQuery` on the way to the
+ * read, so a parameter that names no window or no page narrows nothing instead of
+ * emptying the trail.
+ */
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
+
+export default async function ActivityPage({ searchParams }: { searchParams: SearchParams }) {
   await connection();
   await requireStaff("/activity");
 
   const canRead = await hasPermissionForUser("settings.manage_platform");
+  const params = await searchParams;
+
+  const query: TrailQuery = paramsToQuery(
+    new URLSearchParams(
+      Object.entries(params).flatMap(([key, value]) =>
+        value === undefined ? [] : Array.isArray(value) ? value.map((item) => [key, item]) : [[key, value]]
+      )
+    )
+  );
+  if (!query.window) query.window = DEFAULT_WINDOW;
 
   const result = canRead
-    ? await getTrail({ window: DEFAULT_WINDOW })
+    ? await getTrail(query)
     : {
         ok: false as const,
         error:

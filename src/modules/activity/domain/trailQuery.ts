@@ -29,9 +29,17 @@ import {
   type ActorKind,
   type TrailWindowKey,
 } from "@/modules/activity/domain/trail";
+import { parsePage } from "@/lib/paging";
 
-/** What the screen draws per read. A download asks for the module's own ceiling. */
-export const SCREEN_ROWS = 120;
+/**
+ * How deep one page of the trail is.
+ *
+ * A page and not a ceiling: the console walks the trail with a pager, so the read
+ * behind it asks the database for one page at a time instead of for the newest
+ * 120 rows and a note saying the rest are in a download. A download still asks for
+ * `EXPORT_ROWS`, which is the module's own ceiling.
+ */
+export const TRAIL_PAGE_ROWS = 40;
 
 /**
  * A record id as the trail stores them: UUIDs, and short codes for anything
@@ -48,6 +56,7 @@ export interface TrailQuery {
   entityId?: unknown;
   query?: unknown;
   window?: unknown;
+  page?: unknown;
 }
 
 /** The filters as the server accepted them, so a reader describes these, not its own state. */
@@ -100,6 +109,7 @@ export function resolveTrailQuery(
       entityId,
       query: query || null,
       limit,
+      page: parsePage(raw.page as string | number | null | undefined),
       since:
         bounds.hours === null
           ? null
@@ -147,5 +157,8 @@ export function paramsToQuery(params: URLSearchParams): TrailQuery {
     entityId: params.get("entityId"),
     query: params.get("q"),
     window: params.get("window"),
+    // Absent on a download URL, which is built by `queryToParams` and never
+    // carries a page: an export wants the whole cut, not the screen's slice.
+    page: params.get("page"),
   };
 }

@@ -27,6 +27,8 @@ import {
   type ActorKind,
 } from "@/modules/activity/domain/trail";
 import { Badge, Card, CardHeader, EmptyState } from "@/modules/analytics/presentation/ui";
+import { Pagination } from "@/modules/analytics/presentation/Pagination";
+import { pageWindow } from "@/lib/paging";
 import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
@@ -248,7 +250,7 @@ export function ActivityView({
   const [open, setOpen] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  function pull(patch: Partial<FormState>) {
+  function pull(patch: Partial<FormState>, page = 1) {
     const merged: FormState = { ...form, ...patch };
     setForm(merged);
     setOpen(null);
@@ -262,6 +264,7 @@ export function ActivityView({
       entityId: merged.entityId || undefined,
       query: merged.query || undefined,
       window: merged.window,
+      page,
     };
 
     startTransition(async () => {
@@ -271,6 +274,14 @@ export function ActivityView({
         return;
       }
       setView(result.view);
+      // The cut and the page go into the address bar so a reload, a paste into
+      // the chat and the Back button all describe the rows on screen. It is a
+      // `replaceState` rather than a router push: the rows come from the action
+      // this transition is already awaiting, and Back should leave the page
+      // instead of replaying every chip the reader clicked.
+      const params = queryToParams(result.view.filters);
+      if (result.view.page > 1) params.set("page", String(result.view.page));
+      window.history.replaceState(null, "", `?${params.toString()}`);
     });
   }
 
@@ -293,6 +304,7 @@ export function ActivityView({
   );
   const exportBase = `/api/activity/export?${queryToParams(view.filters).toString()}`;
   const kinds = Object.keys(ACTOR_KIND_LABELS) as ActorKind[];
+  const pager = pageWindow(view.page, view.total, view.rows.length, view.size);
 
   return (
     <div className="mt-6 space-y-4">
@@ -414,7 +426,10 @@ export function ActivityView({
           <Filter className="h-3.5 w-3.5 text-brand-gold" aria-hidden />
           <span className="font-semibold">{view.scope}</span>
           <span aria-live="polite">
-            · {view.total.toLocaleString()} matching, newest {view.rows.length.toLocaleString()} here
+            · {view.total.toLocaleString()} matching
+            {view.rows.length > 0
+              ? `, rows ${pager.from.toLocaleString()}–${pager.to.toLocaleString()} here`
+              : ""}
           </span>
           {pending && <span className="text-brand-ink/40">· refreshing</span>}
         </p>
@@ -498,10 +513,17 @@ export function ActivityView({
         </ul>
       )}
 
+      <Pagination
+        window={pager}
+        noun="changes"
+        onChange={(next) => pull({}, next)}
+        pending={pending}
+      />
+
       {view.more && (
         <p className="text-[11px] leading-relaxed text-brand-ink/50">
-          The screen draws the newest {view.rows.length.toLocaleString()} rows; a download carries up
-          to 2,000 of the {view.total.toLocaleString()} matching. Narrow the window for the rest.
+          The pager walks the {view.total.toLocaleString()} matching rows {view.size} at a time. A
+          download carries up to 2,000 of them in one file.
         </p>
       )}
 

@@ -148,6 +148,12 @@ export interface ActivityFilters {
   query?: string | null;
   since?: string | null;
   limit?: number;
+  /**
+   * Which page of the cut to read, 1-based. Absent means page 1, which is the
+   * whole of what a download asks for — an export wants every row the cut holds,
+   * not the screen's slice of it, so the export route never sets this.
+   */
+  page?: number;
 }
 
 export function isActivityArea(value: unknown): value is ActivityArea {

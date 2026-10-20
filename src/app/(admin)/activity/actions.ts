@@ -11,10 +11,11 @@ import {
 import {
   resolveTrailQuery,
   scopeFor,
-  SCREEN_ROWS,
+  TRAIL_PAGE_ROWS,
   type AppliedFilters,
   type TrailQuery,
 } from "@/modules/activity/domain/trailQuery";
+import { pageCount } from "@/lib/paging";
 import type { ActivityRow, ActorKind } from "@/modules/activity/domain/trail";
 
 export type { AppliedFilters, TrailQuery } from "@/modules/activity/domain/trailQuery";
@@ -26,6 +27,11 @@ export interface TrailView {
   rows: ActivityRow[];
   total: number;
   more: boolean;
+  /** The page served, after clamping a bookmark that ran past the end. */
+  page: number;
+  pages: number;
+  /** How deep one page is, so the pager can say "40 a page" truthfully. */
+  size: number;
   /** One line saying what this list is cut by, written into the downloads too. */
   scope: string;
   timeZone: string;
@@ -53,7 +59,7 @@ export async function getTrail(raw: TrailQuery = {}): Promise<TrailPreview> {
     return { ok: false, error: AUDIT_DENIED };
   }
 
-  const { filters, applied } = resolveTrailQuery(raw, SCREEN_ROWS, new Date());
+  const { filters, applied } = resolveTrailQuery(raw, TRAIL_PAGE_ROWS, new Date());
 
   const [read, tally, timeZone]: [TrailReadResult, Record<ActorKind, number>, string] =
     await Promise.all([
@@ -72,6 +78,9 @@ export async function getTrail(raw: TrailQuery = {}): Promise<TrailPreview> {
       rows: read.rows,
       total: read.total,
       more: read.more,
+      page: read.page,
+      pages: pageCount(read.total, TRAIL_PAGE_ROWS),
+      size: TRAIL_PAGE_ROWS,
       scope: scopeFor(applied),
       timeZone,
       filters: applied,
