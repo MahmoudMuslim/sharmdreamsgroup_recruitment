@@ -290,7 +290,11 @@ git commit -m "feat(docker): stand up the local Postgres 17 dev database on 5432
 		reverse_proxy rest:3000
 	}
 
-	respond /healthz "ok" 200
+	# A bare `respond /healthz` sorts AFTER the catch-all `handle` below and
+	# could never be reached (measured: 404). It needs its own handle block.
+	handle /healthz {
+		respond "ok" 200
+	}
 
 	handle {
 		respond "sharm-dreams gateway - REST API is under /rest/v1/" 404
@@ -318,7 +322,9 @@ git commit -m "feat(docker): stand up the local Postgres 17 dev database on 5432
       PGRST_SERVER_PORT: 3000
       # No `pgrst` schema config here; PostgREST reads env only.
       PGRST_DB_CONFIG: false
-      PGRST_OPENAPI_SERVER_PROXY_URL: http://localhost:54321/rest/v1
+      # The v16.5 binary's key is `openapi-server-proxy-uri` (measured by
+      # grepping /bin/postgrest); the `_URL` spelling is silently ignored.
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:54321/rest/v1
     # Deliberately no `ports:` - nothing may bypass the gateway.
 
   gateway:
@@ -326,7 +332,10 @@ git commit -m "feat(docker): stand up the local Postgres 17 dev database on 5432
     restart: unless-stopped
     depends_on:
       - rest
-    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile_adapt"]
+    # `caddyfile` is the registered adapter name in caddy v2.11.7 — the
+    # `caddyfile_adapt` spelling is rejected ("unrecognized config adapter")
+    # and the container crash-loops. Verified with `caddy validate`.
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     ports:
       # Loopback, like `db`: this port fronts a REST API whose only credential is
       # a repo-known dev password, and on KVM2 the public front is Caddy's TLS
@@ -340,8 +349,10 @@ git commit -m "feat(docker): stand up the local Postgres 17 dev database on 5432
 
 ```bash
 docker compose -f docker/docker-compose.yml --env-file docker/.env config >/dev/null && echo "compose ok"
-docker run --rm -v "$PWD/docker/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile_adapt
+# `MSYS_NO_PATHCONV=1` because Git Bash rewrites the `$PWD/...` bind source into
+# a Windows path Docker cannot mount (measured in Task 2).
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD/docker/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
 Expected: `compose ok`, then a "is valid" / successful `Validation Result`.
@@ -355,7 +366,12 @@ curl -s -o /dev/null -w "openapi %{http_code}\n" http://localhost:54321/rest/v1/
 curl -s -o /dev/null -w "bogus   %{http_code}\n" http://localhost:54321/nope
 ```
 
-Expected: `healthz 200`, `openapi 200`, `bogus 404`. If `openapi` is `401`/`403` the JWT secret is fine but the connection failed — a `503`/`404` with an empty body means `rest` cannot log in (wrong `LOCAL_PGRST_PASSWORD`, or `authenticator` does not exist yet, which is expected until Task 3). Read `npm run docker:logs` for the `rest` service and report the PostgREST error verbatim rather than guessing.
+Expected as written (measured in Task 2): `healthz 200`, `bogus 404`, and **`openapi 502`** — not `200` and not the `503` an earlier draft predicted. `502` is Caddy's "upstream refused me", and it is the *correct* answer at this point in the plan because the `authenticator` role does not exist until Task 3. Two measured facts to keep straight:
+
+- **PostgREST v16.5 exits when the DB rejects its login** (it never binds its socket, so `rest` sits in `Restarting (1)`); a plain refused connection keeps it up and serves `503` with a `PGRST002` body. So a FATAL-auth stack shows `502` through the gateway, and Task 3 should expect the same until the role exists, then `200` after it.
+- **`openapi` must be proven to reach PostgREST rather than the Caddy catch-all**, and a `502` does that on its own — only `reverse_proxy` can produce it, the catch-all produces the 404 body. To see the prefix strip itself, temporarily point the gateway at an echoing upstream (a second `rest`-named service that prints the path it received) and confirm `/rest/v1/users?select=id` arrives as `/users?select=id`; revert the change before committing. Do **not** create the `authenticator` role to make the probe go green — that is Task 3's deliverable.
+
+Read `npm run docker:logs` for the `rest` service and report the PostgREST error verbatim rather than guessing.
 
 - [ ] **Step 5: Commit.**
 

@@ -9,9 +9,8 @@
 		reverse_proxy rest:3000
 	}
 
-	# handle blocks are mutually exclusive and win over any bare top-level
-	# directive, so healthz must be a handle too: a bare `respond /healthz`
-	# sorts AFTER the catch-all `handle` and could never be reached.
+	# A bare `respond /healthz` sorts AFTER the catch-all `handle` below and
+	# could never be reached (measured: 404). It needs its own handle block.
 	handle /healthz {
 		respond "ok" 200
 	}
