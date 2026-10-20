@@ -35,7 +35,7 @@ Found while gathering evidence for this plan. Each is implemented as written her
 3. **The storage count in spec §2 is wrong.** "5 `supabase.storage.from(bucket)` accessor lines" came from a single-line grep. Re-derived on 2026-10-20: **16 accessor call sites across 14 files**, using 5 methods (`createSignedUrl` ×5, `download` ×4, `remove` ×3, `upload` ×3, `list` ×1). `docs/STATUS-2026-10-20.md` §5 repeats the 5 and needs the same fix. Consequence: spec slice 4 cannot follow slice 3 — re-pointing the one seam breaks all 16 at once. Task 10 isolates them behind `src/lib/files/store.ts` first, so Plan 2 swaps one module.
 4. **The `attempt_token` policies are dormant.** Spec §6 claims 5 policies reading `request.jwt.claims ->> 'attempt_token'` serve candidates. Nothing in the tree ever mints that claim, and [src/app/(candidate)/portal/actions.ts:95-135](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/app/%28candidate%29/portal/actions.ts#L95-L135) reads through `getSupabaseServiceClient()` (RLS bypassed), with anon only as a fallback. Plan 1 mints **no** attempt-token JWTs. The candidate portal needs zero edits — which is also why leaving it alone is safe.
 5. **The 60 s `timeoutMemo` is correct as-is.** Spec §6 asks that it be reconsidered on a persistent process. It is a memo with its own expiry (`middleware.ts:34`), not a leak; a long-lived container is exactly where it starts working *better*. Leave it. Task 13 ports it verbatim.
-6. **`@supabase/supabase-js` cannot be uninstalled in Plan 1.** [src/app/(candidate)/portal/actions.ts:35-43](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/app/%28candidate%29/portal/actions.ts#L35-L43) wraps `getSupabaseServiceClient()` in `try/catch` and falls back to a direct `createClient(supabaseConfig.url, supabaseConfig.anonKey)`. After Task 11 Step 7 the factory no longer throws on a missing key, so **that fallback is dead code** — but deleting it means editing the candidate portal, and the owner has ruled that surface off-limits ("leave candidate portal alone"). Plan 1 therefore leaves the package installed and that file untouched; Plan 2 asks permission to delete those four lines, and only then removes the dependency. Task 17's gate is "the only remaining importer is this one file", not "zero".
+6. **`@supabase/supabase-js` cannot be uninstalled in Plan 1.** [src/app/(candidate)/portal/actions.ts:35-43](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/app/%28candidate%29/portal/actions.ts#L35-L43) wraps `getSupabaseServiceClient()` in `try/catch` and falls back to a direct `createClient(supabaseConfig.url, supabaseConfig.anonKey)`. After Task 11 Step 7 the factory's throw is gated on `SUPABASE_REST_BASE`, not on the vendor keys, so with the stack configured as `.env.example` now requires **that fallback is dead code** — but deleting it means editing the candidate portal, and the owner has ruled that surface off-limits ("leave candidate portal alone"). Plan 1 therefore leaves the package installed and that file untouched; Plan 2 asks permission to delete those four lines, and only then removes the dependency. **A second importer joins it in Task 11 Step 7b:** `src/lib/files/store.ts` keeps a vendor client because the local `storage.objects` shim holds metadata and no file, and after the row clients stop being vendor clients the service key is the only credential that can still reach the vendor's storage API. Task 17's gate is "the remaining importers are exactly these two files", not "zero".
 
 Three further facts worth the record: `supabaseRestCall` in `src/lib/supabase/rest.ts` has **zero callers** (delete it in Task 17); `pg` is currently a **devDependency** (Task 17 promotes it); and `scripts/create-staff.mjs:104` prints a sign-in URL on 3001 (Task 17).
 
@@ -1299,11 +1299,15 @@ git commit -m "test(stack): prove our own token reaches the same rows through ou
 
 ### The hand-written surface, measured
 
-Spec §2 counts 442 `.from("table")` reads and says "kept as-is". That is true of the *call sites*; it is not true of the *object they are called on*. `createServerClient()` returns supabase-js's PostgREST builder, and Plan 1's end state — spec §1, "no `@supabase/*` package left in the tree" — means something in this repo has to answer those 442 chains. Re-derived from `src/` on 2026-10-20, the surface is one file's worth of work, not forty:
+Spec §2 counts 442 `.from("table")` reads and says "kept as-is". That is true of the *call sites*; it is not true of the *object they are called on*. `createServerClient()` returns supabase-js's PostgREST builder, and Plan 1's end state — spec §1, "no `@supabase/*` package left in the tree" — means something in this repo has to answer those chains. Re-derived from `src/` on 2026-10-20, the surface is one file's worth of work, not forty:
+
+**The chains, counted two ways.** 442 `.from("literal")` — which is the figure spec §2 quotes, and it is right as far as a literal grep can see it — plus **12 more that pass a variable**: `files/actions.ts` ×2 (`.from(target.table)`), `analytics/infrastructure/reportReader.ts` ×2, `jobs/application/filingVocabularies.ts` ×1, `live/infrastructure/changeWatch.ts` ×2, `settings/application/master-data-actions.ts` ×5. **454 PostgREST table chains in total.** Task 18 corrects spec §2 to 454; every step that says "442" means the literal subset, and a reader who assumes 442 is the whole surface will not write the `.from(variable)` case into the builder's probe. (`src/lib/files/store.ts`'s five `.from(bucket)` are storage, not PostgREST, and are excluded.)
 
 | Used | Count | Never used |
 | --- | --- | --- |
-| `.eq()` 389, `.filter()` 370, `.select()` 357, `.maybeSingle()` 141, `.order()` 118, `.limit()` 75, `.update()` 74, `.in()` 49, `.insert()` 45, `.delete()` 39, `.is()` 35, `.single()` 16, `.not()` 15, `.range()` 8, `.gte()` 8, `.or()` 7, `.upsert()` 5, `.lte()` 5, `.neq()` 4, `.lt()` 4, `.gt()` 4, `.like()` 2, `.contains()` 2, `.ilike()` 1 | **1,763 calls, 24 methods** | `.schema()`, `.containedBy()`, `.matches()`, `.geojson()`, `.csv()`, `.throwOnError()`, `.head()` as a method (it is an option), `.and()` |
+| `.eq()` 389, `.filter()` 370, `.select()` 357, `.maybeSingle()` 141, `.order()` 118, `.limit()` 75, `.update()` 75, `.in()` 49, `.insert()` 45, `.delete()` 39, `.is()` 35, `.single()` 16, `.not()` 15, `.range()` 8, `.gte()` 8, `.or()` 7, `.upsert()` 5, `.lte()` 5, `.neq()` 4, `.lt()` 4, `.gt()` 4, `.like()` 2, `.contains()` 2, `.ilike()` 1 | **1,774 calls, 24 methods** | `.schema()`, `.containedBy()`, `.matches()`, `.geojson()`, `.csv()`, `.throwOnError()`, `.head()` as a method (it is an option), `.and()` |
+
+These are flat `grep -ro "\.name("` counts over `src/`, so they over-count by whatever unrelated object shares the name — `.match(` was measured that way and is **excluded** because all 11 hits are `String.prototype.match`, and `.filter(`/`.map(`/`.from()` have the same hazard (hence the two-ways count above). The list is the union of *both* measurements corrected: `.update()` is 75, not the 74 an earlier draft of this table carried.
 
 Options actually passed: `{ count: "exact" }` ×36, `{ head: true }` ×29, `{ onConflict: … }` in all 5 `.upsert()` calls, `{ ascending: false }` in `.order()`, `nullsFirst` once. Two `.rpc()` call sites. That is the whole contract Task 11 implements, and it is why the promise "leave the query call sites alone" is honest rather than hopeful.
 
@@ -2009,13 +2013,18 @@ Body: the 16 sites with their `file:line`, the count of files touched, the autho
 - Create: `src/lib/rest/query-builder.ts`
 - Create: `src/lib/rest/client.ts`
 - Create: `src/lib/rest/auth-shim.ts`
+- Create: `src/lib/auth/cookies.ts` (Task 12 extends this same file with the writers; see ruling T11-R1)
 - Modify: `src/lib/supabase/server.ts` (whole body)
 - Modify: `src/lib/supabase/service.ts`, `src/lib/supabase/anon.ts`
+- Modify: `.env.example` (add `SUPABASE_REST_BASE=` — Task 11 is the first task that fails without it)
 - Test: `scripts/prove-rest-builder.mjs`
 
 **Interfaces:**
-- Consumes: `SUPABASE_REST_BASE` (the gateway `http://localhost:54321`), `mintSessionToken()` / `verifySessionToken()` from Task 8, the cookie name from Task 12.
-- Produces: `createRestClient({ token }) => RestClient` where `RestClient` is `{ from(table): Query; rpc(name, body): Promise<Result>; auth: AuthShim }`; and `createSupabaseServerClient()` — **same name, same import path, same call shape** — returning that client. All 129 call sites and their 442 chains keep compiling.
+- Consumes: `SUPABASE_REST_BASE` (the gateway `http://localhost:54321/rest/v1`), `mintSessionToken()` / `verifySessionToken()` / `mintServiceToken()` from Task 8.
+- Produces: `createRestClient({ baseUrl, token }) => RestClient` where `RestClient` is `{ from(table): Query; rpc(name, body): Promise<Result> }` — `token` may be a string, `null`, or a function returning either, so a service client can mint per request without its callers changing shape (T11-R2); `createAuthShim(readCookie)`; `SESSION_COOKIE = "sdg_session"`; and `createSupabaseServerClient()` — **same name, same import path, same call shape** — returning `{ ...RestClient, auth }`. All 129 call sites and their 454 table chains (442 of them a literal) keep compiling, and `getSupabaseServiceClient()` keeps its synchronous call shape at all 64 of its call sites.
+
+**Why this task creates `src/lib/auth/cookies.ts` (T11-R1).** Step 5's shim needs `SESSION_COOKIE`, and the draft of this task had Task 12 own that file — measured against the tree, `src/lib/auth/` today holds `db.ts login-target.ts passwords.ts session.ts staffRoutes token.ts`, so importing a constant from a file that does not exist until the next task means Task 11's own `tsc` gate cannot pass. The file is therefore created here with the single constant, and Task 12 adds `cookieAttributes()`, `SESSION_TTL_SECONDS` and the writer pair to the same module. The alternative — repeating the literal `"sdg_session"` in Step 6, Step 5, Task 13 and Task 15 — is the drift the plan already forbids in Task 12's Interfaces block.
+
 
 - [ ] **Step 1: Write the builder's failing probe**, which pins the exact URL each chain must produce. These expectations are PostgREST's own querystring grammar, not supabase-js internals — that is what makes the builder replaceable.
 
@@ -2261,15 +2270,30 @@ export interface Result<T = unknown> {
   count: number | null;
 }
 
+/** A bearer, or a factory for one. The factory may be async because a
+ * service-role bearer is a *minted* token with a 60 s life (Task 8), and a
+ * client built once at module scope cannot hold a token that expires — see
+ * Step 7. Staff and anon callers keep passing a plain string or `null`. */
+type Bearer = string | null;
+type BearerSource = Bearer | (() => Bearer | Promise<Bearer>);
+
 interface RestClientConfig {
   baseUrl: string;                      // http://localhost:54321/rest/v1
-  token: string | null;                 // the bearer this request carries
+  token: BearerSource;                  // the bearer this request carries
   fetchImpl?: typeof fetch;
 }
 
 export function createRestClient(config: RestClientConfig) {
   const doFetch = config.fetchImpl ?? fetch;
-  const authHeaders = () => (config.token ? { Authorization: `Bearer ${config.token}` } : {});
+  // A trailing slash here produces `http://…/rest/v1//applications`, which
+  // PostgREST answers with a 404 that reads like a missing table. Config's own
+  // `restUrl` default has always ended in `/rest/v1/`, so the transport strips
+  // it rather than trusting every caller.
+  const baseUrl = config.baseUrl.replace(/\/+$/, "");
+  async function authHeaders(): Promise<Record<string, string>> {
+    const bearer = typeof config.token === "function" ? await config.token() : config.token;
+    return bearer ? { Authorization: `Bearer ${bearer}` } : {};
+  }
 
   async function send(url: string, shape: Shape, headers: Record<string, string>): Promise<Result> {
     let res: Response;
@@ -2281,7 +2305,7 @@ export function createRestClient(config: RestClientConfig) {
         cache: "no-store",
       });
     } catch (cause) {
-      return { data: null, error: { message: `rest: ${config.baseUrl} unreachable — ${(cause as Error).message}` }, count: null };
+      return { data: null, error: { message: `rest: ${baseUrl} unreachable — ${(cause as Error).message}` }, count: null };
     }
 
     const range = res.headers.get("content-range");
@@ -2319,11 +2343,11 @@ export function createRestClient(config: RestClientConfig) {
     return { data: parsed, error: null, count };
   }
 
-  function run(table: string, builder: QueryBuilder): Promise<Result> {
+  async function run(table: string, builder: QueryBuilder): Promise<Result> {
     const shape = builder.shape_();
     const headers: Record<string, string> = {
       Accept: shape.single || shape.maybeSingle ? "application/vnd.pgrst.object+json" : "application/json",
-      ...authHeaders(),
+      ...(await authHeaders()),
     };
 
     const prefer: string[] = [];
@@ -2343,7 +2367,7 @@ export function createRestClient(config: RestClientConfig) {
       const builder = new QueryBuilder();
       // Thenable, because every existing site writes
       // `await supabase.from(x).select(y)` with no terminal call. Without this
-      // the port would mean editing 442 chains — the thing spec §1 forbids.
+      // the port would mean editing 454 chains — the thing spec §1 forbids.
       return Object.assign(builder, {
         then<T1, T2>(onFulfilled: (r: Result) => T1 | PromiseLike<T1>, onRejected?: (e: unknown) => T2 | PromiseLike<T2>) {
           return run(table, builder).then(onFulfilled, onRejected);
@@ -2352,12 +2376,12 @@ export function createRestClient(config: RestClientConfig) {
     },
 
     async rpc(name: string, body?: object): Promise<Result> {
-      const url = `${config.baseUrl}/rpc/${encodeURIComponent(name)}`;
+      const url = `${baseUrl}/rpc/${encodeURIComponent(name)}`;
       let res: Response | null = null;
       try {
         res = await doFetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json", ...authHeaders() },
+          headers: { "Content-Type": "application/json", Accept: "application/json", ...(await authHeaders()) },
           body: JSON.stringify(body ?? {}),
           cache: "no-store",
         });
@@ -2381,6 +2405,15 @@ export type RestClient = ReturnType<typeof createRestClient>;
 ```
 
 Two things in that file will be argued with in review, so here they are: `cache: "no-store"` on every call is what preserves today's behaviour, where the vendor client never served a cached read (and `cacheComponents: true` in Next 16 would otherwise make a stale row look like an RLS bug); and `return=representation` on writes is what keeps the `.insert(…).select()` idiom returning rows, which several actions use to learn the new id.
+
+- [ ] **Step 4b: Create `src/lib/auth/cookies.ts`** with only the constant, so Step 5 can import it and `tsc` can pass. Task 12 adds `cookieAttributes()`, `SESSION_TTL_SECONDS` and the writer pair to this same module — it must not recreate the file.
+
+```ts
+/** The one cookie name for a staff session. Task 12's writer, Task 13's proxy
+ * and Task 15's browser proof all read it from here; a literal repeated in
+ * five files is how a cookie gets renamed in four of them. */
+export const SESSION_COOKIE = "sdg_session";
+```
 
 - [ ] **Step 5: Write `src/lib/rest/auth-shim.ts`** — the object the 11 non-`admin` `supabase.auth.*` sites keep calling, and the reason `server.ts` can be re-pointed without editing them.
 
@@ -2432,6 +2465,7 @@ export type AuthShim = ReturnType<typeof createAuthShim>;
 
 ```ts
 import { cookies } from "next/headers";
+import { SESSION_COOKIE } from "@/lib/auth/cookies";
 import { createRestClient } from "@/lib/rest/client";
 import { createAuthShim } from "@/lib/rest/auth-shim";
 
@@ -2443,7 +2477,7 @@ import { createAuthShim } from "@/lib/rest/auth-shim";
  */
 export async function createSupabaseServerClient() {
   const jar = await cookies();
-  const token = jar.get("sdg_session")?.value ?? null;
+  const token = jar.get(SESSION_COOKIE)?.value ?? null;
   const base = process.env.SUPABASE_REST_BASE;
   if (!base) {
     throw new Error("SUPABASE_REST_BASE is not set. Locally: http://localhost:54321/rest/v1");
@@ -2455,63 +2489,94 @@ export async function createSupabaseServerClient() {
 }
 ```
 
-The cookie name `sdg_session` is the constant Task 12 defines in `src/lib/auth/cookies.ts`; import it from there rather than repeating the literal in five files.
+Two notes on that file. The cookie name comes from `src/lib/auth/cookies.ts` (Step 4b), not a literal — the same constant is what Task 12 writes, Task 13's proxy reads and Task 15 inspects in DevTools. And `process.env` is read here instead of `src/lib/config.ts` deliberately: `config.ts`'s existing `restUrl` is derived from `NEXT_PUBLIC_SUPABASE_URL` and ends in `/rest/v1/`, which is the vendor URL this task is retiring, so pointing the new transport at it would send the app back to the vendor through the door Task 11 is closing. Task 17 replaces `restUrl` with `restBase: optional(process.env.SUPABASE_REST_BASE)` in `config.ts` and these three reads with it; a trailing slash in the value is already harmless because `createRestClient` strips it.
 
-- [ ] **Step 7: Re-point the other two server factories**, or the port is decorative. `createSupabaseServerClient` reaching the local stack means nothing while 23 files still reach the vendor through `getSupabaseServiceClient()` and 6 more through `getSupabaseAnonClient()` — the service client in particular writes candidate records, drains the WhatsApp queue and reads the tracking codes, so leaving it on the vendor would split every flow down the middle.
+- [ ] **Step 7: Re-point the other two server factories**, or the port is decorative. `createSupabaseServerClient` reaching the local stack means nothing while **64 call sites of `getSupabaseServiceClient()` across 22 consumer files** still reach the vendor and 8 of `getSupabaseAnonClient()` across 6 files reach it too — the service client in particular writes candidate records, drains the WhatsApp queue and reads the tracking codes, so leaving it on the vendor would split every flow down the middle.
 
-`src/lib/supabase/service.ts` becomes:
+Two surfaces the service factory still has to answer for, measured before writing this step: `getFileStore(supabase)` at four of its sites (Step 7b) and `supabase.auth.admin.*` at **13 sites in `src/modules/settings/application/user-actions.ts`** (113, 134, 211, 230, 254, 270, 460, 521, 541, 587, 597, 633, 687, 776, 782, 808, 830, 881, 905, 967, 993, 1074, 1093, 1167 — the *client* is made 13 times, some clients make two admin calls). Those 13 calls are GoTrue's admin API over a `users` table that does not become ours until Task 14, so this task re-points the **rows** and hands back the vendor's `auth` untouched:
 
 ```ts
-import { createRestClient, type RestClient } from "@/lib/rest/client";
+import { createClient } from "@supabase/supabase-js";
+import { supabaseConfig } from "@/lib/config";
+import { createRestClient } from "@/lib/rest/client";
 import { mintServiceToken } from "@/lib/auth/token";
 
-let serviceClient: RestClient | null = null;
-
 /**
- * Service-role client. BYPASSES Row Level Security via `bypassrls`.
- * Server-side only — never import from a client component.
+ * Service-role access. BYPASSES Row Level Security via `bypassrls` — the local
+ * `service_role` has the `bypassrls` attribute (01-roles.sql), and PostgREST
+ * maps this bearer's `role` claim onto that database role.
  *
- * The bearer is a short-lived token signed here with `AUTH_JWT_SECRET`, so it
- * carries no long-lived secret to leak; PostgREST maps its `role` claim to the
- * `service_role` database role.
+ * The bearer is a short-lived token signed here with `AUTH_JWT_SECRET`, so no
+ * long-lived secret leaves the process.
+ *
+ * `auth` is the ONE surface still pointed at the vendor: GoTrue's admin API has
+ * no local equivalent until Task 14 writes `authAdmin()` over the ported
+ * `auth.users` (Task 4). Every `.from()`/`.rpc()` on this object is local.
  */
-export function getSupabaseServiceClient(): RestClient {
-  if (!serviceClient) {
-    const base = process.env.SUPABASE_REST_BASE;
-    if (!base) {
-      throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
-    }
-    serviceClient = createRestClient({ baseUrl: base, token: mintServiceToken(60) });
-  }
-  return serviceClient;
-}
-```
+let serviceAuth: ReturnType<typeof createClient>["auth"] | null = null;
 
-Then read every one of the 23 call sites and confirm none of them expects a *singleton that outlives 60 seconds*. A module-global client holding a 60 s token is a bug: a page rendered at the 61st second would send an expired bearer and get a 401 that looks like an RLS failure. So either re-mint per call — `token: await mintServiceToken(60)` inside a `createServiceClient()` factory that replaces the global — or hold the global and give the token an hour. **Choose the per-call factory**, because the rest client is a plain object with no socket pool and there is nothing to reuse; delete `serviceClient` entirely:
-
-```ts
-export async function getSupabaseServiceClient(): Promise<RestClient> {
+export function getSupabaseServiceClient() {
   const base = process.env.SUPABASE_REST_BASE;
-  if (!base) throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
-  return createRestClient({ baseUrl: base, token: await mintServiceToken(600) });
+  if (!base) {
+    throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
+  }
+  serviceAuth ??= createClient(supabaseConfig.url, supabaseConfig.serviceRoleKey!).auth;
+  return {
+    // Lazy bearer, so the factory stays synchronous AND no bearer can outlive
+    // its own expiry: the token is minted per request, not per module.
+    ...createRestClient({ baseUrl: base, token: () => mintServiceToken(60) }),
+    auth: serviceAuth,
+  };
 }
 ```
 
-That changes the call shape from `getSupabaseServiceClient()` to `await getSupabaseServiceClient()` at all 23 sites — 23 edits, each one word, in files that include the candidate portal's `trackApplication`. Do them mechanically, and let `tsc` in Step 9 find any you missed; a missing `await` on a `Promise` is a type error here, not a silent bug.
+That is the second reason `token` is a function (T11-R2). A module-global client holding a 60-second token is a bug — a page rendered at the 61st second would send an expired bearer and get a 401 that reads like an RLS failure; a global holding an hour-long token trades that for an hour of un-revocable privilege. Minting per call costs a local HMAC over a 36-byte payload, measured in microseconds, and buys both: the shortest TTL in the system *and* the call shape every one of the 64 sites already uses. **No call site changes in this step, and `await` must not be added to any of them** — if `tsc` reports a `Promise` here, the factory went async by accident.
 
 `src/lib/supabase/anon.ts` keeps its whole doc comment — the `jobs_public_read` reasoning is still exactly why a tokenless read is safe to prerender — and replaces the body with `createRestClient({ baseUrl, token: null })`. **Delete the mock-client branch** (`anon.ts:31-40`), which today silently returns empty data during a build with no credentials. Without the vendor there is no "no credentials" state that is worth supporting: the base URL is a local container, and the build now genuinely requires the stack to be up. That is a real consequence of this migration, not a regression — say so in the commit body, because it means `npm run build` on a machine with no `docker compose up` will now fail loudly where it used to produce a quietly empty careers page.
+
+- [ ] **Step 7b: Cut the last vendor dependency the row re-point exposes — `getFileStore`'s client.** Task 10 handed each of the 15 call sites' *existing* client to `getFileStore(client)`, which was right then: all three factories were vendor clients, so the request-bound staff client kept the vendor's bucket policies as a second gate. This step removes the vendor row clients, and that removes the premise. Measured against the vendor's own auth, a staff bearer from `mintSessionToken()` is signed with *our* `AUTH_JWT_SECRET` and is rejected by gotrue, so after this task **there is no vendor identity left for a staff or service byte** — the only credential that can still reach the vendor's storage API is `SUPABASE_SERVICE_ROLE_KEY`. Do not smuggle that through by hanging a service-key `storage` off all three factories, which would look per-authority and not be. State it in one place instead:
+
+```ts
+/**
+ * The bytes still live with the vendor (spec §7: the local `storage.objects`
+ * shim holds metadata, not files), and after Task 11 the vendor has no other
+ * identity for us — our session token is signed with `AUTH_JWT_SECRET`, which
+ * gotrue will not accept. So every byte the portal touches here moves under
+ * the service key, which is a deliberate widening relative to the eight staff
+ * sites that used to run under the signed-in staff JWT and the vendor's bucket
+ * policies. The portal's own checks — the staff guard, the ownership predicates
+ * in the actions, the format table on the upload routes — are now the gate on
+ * a byte. Plan 2 deletes this whole path: `getFileStore()` returns a
+ * disk-backed store over `/data/uploads` + a `files` table, the vendor client
+ * and `@supabase/supabase-js` go with it (Task 17's importer list shrinks by
+ * this file), and the widening ends the day the bytes do.
+ */
+const vendor = createClient(supabaseConfig.url, supabaseConfig.serviceRoleKey!);
+
+export async function getFileStore(): Promise<FileStore> {
+  const { storage } = vendor;
+  …the same five method bodies as Task 10 wrote…
+}
+```
+
+Then change all 15 `getFileStore(supabase)` call sites to `getFileStore()` — the client variable stays wherever the same file also reads rows, and `storage-list.ts` / `cv-links.ts` keep the parameter their callers pass for *their* row queries. `tsc` finds every one you miss: an extra argument to a zero-parameter function is an error, not a warning.
 
 - [ ] **Step 8: Prove the builder against the running stack** (this is the first time app code and PostgREST meet):
 
 ```bash
 node --experimental-strip-types scripts/prove-rest-builder.mjs
-node --input-type=module -e "
+node --env-file=.env.local --input-type=module -e "
 process.env.SUPABASE_REST_BASE='http://localhost:54321/rest/v1';
 const fs=await import('node:fs');
 process.env.AUTH_JWT_SECRET=fs.readFileSync('docker/.env','utf8').match(/^AUTH_JWT_SECRET=(.+?)\r?$/m)[1];
 const { createRestClient } = await import('./src/lib/rest/client.ts');
 const { mintSessionToken } = await import('./src/lib/auth/token.ts');
-const token = await mintSessionToken({ sub:'11111111-1111-1111-1111-111111111111', role:'authenticated' });
+const { Pool } = await import('pg');
+const pool = new Pool({ connectionString: process.env.AUTH_DB_URL });
+const { rows: [{ auth_user_id }] } = await pool.query(
+  \"select auth_user_id from public.user_profiles where role = 'SUPER_ADMIN' and email = 'owner.local@sharmdreams.test' limit 1\");
+await pool.end();
+const token = await mintSessionToken({ sub: auth_user_id, role: 'authenticated' });
 const api = createRestClient({ baseUrl: process.env.SUPABASE_REST_BASE, token });
 const r = await api.from('user_profiles').select('id, role');
 console.log('rows', Array.isArray(r.data) ? r.data.length : r.data, 'error', r.error?.message ?? null);
@@ -2520,25 +2585,28 @@ console.log('count', c.count);
 " --experimental-strip-types
 ```
 
-Expected: `rows 3 error null` (Task 6 seeded three profiles and this token's role is `authenticated`, so `is_staff()` must admit them — note this row count depends on `is_staff()` being `SECURITY DEFINER`; if it is `0` with no error, that function is no longer bypassing RLS), then `count 3`.
+The `sub` must be **looked up, not invented** (T11-R3): `profiles_self_read` is `(auth_user_id = auth.uid()) OR is_staff()`, and `is_staff()` is the only half that admits a row it does not own. With a fabricated uuid both halves are false → **0 rows and no error**, and Step 8 would then blame `is_staff()` for losing `SECURITY DEFINER` — a false alarm manufactured by the probe itself. `scripts/prove-local-stack.mjs:95-101` already reads a real staff `auth_user_id` this way; copy that rather than inventing a uuid.
 
-- [ ] **Step 9: Typecheck, lint, and run the whole repo's gates** — 129 call sites now resolve to a new type and the 23 service sites gained an `await`, so this is the first gate that will actually complain:
+Expected: `rows 3 error null` (Task 6 seeded three profiles, and a `SUPER_ADMIN`'s `auth_user_id` makes `is_staff()` true for all of them), then `count 3`. If the row count is 3 but `count` is `null`, the HEAD/`Prefer: count=exact` path is wrong — that is the bug this probe exists to catch, since three sites read counts that way.
+
+- [ ] **Step 9: Typecheck, lint, and run the whole repo's gates** — 129 call sites now resolve to a new type, so this is the first gate that will actually complain:
 
 ```bash
 ./node_modules/.bin/tsc --noEmit -p tsconfig.json
 ```
 
-Expect real fallout, and fix it at the *builder*, not at the call sites: a chain the builder does not support is a missing method, not a bug in the caller. Record in the commit body how many distinct call-site errors appeared and which methods you had to add. If a method outside the measured 24 shows up, your measurement was wrong — re-run the greps and update Slice C's preamble table.
+Expect real fallout, and fix it at the *builder*, not at the call sites: a chain the builder does not support is a missing method, not a bug in the caller. Record in the commit body how many distinct call-site errors appeared and which methods you had to add. If a method outside the measured 24 shows up, your measurement was wrong — re-run the greps and update Slice C's preamble table. The two errors you must NOT see are (a) any complaint about `getSupabaseServiceClient()` needing an `await` — it does not, see Step 7 — and (b) a `.storage` error on a row client, because Step 7b removed the parameter.
 
 - [ ] **Step 10: Commit.**
 
 ```bash
-git add src/lib/rest src/lib/supabase/server.ts src/lib/supabase/service.ts src/lib/supabase/anon.ts
+git add src/lib/rest src/lib/auth/cookies.ts src/lib/files/store.ts
+git add src/lib/supabase/server.ts src/lib/supabase/service.ts src/lib/supabase/anon.ts
 git add -u src
-git commit -m "feat(rest): serve the 442 query chains from our own PostgREST client"
+git commit -m "feat(rest): serve the 454 query chains from our own PostgREST client"
 ```
 
-Body: the tsc error count you started with and ended with, any builder method you had to add beyond the measured 24, the 23 `await getSupabaseServiceClient()` edits, and the deliberate removal of `anon.ts`'s credential-free mock — with the consequence that `npm run build` now requires the local stack.
+Body: the tsc error count you started with and ended with; any builder method you had to add beyond the measured 24; the 15 `getFileStore(supabase)` → `getFileStore()` edits with the reason Step 7b gives (a staff byte has no vendor identity after this task, so the service key is the only credential that reaches the vendor's storage API, and the portal's own checks are now the gate on a file); the deliberate removal of `anon.ts`'s credential-free mock, with the consequence that `npm run build` now requires the local stack; the fact that `getSupabaseServiceClient()` stayed synchronous at all 64 sites; and the deliberate intermediate state the next two tasks inherit — reads go through our PostgREST while `src/proxy.ts` still verifies a gotrue session and the Team console's 13 `auth.admin.*` calls still hit the vendor, which is also why `src/lib/auth/cookies.ts` is created here with one constant rather than waiting for Task 12.
 
 ---
 
@@ -2553,7 +2621,7 @@ The cost: the password crosses to the server as form data over the app's own ori
 ### Task 12: Session cookies and the sign-in action
 
 **Files:**
-- Create: `src/lib/auth/cookies.ts`
+- Modify: `src/lib/auth/cookies.ts` (Task 11 Step 4b created it with `SESSION_COOKIE`; this task adds the rest — do not recreate the file or duplicate the constant)
 - Create: `src/app/login/actions.ts`
 - Modify: `src/app/login/LoginForm.tsx`
 - Modify: `src/modules/analytics/presentation/SignOutButton.tsx`
@@ -2561,9 +2629,9 @@ The cost: the password crosses to the server as form data over the app's own ori
 
 **Interfaces:**
 - Consumes: `verifyStaffPassword(email, password)` from Task 9, returning `{ ok: true, userId } | { ok: false, reason: "unknown_user" | "wrong_password" | "banned" }`; `mintSessionToken({ sub, role }, ttlSeconds?)` from Task 8 — the optional TTL exists precisely so this file can pass `SESSION_TTL_SECONDS` instead of inheriting the token's 900-second default.
-- Produces: `SESSION_COOKIE` / `LAST_ACTIVE_COOKIE` constants; `startSession(userId)` and `endSession()` — the Server-Action-side pair that writes through `next/headers`. Task 13 adds the proxy-side pair, `writeSession(response, userId)` / `clearSession(response)`, to this same file. Also the server actions `signInAction(formData)` and `signOutAction()`. Task 11 Step 6's `server.ts` import of `SESSION_COOKIE` is what makes this task and that one a pair — if you execute them out of order, Task 11's `tsc` gate fails on the missing constant, which is the correct failure.
+- Produces: `SESSION_COOKIE` / `LAST_ACTIVE_COOKIE` constants; `startSession(userId)` and `endSession()` — the Server-Action-side pair that writes through `next/headers`. Task 13 adds the proxy-side pair, `writeSession(response, userId)` / `clearSession(response)`, to this same file. Also the server actions `signInAction(formData)` and `signOutAction()`. Task 11 Step 4b already created this file with `SESSION_COOKIE`, because Task 11's own shim and `server.ts` read it — so this task extends that module rather than writing it, and the two tasks are a pair in the direction of the writers only.
 
-- [ ] **Step 1: Write `src/lib/auth/cookies.ts`.**
+- [ ] **Step 1: Extend `src/lib/auth/cookies.ts`.** Task 11 Step 4b created this file with `SESSION_COOKIE` alone; keep that line and add the rest below to it. A second `export const SESSION_COOKIE` is a redeclaration error, and if you wrote the file from scratch instead, Task 11's `server.ts` and Task 11 Step 5's shim silently now point at a different module than the one the writers use.
 
 ```ts
 import { cookies } from "next/headers";
@@ -3441,7 +3509,7 @@ Only after Slices A–E are green. This task deletes the things the port made re
 - Delete: `src/lib/supabase/rest.ts`, `src/lib/supabase/client.ts`
 - Modify: `src/lib/config.ts`, `package.json`, `scripts/create-staff.mjs`, `.env.example`, `next.config.ts`
 - Remove dependency: `@supabase/ssr` (all three importers are gone: `server.ts` in Task 11, `middleware.ts` in Task 13, `client.ts` here)
-- Keep dependency: `@supabase/supabase-js` — spec correction #6, one dead fallback branch in an off-limits file
+- Keep dependency: `@supabase/supabase-js` — spec correction #6, for TWO importers, not one: the dead fallback branch in the off-limits `(candidate)/portal/actions.ts`, and `src/lib/files/store.ts`, which since Task 11 Step 7b is the only thing in the app that still reaches the vendor for **bytes**. Task 17's gate is therefore "the remaining importers are exactly those two files", and Plan 2's disk store is what deletes the second.
 - Promote dependency: `pg` from `devDependencies` to `dependencies`
 
 - [ ] **Step 1: Confirm each deletion is already orphaned**, and stop if any grep is not empty:
@@ -3540,7 +3608,7 @@ The plan is not done when the code compiles; it is done when the claims can be c
 
 - [ ] **Step 4: Fix the same figures in the status report.** [docs/STATUS-2026-10-20.md](file:///D:/Nextjs%20Projects/sharm_dreams_group/docs/STATUS-2026-10-20.md) §5 repeats the 5, and §2.4 still calls the cron routes "the two routes nothing schedules" — which is now false, so add the Plan 1 line and its commit hash to §2.4 rather than quietly rewriting history.
 
-- [ ] **Step 5: Say what is left.** Append a "Plan 1 complete, Plan 2 open" section to the status file listing exactly: bytes still live with the vendor (`storage.objects` holds rows, not files); `@supabase/supabase-js` still installed for one dead fallback in an off-limits file; `@vercel/speed-insights` still loaded; no TLS yet; the live `pg_dump` restore still unrun; KVM2 untouched. This is the list the owner reads to decide what happens next, so it must not round up.
+- [ ] **Step 5: Say what is left.** Append a "Plan 1 complete, Plan 2 open" section to the status file listing exactly: bytes still live with the vendor (`storage.objects` holds rows, not files — and since Task 11 Step 7b every byte the portal touches is read and written under the service key, so the vendor's bucket policies are no longer a second gate on staff or applicant files); `@supabase/supabase-js` still installed for two importers (the dead fallback in the off-limits candidate file, and `src/lib/files/store.ts`); `@vercel/speed-insights` still loaded; no TLS yet; the live `pg_dump` restore still unrun; KVM2 untouched. This is the list the owner reads to decide what happens next, so it must not round up.
 
 - [ ] **Step 6: Commit, and offer the push.**
 
