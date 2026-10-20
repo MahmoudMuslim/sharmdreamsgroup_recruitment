@@ -2019,7 +2019,7 @@ export function getSupabaseServiceClient(): RestClient {
   if (!serviceClient) {
     const base = process.env.SUPABASE_REST_BASE;
     if (!base) {
-      throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Task 3).");
+      throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
     }
     serviceClient = createRestClient({ baseUrl: base, token: mintServiceToken(60) });
   }
@@ -2032,7 +2032,7 @@ Then read every one of the 23 call sites and confirm none of them expects a *sin
 ```ts
 export async function getSupabaseServiceClient(): Promise<RestClient> {
   const base = process.env.SUPABASE_REST_BASE;
-  if (!base) throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Task 3).");
+  if (!base) throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
   return createRestClient({ baseUrl: base, token: await mintServiceToken(600) });
 }
 ```
