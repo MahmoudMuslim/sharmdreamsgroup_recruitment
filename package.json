@@ -4,6 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "docker:up": "docker compose -f docker/docker-compose.yml --env-file docker/.env up -d",
+    "docker:down": "docker compose -f docker/docker-compose.yml --env-file docker/.env down",
+    "docker:wipe": "docker compose -f docker/docker-compose.yml --env-file docker/.env down -v",
+    "docker:logs": "docker compose -f docker/docker-compose.yml --env-file docker/.env logs -f",
+    "docker:psql": "docker compose -f docker/docker-compose.yml --env-file docker/.env exec db psql -U postgres -d sharm_dreams",
     "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs",
     "build": "next build",
     "check:routes": "node scripts/check-staff-routes.mjs",

@@ -47,3 +47,9 @@ PROMPT.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local self-host stack: PII dumps and real secrets never enter the repo.
+docker/data/*
+!docker/data/.gitkeep
+docker/.env
+!docker/.env.example

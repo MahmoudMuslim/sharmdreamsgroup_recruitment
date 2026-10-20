@@ -1,0 +1,40 @@
+# Sharm Dreams Talent Cloud — self-hosted data plane.
+#
+# The app runs OUTSIDE this file (`next dev` on host port 3000); see
+# docs/superpowers/specs/2026-10-20-docker-self-host-migration-design.md §4.
+# On KVM2 this same file becomes the production stack.
+name: sharm-dreams-local
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD}
+      POSTGRES_DB: sharm_dreams
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # PG17 is forced by supabase/schema.sql: every grant it carries uses the
+    # `maintain` privilege, which does not exist before PG17.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+    ports:
+      - "${LOCAL_DB_PORT:-54320}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sharm_dreams"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  # A named volume, NOT a bind-mount into the repo: a restored live dump lives in
+  # here and must never be picked up by `git add .` (spec §10).
+  db-data:
