@@ -4,6 +4,7 @@ import { revalidatePath, cacheLife } from "next/cache";
 import { after } from "next/server";
 import { getSupabaseAnonClient } from "@/lib/supabase/anon";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { extractCvText, type ExtractedCv as _ExtractedCv } from "@/modules/screening/infrastructure/cvParser";
 import { CV_TEXT_MIN_CHARS, profileLink } from "@/modules/careers/cv-rules";
@@ -358,13 +359,14 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   let finalCvText = cvText;
 
   if (input.cvFilePath) {
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from("candidate-cvs")
-      .download(input.cvFilePath);
+    const files = await getFileStore(supabase);
+    const { bytes: fileData, error: downloadError } = await files.download({
+      bucket: "candidate-cvs",
+      path: input.cvFilePath,
+    });
 
     if (!downloadError && fileData) {
-      const arrayBuffer = await fileData.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
+      const buffer = Buffer.from(fileData);
 
       // Detect mime from the stored path extension (we control the upload).
       const ext = input.cvFilePath.split(".").pop()?.toLowerCase() ?? "";

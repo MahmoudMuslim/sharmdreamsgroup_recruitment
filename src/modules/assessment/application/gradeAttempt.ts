@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { supabaseConfig } from "@/lib/config";
 import {
@@ -474,22 +475,21 @@ async function ensureTranscript(
   if (response.transcript?.trim()) return response.transcript.trim();
   if (!response.video_path) return "";
 
-  const { data: file, error: downloadError } = await supabase.storage
-    .from(supabaseConfig.buckets.candidateVideos)
-    .download(response.video_path);
+  const files = await getFileStore(supabase);
+  const { bytes, contentType, error: downloadError } = await files.download({
+    bucket: supabaseConfig.buckets.candidateVideos,
+    path: response.video_path,
+  });
 
-  if (downloadError || !file) {
+  if (downloadError || !bytes) {
     throw new Error(
-      `Could not read the recording at ${response.video_path}: ${downloadError?.message ?? "empty response"}`
+      `Could not read the recording at ${response.video_path}: ${downloadError ?? "empty response"}`
     );
   }
 
   let transcript: string;
   try {
-    transcript = await transcribeRecording(
-      new Uint8Array(await file.arrayBuffer()),
-      file.type || "video/webm"
-    );
+    transcript = await transcribeRecording(bytes, contentType ?? "video/webm");
   } catch (error) {
     if (error instanceof RecordingNotTranscribableError) {
       // No retry can help, so hand it to the reviewer with the reason.

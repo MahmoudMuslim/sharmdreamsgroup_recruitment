@@ -3,6 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
+import { getFileStore } from "@/lib/files/store";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import type { QuestionType } from "@/types";
 import {
@@ -373,6 +374,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
+  const files = await getFileStore(supabase);
 
   const { data: found } = await supabase
     .from("candidate_attempts")
@@ -474,10 +476,12 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
 
     let videoUrl: string | null = null;
     if (response?.video_path) {
-      const { data: signed } = await supabase.storage
-        .from(supabaseConfig.buckets.candidateVideos)
-        .createSignedUrl(response.video_path, 60 * 60);
-      videoUrl = signed?.signedUrl ?? null;
+      const { url } = await files.signedUrl({
+        bucket: supabaseConfig.buckets.candidateVideos,
+        path: response.video_path,
+        seconds: 60 * 60,
+      });
+      videoUrl = url ?? null;
     }
 
     answers.push({

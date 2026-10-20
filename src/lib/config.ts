@@ -48,6 +48,7 @@ export const supabaseConfig = {
   buckets: {
     candidateVideos: "candidate-videos",
     candidateAudio: "candidate-audio",
+    candidateCvs: "candidate-cvs",
     resumes: "resumes",
   },
 } as const;

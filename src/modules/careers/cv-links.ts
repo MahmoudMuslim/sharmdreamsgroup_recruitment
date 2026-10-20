@@ -8,6 +8,7 @@
  */
 
 import type { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getFileStore } from "@/lib/files/store";
 
 type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 
@@ -47,18 +48,19 @@ export function cvDisplayName(path: string | null): string | null {
 export async function createCvLinks(supabase: StaffClient, path: string): Promise<CvLinks> {
   const name = cvDisplayName(path) ?? "cv";
 
+  const files = await getFileStore(supabase);
   const [view, download] = await Promise.all([
-    supabase.storage.from(CV_BUCKET).createSignedUrl(path, CV_URL_LIFETIME_SECONDS),
-    supabase.storage.from(CV_BUCKET).createSignedUrl(path, CV_URL_LIFETIME_SECONDS, { download: name }),
+    files.signedUrl({ bucket: CV_BUCKET, path, seconds: CV_URL_LIFETIME_SECONDS }),
+    files.signedUrl({ bucket: CV_BUCKET, path, seconds: CV_URL_LIFETIME_SECONDS, download: name }),
   ]);
 
-  if (!view.data?.signedUrl) {
+  if (!view.url) {
     console.error(
       "[careers] CV link failed:",
-      view.error?.message ?? download.error?.message ?? "unknown"
+      view.error ?? download.error ?? "unknown"
     );
     return { cv_url: null, cv_download_url: null };
   }
 
-  return { cv_url: view.data.signedUrl, cv_download_url: download.data?.signedUrl ?? null };
+  return { cv_url: view.url, cv_download_url: download.url ?? null };
 }

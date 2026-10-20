@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getFileStore } from "@/lib/files/store";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -83,6 +84,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createSupabaseServerClient();
+  const files = await getFileStore(supabase);
 
   // The parent record is read through RLS first, so a recruiter cannot attach a
   // file to a candidate sitting in another tenant's pipeline.
@@ -101,12 +103,16 @@ export async function POST(request: NextRequest) {
 
   const path = attachmentPath(applicationId, file.name);
 
-  const { error: uploadError } = await supabase.storage
-    .from(rule.bucket)
-    .upload(path, file, { contentType: file.type, upsert: false });
+  const { error: uploadError } = await files.upload({
+    bucket: rule.bucket,
+    path,
+    body: file,
+    contentType: file.type,
+    upsert: false,
+  });
 
   if (uploadError) {
-    console.error("[uploads] storage refused:", rule.bucket, uploadError.message);
+    console.error("[uploads] storage refused:", rule.bucket, uploadError);
     return NextResponse.json(
       { error: `Storage refused that file. ${rule.hint}` },
       { status: 500 }
@@ -137,9 +143,9 @@ export async function POST(request: NextRequest) {
 
   if (insertError || !attachment) {
     console.error("[uploads] attachment row refused:", insertError?.message);
-    const { error: cleanupError } = await supabase.storage.from(rule.bucket).remove([path]);
+    const { error: cleanupError } = await files.remove({ bucket: rule.bucket, paths: [path] });
     if (cleanupError) {
-      console.error("[uploads] orphan left behind:", rule.bucket, path, cleanupError.message);
+      console.error("[uploads] orphan left behind:", rule.bucket, path, cleanupError);
     }
     return NextResponse.json(
       {

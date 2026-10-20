@@ -1,4 +1,5 @@
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getFileStore } from "@/lib/files/store";
 import { supabaseConfig } from "@/lib/config";
 import { NextResponse } from "next/server";
 
@@ -35,9 +36,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const extension = video.type.includes("mp4") ? "mp4" : "webm";
   const path = `${token}/${questionId}-${Date.now()}.${extension}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from(supabaseConfig.buckets.candidateVideos)
-    .upload(path, video, { contentType: video.type || "video/webm", upsert: true });
+  const files = await getFileStore(supabase);
+  const { error: uploadError } = await files.upload({
+    bucket: supabaseConfig.buckets.candidateVideos,
+    path,
+    body: video,
+    contentType: video.type || "video/webm",
+    upsert: true,
+  });
 
   if (uploadError) {
     return NextResponse.json({ error: "Video upload failed" }, { status: 500 });

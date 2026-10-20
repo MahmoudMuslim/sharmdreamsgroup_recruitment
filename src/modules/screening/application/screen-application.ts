@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { engineActivityActor, recordActivity } from "@/modules/activity/application/record";
 import {
@@ -207,11 +208,12 @@ function mimeForPath(path: string): string {
 /** Best-effort read of the stored CV file; empty string when unavailable. */
 async function cvTextFromStorage(path: string): Promise<string> {
   const supabase = getSupabaseServiceClient();
-  const { data: file, error } = await supabase.storage.from(CV_BUCKET).download(path);
+  const files = await getFileStore(supabase);
+  const { bytes: file, error } = await files.download({ bucket: CV_BUCKET, path });
   if (error || !file) return "";
 
   try {
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const buffer = Buffer.from(file);
     const extracted = await extractCvText(buffer, mimeForPath(path));
     return extracted.empty ? "" : extracted.text;
   } catch {

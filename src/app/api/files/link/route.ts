@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getFileStore } from "@/lib/files/store";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { bucketInfo, displayName, isStoredPath } from "@/app/(admin)/files/file-browser-types";
@@ -48,16 +49,21 @@ export async function GET(request: NextRequest) {
   const inline = !wantsDownload && isSafeToView(mimeType);
 
   const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.storage
-    .from(bucket.key)
-    .createSignedUrl(path, LINK_LIFETIME_SECONDS, inline ? undefined : { download: displayName(path) });
+  const files = await getFileStore(supabase);
+  const { url, error } = await files.signedUrl({
+    bucket: bucket.key,
+    path,
+    seconds: LINK_LIFETIME_SECONDS,
+    // The inline branch sends no disposition; only a download asks for one.
+    download: inline ? undefined : displayName(path),
+  });
 
-  if (error || !data?.signedUrl) {
-    console.error("[files] signed link refused:", error?.message ?? "no url", path);
+  if (error || !url) {
+    console.error("[files] signed link refused:", error ?? "no url", path);
     return NextResponse.json({ error: "That file is no longer in storage." }, { status: 404 });
   }
 
-  return NextResponse.redirect(data.signedUrl, {
+  return NextResponse.redirect(url, {
     status: 307,
     headers: { "Cache-Control": "no-store" },
   });
