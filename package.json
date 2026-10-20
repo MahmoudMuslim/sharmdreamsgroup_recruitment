@@ -10,6 +10,7 @@
     "docker:logs": "docker compose -f docker/docker-compose.yml --env-file docker/.env logs -f",
     "docker:psql": "docker compose -f docker/docker-compose.yml --env-file docker/.env exec db psql -U postgres -d sharm_dreams",
     "db:apply-local": "node scripts/apply-local-schema.mjs",
+    "db:seed-local": "node scripts/seed-local-staff.mjs",
     "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs",
     "build": "next build",
     "check:routes": "node scripts/check-staff-routes.mjs",

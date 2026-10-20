@@ -893,6 +893,7 @@ git commit -m "fix(rls): lock the unreferenced jobs and applicants tables to ser
 **Files:**
 - Create: `scripts/seed-local-staff.mjs`
 - Modify: `docker/.env.example` (add `LOCAL_STAFF_PASSWORD`)
+- Modify: `package.json` (add the `db:seed-local` alias beside `db:apply-local`)
 
 **Interfaces:**
 - Produces: three `auth.users` rows with `crypt()`-hashed passwords and matching `user_profiles` rows (`SUPER_ADMIN`, `RECRUITER`, `CANDIDATE`), a fixed `tenant_id`. Task 7's gate signs in as the SUPER_ADMIN; Task 9's `passwords.ts` verifies against exactly these hashes. The `role_permissions` the two staff roles need are **already seeded by `supabase/schema.sql`** — measured on the local stack: `SUPER_ADMIN` 20 granted rows, `RECRUITER` 11 rows of which 10 are granted — so this script writes none and must not start inventing them.
@@ -903,6 +904,12 @@ git commit -m "fix(rls): lock the unreferenced jobs and applicants tables to ser
 ```ini
 # Local-only password for the seeded staff fixtures. Never reuse anywhere real.
 LOCAL_STAFF_PASSWORD=sdg-local-fixture-pw
+```
+
+and give the seeder an npm alias beside the other local-stack entry points, because a script nobody can find is a script nobody runs after `down -v`:
+
+```json
+    "db:seed-local": "node scripts/seed-local-staff.mjs",
 ```
 
 - [ ] **Step 2: Write `scripts/seed-local-staff.mjs`.**
@@ -1014,7 +1021,7 @@ If `user_profiles` has no unique constraint on `auth_user_id`, the `on conflict`
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add scripts/seed-local-staff.mjs docker/.env.example
+git add scripts/seed-local-staff.mjs docker/.env.example package.json
 git commit -m "test(docker): seed a local staff directory with pgcrypto bcrypt hashes"
 ```
 
@@ -1088,7 +1095,12 @@ async function rest(token, qs) {
 
 const staff = await (async () => {
   const c = new Client({
-    connectionString: `postgresql://postgres:${env.LOCAL_DB_PASSWORD}@localhost:${env.LOCAL_DB_PORT || 54320}/sharm_dreams`,
+    user: "postgres",
+    password: env.LOCAL_DB_PASSWORD,
+    host: "localhost",
+    port: Number(env.LOCAL_DB_PORT) || 54320,
+    database: "sharm_dreams",
+    connectionTimeoutMillis: 15000,
   });
   await c.connect();
   const r = await c.query(
@@ -1177,7 +1189,15 @@ if (failed.length) {
 npm run stack:prove
 ```
 
-Expected: `6/6 checks passed` (the two lock-down tables and two RPCs make four of the six lines). Investigate a failure before writing any Slice C code — spec §3 says the identity half is only provable against a PostgREST we own, and this gate is that proof. A failure on check 1 usually means a policy grants `to public` while the row-level predicate assumes `authenticated`; a failure on check 3 means `authenticator` is not a member of `authenticated`.
+Expected: `8/8 checks passed` — four standalone checks plus the two lock-down tables and the two RPCs. Investigate a failure before writing any Slice C code — spec §3 says the identity half is only provable against a PostgREST we own, and this gate is that proof. A failure on check 1 usually means a policy grants `to public` while the row-level predicate assumes `authenticated`; a failure on check 3 means `authenticator` is not a member of `authenticated`.
+
+Three things this gate is easy to misread, all measured while Task 6 was reviewed:
+
+- **Check 4's `>= 3` depends on the CANDIDATE fixture.** The policy that answers it is `profiles_self_read = (auth_user_id = auth.uid() OR is_staff())`, and `is_staff()` is `role in ('SUPER_ADMIN','RECRUITER','HIRING_MANAGER')` — so the third row a SUPER_ADMIN sees is the `CANDIDATE` profile Task 6 seeds. Trim the fixtures to "two staff" and this check fails at 2 for a reason that has nothing to do with RLS.
+- **The locked-down tables answer `401` with `42501 permission denied`, not an empty `200`.** Grant-level lock-down (Task 5) is a different mechanism from a policy that simply matches no rows, and the check must not be written as "zero rows".
+- **`LOCAL_DB_PASSWORD` proves nothing over TCP here.** `pg_hba_file_rules` has `host all all 127.0.0.1/32 trust` and `::1 trust`; only the non-loopback `host` line is `scram-sha-256`. So a Client that logs in from the host is not evidence that a password was checked — never let a passing connect become a credential proof. Use in-container `psql` for anything that must be credential-free, and the bcrypt comparison inside the database for anything that must be credential-bearing.
+
+The `new Client({…})` block above passes host, port, database and password as **fields**, exactly as `scripts/seed-local-staff.mjs:45-52` does. Do not "simplify" it back to a `postgresql://user:password@host/db` URI: a rotated password containing `@`, `/` or `%` silently misparses into the wrong database name, which is why commit `9b6ca2f` exists.
 
 - [ ] **Step 4: Commit.**
 
@@ -1393,6 +1413,8 @@ Why SQL and not a library: Supabase stores `$2a$` bcrypt (proved in Task 6 Step 
 # and later the staff directory). PostgREST never sees it.
 AUTH_DB_URL=postgresql://postgres:sdg_local_dev_pw@localhost:54320/sharm_dreams
 ```
+
+This one value *is* a URI, and it stays one deliberately: it is read verbatim from the environment by `new Pool({ connectionString: … })`, never built by interpolating a password, so the misparse risk that made Task 4's script go field-based does not apply to the code — only to whoever types the value. The rule to write into `.env.example`'s comment is therefore about authoring, not parsing: **if you rotate `LOCAL_DB_PASSWORD`, percent-encode it here too** (`@` → `%40`, `/` → `%2F`, `%` → `%25`), because `pg` parses this string with the RFC 3986 userinfo grammar and an unencoded `@` makes it look for the host in the middle of your password.
 
 - [ ] **Step 2: Write `src/lib/auth/db.ts`.**
 
@@ -3189,7 +3211,7 @@ Body: the three greps from Step 1 with their output, why `@supabase/supabase-js`
 
 The plan is not done when the code compiles; it is done when the claims can be checked. This task runs the whole thing once, from a clean slate, and corrects the record.
 
-- [ ] **Step 1: Wipe and rebuild from nothing.** `docker compose down -v` (this deletes the local database — local only, never hosted), then `docker compose up -d --build` and `node scripts/apply-local-schema.mjs`. Expected: the counts printed by Task 4 match a fresh `supabase/schema.sql`, and `node scripts/prove-local-stack.mjs` passes all six checks, including the load-bearing one: `user_profiles?select=id` answers **200**, not a refusal.
+- [ ] **Step 1: Wipe and rebuild from nothing.** `docker compose down -v` (this deletes the local database — local only, never hosted), then `docker compose up -d --build`, `node scripts/apply-local-schema.mjs` and **`npm run db:seed-local`** (which is `node scripts/seed-local-staff.mjs`). Expected: the counts printed by Task 4 match a fresh `supabase/schema.sql`, and `node scripts/prove-local-stack.mjs` passes all 8 checks, including the load-bearing one: `user_profiles?select=id` answers **200**, not a refusal. Skip the seed and the gate dies at its first line with `run scripts/seed-local-staff.mjs first` — on a wiped volume there is no staff fixture for it to mint a token from, so the seed step is part of the clean slate, not an optional extra. Re-running proofs that Tasks 1 and 3 wrote as `node -e` with the password interpolated into a URI should use `docker exec sharm-dreams-local-db-1 psql -U postgres -d sharm_dreams -c …` instead: the local `pg_hba.conf` trusts loopback, so a credential on the command line buys nothing and risks a misparse.
 
 - [ ] **Step 2: Run the browser proof** (Task 15) against that rebuilt stack, from sign-in through the idle timeout to the Team console.
 
