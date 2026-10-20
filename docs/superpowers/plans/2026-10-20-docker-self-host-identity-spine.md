@@ -361,6 +361,9 @@ Expected: `healthz 200`, `openapi 200`, `bogus 404`. If `openapi` is `401`/`403`
 
 ```bash
 git add docker/docker-compose.yml docker/Caddyfile
+git commit -m "feat(docker): serve the REST reads through PostgREST behind a loopback gateway"
+```
+
 ---
 
 ### Task 3: The identity stand-ins Postgres needs before any grant parses
@@ -1086,6 +1089,9 @@ Expected: `6/6 checks passed` (the two lock-down tables and two RPCs make four o
 
 ```bash
 git add scripts/prove-local-stack.mjs package.json
+git commit -m "test(stack): prove our own token reaches the same rows through our own PostgREST"
+```
+
 ---
 
 ## Slice C — sessions, cookies, and the one seam
