@@ -51,6 +51,13 @@ end $$;
 -- It is a local dev credential by design; KVM2 replaces the whole file from a
 -- secret that never enters the repo. A manual re-run resets it to this literal,
 -- so a rotated value must be mirrored here or this file skipped.
+--
+-- No `nologin` here: Postgres does NOT let the last keyword win — `create role
+-- authenticator nologin … login …` raises `ERROR: conflicting or redundant
+-- options` and aborts the whole initdb pass, leaving a half-built volume.
+-- `login` alone is what this role needs, and the else-branch re-asserts exactly
+-- the keyword list this line sets (including NOINHERIT) so a re-run converges
+-- attributes rather than only existence.
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'authenticator') then
     create role authenticator noinherit login nobypassrls nosuperuser nocreaterole nocreatedb password 'sdg_pgrst_local';
