@@ -60,6 +60,10 @@ const SECRETS = [
   ["NVIDIA_API_KEY", get("NVIDIA_API_KEY")],
   ["WHATSAPP (any EAAQB token)", "EAAQB"],
   ["service-role JWT payload", servicePayload],
+/* This list is what to hunt by VALUE, so a name whose value is absent contributes
+ * nothing to hunt: once STATUS §8.2 action 4 deletes the vendor lines, the bundle
+ * scan stops covering those four. The standing gates for that case are the deploy-
+ * surface NAME scan and the SDK-import scan below, not this list. */
 ].filter(([, v]) => v && v.length > 8);
 
 function walk(dir, skip = [], out = []) {
@@ -243,18 +247,24 @@ for (const label of [".env.local", join("docker", ".env")]) {
 }
 
 /* A fourth place, and the one §15 claim 1's grep structurally cannot see: tracked
- * copies of a vendored `supabase-server` agent skill, each of which instructs an
- * agent to `npm install @supabase/ssr` and import from `@supabase/`. They are not
- * in `src` or `scripts`, and `.dockerignore` never allow-lists them, so the shipped
- * artifact is clean — but the repo tree still carries instructions to re-add the
- * dependency, and an agent pointed at this workspace can be triggered by them.
- * Deleting them is the owner's call (53 tracked files is not a doc slice's
- * business), so this prints where they are instead of claiming they are gone.
- * `git ls-files` is the cheap census of *tracked* copies, which is the claim; the
- * image builder has no repo to enumerate, and that is a skip, not a zero. */
+ * copies of a vendored `supabase-server` agent skill, each of which tells an agent
+ * to `npm install @supabase/middleware` and to pull `createServerClient` out of the
+ * vendor's SSR package (that skill's line 184 is exactly the import this file's
+ * regex below hunts for). They are not in `src` or `scripts`, and `.dockerignore`
+ * never allow-lists them, so the shipped artifact is clean — but the repo tree
+ * still carries instructions to re-add the dependency, and an agent pointed at this
+ * workspace can be triggered by them. Deleting them is the owner's call (53 tracked
+ * files is not a doc slice's business), so this prints where they are instead of
+ * claiming they are gone. `git ls-files` is the cheap census of *tracked* copies,
+ * which is the claim; the image builder has no repo to enumerate, and that is a
+ * skip, not a zero. stderr is ignored so git's own "not a git repository" cannot
+ * leak into a build log. */
 let skillCopies;
 try {
-  const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" })
+  const tracked = execFileSync("git", ["ls-files"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  })
     .split(/\r?\n/)
     .filter((f) => f.endsWith("skills/supabase-server/SKILL.md"));
   skillCopies = tracked.length
