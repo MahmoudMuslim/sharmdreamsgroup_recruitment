@@ -234,6 +234,23 @@ guarded by the same `is_staff()` / `candidates.write` predicates, a
 `candidate-videos`, `candidate-audio`, `resumes`, **plus `candidate-cvs`**, which
 `config.ts:48-52` omits — a latent bug the port would otherwise inherit.
 
+> **Measured 2026-10-21, three changes to this section.** (1) The `candidate-cvs`
+> omission is **already fixed**: `src/lib/config.ts:72-80` lists all four buckets,
+> `candidateCvs: "candidate-cvs"` included, with its own comment naming the broken CV
+> link as the reason. No Plan 2 task should re-fix it. (2) The vendor surface this slice
+> has to swallow is now measured exactly, and it is small: **5 accessor lines**
+> (`src/lib/files/store.ts:70,76,81,90,94`) behind **14** `getFileStore()` call sites in
+> 14 files, and **17 objects / 3.8 MB** still physically in the hosted buckets
+> (`candidate-cvs` 13, `candidate-videos` 2, `resumes` 2, `candidate-audio` 0) — listed
+> read-only with the service key on 2026-10-21. (3) `.from(variable)` refs are **17**,
+> not the 26 this section's first line quotes; §2's row carries the re-measurement.
+> (4) The `files` table drops `owner`: `FileStore` carries no session, so no call
+> site could fill it and no reader would ever query it — the columns are
+> `(bucket, path, mime, bytes, created_at, updated_at)`, and a column nothing reads
+> is debt, not foresight. (5) The five accessor lines are at
+> `src/lib/files/store.ts:69,75,81,90,94` as of this re-read, not `70,76` — the file
+> is unchanged, the earlier pair was counted from a pre-correction read.
+
 ---
 
 ## 8. Slice 5 — Staff CRUD (the 13 `auth.admin.*` sites)
@@ -287,6 +304,37 @@ and `SUPABASE_DB_PASSWORD` become server-only names for our own service-role tok
 and the Postgres URI. The old `NEXT_PUBLIC_SUPABASE_URL`, anon/service keys and DB
 password all stop existing as Supabase artefacts.
 
+> **Measured 2026-10-21, and this section's premise is half wrong.** No browser reads
+> anything here: walking every `"use client"` file in `src/` for `supabaseConfig`,
+> `SUPABASE_REST_BASE` or `NEXT_PUBLIC_SUPABASE` returns **0 files**, and the four
+> `SUPABASE_REST_BASE` consumers (`supabase/{anon,server,service}.ts`, `auth/guard.ts`)
+> are all server-only. So "the two genuinely browser-read values stay `NEXT_PUBLIC_`"
+> describes the design Plan 1 intended, not the one that shipped — every REST read goes
+> through a server action. Worse, `docker/docker-compose.yml:143-144` still passes
+> `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` as **build args**, which
+> inlines the vendor URL and the anon key into the client bundle for a value nothing in
+> the bundle reads. Plan 2 deletes both build args; that is a real exposure closing, not
+> a rename.
+>
+> Renamed stays, with one exception measured rather than assumed: `SUPABASE_REST_BASE` →
+> `REST_BASE_URL` (12 references, all server-side, mechanical), and
+> `SUPABASE_DB_PASSWORD` retires with the three hosted scripts that parse it
+> (`apply-schema.mjs`, `dump-schema.mjs`, `verify-schema.mjs` — they re-aim at the local
+> stack's existing `LOCAL_DB_PASSWORD`). The four vendor credentials
+> (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+> `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_PROJECT_REF`) have **0 readers left** once the
+> files seam and the portal's dead branch are gone: `supabaseConfig.url` is read by
+> exactly two places today — `src/lib/files/store.ts:60` and
+> `src/app/(candidate)/portal/actions.ts:104`.
+>
+> What does **not** rename: `src/lib/supabase/` and `createSupabaseServerClient()`.
+> Those carry **128 call sites across 45 files** (§2), and after Plan 1 they build a
+> `pg`/PostgREST client that never touches the vendor. Renaming them is 45 files of
+> churn that changes no dependency; the name is now historical, and the module comment
+> says so. `supabase/schema.sql` and `scripts/local-supabase-stub.sql` keep their paths
+> for the same reason — `apply-local-schema.mjs` reads the first and the 88 RLS policies
+> evaluate through the second.
+
 ---
 
 ## 12. Explicit non-goals
@@ -320,3 +368,78 @@ live-dump restore remains a separate, explicitly-gated step later in slice 2.
   KVM2 vs a host port locally) and the anon JWT's expiry;
 - #376 (Settings → Languages console) and the 21 session-gated live proofs must not
   regress during the port; the data-layer debts #330/#331 intersect this work.
+
+---
+
+## 15. Plan 2 — off the vendor completely (scope approved 2026-10-21)
+
+Plan 1 moved the *rows* and the *identity* onto the self-hosted stack and left the
+*bytes* with the vendor. Plan 2 moves those bytes, and then removes the vendor from
+the dependency graph, the environment surface and the image build. The owner's
+directive is the scope, in their words: *"stop using Supabase and Vercel Completely
+… remove Supabase and vercel Completely."*
+
+### What "done" means — five claims, each mechanically checkable
+
+1. `npm ls @supabase/supabase-js @vercel/speed-insights` answers "not installed", and
+   `grep -rn 'from "@supabase/' src scripts` returns **0**.
+2. A clean image build contains no vendor project reference — grepping the built
+   `.next/` for the hosted project's ref returns **0 files**. §11 measured that
+   nothing in the client bundle reads the two `NEXT_PUBLIC_SUPABASE_*` values today,
+   so this claim is the proof that the build args were pure exposure.
+3. Every byte the portal reads or writes lives under `/data/uploads/<bucket>/<path>`
+   on a named volume with a matching `files` row, and no accessor can resolve a path
+   outside its own bucket.
+4. The environment carries **zero** vendor credentials: `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `SUPABASE_DB_PASSWORD` no longer exist in any env file, example, build arg or
+   `src/lib/config.ts` field; `scripts/audit-secrets.mjs` asserts their *absence*.
+5. The identity spine is untouched: the Plan 1 gates still pass as they did at
+   `28a9467`, with only the storage shim's **8** `storage.objects` policies retired
+   (88 → 80 in `supabase/schema.sql`).
+
+### The vendor surface, measured 2026-10-21 — this is the whole job
+
+| what | how many | where |
+| --- | --- | --- |
+| storage accessor lines left | **5** | `src/lib/files/store.ts:69,75,81,90,94` (upload, signedUrl, download, remove, list) |
+| seam call sites that must not change | **14** in **14** files | every `await getFileStore()` in `src` (the two other grep hits are the definition at `:65` and the comment at `:44`) |
+| objects still at the vendor | **17**, **3.8 MB** | `candidate-cvs` 13, `candidate-videos` 2, `resumes` 2, `candidate-audio` 0 |
+| `@supabase/supabase-js` importers | **3** | `src/lib/files/store.ts`, the dead anon fallback at `src/app/(candidate)/portal/actions.ts:104` (deletion granted by the owner 2026-10-21), `scripts/create-staff.mjs` |
+| `@vercel/speed-insights` importers | **0** | `package.json:29` only — an unused dependency, so its removal is one `npm uninstall`, no code edit |
+| vendor credentials still read in `src` | `url` **2**, `anonKey` **1**, `serviceRoleKey` **1** | all three are the two rows above; after Plan 2 each has 0 readers |
+| `supabaseConfig.buckets` readers | **4** | all four read `candidateVideos` — these stay, they name *our* buckets |
+| `storage.objects` policies to retire | **8** | `supabase/schema.sql:1759-1795` |
+| build args to delete | **2** | `docker/app/Dockerfile:31-34`, `docker/docker-compose.yml:138-144` |
+| `SUPABASE_REST_BASE` refs to rename | **12** | → `REST_BASE_URL` (§11) |
+
+One afternoon of extraction, not a migration: the entire payload is 3.8 MB.
+
+### The ordering rule — extract first, delete last
+
+Deleting the vendor dependency is irreversible in a way the rest of this port is not:
+after it, a byte exists only where we put it. So the sequence is fixed and no step
+may be reordered — **extract** the 17 objects and a hosted `pg_dump` into git-ignored
+`docker/data/`, **prove** the extraction by opening every file back, **cut over** the
+code to the disk store and prove the running app, and only **then** delete the
+package, the credentials and the shim. The hosted Supabase project and the Vercel
+deployment are the owner's to close, and only after they have kept an off-machine
+copy of the dump; nothing in this plan deletes anything on the vendor side.
+
+### The tasks
+
+1. Extract the vendor's 17 objects + a manifest, and take the hosted `pg_dump` (read-only against the vendor; output git-ignored).
+2. `files` table + its RLS, mirroring the 8 storage policies being retired.
+3. Disk-backed `FileStore` over `/data/uploads` + `files` rows, with resolve-and-verify traversal guards.
+4. Own HMAC short-lived signed links streamed by a route handler, with Range support so a video pitch still seeks.
+5. Swap the body of `store.ts` (14 callers unchanged) and live-prove every byte path.
+6. Load the extracted bytes into the volume and verify each one opens.
+7. Delete the granted dead anon-key fallback; retire the hosted `scripts/create-staff.mjs`.
+8. Uninstall `@supabase/supabase-js` + `@vercel/speed-insights`, delete the five HOSTED-ONLY config fields and the dead `process.env.VERCEL` term.
+9. Env surface: drop the four vendor credentials and both build args, rename `SUPABASE_REST_BASE` → `REST_BASE_URL`, retire `SUPABASE_DB_PASSWORD` onto `LOCAL_DB_PASSWORD`.
+10. Retire the `storage` shim and its 8 policies from the schema of record, re-measuring the count.
+11. Acceptance from a wiped volume, plus the STATUS section that names only what the owner still has to do.
+
+What this plan deliberately does **not** rename is §11's non-rename list, and it
+still holds: `src/lib/supabase/`, `createSupabaseServerClient()`,
+`supabase/schema.sql` and `scripts/local-supabase-stub.sql` keep their names.
