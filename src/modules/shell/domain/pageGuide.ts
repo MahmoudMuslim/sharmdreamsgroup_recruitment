@@ -383,13 +383,14 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   "/settings": {
     purpose: "Every switch the portal obeys, who may do what, and the record of both.",
     shows: [
-      "Four areas in the dock: Platform (organisation, AI, assessment, notifications, security, and the settings change trail), Organisation (companies, departments, locations, role families, skills, currencies, and the filing drift desk), Access & comms (permissions, team, notification templates) and Providers (API keys with their audit trail, and AI models with routing, catalogue and provider health).",
+      "Four areas in the dock: Platform (organisation, AI, assessment, notifications, security, and the settings change trail), Organisation (companies, departments, locations, role families, skills, currencies, and the filing drift desk), Access & comms (permissions, team, notification templates, languages) and Providers (API keys with their audit trail, and AI models with routing, catalogue and provider health).",
     ],
     use: [
       "Pick a section, change the controls, Save changes. Each write is recorded with who made it.",
       "Search the settings by name, key or description; the box names what it matches.",
       "In Organisation add and edit the vocabularies every opening is filed under, and Refile the openings sitting outside them.",
       "In Access & comms grant and revoke per role, create a staff account or record an invite, show a generated password once, reset it, deactivate, or delete an account that is already disabled — and edit, reset to shipped copy or delete a notification template per channel.",
+      "In Languages open a group, type an override for a key, or Draft its blanks with the model and Save — a stored wording replaces the words the build ships on every public page.",
       "In Providers store a key, Test it, set the primary and fallback model for each task, and run the health checks.",
       "Both trails page and search: by key, value, action or person.",
     ],
@@ -397,6 +398,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Writes and both trails need the Manage platform settings permission; staff accounts need Manage users.",
       "A stored key always wins over the environment variable of the same name, and removing one falls back to the environment. A saved key is never displayed back to you.",
       "A second master-data row carrying the same words is refused, because a job opening stores only the name.",
+      "A wording override that drops or invents a {placeholder}, or runs past 2000 characters, refuses the whole save rather than writing the half it likes.",
       "You cannot disable your own account, and the last active Super Admin cannot be locked out.",
       "A probe costs money: arriving on the provider tab runs nothing — only Test and the health checks send a request.",
     ],

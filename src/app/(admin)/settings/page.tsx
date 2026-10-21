@@ -6,6 +6,9 @@ import { FilingDriftPanel } from "./FilingDriftPanel";
 import { PermissionMatrixCard } from "./PermissionMatrixCard";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
+import { LanguagesConsole } from "./LanguagesConsole";
+import { loadStoredTranslations } from "@/modules/i18n/application/translationOverrides";
+import { translationRows } from "@/modules/i18n/domain/translations";
 import { loadSettings } from "./actions";
 import { listSettingsTrail } from "@/modules/settings/application/settings-trail-actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
@@ -76,6 +79,20 @@ async function TrailPanel({
       find={find}
     />
   );
+}
+
+/**
+ * The Languages section, with its own read.
+ *
+ * The console lists every dictionary key, so the rows are built here — on the
+ * server, where the dictionaries live — and handed to the panel as plain data. The
+ * read runs only on this section, the way the change trail reads only on its own:
+ * the other sixteen addresses the dock offers should not pay for a translation
+ * round trip they never show.
+ */
+async function LanguagesPanel({ editable }: { editable: boolean }) {
+  const rows = translationRows(await loadStoredTranslations());
+  return <LanguagesConsole rows={rows} editable={editable} />;
 }
 
 export default async function SettingsPage({
@@ -216,6 +233,8 @@ export default async function SettingsPage({
           {section.id === "templates" && (
             <TemplatesConsole templates={bundle.templates} editable={editable} />
           )}
+
+          {section.id === "languages" && <LanguagesPanel editable={editable} />}
         </div>
       )}
 

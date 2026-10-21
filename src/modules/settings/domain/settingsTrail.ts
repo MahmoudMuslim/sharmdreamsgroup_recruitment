@@ -136,6 +136,7 @@ type PrefixGroup = Extract<SettingsTrailGroup, { kind: "prefix" }>;
  */
 const UNCONTROLLED_GROUPS: readonly PrefixGroup[] = [
   { id: "templates", label: "Message templates", kind: "prefix", prefix: "notification_template:" },
+  { id: "languages", label: "Interface wording", kind: "prefix", prefix: "i18n." },
   { id: "team", label: "Team accounts", kind: "prefix", prefix: "staff." },
   { id: "files", label: "Stored files", kind: "prefix", prefix: "storage." },
   { id: "integrations", label: "Removed integrations", kind: "prefix", prefix: "integrations." },

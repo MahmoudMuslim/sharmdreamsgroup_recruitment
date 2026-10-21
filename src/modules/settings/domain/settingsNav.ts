@@ -90,6 +90,12 @@ const ACCESS_SECTIONS: SettingsNavSection[] = [
     hint: "The wording candidates receive at each pipeline stage.",
     icon: "bell",
   },
+  {
+    id: "languages",
+    label: "Languages",
+    hint: "The interface wording in each language, and the overrides that replace what the build ships.",
+    icon: "languages",
+  },
 ];
 
 const PROVIDER_SECTIONS: SettingsNavSection[] = [

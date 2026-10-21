@@ -8,6 +8,7 @@ import {
   History,
   GraduationCap,
   KeyRound,
+  Languages,
   MapPin,
   Network,
   Shield,
@@ -41,6 +42,7 @@ const ICONS: Record<string, LucideIcon> = {
   users: Users,
   key: KeyRound,
   cpu: Cpu,
+  languages: Languages,
   history: History,
 };
 
