@@ -15,6 +15,7 @@
     "stack:prove": "node scripts/prove-local-stack.mjs",
     "files:prove": "node scripts/prove-files-rls.mjs",
     "files:paths": "node scripts/prove-file-paths.mjs",
+    "files:links": "node scripts/prove-signed-links.mjs",
     "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs",
     "build": "next build",
     "check:routes": "node scripts/check-staff-routes.mjs",
