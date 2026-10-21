@@ -75,6 +75,57 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
 
+  # The scheduler `/api/cron/whatsapp` and `/api/cron/grading never had: nothing
+  # on Vercel ever called them (no vercel.json) and nothing in supabase/ does
+  # (no pg_cron). A supervised busybox loop as PID 1, not crond.
+  cron:
+    build: ./cron
+    environment:
+      CRON_SECRET: ${CRON_SECRET}
+      # The app is `next dev` on this Windows HOST, not a container, so the
+      # default reaches it through host.docker.internal; `extra_hosts` makes the
+      # same line valid on the Linux production host. Override APP_URL in
+      # docker/.env only when the `full` profile's `app` service is the target.
+      APP_URL: ${APP_URL:-http://host.docker.internal:3000}
+      WHATSAPP_EVERY: ${WHATSAPP_EVERY:-60}
+      GRADING_EVERY: ${GRADING_EVERY:-300}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Deliberately NO `depends_on`: Compose activates the profile of any service
+    # named there, so `depends_on: app` would start the `full`-profile app
+    # container as a side effect — and it publishes ${APP_PORT:-3000} onto the
+    # port the owner's dev servers live on. `hit()` already survives a down app:
+    # it logs [FAIL], sleeps, and retries, which is the correct behaviour.
+    restart: unless-stopped
+
+  # Placeholder for the production shape; Plan 2 owns the real server image.
+  # Off by default: `docker compose up` is the data plane + cron only, which is
+  # what a Windows dev host wants with `next dev` on 3000.
+  app:
+    image: node:24-alpine3.20
+    profiles: ["full"]
+    working_dir: /app
+    # No `npm ci` here. This service would run as root inside the developer's
+    # own tree (volumes: ../../:/app) and rebuild their node_modules from a
+    # Linux container — a repo-mutating side effect outside this task.
+    command: ["npm", "run", "start"]
+    ports: ["${APP_PORT:-3000}:3000"]
+    environment:
+      NODE_ENV: production
+      # Inside the compose network a container talks to PostgREST directly, so
+      # there is NO /rest/v1 prefix — that prefix is the gateway's, and only the
+      # host's `http://localhost:54321/rest/v1` form carries it.
+      SUPABASE_REST_BASE: http://rest:3000
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      CRON_SECRET: ${CRON_SECRET}
+      # Read by the APP (src/lib/config.server.ts `cronConfig`), never by the
+      # cron container. `:-` is load-bearing: an empty value left in docker/.env
+      # would otherwise reach `Number(process.env.WHATSAPP_CRON_BATCH_SIZE ?? 50)`
+      # as an empty string — `??` does not fire on "" and the batch size becomes 0.
+      WHATSAPP_CRON_BATCH_SIZE: ${WHATSAPP_CRON_BATCH_SIZE:-50}
+      GRADING_CRON_BATCH_SIZE: ${GRADING_CRON_BATCH_SIZE:-10}
+    volumes: [../../:/app]
+
 volumes:
   # A named volume, NOT a bind-mount into the repo: a restored live dump lives in
   # here and must never be picked up by `git add .` (spec §10).
