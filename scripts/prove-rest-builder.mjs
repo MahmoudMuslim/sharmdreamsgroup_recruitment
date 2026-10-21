@@ -178,3 +178,52 @@ for (const testCase of requestCases) {
 }
 if (requestBad) process.exit(1);
 console.log(`PASS ${requestCases.length} resolved requests (verb + Prefer + body)`);
+
+/* ------------------------------------------------------------------ *
+ * Half three: a wrapped projection.
+ *
+ * PostgREST 16.5's select grammar takes a space around a comma but not a
+ * newline, so a projection wrapped over several lines makes the whole read
+ * answer `400 PGRST100 … unexpected "\n"`. Measured on the local stack with the
+ * two strings below: the wrapped bytes are refused, the same bytes with each
+ * line break collapsed answer 200. `/assessments` shipped broken by exactly
+ * this, because both of its reads are written wrapped and no gate renders an
+ * authenticated page.
+ *
+ * The assertion is on the DECODED parameter, not the escaped string: the bug is
+ * a character the grammar owns, and the encoder (`URLSearchParams`) is already
+ * pinned by half one.
+ * ------------------------------------------------------------------ */
+const wrapped = [
+  [
+    `id, application_id, template_id, status, created_at, integrity_flags,
+       applications!inner(full_name, archived_at, job_openings(title)),
+       assessment_templates(name, assessment_questions(id)),
+       candidate_responses(id)`,
+    "id, application_id, template_id, status, created_at, integrity_flags, applications!inner(full_name, archived_at, job_openings(title)), assessment_templates(name, assessment_questions(id)), candidate_responses(id)",
+  ],
+  [
+    `id, template_id, status,
+  question_order, option_order`,
+    "id, template_id, status, question_order, option_order",
+  ],
+];
+
+let wrapBad = 0;
+for (const [input, expected] of wrapped) {
+  const qs = q().select(input).toQuerystring();
+  const got = new URLSearchParams(qs.slice(1)).get("select");
+  if (got === null) { wrapBad++; console.error(`FAIL  select vanished from ${qs}`); continue; }
+  if (got.includes("\n") || got !== expected) {
+    wrapBad++;
+    console.error(`FAIL  wrapped projection\n  expected ${expected}\n  got      ${got}`);
+  }
+}
+// A projection written on one line must go out byte-for-byte as authored.
+const singleLine = q().select("id, name").toQuerystring();
+if (new URLSearchParams(singleLine.slice(1)).get("select") !== "id, name") {
+  wrapBad++;
+  console.error(`FAIL  single-line projection was rewritten: ${singleLine}`);
+}
+if (wrapBad) process.exit(1);
+console.log(`PASS ${wrapped.length + 1} wrapped projections (no newline reaches the grammar)`);

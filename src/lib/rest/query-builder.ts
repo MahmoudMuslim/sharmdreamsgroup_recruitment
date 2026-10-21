@@ -238,7 +238,7 @@ export class QueryBuilder<R = Rows> {
    */
   toQuerystring(): string {
     const params = new URLSearchParams();
-    if (this.shape.select !== undefined) params.append("select", this.shape.select);
+    if (this.shape.select !== undefined) params.append("select", encodeSelect(this.shape.select));
 
     for (const [column, operator, value] of this.shape.filters) {
       if (LOGIC_OPS.has(operator)) {
@@ -272,6 +272,24 @@ export class QueryBuilder<R = Rows> {
 
 function stripParens(value: string): string {
   return value.replace(/^\s*\(/, "").replace(/\)\s*$/, "");
+}
+
+/**
+ * Flatten a hand-formatted projection onto one line.
+ *
+ * PostgREST's select grammar accepts a space around a comma but not a newline:
+ * `select=a,\n b` answers `400 PGRST100 … unexpected "\n"` (measured against
+ * this stack's PostgREST 16.5). A long projection is therefore unreadable as one
+ * line, and a wrapped one fails the whole page — `/assessments` rendered the
+ * error boundary because both of its reads
+ * (`(admin)/assessments/actions.ts:249` and `:386`) are written wrapped.
+ * Normalise here, at the seam that owns putting the chain on the wire, rather
+ * than at each call site: only line breaks and the indentation that follows them
+ * collapse, so a projection's own spacing and every quoted identifier are left
+ * exactly as written.
+ */
+function encodeSelect(select: string): string {
+  return select.replace(/\s*\n\s*/g, " ").trim();
 }
 
 export function buildUrl(table: string, builder: QueryBuilder<Row>): string {
