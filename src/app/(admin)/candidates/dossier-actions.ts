@@ -234,7 +234,7 @@ export async function getCandidateDossier(
   // The links are short-lived and only this recruiter asked for them, so a CV
   // that cannot be signed degrades to a note rather than an empty drawer.
   const links = path
-    ? await createCvLinks(supabase, path)
+    ? await createCvLinks(path)
     : { cv_url: null, cv_download_url: null };
 
   const [attempts, logs, queued, planResponse, siblings, attached] = await Promise.all([

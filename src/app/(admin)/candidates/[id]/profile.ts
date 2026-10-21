@@ -459,7 +459,7 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
     summary.rows.map(async (row) => {
       const path = asNullableText(row.cv_file_path);
       if (!path) return { stored: false, url: null, download_url: null } as const;
-      const links = await createCvLinks(supabase, path);
+      const links = await createCvLinks(path);
       return {
         stored: true,
         url: links.cv_url,

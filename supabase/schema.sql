@@ -1,12 +1,20 @@
 /*
  * Sharm Dreams Talent Cloud — schema of record.
+ * AUTHORITATIVE: this file carries hand edits that `node scripts/dump-schema.mjs`
+ * does not reproduce (the vault removal, the locked-down jobs/applicants
+ * policies, and the storage statements Task 10 deleted — the dump tool still
+ * emits them because it reads the hosted project, where `storage` is the
+ * vendor's own schema). A re-dump must re-apply them, not silently restore them.
  *
  * Generated from the live project, so this file describes the database instead
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
  * reasoning behind any single object lives in supabase/migrations/001-*.sql.
  *
- * The two seed blocks at the end are the only sections this file authors rather
- * than dumps — and both are dumps of live rows in authored shape. Regenerate with:
+ * Three sections are authored rather than dumped: the two seed blocks, and the
+ * `public.files` table with its eight policies at the very end, which is the
+ * table that replaced the vendor's storage.objects (Plan 2 Tasks 2 and 10, spec
+ * §15 — Task 10 deleted those policies and the `storage` grants from this file).
+ * Both seed blocks are dumps of live rows in authored shape. Regenerate with:
  *
  *   node scripts/dump-schema.mjs > supabase/schema.sql
  *   node scripts/verify-schema.mjs supabase/schema.sql   # must report no gaps
@@ -15,9 +23,9 @@
  * database: extensions and enums, then every table, then uniqueness, then the
  * foreign keys that point at it, then functions, then the indexes and policies
  * that call those functions, then the rows the console reads before it can
- * render anything. It applies on a Supabase project — some policies reference
- * auth.uid() and storage.objects — but not on vanilla Postgres, where the auth
- * and storage schemas have to be stood in for first.
+ * render anything. It applies on vanilla Postgres with only the `auth` schema
+ * stood in (`docker/db/initdb/02-auth-users.sql`); the `storage` stand-in that
+ * used to be required alongside it is gone, and nothing here references it.
  */
 
 -- ============================================================================
@@ -27,8 +35,6 @@
 create schema if not exists extensions;
 create extension if not exists "pg_stat_statements" with schema extensions;
 create extension if not exists "pgcrypto" with schema extensions;
-create schema if not exists vault;
-create extension if not exists "supabase_vault" with schema vault;
 create extension if not exists "uuid-ossp" with schema extensions;
 
 -- ============================================================================
@@ -1331,21 +1337,6 @@ create policy "app_settings_write" on public.app_settings
   to public
   using (has_permission('settings.manage_platform'::text))
   with check (has_permission('settings.manage_platform'::text));
-drop policy if exists "Allow authenticated insert applicants" on public.applicants;
-create policy "Allow authenticated insert applicants" on public.applicants
-  for INSERT
-  to public
-  with check (true);
-drop policy if exists "Allow authenticated update applicants" on public.applicants;
-create policy "Allow authenticated update applicants" on public.applicants
-  for UPDATE
-  to public
-  using (true);
-drop policy if exists "Allow public read applicants" on public.applicants;
-create policy "Allow public read applicants" on public.applicants
-  for SELECT
-  to public
-  using (true);
 drop policy if exists "attachments_staff_add" on public.application_attachments;
 create policy "attachments_staff_add" on public.application_attachments
   for INSERT
@@ -1587,21 +1578,6 @@ create policy "jobs_staff_write" on public.job_openings
   to public
   using (is_staff())
   with check (is_staff());
-drop policy if exists "Allow authenticated insert jobs" on public.jobs;
-create policy "Allow authenticated insert jobs" on public.jobs
-  for INSERT
-  to public
-  with check (true);
-drop policy if exists "Allow authenticated update jobs" on public.jobs;
-create policy "Allow authenticated update jobs" on public.jobs
-  for UPDATE
-  to public
-  using (true);
-drop policy if exists "Allow public read jobs" on public.jobs;
-create policy "Allow public read jobs" on public.jobs
-  for SELECT
-  to public
-  using (true);
 drop policy if exists "locations_read" on public.locations;
 create policy "locations_read" on public.locations
   for SELECT
@@ -1785,46 +1761,6 @@ create policy "profiles_self_update" on public.user_profiles
   to public
   using ((auth_user_id = auth.uid()))
   with check ((auth_user_id = auth.uid()));
-drop policy if exists "candidate video uploads" on storage.objects;
-create policy "candidate video uploads" on storage.objects
-  for INSERT
-  to anon, authenticated
-  with check (((bucket_id = 'candidate-videos'::text) AND ((storage.foldername(name))[1] = ((current_setting('request.jwt.claims'::text, true))::jsonb ->> 'attempt_token'::text))));
-drop policy if exists "candidates upload cvs" on storage.objects;
-create policy "candidates upload cvs" on storage.objects
-  for INSERT
-  to anon, authenticated
-  with check ((bucket_id = 'candidate-cvs'::text));
-drop policy if exists "public resume uploads" on storage.objects;
-create policy "public resume uploads" on storage.objects
-  for INSERT
-  to anon
-  with check (((bucket_id = 'resumes'::text) AND ((storage.foldername(name))[1] = 'public'::text)));
-drop policy if exists "staff delete candidate cvs" on storage.objects;
-create policy "staff delete candidate cvs" on storage.objects
-  for DELETE
-  to authenticated
-  using (((bucket_id = 'candidate-cvs'::text) AND is_staff()));
-drop policy if exists "staff delete candidate media" on storage.objects;
-create policy "staff delete candidate media" on storage.objects
-  for DELETE
-  to authenticated
-  using (((bucket_id = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
-drop policy if exists "staff read candidate cvs" on storage.objects;
-create policy "staff read candidate cvs" on storage.objects
-  for SELECT
-  to authenticated
-  using (((bucket_id = 'candidate-cvs'::text) AND is_staff()));
-drop policy if exists "staff read candidate media" on storage.objects;
-create policy "staff read candidate media" on storage.objects
-  for SELECT
-  to authenticated
-  using (((bucket_id = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
-drop policy if exists "staff upload candidate media" on storage.objects;
-create policy "staff upload candidate media" on storage.objects
-  for INSERT
-  to authenticated
-  with check (((bucket_id = ANY (ARRAY['resumes'::text, 'candidate-audio'::text])) AND is_staff() AND has_permission('candidates.write'::text) AND ((storage.foldername(name))[1] = 'applications'::text)));
 
 -- ============================================================================
 -- TRIGGERS
@@ -1912,8 +1848,6 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.app_settings to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.app_settings to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.app_settings to service_role;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to anon;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.applicants to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.application_attachments to authenticated;
@@ -2036,8 +1970,6 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to service_role;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to anon;
-grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.jobs to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.locations to anon;
@@ -2140,72 +2072,6 @@ grant execute on function public.user_tenant_id to authenticated;
 grant execute on function public.user_tenant_id to postgres;
 grant execute on function public.user_tenant_id to public;
 grant execute on function public.user_tenant_id to service_role;
-
--- ============================================================================
--- STORAGE SCHEMA PRIVILEGES
--- ============================================================================
-
-grant usage on schema storage to anon;
-grant usage on schema storage to authenticated;
-grant usage on schema storage to service_role;
-grant delete on table storage.buckets to anon;
-grant insert on table storage.buckets to anon;
-grant select on table storage.buckets to anon;
-grant update on table storage.buckets to anon;
-grant delete on table storage.buckets to authenticated;
-grant insert on table storage.buckets to authenticated;
-grant select on table storage.buckets to authenticated;
-grant update on table storage.buckets to authenticated;
-grant delete on table storage.buckets to service_role;
-grant insert on table storage.buckets to service_role;
-grant maintain on table storage.buckets to service_role;
-grant references on table storage.buckets to service_role;
-grant select on table storage.buckets to service_role;
-grant trigger on table storage.buckets to service_role;
-grant truncate on table storage.buckets to service_role;
-grant update on table storage.buckets to service_role;
-grant delete on table storage.objects to anon;
-grant insert on table storage.objects to anon;
-grant select on table storage.objects to anon;
-grant update on table storage.objects to anon;
-grant delete on table storage.objects to authenticated;
-grant insert on table storage.objects to authenticated;
-grant select on table storage.objects to authenticated;
-grant update on table storage.objects to authenticated;
-grant delete on table storage.objects to service_role;
-grant insert on table storage.objects to service_role;
-grant maintain on table storage.objects to service_role;
-grant references on table storage.objects to service_role;
-grant select on table storage.objects to service_role;
-grant trigger on table storage.objects to service_role;
-grant truncate on table storage.objects to service_role;
-grant update on table storage.objects to service_role;
-grant execute on function storage.foldername(name text) to public;
-
--- ============================================================================
--- STORAGE BUCKETS
--- ============================================================================
-
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('candidate-audio', 'candidate-audio', false, 20971520, array['audio/webm', 'audio/mpeg', 'audio/mp4']::text[])
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('candidate-cvs', 'candidate-cvs', false, null, null)
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('candidate-videos', 'candidate-videos', false, 52428800, array['video/webm', 'video/mp4']::text[])
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('resumes', 'resumes', false, 10485760, array['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']::text[])
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
 
 -- ============================================================================
 -- REALTIME PUBLICATION
@@ -2517,3 +2383,90 @@ insert into public.app_settings (id, scope, company_id, key, value, description,
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('e677f3b8-6fd5-4c53-9c4f-2cdcc9302b02', 'GLOBAL', null, 'organisation.enabled_locales', '["en", "ar"]', 'Languages offered to candidates', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('f60b515b-fd34-493b-acda-02ad08f06880', 'GLOBAL', null, 'organisation.locale', '"en"', 'Default interface language', false, null) on conflict (id) do nothing;
 -- 226 reference rows above. Their order is load-bearing: parents before children.
+
+-- ============================================================================
+-- FILES — OUR OWN STORAGE TABLE (authored, not dumped)
+-- Added by Plan 2 Task 2 (spec §15). The eight policies below mirror, one for
+-- one, the eight `storage.objects` policies that used to sit in this file, so a
+-- candidate video kept the same rule it always had: the anonymous attempt token
+-- that is the first path segment. The predicates differ only in shape —
+-- `(storage.foldername(name))[1]` became `split_part(path, '/', 1)` because the
+-- foldername function belonged to the vendor's storage schema.
+--
+-- Task 10 deleted those eight policies, the `storage` grants and the four
+-- `storage.buckets` rows. Nothing in this file needs the `storage` schema now,
+-- and nothing under `src` ever queried it after the cut-over: `files` is the
+-- only metadata table, the disk under `UPLOADS_ROOT` the only byte store.
+--
+-- Bytes live on disk under /data/uploads/<bucket>/<path>; this table is what
+-- makes a path listable, sized and typed. There is no `owner` column: the
+-- FileStore carries no session, so no writer could fill it and no reader would
+-- ever query it (spec §7 correction 4).
+--
+-- Writes go through the app's own pool, so these policies bind the PostgREST
+-- door — the File Manager's listings and metadata reads. No UPDATE policy
+-- exists because nothing updates a row in place: a re-upload replaces the bytes
+-- and upserts the same key.
+-- ============================================================================
+
+create table if not exists public.files (
+  id bigint generated always as identity primary key,
+  bucket text not null,
+  path text not null,
+  mime text,
+  bytes bigint,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint files_bucket_path_key unique (bucket, path)
+);
+
+-- The listing walks a prefix, which a plain btree on text cannot serve without
+-- operator classes: text_pattern_ops makes `starts_with` an index scan.
+create index if not exists files_bucket_path_prefix_idx on public.files (bucket, path text_pattern_ops);
+
+alter table public.files enable row level security;
+
+grant select, insert on table public.files to anon;
+grant select, insert, update, delete on table public.files to authenticated;
+grant all on table public.files to service_role;
+
+drop policy if exists "candidate video uploads" on public.files;
+create policy "candidate video uploads" on public.files
+  for insert
+  to anon, authenticated
+  with check (((bucket = 'candidate-videos'::text) AND (split_part(path, '/'::text, 1) = ((current_setting('request.jwt.claims'::text, true))::jsonb ->> 'attempt_token'::text))));
+drop policy if exists "candidates upload cvs" on public.files;
+create policy "candidates upload cvs" on public.files
+  for insert
+  to anon, authenticated
+  with check ((bucket = 'candidate-cvs'::text));
+drop policy if exists "public resume uploads" on public.files;
+create policy "public resume uploads" on public.files
+  for insert
+  to anon
+  with check (((bucket = 'resumes'::text) AND (split_part(path, '/'::text, 1) = 'public'::text)));
+drop policy if exists "staff delete candidate cvs" on public.files;
+create policy "staff delete candidate cvs" on public.files
+  for delete
+  to authenticated
+  using (((bucket = 'candidate-cvs'::text) AND is_staff()));
+drop policy if exists "staff delete candidate media" on public.files;
+create policy "staff delete candidate media" on public.files
+  for delete
+  to authenticated
+  using (((bucket = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
+drop policy if exists "staff read candidate cvs" on public.files;
+create policy "staff read candidate cvs" on public.files
+  for select
+  to authenticated
+  using (((bucket = 'candidate-cvs'::text) AND is_staff()));
+drop policy if exists "staff read candidate media" on public.files;
+create policy "staff read candidate media" on public.files
+  for select
+  to authenticated
+  using (((bucket = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
+drop policy if exists "staff upload candidate media" on public.files;
+create policy "staff upload candidate media" on public.files
+  for insert
+  to authenticated
+  with check (((bucket = ANY (ARRAY['resumes'::text, 'candidate-audio'::text])) AND is_staff() AND has_permission('candidates.write'::text) AND (split_part(path, '/'::text, 1) = 'applications'::text)));

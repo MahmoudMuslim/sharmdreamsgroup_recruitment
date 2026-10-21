@@ -2,58 +2,40 @@
  * Client-safe configuration.
  *
  * IMPORTANT: this module is imported by browser code, so it must never touch
- * server-only secrets. AI provider keys and the service-role key live in
+ * server-only secrets. AI provider keys and the third-party credentials live in
  * `config.server.ts`, which is guarded with `server-only`.
  *
- * Validation here is limited to the NEXT_PUBLIC_* values that are inlined into
- * the client bundle at build time.
+ * Nothing here reads a `NEXT_PUBLIC_*` value any more: the app's own origin is
+ * the only one a browser needs, and it is set per deployment by `APP_URL`.
  */
 
 function optional(value: string | undefined, fallback = ""): string {
   return value && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-const supabaseUrl = optional(process.env.NEXT_PUBLIC_SUPABASE_URL);
-
-/** Raises only on the server at runtime, where the value is actually required.
- * During build (static generation), we allow missing values to avoid build failures. */
-function assertServer(name: string, value: string): string {
-  // Skip validation during Next.js build/static generation
-  const isBuildTime = process.env.NEXT_PHASE === "phase-production-build" ||
-                      process.env.NEXT_PHASE === "phase-development-build" ||
-                      process.env.NODE_ENV === "production" && typeof window === "undefined" && !process.env.VERCEL;
-  
-  if (!value && typeof window === "undefined" && !isBuildTime) {
-    throw new Error(
-      `[config] Missing required environment variable: ${name}. Add it to .env.local (see .env.example).`
-    );
-  }
-  return value || "";
-}
-
+/**
+ * The four names below are the buckets *we* run, not the vendor's: they are the
+ * directories under `UPLOADS_ROOT` that `src/lib/files/paths.ts` resolves within,
+ * and the value a `files` row stores in its `bucket` column. The object keeps its
+ * `supabase` name for the same reason `src/lib/supabase/` does — renaming it would
+ * touch four call sites to say nothing new — and `candidateCvs` keeps the exact
+ * spelling the "Track your application" copy and the extracted manifest use.
+ */
 export const supabaseConfig = {
-  projectRef:
-    optional(process.env.SUPABASE_PROJECT_REF) ||
-    supabaseUrl.replace(/^https:\/\//, "").split(".")[0],
-  url: assertServer("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl),
-  restUrl:
-    optional(process.env.SUPABASE_REST_URL) || `${supabaseUrl}/rest/v1/`,
-  anonKey: assertServer(
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    optional(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
-  ),
-  /** Only ever read from server modules — never serialised to the client. */
-  serviceRoleKey: optional(process.env.SUPABASE_SERVICE_ROLE_KEY),
-  dbPassword: optional(process.env.SUPABASE_DB_PASSWORD),
   buckets: {
     candidateVideos: "candidate-videos",
     candidateAudio: "candidate-audio",
     resumes: "resumes",
+    candidateCvs: "candidate-cvs",
   },
 } as const;
 
 export const appConfig = {
-  url: optional(process.env.APP_URL, "http://localhost:3001"),
+  // The app now answers on the stack's own origin (nginx publishes 3000), so an
+  // `APP_URL`-less build has to fall back to a host a candidate can still reach.
+  // `3001` is the dev server, and a link that points there from a production page
+  // is the task-#313 bug.
+  url: optional(process.env.APP_URL, "http://localhost:3000"),
   name: "Sharm Dreams Talent Cloud",
   defaultLocale: "en" as const,
 } as const;

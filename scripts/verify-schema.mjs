@@ -1,12 +1,16 @@
 /*
+ * HOSTED-ONLY — retired with spec §15, delete it with `apply-schema.mjs` once the
+ * hosted project is closed. It compares the project's catalog against
+ * `supabase/schema.sql`, and is aimed at another database with `ZZ_DB_URL`, which
+ * is how the local stack gets checked against the file instead.
+ *
  * Checks that supabase/schema.sql describes the live database completely.
  * Compares catalog sets, so an absent object is a failure rather than a guess —
  * run it after every migration and before every deploy.
  *
  *   node scripts/verify-schema.mjs supabase/schema.sql
  *
- * Read-only. Point it at another database with ZZ_DB_URL to prove that a fresh
- * build matches production.
+ * Read-only.
  */
 import { readFileSync } from "fs";
 import { Client } from "pg";
@@ -33,6 +37,22 @@ const c = new Client({
 });
 await c.connect();
 const q = async (sql) => (await c.query(sql)).rows;
+
+/* Whether this database still has a `storage` schema to compare. The header says
+ * HOSTED-ONLY, and the header is right: on the local stack the stand-in was
+ * retired in 4458cb7 and the disk store owns the bytes, so `select … from
+ * storage.buckets` here was a `42P01` crash — aimed at the local stack through
+ * `ZZ_DB_URL`, this script died instead of saying the section does not apply.
+ * Presence, not a flag, decides: a hosted project keeps getting exactly what it
+ * got before. */
+const hasStorage = (await q(`select 1 from pg_namespace where nspname = 'storage'`)).length > 0;
+if (!hasStorage) {
+  console.log(
+    "SKIP storage sections: no `storage` schema here. The local stand-in was retired in " +
+      "4458cb7 — the disk store owns the bytes and `public.files` owns the rows, so there is " +
+      "nothing in this file to compare against."
+  );
+}
 
 let failures = 0;
 function report(label, rows, missing) {
@@ -197,8 +217,10 @@ const seq = await q(
 report("sequences", seq, () => seq.filter((r) => !(lower.includes(`create sequence if not exists ${r.s}.${r.n}`) || lower.includes(`create sequence if not exists ${r.n}`))).map((r) => `${r.s}.${r.n}`));
 
 /* --- storage buckets --- */
-const buckets = await q(`select id from storage.buckets`);
-report("storage buckets", buckets, () => buckets.filter((r) => !lower.includes(`'${r.id.toLowerCase()}'`)).map((r) => r.id));
+if (hasStorage) {
+  const buckets = await q(`select id from storage.buckets`);
+  report("storage buckets", buckets, () => buckets.filter((r) => !lower.includes(`'${r.id.toLowerCase()}'`)).map((r) => r.id));
+}
 
 /* --- grants --- */
 const grants = await q(
@@ -223,68 +245,72 @@ report("grant targets", grants, () =>
  * Supabase provisions these at project creation, so a hand-written bootstrap
  * never mentioned them and a rebuild lost them silently. The dump records the
  * three roles an app connects as; the internal supabase_* grants stay with the
- * host, so only these are compared.
+ * host, so only these are compared. Skipped whole when the database has no
+ * `storage` at all — reporting "all 0 present" for a schema that does not exist
+ * is a pass this script has not earned.
  */
-const APP_ROLES = "'anon', 'authenticated', 'service_role'";
-const storageGrants = await q(
-  `select 'schema' kind, 'storage' obj, lower(a.privilege_type) priv, g.rolname grantee
-     from pg_namespace n cross join lateral aclexplode(n.nspacl) a
-     join pg_roles g on g.oid = a.grantee
-    where n.nspname = 'storage' and g.rolname in (${APP_ROLES})
-    union all
-    select 'table', 'storage.'||c.relname, lower(a.privilege_type), g.rolname
-     from pg_class c join pg_namespace n on n.oid = c.relnamespace
-     cross join lateral aclexplode(c.relacl) a
-     join pg_roles g on g.oid = a.grantee
-    where n.nspname = 'storage' and c.relname in ('buckets', 'objects')
-      and g.rolname in (${APP_ROLES})
-    order by 1, 2, 4, 3`
-);
-report("storage privileges", storageGrants, () =>
-  storageGrants
-    .filter((r) => !lower.includes(`grant ${r.priv} on ${r.kind} ${r.obj} to ${r.grantee};`))
-    .map((r) => `${r.priv} on ${r.kind} ${r.obj} -> ${r.grantee}`)
-);
+if (hasStorage) {
+  const APP_ROLES = "'anon', 'authenticated', 'service_role'";
+  const storageGrants = await q(
+    `select 'schema' kind, 'storage' obj, lower(a.privilege_type) priv, g.rolname grantee
+       from pg_namespace n cross join lateral aclexplode(n.nspacl) a
+       join pg_roles g on g.oid = a.grantee
+      where n.nspname = 'storage' and g.rolname in (${APP_ROLES})
+      union all
+      select 'table', 'storage.'||c.relname, lower(a.privilege_type), g.rolname
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       cross join lateral aclexplode(c.relacl) a
+       join pg_roles g on g.oid = a.grantee
+      where n.nspname = 'storage' and c.relname in ('buckets', 'objects')
+        and g.rolname in (${APP_ROLES})
+      order by 1, 2, 4, 3`
+  );
+  report("storage privileges", storageGrants, () =>
+    storageGrants
+      .filter((r) => !lower.includes(`grant ${r.priv} on ${r.kind} ${r.obj} to ${r.grantee};`))
+      .map((r) => `${r.priv} on ${r.kind} ${r.obj} -> ${r.grantee}`)
+  );
 
-const policyHelpers = new Set();
-for (const p of await q(
-  `select coalesce(pg_get_expr(p.polqual, p.polrelid), '')||coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') src
-     from pg_policy p join pg_class c on c.oid = p.polrelid
-     join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname in ('public', 'storage')`
-)) {
-  for (const f of p.src.matchAll(/storage\.([a-z_]+)\(/g)) policyHelpers.add(f[1]);
+  const policyHelpers = new Set();
+  for (const p of await q(
+    `select coalesce(pg_get_expr(p.polqual, p.polrelid), '')||coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') src
+       from pg_policy p join pg_class c on c.oid = p.polrelid
+       join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname in ('public', 'storage')`
+  )) {
+    for (const f of p.src.matchAll(/storage\.([a-z_]+)\(/g)) policyHelpers.add(f[1]);
+  }
+  /* These helpers carry the default ACL, so proacl is NULL and aclexplode() of it
+   * returns nothing — hence acldefault(). Without that, this check would compare
+   * an empty list against the file and report a pass it had not earned. */
+  const helperGrants = await q(
+    `select p.proname name, pg_get_function_identity_arguments(p.oid) args,
+            lower(a.privilege_type) priv, coalesce(g.rolname, 'public') grantee
+       from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+       left join pg_roles g on g.oid = a.grantee
+      where n.nspname = 'storage' and lower(a.privilege_type) = 'execute'
+        and coalesce(g.rolname, 'public') not in ('supabase_admin', 'supabase_storage_admin')
+      order by 1, 4`
+  );
+  const neededHelpers = helperGrants.filter((r) => policyHelpers.has(r.name));
+  report("storage policy helpers", neededHelpers, () =>
+    neededHelpers.length === 0
+      ? [...policyHelpers].map((h) => `no grantee row for called helper storage.${h}()`)
+      : neededHelpers
+          .filter((r) => {
+            const names = `function storage.${r.name}(${r.args})`;
+            /* Supabase leaves these ACLs at their default, which is EXECUTE to
+             * PUBLIC; a rebuild may hold them as per-role grants instead. Every
+             * role is a member of PUBLIC, so either form satisfies the policy. */
+            return (
+              !lower.includes(`grant ${r.priv} on ${names} to ${r.grantee};`) &&
+              !lower.includes(`grant ${r.priv} on ${names} to public;`)
+            );
+          })
+          .map((r) => `${r.priv} on storage.${r.name}(${r.args}) -> ${r.grantee}`)
+  );
 }
-/* These helpers carry the default ACL, so proacl is NULL and aclexplode() of it
- * returns nothing — hence acldefault(). Without that, this check would compare
- * an empty list against the file and report a pass it had not earned. */
-const helperGrants = await q(
-  `select p.proname name, pg_get_function_identity_arguments(p.oid) args,
-          lower(a.privilege_type) priv, coalesce(g.rolname, 'public') grantee
-     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-     cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
-     left join pg_roles g on g.oid = a.grantee
-    where n.nspname = 'storage' and lower(a.privilege_type) = 'execute'
-      and coalesce(g.rolname, 'public') not in ('supabase_admin', 'supabase_storage_admin')
-    order by 1, 4`
-);
-const neededHelpers = helperGrants.filter((r) => policyHelpers.has(r.name));
-report("storage policy helpers", neededHelpers, () =>
-  neededHelpers.length === 0
-    ? [...policyHelpers].map((h) => `no grantee row for called helper storage.${h}()`)
-    : neededHelpers
-        .filter((r) => {
-          const names = `function storage.${r.name}(${r.args})`;
-          /* Supabase leaves these ACLs at their default, which is EXECUTE to
-           * PUBLIC; a rebuild may hold them as per-role grants instead. Every
-           * role is a member of PUBLIC, so either form satisfies the policy. */
-          return (
-            !lower.includes(`grant ${r.priv} on ${names} to ${r.grantee};`) &&
-            !lower.includes(`grant ${r.priv} on ${names} to public;`)
-          );
-        })
-        .map((r) => `${r.priv} on storage.${r.name}(${r.args}) -> ${r.grantee}`)
-);
 
 /* --- reference rows the console reads before it can render ---
  * DDL alone builds a database with an empty permission catalogue, no roles, no

@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
+import { getFileStore } from "@/lib/files/store";
 
 export type AttachmentResult = { ok: true; note?: string } | { ok: false; error: string };
 
@@ -25,6 +26,7 @@ export async function deleteAttachment(attachmentId: string): Promise<Attachment
   }
 
   const supabase = await createSupabaseServerClient();
+  const files = await getFileStore();
 
   const { data: row } = await supabase
     .from("application_attachments")
@@ -34,16 +36,17 @@ export async function deleteAttachment(attachmentId: string): Promise<Attachment
 
   if (!row) return { ok: false, error: "That attachment is no longer on this candidate." };
 
-  const { error: storageError } = await supabase.storage
-    .from(row.bucket)
-    .remove([row.storage_path]);
+  const { error: storageError } = await files.remove({
+    bucket: row.bucket,
+    paths: [row.storage_path],
+  });
 
   // A bulk remove reports the object missing rather than refusing quietly, so
   // "not found" counts as the file being gone already.
-  const alreadyGone = !!storageError && /not found/i.test(storageError.message);
+  const alreadyGone = !!storageError && /not found/i.test(storageError);
   if (storageError && !alreadyGone) {
-    console.error("[attachments] delete refused:", row.bucket, storageError.message);
-    return { ok: false, error: `Storage refused the delete: ${storageError.message}` };
+    console.error("[attachments] delete refused:", row.bucket, storageError);
+    return { ok: false, error: `Storage refused the delete: ${storageError}` };
   }
 
   const { error: rowError } = await supabase

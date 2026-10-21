@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import type { StaffRoute } from "@/lib/auth/staffRoutes";
 
 /**
@@ -172,7 +172,7 @@ function toMark(code: string | undefined): LiveAreaMark {
 }
 
 export async function readLiveFingerprints(
-  supabase: SupabaseClient
+  supabase: RestClient
 ): Promise<LiveFingerprints> {
   const entries = await Promise.all(
     LIVE_WATCH.map(async (watch): Promise<[string, LiveAreaMark]> => {
@@ -221,7 +221,7 @@ export function diffLiveFingerprints(
   return moved;
 }
 
-async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<LiveAreaMark> {
+async function fingerprint(supabase: RestClient, watch: LiveWatch): Promise<LiveAreaMark> {
   if (watch.stamp) {
     const { data, count, error } = await supabase
       .from(watch.table)

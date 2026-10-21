@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
+import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
@@ -122,6 +123,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     hasPermissionForUser("assessments.grade"),
     getAiAutomationSettings(),
   ]);
+  const files = await getFileStore();
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
@@ -168,10 +170,12 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     // short-lived playback link rather than exposing a public URL.
     let videoUrl: string | null = null;
     if (row.video_path) {
-      const { data: signed } = await supabase.storage
-        .from(supabaseConfig.buckets.candidateVideos)
-        .createSignedUrl(row.video_path, 60 * 60);
-      videoUrl = signed?.signedUrl ?? null;
+      const { url } = await files.signedUrl({
+        bucket: supabaseConfig.buckets.candidateVideos,
+        path: row.video_path,
+        seconds: 60 * 60,
+      });
+      videoUrl = url ?? null;
     }
 
     grades.push({

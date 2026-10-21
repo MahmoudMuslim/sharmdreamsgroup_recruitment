@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getFileStore } from "@/lib/files/store";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -189,7 +190,7 @@ interface CvReadSource {
  * download, parse, write, trail and revalidation. Two ways in, one set of rules.
  */
 async function storeCvText(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   input: {
     applicationId: string;
     replace?: boolean;
@@ -220,21 +221,23 @@ async function storeCvText(
     };
   }
 
-  const { data: object, error: downloadError } = await supabase.storage
-    .from(input.source.bucket)
-    .download(input.source.path);
+  const files = await getFileStore();
+  const { bytes, error: downloadError } = await files.download({
+    bucket: input.source.bucket,
+    path: input.source.path,
+  });
 
-  if (downloadError || !object) {
+  if (downloadError || !bytes) {
     return {
       ok: false,
       error: `The stored file could not be read${
-        /not found/i.test(downloadError?.message ?? "") ? " — it is no longer in storage" : ""
+        /not found/i.test(downloadError ?? "") ? " — it is no longer in storage" : ""
       }.`,
     };
   }
 
   let text: string;
-  const buffer = Buffer.from(await object.arrayBuffer());
+  const buffer = Buffer.from(bytes);
   const mislabelled = mislabelledFile(buffer, mime);
   if (mislabelled) {
     return { ok: false, error: mislabelled };

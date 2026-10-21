@@ -1,11 +1,13 @@
 /**
  * The two buckets a recruiter writes into.
  *
- * The limits below are transcribed from the live `storage.buckets` rows, which
- * are the authority: storage refuses an oversize or wrong-typed object no matter
- * what the portal promises first. Enforcing the same numbers here only means the
- * recruiter reads "That file is larger than 10 MB" instead of a storage error
- * code, and lets the file picker offer the formats the bucket will accept.
+ * These numbers were transcribed from the live `storage.buckets` rows, which
+ * used to be the second gate: storage refused an oversize or wrong-typed object
+ * no matter what the portal promised first. Plan 2 Task 10 retired that schema,
+ * and the disk store deliberately checks nothing but path containment, so the
+ * rules below and the routes that read them are now the only size and type
+ * enforcement a byte gets. Changing one here changes what the portal accepts —
+ * there is nothing behind it to catch a wider value.
  */
 
 export type AttachmentBucket = "resumes" | "candidate-audio";
@@ -16,9 +18,9 @@ export interface AttachmentRule {
   label: string;
   /** The button text. */
   action: string;
-  /** Exactly what `storage.buckets.allowed_mime_types` holds for this bucket. */
+  /** The types the portal accepts for this bucket, enforced by the upload route. */
   allowedMimeTypes: readonly string[];
-  /** Exactly what `storage.buckets.file_size_limit` holds for this bucket. */
+  /** The largest object the portal accepts for this bucket. */
   maxBytes: number;
   /** `accept` for the file input, so the OS picker starts in the right place. */
   accept: string;

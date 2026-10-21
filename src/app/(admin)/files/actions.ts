@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
+import { getFileStore } from "@/lib/files/store";
+import { displayName, isStoredPath } from "@/lib/files/paths";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { stageLabel, formatBytes } from "@/lib/utils";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -10,8 +12,6 @@ import { LIST_LIMIT, WALK_LIST_LIMIT, listObjects, objectMetadata } from "./stor
 import {
   BUCKETS,
   bucketInfo,
-  displayName,
-  isStoredPath,
   type BucketKey,
   type BucketStat,
   type DeleteResult,
@@ -119,16 +119,17 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
   if (!isStoredPath(path)) return { ok: false, error: "That is not a valid storage key." };
 
   const supabase = await createSupabaseServerClient();
+  const files = await getFileStore();
 
   // Read the object's size and type before removing it: the audit entry is
   // worthless if the only copy of that detail was the file itself.
   const before = await objectMetadata(bucket.key, path);
   const owner = await fileOwner(supabase, bucket.key, path);
 
-  const { error } = await supabase.storage.from(bucket.key).remove([path]);
+  const { error } = await files.remove({ bucket: bucket.key, paths: [path] });
   if (error) {
-    console.error("[files] delete refused:", bucket.key, error.message);
-    return { ok: false, error: `Storage refused the delete: ${error.message}` };
+    console.error("[files] delete refused:", bucket.key, error);
+    return { ok: false, error: `Storage refused the delete: ${error}` };
   }
 
   const note = [
@@ -181,23 +182,22 @@ async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string)
   const rows = new Map<string, Omit<StoredFile, "owner">>();
 
   for (const entry of listed.entries) {
-    const row = asRecord(entry);
-    const name = typeof row.name === "string" ? row.name : null;
+    const name = entry.name;
     if (!name) continue;
 
     // Storage reports a folder as an entry that carries no object id.
-    if (typeof row.id !== "string") {
+    if (entry.isFolder) {
       folders.push({ name, prefix: `${prefix}${name}/` });
       continue;
     }
 
-    const path = `${prefix}${name}`;
+    const path = entry.path;
     rows.set(path, {
       path,
       name: displayName(name),
-      bytes: numberOrNull(asRecord(row.metadata).size),
-      mimeType: stringOrNull(asRecord(row.metadata).mimetype),
-      modifiedAt: stringOrNull(row.updated_at),
+      bytes: entry.bytes,
+      mimeType: entry.mimeType,
+      modifiedAt: entry.updatedAt,
     });
   }
 
@@ -262,17 +262,16 @@ async function walk(
   const children: string[] = [];
 
   for (const entry of listed.entries) {
-    const row = asRecord(entry);
-    const name = typeof row.name === "string" ? row.name : null;
+    const name = entry.name;
     if (!name) continue;
 
-    if (typeof row.id !== "string") {
+    if (entry.isFolder) {
       children.push(`${prefix}${name}/`);
       continue;
     }
 
     files += 1;
-    bytes += numberOrNull(asRecord(row.metadata).size) ?? 0;
+    bytes += entry.bytes ?? 0;
   }
 
   for (const child of children) {
@@ -569,8 +568,4 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
-}
-
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

@@ -2,7 +2,8 @@ import { PIPELINE_STAGES, APPLICATION_SOURCES } from "@/modules/candidates/domai
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
 import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
 import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
-import { bucketInfo, isStoredPath } from "@/app/(admin)/files/file-browser-types";
+import { bucketInfo } from "@/app/(admin)/files/file-browser-types";
+import { isStoredPath } from "@/lib/files/paths";
 import {
   credentialsTab,
   MODEL_CONSOLE_TABS,

@@ -1,11 +1,14 @@
 # Database
 
-The whole application runs on **Supabase PostgreSQL 17**. Every table lives in the `public` schema, is created idempotently in [`supabase/schema.sql`](../supabase/schema.sql), and is protected by **Row Level Security**. The authoritative definition is that file — this document is a map of it.
+The whole application runs on **PostgreSQL 18.6 plus PostgREST 16.5, both containers this repo configures** (`docker/docker-compose.yml`), with the schema created idempotently in [`supabase/schema.sql`](../supabase/schema.sql). Every table lives in the `public` schema and is protected by **Row Level Security**. The authoritative definition is that file — this document is a map of it.
 
-- **41 tables**
-- **RLS enabled** on application tables — **94 policies** across them
-- **3 storage buckets**: `resumes`, `candidate-audio`, `candidate-videos`
-- **18 Postgres enums** for closed value sets
+Counts below are measured from that file, not from a snapshot:
+
+- **42 tables** (`grep -c '^create table if not exists public\.'`)
+- **RLS enabled** on application tables — **88 policies** across them (`grep -c '^create policy'`)
+- **15 functions** and **15 triggers** (`set_updated_at`, `assign_tracking_code`, and the RLS helpers `is_staff()` / `has_permission()` / `auth.uid()` …)
+- **55 indexes**, **18 Postgres enums** for closed value sets
+- **No storage buckets.** Files are rows in `public.files` plus bytes on a mounted volume — see [Files](#files-formerly-storage).
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATION.md) · [API.md](API.md)
 
@@ -94,7 +97,7 @@ Relationships below are described logically; the schema enforces most of them wi
 | `roles` | `id uuid`, `key app_role` | SUPER_ADMIN, RECRUITER, HIRING_MANAGER (+ CANDIDATE as a `user_role`). `is_system`. |
 | `permissions` | `key` (PK) | The catalogue of permission keys, grouped. |
 | `role_permissions` | `(role_key app_role, permission_key)` | Which permissions each role holds (`granted`). |
-| `user_profiles` | `id uuid`, `auth_user_id` | Maps a Supabase Auth user to `role user_role`, `tenant_id`, `full_name`, `locale`. |
+| `user_profiles` | `id uuid`, `auth_user_id` | Maps a row of our own `auth.users` directory to `role user_role`, `tenant_id`, `full_name`, `locale`. `auth_user_id` is the bearer's `sub`. |
 | `user_invites` | `id uuid` | Pending staff invites: `email`, `role app_role`, `status invite_status`, `expires_at` (default +7 days). |
 
 ## Settings & audit
@@ -121,17 +124,18 @@ Relationships below are described logically; the schema enforces most of them wi
 
 ---
 
-## Storage
+## Files (formerly storage)
 
-Three buckets (names from `src/lib/config.ts`):
+There are no buckets and no object store. A file is **a row in `public.files`** (`bucket`, `path`, `mime`, `bytes`, `unique (bucket, path)`) plus **bytes under `$UPLOADS_ROOT/<bucket>/<path>`** on the `uploads` volume. `bucket` is one of four directory names (`src/lib/config.ts` → `supabaseConfig.buckets`); the `/files` console lists rows and walks prefixes, and `files_bucket_path_prefix_idx` (`bucket, path text_pattern_ops`) makes that prefix walk an index scan rather than a sequential one.
 
 | Bucket | Holds |
 |--------|-------|
 | `resumes` | Candidate CVs (public upload) + recruiter-attached documents. |
 | `candidate-audio` | Voice notes attached to a candidate record. |
 | `candidate-videos` | Video-response takes from the assessment runner. |
+| `candidate-cvs` | The CV uploaded on the public apply form (`applications/<jobId>/<uuid>-<name>`), which the submit action then downloads, extracts text from, and hands to AI screening. |
 
-Uploads go through route handlers (`/api/careers/upload`, `/api/files/upload`, `/api/attempt/[token]/video`) that validate size/type against the module rules **before** touching the bucket, and signed read URLs are minted by `/api/files/link` (staff + `candidates.read`).
+Everything a byte passes through is our own code: `src/lib/files/paths.ts` resolves a `(bucket, path)` pair inside its bucket and refuses anything that escapes it, `src/app/api/files/upload/route.ts` and the careers/attempt routes validate size and MIME against the module rules **before** writing, `src/lib/files/signed-link.ts` mints an HMAC link (`/api/files/link`, staff + `candidates.read`), and `/api/files/f/[token]` streams it with range support. `public.files` carries 8 RLS policies; the vendor's `storage` schema is gone from the create path, and a local apply drops it if a re-dump ever restores it.
 
 ---
 
@@ -142,16 +146,17 @@ RLS is the enforcement layer for every read/write. Notable postures:
 - **`provider_credentials`** — enabled, **no policies**: only the service-role client can read it. Secrets never reach a browser.
 - **`assistant_sessions` / `assistant_messages`** — owner-only.
 - **`currencies`** — explicit read/admin-write policies (the auto-enable helper only turns RLS on, it does not grant access).
-- **Candidate attempts** — a candidate's queries are scoped to their own attempt via the `access_token` claim.
-- **Staff queries** run on the caller's JWT, so a Hiring Manager's live fingerprint and reports cover only the rows their role + tenant may see.
+- **Candidate attempts** — five policies key on `request.jwt.claims ->> 'attempt_token'` matching `candidate_attempts.access_token` (one of them the `files` upload rule that a path may only start with the token it was issued for). They are a **backstop, not the live path**: every `/api/attempt/[token]/*` route validates the unguessable token in code and then writes through the service client, so no HTTP caller in production presents an `attempt_token` bearer. `scripts/prove-files-rls.mjs` mints one anyway to prove the policies really fire.
+- **Staff queries** run on the caller's bearer, so a Hiring Manager's live fingerprint and reports cover only the rows their role + tenant may see.
 
-> Prefer the **session (JWT) client** so RLS applies. The **service-role** client (`src/lib/supabase/service.ts`) bypasses RLS and is used only for privileged server operations after a permission is re-checked in code.
+> Prefer the **request client** (`src/lib/supabase/server.ts`) so RLS applies. The **service-role** client (`src/lib/supabase/service.ts`) bypasses RLS via the `bypassrls` DB role and is used only for privileged server operations after a permission is re-checked in code.
 
 ---
 
 ## Migrations & seeding
 
-- `supabase/schema.sql` — the consolidated, idempotent schema (applied via `scripts/apply-schema.mjs`).
-- `supabase/migrations/0xx_*.sql` — incremental, ordered changes (RBAC, provider credentials, WhatsApp jobs, sourcing, activity log, time entries, company profiles, …).
-- `supabase/seed.sql` — demo/first-run data (companies, roles, permissions, model config).
-- `scripts/verify-schema.mjs` — checks the applied schema matches expectations.
+- `supabase/schema.sql` — the consolidated, idempotent schema **and** the console's reference data: every table, policy, function, trigger, index, plus 235 `insert … on conflict (id) do nothing` rows: 9 company rows in a `SEED DATA` section, then the 226 rows the `REFERENCE ROWS` section header introduces (roles, permissions, model config, `app_settings`, master data). The in-file comment at the end of that section says "226 reference rows above" and means the section, not the file — companies come first because parents precede children. This is the file the running stack is built from.
+- `npm run db:apply-local` → `scripts/apply-local-schema.mjs` — applies it to the local `db` container as one atomic script. It pre-flights the `supabase_vault` create (a vanilla image cannot provide it, so it exits 1 with the file and remedy named), then drops a restored `storage` schema before the SQL runs — so a re-dump that silently resurrected a vendor policy fails loudly on a missing relation instead of quietly keeping a dead shim alive. Then `npm run db:seed-local` (staff logins) and `npm run stack:prove` (the parity gate).
+- `supabase/migrations/0xx_*.sql` — the 29 authored, ordered changes that grew the schema (RBAC, provider credentials, WhatsApp jobs, sourcing, activity log, time entries, company profiles, …). They are history, not the apply path: the local stack runs `schema.sql` alone, which already contains their effect.
+- `supabase/seed.sql` — demo data (fake applications and candidates). **Not applied automatically by anything**; apply by hand when you want a populated-looking board.
+- `scripts/apply-schema.mjs` / `verify-schema.mjs` / `dump-schema.mjs` — HOSTED-ONLY doors to the vendor project, banner-marked for deletion once the off-machine dump copy exists. `dump-schema.mjs` is how `schema.sql` was produced; `verify-schema.mjs` will report the retired `storage` section as a gap against the hosted database, which is correct and temporary.

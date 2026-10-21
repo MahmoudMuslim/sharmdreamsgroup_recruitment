@@ -1,4 +1,6 @@
 import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { getFileStore } from "@/lib/files/store";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
   CV_MAX_BYTES,
   CV_TYPE_ERROR,
@@ -19,6 +21,11 @@ import {
  */
 
 export async function POST(request: Request): Promise<Response> {
+  // Refused before the body is buffered, in the same words the check below uses
+  // (`cvSizeError()`), so a candidate cannot tell which of the two caught them.
+  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -80,9 +87,14 @@ export async function POST(request: Request): Promise<Response> {
   const leaf = fileEntry.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "cv";
   const path = `applications/${jobId}/${crypto.randomUUID()}-${leaf}`;
 
-  const { error } = await supabase.storage
-    .from("candidate-cvs")
-    .upload(path, fileEntry, { contentType: fileEntry.type, upsert: false });
+  const files = await getFileStore();
+  const { error } = await files.upload({
+    bucket: "candidate-cvs",
+    path,
+    body: fileEntry,
+    contentType: fileEntry.type,
+    upsert: false,
+  });
 
   if (error) {
     return Response.json(

@@ -1,0 +1,24 @@
+# Whitelist, not blacklist: this repo root holds ~40 agent dot-directories, two
+# bfg jars, build/server logs and a real CV pdf. A blacklist would have to name
+# every one of them and would silently ship the next thing added. Everything is
+# excluded, then only what `next build` reads is let back in.
+#
+# The load-bearing exclusion is `.env*`: Next inlines `NEXT_PUBLIC_*` at build
+# time, so a build that reads the host's `.env.local` bakes live credentials
+# into an image layer that survives in the build cache. Nothing has to be inlined
+# any more — the browser only ever talks to the origin it was served from, and
+# server-side link building reads `APP_URL` at runtime (docker/app/Dockerfile:26).
+# So the build takes no credential-carrying ARGs at all.
+*
+
+!package.json
+!package-lock.json
+!next.config.ts
+!next-env.d.ts
+!tsconfig.json
+!eslint.config.mjs
+!AGENTS.md
+!src
+!public
+!scripts
+!docker/app/Dockerfile

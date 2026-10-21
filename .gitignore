@@ -47,3 +47,12 @@ PROMPT.md
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local self-host stack: PII dumps and real secrets never enter the repo.
+docker/data/*
+!docker/data/.gitkeep
+docker/.env
+!docker/.env.example
+# The host-side twin of the container's /data/uploads volume. Same rule: these
+# are candidate CVs and pitch recordings, and a `git add .` must never see them.
+.data/

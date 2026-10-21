@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -146,7 +146,7 @@ function buildConfig(draft: QuestionDraft): QuestionConfig {
  * agree on what "next" means.
  */
 async function renumberSuite(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   templateId: string
 ): Promise<string | null> {
   const { data, error } = await supabase
@@ -499,7 +499,7 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 }
 
 async function readSuiteForAuthoring(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   templateId: string
 ): Promise<SuiteAuthoringContext | null> {
   const { data, error } = await supabase

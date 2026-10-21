@@ -1,7 +1,7 @@
 "use server";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { hasAiProvider } from "@/lib/config.server";
@@ -132,7 +132,7 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
 
 /** The vacancy a draft is written for, in the words the recruiter filed. */
 async function readOpeningSeed(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   openingId: string
 ): Promise<OpeningSeed | string> {
   const { data, error } = await supabase
@@ -154,7 +154,9 @@ async function readOpeningSeed(
     location: data.location ?? "",
     description: data.description ?? "",
     requirements: (Array.isArray(data.requirements) ? data.requirements : []).filter(
-      (entry): entry is string => typeof entry === "string"
+      // `unknown` named explicitly because the row arrives untyped: a type
+      // predicate cannot narrow a parameter whose type is implicit `any`.
+      (entry: unknown): entry is string => typeof entry === "string"
     ),
     status: data.status,
   };

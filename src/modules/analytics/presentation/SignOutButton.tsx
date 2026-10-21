@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { signOutAction } from "@/app/login/actions";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,8 +21,7 @@ export function SignOutButton({
   const [pending, startTransition] = useTransition();
 
   async function handleSignOut() {
-    const supabase = getSupabaseBrowserClient();
-    await supabase.auth.signOut();
+    await signOutAction();
     startTransition(() => router.push("/login"));
     router.refresh();
   }

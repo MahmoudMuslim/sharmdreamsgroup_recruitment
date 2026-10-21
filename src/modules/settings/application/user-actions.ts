@@ -12,7 +12,16 @@ import {
   DEFAULT_PASSWORD_MIN_LENGTH,
 } from "@/modules/settings/domain/schema";
 import type { AssignableStaffRole, StaffInvite } from "@/modules/settings/domain/types";
-import type { SupabaseClient } from "@supabase/supabase-js";
+/**
+ * The service client, typed from the seam itself rather than from the vendor.
+ *
+ * Both halves of this handle are local now: the thirteen `auth.admin.*` calls
+ * run on `authAdmin` (`src/lib/auth/admin-users.ts`), four parameterised `pg`
+ * statements, because no HTTP route may reach `auth.users`; the row calls beside
+ * them are the `RestClient` shape over `src/lib/rest`. Nothing on this object
+ * is passed through to GoTrue any more.
+ */
+type ServiceClient = ReturnType<typeof getSupabaseServiceClient>;
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits } from "@/modules/activity/domain/trail";
 
@@ -37,7 +46,7 @@ function roleWord(role: string): string {
  * looked up in one pass and printed as the names the Team console shows.
  */
 async function companyNames(
-  supabase: SupabaseClient,
+  supabase: ServiceClient,
   ids: (string | null)[]
 ): Promise<Map<string, string>> {
   const wanted = [...new Set(ids.filter((each): each is string => Boolean(each)))];
@@ -129,7 +138,7 @@ async function requireStaffManager(): Promise<Actor | null> {
  * protection pass, and would delete an account that was never deactivated.
  */
 async function bannedAuthIds(
-  supabase: SupabaseClient
+  supabase: ServiceClient
 ): Promise<{ ids: Set<string>; error: string | null }> {
   const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (error) return { ids: new Set(), error: error.message };
@@ -152,7 +161,7 @@ async function bannedAuthIds(
  * refuse when the directory could not be read, because then the count is unknown.
  */
 async function activeSuperAdminIds(
-  supabase: SupabaseClient
+  supabase: ServiceClient
 ): Promise<{ ids: Set<string>; error: string | null }> {
   const { data: admins, error } = await supabase
     .from("user_profiles")
@@ -178,7 +187,7 @@ const ACCESS_UNKNOWN =
   "Who can still sign in could not be read, so this change is refused — try again.";
 
 async function auditStaffChange(
-  supabase: SupabaseClient,
+  supabase: ServiceClient,
   entry: { key: string; previous: unknown; next: unknown; changedBy: string }
 ): Promise<void> {
   await supabase.from("settings_audit_log").insert({
@@ -205,7 +214,7 @@ interface NewStaffAccount {
  * having no session at all.
  */
 async function createStaffAccount(
-  supabase: SupabaseClient,
+  supabase: ServiceClient,
   account: NewStaffAccount
 ): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
   const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
@@ -484,7 +493,7 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
   };
 }
 
-async function loadTargetProfile(supabase: SupabaseClient, profileId: string) {
+async function loadTargetProfile(supabase: ServiceClient, profileId: string) {
   const { data } = await supabase
     .from("user_profiles")
     .select("id, auth_user_id, full_name, email, role, tenant_id, phone")

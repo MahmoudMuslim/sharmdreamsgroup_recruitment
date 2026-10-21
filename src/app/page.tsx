@@ -45,6 +45,8 @@ const SUBSIDIARIES = [
   "SDG Corporate Services",
 ] as const;
 
+
+
 export default async function Home() {
   const { defaultLocale, enabledLocales } = await getCandidateLocales();
 

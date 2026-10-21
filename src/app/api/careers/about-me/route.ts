@@ -1,4 +1,5 @@
 import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { describeAboutFailure, writeAboutMe } from "@/modules/careers/about-me";
 import {
   CV_MAX_BYTES,
@@ -52,6 +53,11 @@ function refused(error: string, hint?: string, status = 422): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // A file here is optional — the link leg never carries bytes — so this bounds
+  // only the CV leg, with the ceiling `refused(cvSizeError(), …, 413)` below uses.
+  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;
+
   let form: FormData;
   try {
     form = await request.formData();

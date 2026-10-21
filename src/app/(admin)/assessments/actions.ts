@@ -3,6 +3,7 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
+import { getFileStore } from "@/lib/files/store";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import type { QuestionType } from "@/types";
 import {
@@ -46,8 +47,13 @@ export async function getTemplates(): Promise<TemplateSummary[]> {
   if (error) throw error;
 
   return (data ?? []).map((row) => {
-    const questions = row.assessment_questions ?? [];
-    const attempts = row.candidate_attempts ?? [];
+    // The two embeds are annotated locally because our builder answers rows as
+    // they come back from PostgREST (`any`), while the vendor's client parsed
+    // the select string at the type level and typed each embed as an array.
+    // Without the annotation `questions.reduce((sum, question) => …)` has no
+    // contextual type for its parameters and `noImplicitAny` refuses it.
+    const questions: { points: number | null }[] = row.assessment_questions ?? [];
+    const attempts: { status: string }[] = row.candidate_attempts ?? [];
     return {
       id: row.id,
       name: row.name,
@@ -373,6 +379,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
+  const files = await getFileStore();
 
   const { data: found } = await supabase
     .from("candidate_attempts")
@@ -474,10 +481,12 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
 
     let videoUrl: string | null = null;
     if (response?.video_path) {
-      const { data: signed } = await supabase.storage
-        .from(supabaseConfig.buckets.candidateVideos)
-        .createSignedUrl(response.video_path, 60 * 60);
-      videoUrl = signed?.signedUrl ?? null;
+      const { url } = await files.signedUrl({
+        bucket: supabaseConfig.buckets.candidateVideos,
+        path: response.video_path,
+        seconds: 60 * 60,
+      });
+      videoUrl = url ?? null;
     }
 
     answers.push({

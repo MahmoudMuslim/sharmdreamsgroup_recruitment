@@ -4,11 +4,11 @@ import { parseGateRows, publicGateQuestions } from "@/modules/careers/gate-quest
 /**
  * Public viability questions for one open role.
  *
- * A route handler rather than part of the job page because `/careers/[id]` is
- * prerendered at build time and its job payload is cached — questions served
- * from either would sit stale for a full cache window after a recruiter edited
- * them. Fetched on the client instead, so a newly authored question appears on
- * refresh rather than after a redeploy.
+ * A route handler rather than part of the job page because `/careers/[id]` reads
+ * its job payload through a cached function — questions served from either would
+ * sit stale for a full cache window after a recruiter edited them. Fetched on the
+ * client instead, so a newly authored question appears on refresh rather than
+ * after the entry expires.
  *
  * Read with the anon key, so RLS decides what is visible: `gate_questions_public_read`
  * exposes active rows only. `is_active` is filtered here as well, because the
