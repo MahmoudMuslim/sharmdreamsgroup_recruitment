@@ -245,6 +245,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Below the suites, an Issued links board: one row per link a still-held candidate holds, with the suite, status, how many answers it carries, and the score when your role may see marks.",
       "A link's Answers or Paper button opens that candidate's whole paper — every question in the order they were dealt it, with the full typed answer, the changed spreadsheet cells, the pitch video and its transcript.",
       "A graded paper's drawer adds where it ranks among the graded papers of the same suite, naming that population, and gives the count rather than a rank when there are too few papers to rank against. The line is not shown at all while your role has marks withheld.",
+      "With blind marking on in Settings, a paper whose marks can still change is listed by its tracking code with a Blind badge instead of a name, and the drawer says why. The name returns on its own once the paper is graded.",
     ],
     use: [
       "New template names the suite, its role family, duration and company; Add question builds it.",
@@ -274,6 +275,8 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Revoke, extend, re-issue and delete a link live on the candidate's record.",
       "Marks are read here, never set: the desk that awards them is the candidate's assessment report.",
       "The board lists the newest 300 links and says how many more are on file. Assigned links on the tiles counts every link ever issued, including a filed-away candidate's, so the two figures can differ.",
+      "Blind marking is off until you turn it on in Settings → Security, it holds for every staff reader with no per-role override, and a closed link is never blinded — only a paper whose marks can still change.",
+      "With blind marking on, the links search matches a blinded row by its tracking code and not by its name, because the name was never sent to the page. Nothing anonymises the answers themselves — a typed answer or a video pitch still says and shows who sat it — and the candidate's record, with the assessment report that awards the marks, still names them: blind marking hides a name from a reviewer reading a pile of papers, not a candidate from the recruiter who hired them.",
       "Authoring needs Create assessments; sending links needs Assign assessments.",
     ],
   },

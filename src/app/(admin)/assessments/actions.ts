@@ -5,6 +5,8 @@ import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
 import { getFileStore } from "@/lib/files/store";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
+import { blindMarkingEnabled } from "@/modules/settings/application/blindMarking";
+import { blindHandle, isIdentityBlind } from "@/modules/assessment/domain/blindMarking";
 import type { QuestionType } from "@/types";
 import {
   changedCellsOf,
@@ -199,6 +201,7 @@ function one<T extends object>(value: T | T[] | null | undefined): T | null {
 
 interface LinkApplication {
   full_name?: string;
+  tracking_code?: string;
   job_openings?: { title?: string } | { title?: string }[] | null;
 }
 
@@ -249,7 +252,7 @@ function linksWindow(supabase: Awaited<ReturnType<typeof createSupabaseServerCli
     .from("candidate_attempts")
     .select(
       `id, application_id, template_id, status, time_limit_minutes, created_at, started_at, expires_at, submitted_at, total_score, max_score, integrity_flags,
-       applications!inner(full_name, archived_at, job_openings(title)),
+       applications!inner(full_name, tracking_code, archived_at, job_openings(title)),
        assessment_templates(name, assessment_questions(id)),
        candidate_responses(id)`,
       { count: "exact" }
@@ -263,6 +266,8 @@ export interface IssuedLinksRead {
   /** Every live link on file, including the ones this window does not carry. */
   total: number;
   scores_masked: boolean;
+  /** `security.blind_marking` — the rows below name ungraded papers by their code. */
+  blind_marking: boolean;
 }
 
 /**
@@ -279,9 +284,10 @@ export interface IssuedLinksRead {
  */
 export async function getIssuedLinks(): Promise<IssuedLinksRead> {
   await requireStaff("/assessments");
-  const [supabase, masked] = await Promise.all([
+  const [supabase, masked, blind] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
+    blindMarkingEnabled(),
   ]);
 
   const { data, error, count } = await linksWindow(supabase).limit(LINKS_LIMIT);
@@ -290,10 +296,16 @@ export async function getIssuedLinks(): Promise<IssuedLinksRead> {
   const rows = ((data ?? []) as unknown as AttemptLinkJoin[]).map((row) => {
     const application = one(row.applications ?? null);
     const template = one(row.assessment_templates ?? null);
+    const identityBlind = isIdentityBlind(row.status, blind);
     return {
       id: row.id,
       application_id: row.application_id,
-      candidate_name: application?.full_name ?? "Candidate",
+      // The handle replaces the name down to the row itself, so the browser is
+      // never sent a name to hide — the same rule score masking follows.
+      candidate_name: identityBlind
+        ? blindHandle(application?.tracking_code)
+        : (application?.full_name ?? "Candidate"),
+      identity_blind: identityBlind,
       job_title: one(application?.job_openings ?? null)?.title ?? null,
       template_id: row.template_id,
       template_name: template?.name ?? "Assessment",
@@ -313,7 +325,12 @@ export async function getIssuedLinks(): Promise<IssuedLinksRead> {
 
   // PostgREST reports the total the filter matched, not the slice the limit
   // carried — which is the number the note under the board is allowed to print.
-  return { rows, total: count ?? rows.length, scores_masked: masked };
+  return {
+    rows,
+    total: count ?? rows.length,
+    scores_masked: masked,
+    blind_marking: blind,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -376,9 +393,10 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
   await requireStaff("/assessments");
   if (!ATTEMPT_ID.test(attemptId ?? "")) return null;
 
-  const [supabase, masked] = await Promise.all([
+  const [supabase, masked, blind] = await Promise.all([
     createSupabaseServerClient(),
     scoresAreMaskedForCurrentUser(),
+    blindMarkingEnabled(),
   ]);
   const files = await getFileStore();
 
@@ -387,7 +405,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     .select(
       `id, application_id, template_id, status, time_limit_minutes, started_at, expires_at, submitted_at, total_score, max_score, integrity_flags, question_order, option_order,
        assessment_templates(name),
-       applications(full_name, job_openings(title))`
+       applications(full_name, tracking_code, job_openings(title))`
     )
     .eq("id", attemptId)
     .maybeSingle();
@@ -540,11 +558,18 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
   }
 
   const application = one(attempt.applications ?? null);
+  const identityBlind = isIdentityBlind(attempt.status, blind);
 
   return {
     attempt_id: attempt.id,
     application_id: attempt.application_id,
-    candidate_name: application?.full_name ?? "Candidate",
+    // The whole paper reads blind, not just the header: the drawer is where a
+    // reviewer goes through someone's answers, and a name at the top of it is
+    // exactly the priming the switch exists to keep out of that reading.
+    candidate_name: identityBlind
+      ? blindHandle(application?.tracking_code)
+      : (application?.full_name ?? "Candidate"),
+    identity_blind: identityBlind,
     job_title: one(application?.job_openings ?? null)?.title ?? null,
     template_name: one(attempt.assessment_templates ?? null)?.name ?? "Assessment",
     status: attempt.status,

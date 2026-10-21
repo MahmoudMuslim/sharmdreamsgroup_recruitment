@@ -250,6 +250,12 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         label: "Mask scores for interviewers",
         help: "Hides AI match scores, assessment marks and retention risk from every staff member whose role lacks the “View unmasked scores” permission — by default that means recruiters and hiring managers see the pipeline without the numbers. Switch off to show them to all staff.",
       },
+      {
+        kind: "toggle",
+        key: "security.blind_marking",
+        label: "Blind marking",
+        help: "Reads an assessment paper before its person: on the issued-links board and in a link's answers, a paper whose marks can still change is named by its tracking code instead of its candidate, and the name returns when the last mark is saved. A closed link is exempt — it will never be marked again. Off by default, and unlike withheld marks there is no role permission that overrides it: every staff reader sees the same rule. The limit is worth knowing — the answers themselves are never anonymised, a video pitch still shows and says who sat it, and a candidate's own record names them whenever you need it. The AI grading engine reads the answers without the name either way.",
+      },
     ],
   },
 ];

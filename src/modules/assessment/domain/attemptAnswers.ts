@@ -82,7 +82,17 @@ export interface AttemptAnswer {
 export interface AttemptAnswers {
   attempt_id: string;
   application_id: string;
+  /**
+   * The person, or — under blind marking, while this paper's marks can still
+   * change — its tracking code. `identity_blind` says which.
+   */
   candidate_name: string;
+  /**
+   * `security.blind_marking` is on and this paper is ungraded, so
+   * `candidate_name` names the paper rather than the candidate. The drawer states
+   * it; a missing name is never left to look like missing data.
+   */
+  identity_blind: boolean;
   job_title: string | null;
   template_name: string;
   status: string;

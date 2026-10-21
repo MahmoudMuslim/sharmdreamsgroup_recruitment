@@ -42,6 +42,7 @@ import {
   type AttemptAnswer,
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
+import { blindMarkingNote } from "@/modules/assessment/domain/blindMarking";
 
 const TYPE_META: Record<string, { word: string; icon: LucideIcon }> = {
   MULTIPLE_CHOICE: { word: "Quiz", icon: Check },
@@ -134,6 +135,7 @@ export function IssuedLinksBoard({
                     read.total === 1 ? "" : "s"
                   } on file · ${answered.toLocaleString()} with answers to read`}
               {read.scores_masked && " · marks are hidden for your role"}
+              {read.blind_marking && " · blind marking is on, so an ungraded paper carries its tracking code"}
             </p>
           </div>
           <div className="relative w-full sm:max-w-xs">
@@ -197,12 +199,15 @@ export function IssuedLinksBoard({
                   className="grid grid-cols-12 items-center gap-x-4 px-5 py-3 text-sm transition hover:bg-brand-cream sm:px-6"
                 >
                   <div className="col-span-3 min-w-0">
-                    <Link
-                      href={`/candidates/${link.application_id}`}
-                      className="truncate font-semibold text-brand-ink underline-offset-2 hover:underline"
-                    >
-                      {link.candidate_name}
-                    </Link>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Link
+                        href={`/candidates/${link.application_id}`}
+                        className="truncate font-semibold text-brand-ink underline-offset-2 hover:underline"
+                      >
+                        {link.candidate_name}
+                      </Link>
+                      {link.identity_blind && <Badge tone="neutral">Blind</Badge>}
+                    </span>
                     <p className="truncate text-[11px] text-brand-ink/50">
                       {link.job_title ?? "No role named"} · sent{" "}
                       {formatInZone(link.issued_at, timeZone, DAY_ONLY)}
@@ -402,6 +407,15 @@ export function AnswersDrawer({
 
       {paper && (
         <div className="space-y-4">
+          {/* The withheld name is stated, not left as a code-shaped gap: a
+              recruiter must be able to tell a rule being applied from data that
+              went missing. */}
+          {paper.identity_blind && (
+            <p className="rounded-xl border border-brand-line px-4 py-3 text-xs leading-relaxed text-brand-ink/65">
+              {blindMarkingNote()}
+            </p>
+          )}
+
           <dl className="grid grid-cols-2 gap-3 rounded-xl bg-brand-cream px-4 py-3 sm:grid-cols-4">
             <div>
               <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
