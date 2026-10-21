@@ -46,10 +46,11 @@ worker directory.
 > The vendor's five names — `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 > `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF` — are read
 > by no module under `src` any more, and `next build` inlines no `NEXT_PUBLIC_*`
-> Supabase value into the client bundle. `node scripts/audit-secrets.mjs` asserts
-> both of those against the built artifact. They still appear in the four
-> hosted-only scripts under `scripts/`, which are the door the last dump came
-> through and are deleted once the hosted project is closed.
+> Supabase value into the client bundle. `npm run audit:secrets` asserts the first
+> of those and fails the build on it; the second is asserted against a bundle you
+> name on the command line, because the host's `.next/static` is a dev artifact.
+> They still appear in the four hosted-only scripts under `scripts/`, which are the
+> door the last dump came through and are deleted once the hosted project is closed.
 
 ### Optional — app
 
@@ -124,12 +125,13 @@ local path is `npm run db:apply-local`, which reads the same
 
 ## Build
 
-`prebuild` runs two guards before `next build`; both must pass:
+`prebuild` runs three guards before `next build`; all three must pass:
 
 ```bash
 npm run build
 #  → node scripts/check-staff-routes.mjs   (route dirs == STAFF_ROUTES == NAV)
 #  → node scripts/check-themes.mjs          (4 themes each painted in globals.css)
+#  → node scripts/audit-secrets.mjs         (no vendor credential in the deploy surface)
 #  → next build
 ```
 
@@ -150,10 +152,17 @@ PostgREST pointed at the same database, and a scheduler that sends
 ## Target: Docker / any Node host
 
 The image is `docker/app/Dockerfile`, built by Compose, not by the sketch above.
-`prebuild` runs inside the builder stage, so the two guards gate the image too.
-Nothing vendor-facing is passed as a build argument: the client bundle inlines no
-key, which is what `node scripts/audit-secrets.mjs` checks against the built
-artifact. Provide the env at runtime through `docker/.env`; the app container
+`prebuild` runs inside the builder stage, so all three guards gate the image too —
+and there the audit gates the deploy surface it can see (`src`, the manifests,
+`docker/app/Dockerfile`: 329 files on the measured run), because `.dockerignore`
+does not copy the rest of `docker/`, `.env.local` or a `.next` into the builder.
+The full surface, `docker-compose.yml` included, is the 341 files a host run of
+`npm run audit:secrets` scans — check that number against the run's
+`vendor env names read by the deploy surface` line, not the `tracked source +
+config files` count above it, which is a different set that happens to also print
+329 here. Nothing vendor-facing is passed as a build argument:
+the client bundle inlines no key, which is what the audit checks against a bundle
+you name as `$1`. Provide the env at runtime through `docker/.env`; the app container
 takes the rest from `env_file: ../.env.local`, with its `environment:` block
 overriding the in-network forms of `REST_BASE_URL` and `AUTH_DB_URL` and the
 published `APP_URL`.
@@ -207,12 +216,12 @@ Both cron endpoints accept `GET` or `POST` and require `x-cron-secret`:
 ## Post-deploy checklist
 
 - [ ] `SETTINGS_ENCRYPTION_KEY` set and provider credentials save (Settings → API keys).
-- [ ] `CRON_SECRET` set; both cron routes return 200 with the header, 503 without, and the `cron` container is actually calling them (`docker compose logs cron`).
+- [ ] `CRON_SECRET` set; both cron routes return 200 with the header and 401 without it (503 only when `CRON_SECRET` itself is unset), and the `cron` container is actually calling them (`docker compose logs cron`).
 - [ ] A staff login reaches `/dashboard`; a candidate token reaches only its own attempt.
 - [ ] Public careers board, apply form, and the careers assistant work unauthenticated.
 - [ ] `npm run stack:prove` — the identity/RLS parity gate over the running stack.
 - [ ] `UPLOADS_ROOT` is the mounted `uploads` volume and bytes round-trip through the streaming route: `npm run files:serve` against the container.
-- [ ] `npm run build` passes both prebuild guards.
+- [ ] `npm run build` passes all three prebuild guards.
 
 ---
 
@@ -220,5 +229,5 @@ Both cron endpoints accept `GET` or `POST` and require `x-cron-secret`:
 
 - There is no long-lived privileged key to leak. The `service_role` bearer is minted per request by `src/lib/auth/token.ts` from `AUTH_JWT_SECRET` and lives for 60 s; nothing in the client bundle carries a credential at all, because `next build` no longer inlines a vendor key.
 - `provider_credentials` has RLS with **zero policies** — only the service-role bearer can read it; secrets are AES-256-GCM at rest.
-- Run `node scripts/audit-secrets.mjs` (and again with the image's `.next/static` copied out, as its header describes) before publishing: it scans the shipped bundle for every secret value in `.env.local`, then asserts the deploy surface reads no vendor credential.
+- `npm run audit:secrets` runs in `prebuild`, so every build — host or image — fails if a vendor credential re-enters the deploy surface or a module re-imports the vendor SDK. Before publishing, also point it at the artifact that actually ships, as its header describes (`docker cp` the image's `.next/static`, then `node scripts/audit-secrets.mjs <that path>`); naming a bundle makes the secret-value and vendor-address findings fatal too. It prints no credential in either mode.
 - Prefer the session-token client everywhere so RLS stays the enforcement layer. The direct `pg` pool (`AUTH_DB_URL`) is the deliberate exception — it is the only way in to the `auth` schema and to `public.files` metadata, and it is what `authAdmin` keeps narrow on purpose.

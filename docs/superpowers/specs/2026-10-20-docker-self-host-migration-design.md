@@ -117,12 +117,18 @@ these from memory — re-read the registry tag list._
 
 No MinIO, no Redis, no GoTrue. On KVM2 this same file gains TLS at nginx and
 secrets that never enter the repo; Caddy goes away when the host's `.env.local`
-`SUPABASE_REST_BASE` line does. **As of 2026-10-21 that line is still in the file
-(`grep -c SUPABASE_REST_BASE .env.local` → 1, and it still names port 54321), so
-Caddy runs beside nginx deliberately** — nginx serves its own `/rest/v1/` on 3000
-(`docker/nginx/nginx.conf:125`, `location /rest/v1/ { proxy_pass http://sdg_rest/; }`),
+line that points at the REST gateway goes with it. **As of 2026-10-21 that line is
+still in the file, so Caddy runs beside nginx deliberately** — nginx serves its own
+`/rest/v1/` on 3000 (`docker/nginx/nginx.conf:138`, `location /rest/v1/ { proxy_pass http://sdg_rest/; }`),
 and the two gateways are not in conflict: the container reads nginx, the host's
 `next dev` reads Caddy. Retiring Caddy is a Plan 2 item, not an oversight.
+
+> Corrected 2026-10-21 after Plan 2 Task 9: the line was `SUPABASE_REST_BASE`, and
+> it is now `REST_BASE_URL` (`grep -c SUPABASE_REST_BASE .env.local` → 0,
+> `grep -c '^REST_BASE_URL=' .env.local` → 1; it still names port 54321, and the
+> `gateway:` service is still in the compose file). The reasoning is unchanged — the
+> rename moved the name, not the dependency. What still has to go before Caddy can is
+> the owner's own `.env.local` edit, which is why the service is parked, not deleted.
 
 `package.json:4` is bare `next dev` and `.env.local` already points `APP_URL` /
 `NEXT_PUBLIC_APP_URL` at 3000, so slice 1 only adds the new `SUPABASE_*`-shaped
@@ -390,10 +396,23 @@ directive is the scope, in their words: *"stop using Supabase and Vercel Complet
 3. Every byte the portal reads or writes lives under `/data/uploads/<bucket>/<path>`
    on a named volume with a matching `files` row, and no accessor can resolve a path
    outside its own bucket.
+   *Measured as of 2026-10-21:* containment is `files:paths` 61/61 and the
+   volume↔row parity is object-for-object on the rebuilt stack. One documented
+   exception to "a matching row" — if the `files` insert fails after the rename,
+   `src/lib/files/disk-store.ts:155` keeps the byte instead of unlinking over the
+   object that was there, logs `byte stored, row refused` and returns
+   `{ ok: false }`. A database outage can therefore leave a byte no listing shows;
+   it can never leave a row pointing at nothing.
 4. The environment carries **zero** vendor credentials: `NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
    `SUPABASE_DB_PASSWORD` no longer exist in any env file, example, build arg or
    `src/lib/config.ts` field; `scripts/audit-secrets.mjs` asserts their *absence*.
+   *Measured as of 2026-10-21:* true for everything this repo ships — no tracked
+   file, no `docker/.env.example`, no build arg, no `config.ts` field, and the
+   audit's deploy surface reads none. The two files the owner holds and are not
+   tracked still carry them (`.env.local` all four, `docker/.env` the first two),
+   which is why the audit prints those under "owner action, not a leak" and why
+   this claim closes with STATUS §8.2 rather than with code.
 5. The identity spine is untouched: the Plan 1 gates still pass as they did at
    `28a9467`, and the only schema loss is the storage shim's **8** `storage.objects`
    policies. (The "88 → 80" written here first counted the file before Task 2 added
@@ -544,10 +563,21 @@ Two baselines this plan had been quoting wrong, now measured. `tsc --noEmit` is
 **0 errors**, not "2 stale lines": both came from `.next/types/validator.ts`
 (generated 2026-10-14) still validating the deleted
 `src/app/(admin)/apply-questions/page.tsx`, and one `npx next typegen` cleared them.
-And `npm run audit-secrets` with no argument still reports 3 LEAKs, because its
-default bundle is this repo's own `.next/static`, a pre-Task-9 artifact of 56 files
-— the claim is about the *image*, which is clean, so the fix is to rebuild or pass
-the bundle as `$1`, never to relax the gate.
+And the sentence this record first wrote about the audit was doubly wrong: there is
+no `npm run audit-secrets` script, and `scripts/audit-secrets.mjs` had **no exit
+code at all**, so §15 claim 4's "asserts" was a print, not an assertion. Corrected
+in the final review's fix loop: the deploy-surface name scan and the vendor-SDK
+import scan now set `process.exitCode` and run in `prebuild`, so `next build` —
+host or image — fails on a credential re-added to the surface that builds and runs
+this app; the bundle half stays informational unless a bundle is named as `$1`,
+because the host's `.next/static` is a dev artifact and a stale one must not fail a
+build of code that never ships it; a missing `.env.local` or `.next` is a printed
+skip, which is the only reason the same script can run inside the image builder at
+all. Measured: default run exit **0** with 3 informational LEAK lines (56-file
+pre-Task-9 artifact), that same bundle named as `$1` exit **1**, and a scratch
+`src` file reading `process.env.SUPABASE_SERVICE_ROLE_KEY` exit **1** with a
+`VENDOR` line naming it. Never relax the gate — rebuild, or point it at the image's
+bundle.
 
 **What §15 deliberately leaves to the owner.** `.env.local` still holds
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,

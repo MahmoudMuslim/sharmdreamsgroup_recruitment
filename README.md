@@ -22,7 +22,7 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 |-----|----------------|
 | [Architecture](docs/ARCHITECTURE.md) | Clean-architecture module layout, request lifecycle, data flow |
 | [API Reference](docs/API.md) | Every route handler (`/api/*`) and server action |
-| [Database](docs/DATABASE.md) | All tables, relationships, RLS policies, storage buckets |
+| [Database](docs/DATABASE.md) | All 42 tables, relationships, the 88 RLS policies, and the `public.files` table + uploads volume that replaced storage buckets |
 | [Authentication & RBAC](docs/AUTHENTICATION.md) | Session tokens, roles, granular permissions, credential store |
 | [AI Integration](docs/AI_INTEGRATION.md) | Multi-provider gateway, model failover, capabilities, routing |
 | [Deployment](docs/DEPLOYMENT.md) | Docker Compose stack, environment variables, cron jobs |
@@ -49,8 +49,8 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 - Details: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)
 
 ### Analytics & Insights
-- Pipeline funnel + conversion rates, channel effectiveness, AI fit-score distribution, time-to-hire, application velocity
-- Live change watch streamed to the shell (`/api/live`)
+- Assessment completion (open/finish rates, median invite-to-open and time-on-test), score bands, sourcing reply and conversion rates, per-channel message delivery, interview outcomes — all computed by one pure module (`modules/analytics/domain/report.ts`) that the page and the CSV export share. It names what it cannot compute: there is **no per-stage duration, no stage conversion over time and no cohort funnel**, because a stage move overwrites `applications.stage` and only `HIRED` carries a timestamp.
+- Server-sent change watch (`/api/live`): the shell polls the fingerprints of 11 watched tables every 5 s, so an open page notices a write on its next poll — nothing is pushed from the write path.
 - CSV/Excel/PDF export (`/api/reports/export`, `/api/time/export`, `/api/activity/export`)
 
 ### Job & Candidate Management
@@ -77,10 +77,11 @@ Clean-architecture domains under `src/modules/`, thin route/action layer under `
 src/
 ├── app/            # Route handlers, server actions, pages (App Router)
 │   ├── (admin)/    # 16 protected pages  ├── (candidate)/  # portal + test/[token]
-│   ├── careers/    # public board + apply├── api/          # 20 route handlers
+│   ├── careers/    # public board + apply├── api/          # 22 route handlers
 │   └── login/
-├── modules/        # 15 domains: assessment, assistant, analytics, careers,
-│                   # screening, settings, shell, sourcing, timelog, live, …
+├── modules/        # 16 domains: activity, analytics, assessment, assistant,
+│                   # candidates, careers, i18n, jobs, live, omnichannel,
+│                   # questions, screening, settings, shell, sourcing, timelog
 ├── lib/            # PostgREST + auth-pool clients, session, files, crypto, config, i18n, theme
 ├── stores/         # Zustand (assessment runner state)
 └── types/          # Shared TypeScript interfaces
@@ -116,23 +117,32 @@ A hand-rolled, dependency-light library (no component framework) in `modules/ana
 git clone <repository-url>
 cd sharm_dreams_group
 npm install
+cp docker/.env.example docker/.env   # then fill in its secrets — required before
+                                     # docker:up and db:apply-local both read it
 npm run docker:up                # db + rest + gateway + app + nginx + cron
 npm run db:apply-local           # loads supabase/schema.sql into the stack's own cluster
+npm run db:seed-local            # the three staff fixtures the local login reads
 npm run stack:prove              # proves the three data doors end to end
-cp .env.example .env.local       # then fill in your values (host-side dev)
+cp .env.example .env.local       # host-side `npm run dev` only — see the note below
 node scripts/generate-encryption-key.mjs   # AES-256-GCM key for credential storage
 ```
+
+> `.gitignore`'s `.env*` rule means the **root** template is not tracked, so a fresh
+> clone has no `.env.example` to copy; `docker/.env.example` is tracked and is the one
+> the stack needs. Create the root `.env.local` by hand (or copy an existing
+> developer's) and set the five required variables below. Full list and the known
+> template drift: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Required env: `REST_BASE_URL`, `AUTH_DB_URL`, `AUTH_JWT_SECRET`, `UPLOADS_ROOT`, `SETTINGS_ENCRYPTION_KEY`, and `CRON_SECRET` (the cron routes fail closed without it). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete, code-verified list — including which provider keys are optional fallbacks and the known `.env.example` drift.
 
 ```bash
 npm run dev          # dev server (Turbopack) → http://localhost:3001
-npx tsc --noEmit     # type check
-npm run build        # production build (prebuild runs route + theme checks)
+npx --no-install next typegen && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json   # type check
+npm run build        # production build (prebuild: routes, themes, secret audit)
 ```
 
 ### Database
-`supabase/schema.sql` is the consolidated DDL — every table, the `auth.users` shim, the RLS policies and the console's reference rows — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `supabase/migrations/` (001–030, 026 never written) is the history the dump was made from. From here, SQL changes go to the stack: `npm run docker:psql`. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
+`supabase/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `supabase/migrations/` (001–030, 026 never written) is the history the dump was made from, not a path anything applies. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
 
 ---
 
@@ -140,27 +150,45 @@ npm run build        # production build (prebuild runs route + theme checks)
 
 ```bash
 npm run dev                 # dev server (Turbopack)
-npm run build               # build (prebuild: check-staff-routes + check-themes)
+npm run build               # build (prebuild: check-staff-routes + check-themes + audit-secrets)
 npm run lint                # ESLint
 npm run check:routes        # validate staff route / permission coverage
 npm run check:themes        # validate theme token coverage
+npm run audit:secrets       # validate the deploy surface holds no vendor credential
+
+# The stack
+npm run docker:up / docker:down / docker:logs / docker:psql / docker:wipe
+npm run db:apply-local      # apply supabase/schema.sql to the stack's own cluster
+npm run db:seed-local       # local staff fixtures, written into the stack's auth.users
+
+# Proofs (see docs/TESTING.md for what each asserts)
+npm run stack:prove         # identity + RLS parity against the running stack
+npm run files:prove         # the eight public.files policies over the HTTP door
+npm run files:paths         # path containment (61 checks, plain Node)
+npm run files:links         # signed-link forgery (76 checks, plain Node)
+npm run files:serve         # bytes over HTTP against the running container
 
 node scripts/generate-encryption-key.mjs   # AES key (run once)
-node scripts/apply-migration.mjs <file>    # apply one SQL migration
-node scripts/dump-schema.mjs               # dump live DB schema to schema.sql
-node scripts/verify-schema.mjs             # verify schema against expectations
-node scripts/seed-local-staff.mjs           # local staff fixtures, written into the stack's auth.users
-node scripts/audit-secrets.mjs             # scan the repo for leaked secrets
+npm run audit:secrets                       # build guard: fails on a vendor credential in the deploy surface
+
+# HOSTED-ONLY — doorways to the retired vendor project, deleted once it is closed
+node scripts/apply-schema.mjs              # apply the consolidated schema to the hosted DB
+node scripts/apply-migration.mjs <file>    # apply one migration to the hosted DB
+node scripts/dump-schema.mjs               # dump the hosted schema into schema.sql
+node scripts/verify-schema.mjs <file>      # compare the hosted catalog against schema.sql
 ```
+
+The first two read `SB_DB` (or `.env.local`'s `SUPABASE_DB_PASSWORD`); `verify-schema.mjs` can be aimed at any other database with `ZZ_DB_URL`. Local SQL changes go through `npm run docker:psql`, and the `supabase/migrations/` files are history, not the apply path.
 
 ---
 
 ## 🛡 Security (summary)
 
 - AES-256-GCM encryption for stored API keys (`SETTINGS_ENCRYPTION_KEY`)
-- Row Level Security on every table with custom PostgreSQL helper functions
-- 128-bit unguessable `access_token` per candidate attempt
-- Secrets decrypted only at request time, never sent to the browser; `scripts/audit-secrets.mjs` guards the repo
+- Row Level Security on all 42 `public` tables — one explicit `alter table … enable row level security` each (a 43rd enable sits inside the `rls_auto_enable()` event trigger, which arms RLS on any new `public` table) — with the helper functions the ported policies call
+- 256-bit unguessable `access_token` per candidate attempt (`randomBytes(32)`, base64url)
+- Secrets decrypted only at request time, never sent to the browser; `scripts/audit-secrets.mjs` runs in `prebuild` and fails the build if a vendor credential re-enters the deploy surface
+- Candidate bytes live on the stack's own `uploads` volume, resolved through `src/lib/files/paths.ts` (no path may escape `$UPLOADS_ROOT`) and served only by HMAC-signed, expiring links
 - Full audit trail (`activity_log`, `credential_audit_log`, `settings_audit_log`)
 - Details: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) · [docs/DATABASE.md](docs/DATABASE.md#rls-policies)
 

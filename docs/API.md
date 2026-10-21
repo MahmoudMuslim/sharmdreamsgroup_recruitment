@@ -2,10 +2,10 @@
 
 Two server-side surfaces exist in this app:
 
-1. **Route handlers** under `src/app/api/**/route.ts` — HTTP endpoints for things a Server Action cannot do (multipart uploads, streaming, `GET` downloads, cron callbacks, the realtime probe).
+1. **Route handlers** under `src/app/api/**/route.ts` — HTTP endpoints for things a Server Action cannot do (multipart uploads, streaming, `GET` downloads, cron callbacks, the live SSE channel).
 2. **Server Actions** — `"use server"` functions exported from `*/actions.ts` files, invoked directly from client components. These carry the bulk of the read/write traffic.
 
-There is no separately deployed REST API: both run inside the Next.js runtime and talk to Supabase through the server clients in `src/lib/supabase`.
+There is no separately deployed REST API *for the app*: both run inside the Next.js runtime and talk to **our own PostgREST** (`rest` in `docker/docker-compose.yml`) through `src/lib/supabase/*`, which is a thin seam over `src/lib/rest/*`. PostgREST is the database's HTTP face, not a second application tier — it exposes the `public` schema and applies RLS as the caller's role. The app also has two doors that bypass HTTP entirely: the `pg` pool (`src/lib/auth/db.ts`, for the `auth` schema and pgcrypto) and the disk (`UPLOADS_ROOT`, for file bytes).
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATION.md) · [DATABASE.md](DATABASE.md)
 
@@ -15,9 +15,9 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 
 | Caller | How they authenticate | Enforcement |
 |--------|----------------------|-------------|
-| **Staff** | Supabase auth JWT in cookies → `requireStaff(route)` / `getSessionUser()` + `isStaff(role)` | Role gate + per-permission `hasPermissionForUser(key)`; RLS on every query |
-| **Candidate (test taker)** | Unguessable per-attempt `access_token` in the URL path | Token validated in the route; RLS scoped to that attempt |
-| **Public (careers)** | None — anon client | Public RLS (insert applications/attachments/leads, read published jobs) |
+| **Staff** | Our own HS256 bearer in the httpOnly `sdg_session` cookie → `guardRequest` in `src/proxy.ts`, then `requireStaff(route)` / `getSessionUser()` + `isStaff(role)` | Role gate + per-permission `hasPermissionForUser(key)`; RLS on every query |
+| **Candidate (test taker)** | Unguessable per-attempt `access_token` in the URL path | Token validated **in the route**, which then writes through the service client. The `attempt_token` RLS policies exist as a backstop but no production caller presents that bearer. |
+| **Public (careers)** | None — the anon client (`token: null`, so Postgres runs it as the `anon` role) | Public RLS (insert applications/attachments/leads, read published jobs) |
 | **Cron / scheduler** | `x-cron-secret` header matching `CRON_SECRET` | Fails **closed** (503) when the secret is unset |
 
 ---
@@ -55,7 +55,7 @@ Every download re-reads from the database and re-checks its permission server-si
 
 ### Cron — scheduled sweeps
 
-Both accept `GET` **and** `POST` (so pg_cron / Vercel Cron / an external scheduler can hit them either way) and require the `x-cron-secret` header.
+Both accept `GET` **and** `POST` and require the `x-cron-secret` header. The scheduler is the `cron` container in this repo — a supervised busybox loop (PID 1, not crond) that polls `$APP_URL` every `WHATSAPP_EVERY` (default 60 s) and hits grading every `GRADING_EVERY` (default 300 s). Nothing uses `pg_cron` (the vanilla image has no extension to schedule with) and nothing external is required.
 
 | Method | Route | Purpose |
 |--------|-------|---------|
@@ -128,6 +128,6 @@ Server Actions are plain `export async function`s in a `"use server"` module, ca
 ## Conventions
 
 - **Validate at the boundary** with Zod before touching the database.
-- **Prefer the session (JWT) client** so RLS is the enforcement layer; use the service-role client only for privileged writes after re-checking permissions in code.
+- **Prefer the request client** (`src/lib/supabase/server.ts`) so RLS is the enforcement layer; use the service-role client only for privileged writes after re-checking permissions in code.
 - **Fail closed**: a missing secret or permission returns an error, never a permissive default.
-- **Record side effects**: writes that matter emit to `activity_log` / `settings_audit_log` / `credential_audit_log` and publish a `live` change.
+- **Record side effects**: writes that matter emit to `activity_log` / `settings_audit_log` / `credential_audit_log`. No write notifies the portal — `/api/live` finds the change on its next fingerprint poll.

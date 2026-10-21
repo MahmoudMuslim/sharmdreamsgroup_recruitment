@@ -6,25 +6,37 @@ This document describes how the application is put together: the layering, the m
 
 ## High level
 
-The app is a **Next.js 16 App Router** project backed entirely by **Supabase** (PostgreSQL 17 + Auth + Storage). There is no separate application server: route handlers and React Server Actions run inside the Next.js runtime and talk to Supabase directly through server-side clients.
+The app is a **Next.js 16 App Router** project running in its own Docker Compose stack against **PostgreSQL 18 + PostgREST** that this repo configures and owns. There is no separate application server and no hosted backend: route handlers and React Server Actions run inside the Next.js runtime and talk to PostgREST over HTTP, to Postgres over a `pg` pool for the two things REST may not reach, and to a disk volume for file bytes.
 
 Three layers, top to bottom:
 
 1. **Presentation (`src/app`)** — pages, client components, route handlers (`/api/*`), and server actions (`"use server"`). Thin: authorize, call into a module, render.
 2. **Domain modules (`src/modules/*`)** — business logic grouped by bounded context, split into `domain` / `application` / `infrastructure` / `presentation` where a module is large enough to need it.
-3. **Shared infrastructure (`src/lib`)** — Supabase clients, auth/session, crypto, config, i18n, theming, realtime.
+3. **Shared infrastructure (`src/lib`)** — the PostgREST clients, auth/session, the file store, crypto, config, i18n, theming, live channel.
 
 ```
-Browser ──► Next.js page / route handler / server action
-                     │  requireStaff()  (auth + RBAC)
-                     ▼
-              src/modules/<domain>       ← business logic
-                     │  service-role or session client
-                     ▼
-              src/lib/supabase/*         ← Supabase access
-                     ▼
-              Supabase (Postgres + RLS, Auth, Storage)
+Browser ──► nginx ──► Next.js page / route handler / server action
+                              │  requireStaff()  (auth + RBAC)
+                              ▼
+                        src/modules/<domain>       ← business logic
+                              │  session · anon · service client
+                              ▼
+                        src/lib/supabase/* → src/lib/rest/*   ← one PostgREST transport
+                              ▼
+                     REST_BASE_URL = http://rest:3000   (no prefix: the prefix
+                              ▼       belongs to the proxies, see below)
+                          PostgREST ──► Postgres (RLS, our own `auth` schema)
+
+   side doors, deliberately not REST:
+     src/lib/auth/db.ts  ── pg pool ──► auth.users, bcrypt, staff CRUD  (`auth` is not exposed over HTTP)
+     src/lib/files/*     ── disk ─────► /data/uploads volume, metadata in public.files
 ```
+
+Two processes own the `/rest/v1` prefix, and neither of them is PostgREST: **nginx**
+`location /rest/v1/` proxies to `rest:3000` for anything arriving from a browser, and
+**Caddy** on `127.0.0.1:54321` exists only so a process running *outside* the stack (the
+owner's `npm run dev` on the host) has a gateway to point `REST_BASE_URL` at. `rest`
+publishes no port at all — nothing may bypass a gateway.
 
 ---
 
@@ -47,22 +59,29 @@ src/
 │   └── api/                  # Route handlers (see docs/API.md)
 ├── modules/                  # Clean-architecture domains
 ├── lib/                      # Shared infrastructure
-│   ├── auth/                 # session.ts · staffRoutes.ts · login-target.ts
+│   ├── auth/                 # token · cookies · session · guard · passwords · db
+│   │                         # · admin-users · staffRoutes · login-target
 │   ├── crypto/               # secrets.ts (AES-256-GCM)
-│   ├── supabase/             # anon · client · server · service · rest · middleware
+│   ├── files/                # paths · disk-store · signed-link · store
+│   ├── rest/                 # client · query-builder · auth-shim  (the transport)
+│   ├── supabase/             # anon · server · service  (names kept, contents are ours)
 │   └── *.ts                  # config · config.server · currency · i18n · live ·
-│                             # locale-pref · public-url · rail · textSearch · theme ·
-│                             # timezone · utils · alert-ack
+│                             # locale-pref · paging · public-url · rail · textSearch ·
+│                             # theme · timezone · utils · alert-ack
 ├── stores/                   # Zustand (useAssessmentStore)
 ├── types/                    # Shared TypeScript interfaces (index.ts)
-└── proxy.ts                  # (test/dev proxy shim)
+└── proxy.ts                  # the pre-request gate (Next.js 16's middleware file)
 ```
+
+The Compose stack itself is `docker/`: `docker-compose.yml`, `docker/db/initdb/*.sql`
+(roles, extensions, the `auth` stand-in), `docker/app/Dockerfile`,
+`docker/nginx/nginx.conf`, `docker/Caddyfile`, `docker/cron/`.
 
 ---
 
-## The modules (15 domains)
+## The modules (16 domains)
 
-Each folder under `src/modules/` is a bounded context. Larger ones are further divided into `domain` (pure logic), `application` (orchestration / server actions), `infrastructure` (Supabase + provider I/O), and `presentation` (client components).
+Each folder under `src/modules/` is a bounded context. Larger ones are further divided into `domain` (pure logic), `application` (orchestration / server actions), `infrastructure` (data-access + provider I/O), and `presentation` (client components).
 
 | Module | Responsibility |
 |--------|----------------|
@@ -73,7 +92,8 @@ Each folder under `src/modules/` is a bounded context. Larger ones are further d
 | `candidates` | Candidate list filtering (`listFilters.ts`) shared by the browser UI |
 | `careers` | Public careers: CV rules, attachment rules, gate questions, job board, company profile, and the **chatbot** (`answer`, `conversation`, `role-card`) |
 | `jobs` | Hireable-opening resolution and opening search |
-| `live` | Realtime change watch (`changeWatch.ts`) + `Live` components/hook backed by `/api/live` |
+| `i18n` | Translation overrides: reads the per-locale `app_settings` rows, seeds them, and can produce a translation through the AI gateway |
+| `live` | Change watch (`changeWatch.ts`) + `Live` components/hook backed by `/api/live` — our own fingerprinted SSE stream, not a vendor realtime |
 | `omnichannel` | WhatsApp + SMTP connectors, WhatsApp dispatch, candidate notifications, templates |
 | `questions` | **Question Bank** domain — projects a gate or suite question into one shape and owns the rails, search, groups, place lookups, ordering and copy targets the `/questions` console draws (`bank.ts`). Stores nothing of its own |
 | `screening` | AI gateway, CV parsing, OpenRouter engine, Qoder completion, application screening |
@@ -115,13 +135,13 @@ Every entry below is a real `page.tsx` under `src/app/(admin)/` and is listed in
 
 ### Read path (server component)
 1. Page calls `requireStaff(route)` → resolves the session (`getSessionUser`, cached per request) and enforces staff role.
-2. Data reads run through a Supabase client created with the user's JWT, so **RLS applies** to every query.
+2. Data reads run through a PostgREST client built for that request and carrying the caller's bearer, so **RLS applies** to every query. PostgREST maps the bearer's `role` claim onto the Postgres role (`anon` / `authenticated` / `service_role`) and sets `request.jwt.claims`, which `auth.uid()` then reads.
 3. Pure filtering/shaping is delegated to the relevant module's `domain` layer.
 
 ### Write path (server action)
 1. Client component invokes an action exported from a `*/actions.ts` (`"use server"`).
 2. The action re-checks the session + permission, validates with Zod, then writes via the service or session client.
-3. Side effects are recorded to `activity_log` / `settings_audit_log` / `credential_audit_log`, and a live change is published so the `live` hook refreshes affected views.
+3. Side effects are recorded to `activity_log` / `settings_audit_log` / `credential_audit_log`. Nothing notifies the portal: the `live` channel is a poll, so an open page notices the write on its next fingerprint (see State & realtime below).
 
 ### Public path (careers)
 - `GET /careers`, `POST /api/careers/upload|prefill|chat|lead`, `GET /api/careers/questions` run with the anon client under public RLS (insert applications/attachments/leads, read published jobs). No session required.
@@ -131,32 +151,35 @@ Every entry below is a real `page.tsx` under `src/app/(admin)/` and is listed in
 
 ---
 
-## Supabase access layer (`src/lib/supabase`)
+## Data access (`src/lib/supabase` over `src/lib/rest`)
+
+`src/lib/supabase/` keeps its name for one reason: 128 call sites construct one of these three (measured with `grep -rn 'createSupabaseServerClient(' src`), and none of them needs to know the transport is now our own PostgREST (spec §11 forbade a rename that would churn every file for no behavioural gain). Underneath, `src/lib/rest/` is the transport.
 
 | File | Role |
 |------|------|
-| `anon.ts` | Public/anon client for unauthenticated surfaces |
-| `client.ts` | Browser client (client components) |
-| `server.ts` | SSR client created per request with the user's cookies/JWT (RLS-scoped reads/writes) |
-| `service.ts` | Service-role client — bypasses RLS; used only for privileged server operations |
-| `rest.ts` | Direct PostgREST/HTTP helpers |
-| `middleware.ts` | Session refresh + the edge staff gate (idle timeout, candidate bounce) |
+| `supabase/server.ts` | **The one seam.** Per-request client built from the `sdg_session` bearer after it is verified; anything that is not a verified `authenticated` bearer is forwarded as `null`, so the request runs as `anon` and RLS answers it. Returns the `{ from, rpc, auth }` shape the old client had. |
+| `supabase/anon.ts` | Module-scoped client with no identity, for public, cacheable reads (`jobs_public_read` → PUBLISHED rows only). Kept separate because a cookie-bound client cannot be prerendered. |
+| `supabase/service.ts` | Service-role client. Mints a short-lived bearer locally with `AUTH_JWT_SECRET` (60 s, per call, so no bearer outlives its expiry); the `service_role` DB user carries `bypassrls`, so this **bypasses** RLS. |
+| `rest/client.ts` | The PostgREST HTTP client — `from()`, `rpc()`, and the `auth.admin` handle. |
+| `rest/query-builder.ts` | The chainable filter/order/select builder that compiles to PostgREST query params. |
+| `rest/auth-shim.ts` | `auth.admin` as four parameterised statements over the `pg` pool (`src/lib/auth/db.ts`), because `auth` is deliberately outside `PGRST_DB_SCHEMAS` and no HTTP route may reach `auth.users`. |
 
-Client selection is deliberate: **prefer the session (JWT) client so RLS is the enforcement layer**; reach for `service.ts` only when a privileged write is required and re-check permissions in code first.
+Client selection is deliberate: **prefer the request client so RLS is the enforcement layer**; reach for `service.ts` only when a privileged write is required and re-check permissions in code first. There is no browser client — no client component holds a data client, so nothing here can be reached from the page.
 
 ---
 
 ## State & realtime
 
 - **Zustand** (`src/stores/useAssessmentStore.ts`) holds the candidate runner's transient state (answers, timer, submission status).
-- **Realtime** is a lightweight server-published channel: `modules/live` + `lib/live.ts` + `/api/live`, surfaced through `useLive`/`LiveBadge`.
+- **Realtime is a poll we own.** `/api/live` is a Server-Sent Events stream: one open `EventSource` per tab, and per connection a probe every 5 s (`POLL_MS`) fingerprints the 11 hiring tables in `LIVE_WATCH` — newest `updated_at` stamp plus row count, or a hash of watched columns where a table keeps no stamp. When a fingerprint moves, the stream names the *areas* that changed and the browser re-reads the page it is standing on, through that page's own RLS-scoped queries. No row content crosses the channel, so it leaks nothing a recruiter could not already query; two consecutive failed probes (`STALLED_AFTER`) make the badge admit the channel went quiet rather than claim it is live. `modules/live/infrastructure/changeWatch.ts` owns the watch list and the diff, `lib/live.ts` the client store, `modules/live/presentation/Live.tsx` the hook and badge.
 
 ---
 
 ## Configuration & theming
 
-- `lib/config.ts` is **client-safe** (only `NEXT_PUBLIC_*` + model chains); `lib/config.server.ts` is guarded by `server-only` and holds provider keys, the service-role secret, WhatsApp/SMTP defaults, and cron config.
-- Theming is CSS-token driven (`app/globals.css` + `lib/theme.ts`): Base and Liquid-glass parents × Light/Dark, persisted in `localStorage` and applied pre-paint.
+- `lib/config.ts` is **client-safe** and imports cleanly into browser code. It reads `APP_URL` and the four `AI_MODEL_*` chain names, and holds the four bucket names — no `NEXT_PUBLIC_*` value any more, because nothing is inlined at build time; the browser only ever needs the origin it was served from. `lib/config.server.ts` is guarded by `server-only` and holds the AI provider keys, WhatsApp/SMTP defaults, and cron config.
+- The self-hosting secrets are deliberately *not* in a config module — each is read where it is used, so a missing one fails at the door that needs it: `AUTH_JWT_SECRET` in `auth/token.ts` (and `files/signed-link.ts`), `SETTINGS_ENCRYPTION_KEY` in `crypto/secrets.ts`, `UPLOADS_ROOT` in `files/paths.ts`, `AUTH_DB_URL` in `auth/db.ts`. `REST_BASE_URL` is the one value four modules read straight from the environment and each throws on without it: `supabase/anon.ts:51`, `supabase/server.ts:32`, `supabase/service.ts:21` and `auth/guard.ts:39`.
+- Theming is CSS-token driven (`app/globals.css` + `lib/theme.ts`): Base and Liquid-glass parents × Light/Dark, persisted in `localStorage` only (there is no per-user theme column) and applied pre-paint.
 
 ---
 
