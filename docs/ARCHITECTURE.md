@@ -153,7 +153,7 @@ Every entry below is a real `page.tsx` under `src/app/(admin)/` and is listed in
 
 ## Data access (`src/lib/supabase` over `src/lib/rest`)
 
-`src/lib/supabase/` keeps its name for one reason: 128 call sites construct one of these three (measured with `grep -rn 'createSupabaseServerClient(' src`), and none of them needs to know the transport is now our own PostgREST (spec §11 forbade a rename that would churn every file for no behavioural gain). Underneath, `src/lib/rest/` is the transport.
+`src/lib/supabase/` keeps its name for one reason: **198 call sites across 67 files** construct one of these three, and none of them needs to know the transport is now our own PostgREST (spec §11 forbade a rename that would churn every file for no behavioural gain). Measured by counting each constructor's calls, not its definition: `createSupabaseServerClient()` 129, `getSupabaseServiceClient()` 62, `getSupabaseAnonClient()` 7. Underneath, `src/lib/rest/` is the transport.
 
 | File | Role |
 |------|------|

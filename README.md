@@ -142,7 +142,7 @@ npm run build        # production build (prebuild: routes, themes, secret audit)
 ```
 
 ### Database
-`supabase/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `supabase/migrations/` (001–030, 026 never written) is the history the dump was made from, not a path anything applies. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
+`supabase/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `supabase/migrations/` (001–031, 026 never written) is the history the dump was made from, not a path anything applies. One migration runs the other way: `031_job_headcount.sql` is written and hand-carried into `schema.sql` but applied to no cluster, so `job_openings.positions_needed` is in the file of record and not in the running table — the hiring-demand read shows "not recorded" until the owner applies it. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
 
 ---
 
