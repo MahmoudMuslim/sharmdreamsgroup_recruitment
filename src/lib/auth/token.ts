@@ -10,8 +10,31 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * need a different PostgREST configuration and a second key management story.
  */
 
-const ISSUER = "sharm-dreams-local";
-const AUDIENCE = "sdg_local";
+/** The environment names this deployment's tokens carry.
+ *
+ * Both were literals (`sharm-dreams-local` / `sdg_local`), which meant the only
+ * thing separating one environment from another was `AUTH_JWT_SECRET` — and
+ * `docker/.env.example` opens with "change nothing", i.e. it recommends the one
+ * practice that makes a token minted on a dev box verify in production. Read
+ * from the environment now, with today's literals as the defaults, and the
+ * audience reaches PostgREST through the same variable
+ * (`PGRST_JWT_AUD: ${AUTH_TOKEN_AUDIENCE…}` in docker/docker-compose.yml), so
+ * the app and the data plane cannot disagree about which environment a token is
+ * for.
+ *
+ * Trim-and-fall-back, the shape `secret` and `validTtl` below use for a misread
+ * value: `AUTH_TOKEN_ISSUER=""` is a typo, not an instruction to mint a token
+ * with a null `iss`, and a null `iss` is one that this module's own verifier
+ * would go on accepting (`claims.iss !== issuer()` is true of `null`, but a
+ * never-set claim reads the same way).
+ */
+function name(value: string | undefined, fallback: string): string {
+  const v = (value ?? "").trim();
+  return v.length > 0 ? v : fallback;
+}
+
+const issuer = () => name(process.env.AUTH_TOKEN_ISSUER, "sharm-dreams-local");
+const audience = () => name(process.env.AUTH_TOKEN_AUDIENCE, "sdg_local");
 
 /** The longest lifetime this module will sign. A staff session is bounded by the
  * idle-timeout layer, so a token that outlives a day is not a legitimate request,
@@ -75,8 +98,8 @@ export async function mintSessionToken(
   const body = b64({
     sub: input.sub,
     role: input.role,
-    aud: AUDIENCE,
-    iss: ISSUER,
+    aud: audience(),
+    iss: issuer(),
     iat: now,
     exp: now + ttl,
   });
@@ -128,7 +151,11 @@ export async function verifySessionToken(token: unknown): Promise<Claims | null>
     // number), which a `typeof === "number"` test passes.
     if (!Number.isInteger(claims.exp) || claims.exp <= now) return null;
     if (!Number.isInteger(claims.iat)) return null;
-    if (claims.aud !== AUDIENCE || claims.iss !== ISSUER) return null;
+    // Both names are this deployment's configured values, not a constant the
+    // token was minted with, so a jar carried over from another environment —
+    // same secret, different `iss`/`aud` — is refused here as well as by
+    // PostgREST, which checks `aud` against the same variable.
+    if (claims.aud !== audience() || claims.iss !== issuer()) return null;
     if (claims.role !== "authenticated" && claims.role !== "anon" && claims.role !== "service_role") {
       return null;
     }

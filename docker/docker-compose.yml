@@ -73,7 +73,14 @@ services:
       # privileged role, so is_staff() is false without a JWT.
       PGRST_DB_ANON_ROLE: anon
       PGRST_JWT_SECRET: ${AUTH_JWT_SECRET}
-      PGRST_JWT_AUD: sdg_local
+      # ONE value for both consumers: this is the same AUTH_TOKEN_AUDIENCE
+      # src/lib/auth/token.ts mints and verifies with, threaded through the `app`
+      # service below, so a token this app accepts is a token PostgREST accepts
+      # and neither side can be rotated alone. The `:-` guard is what keeps an
+      # older docker/.env (written before the variable existed) working: empty
+      # here means `sdg_local`, and an empty variable is what token.ts falls back
+      # to for the same literal. Changing it signs out every session.
+      PGRST_JWT_AUD: ${AUTH_TOKEN_AUDIENCE:-sdg_local}
       PGRST_SERVER_PORT: 3000
       # No `pgrst` schema config here; PostgREST reads env only.
       PGRST_DB_CONFIG: false
@@ -158,6 +165,14 @@ services:
       # name is `db` and the port is the container's own 5432.
       AUTH_DB_URL: postgres://postgres:${LOCAL_DB_PASSWORD}@db:5432/sharm_dreams
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      # The token's environment names, from the same docker/.env values that
+      # decide `PGRST_JWT_AUD` above. Without these two lines a docker/.env
+      # audience would reach PostgREST but not the app, and the app would go on
+      # minting the default — the drift this exists to make impossible. Empty
+      # means "use token.ts's own default", which is the same literal the
+      # `PGRST_JWT_AUD` guard falls back to.
+      AUTH_TOKEN_ISSUER: ${AUTH_TOKEN_ISSUER:-}
+      AUTH_TOKEN_AUDIENCE: ${AUTH_TOKEN_AUDIENCE:-}
       CRON_SECRET: ${CRON_SECRET}
       # Assessment links are built from this (src/lib/config.ts:88, whose
       # `http://localhost:3000` fallback is this stack's own published port).
