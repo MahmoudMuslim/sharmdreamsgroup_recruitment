@@ -13,6 +13,9 @@ import { randomBytes } from "node:crypto";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Trim-aware: `APP_URL=` (empty but defined) in .env.local would otherwise slip
+// straight past `??` and print a host-less "/login".
+const APP_URL = (process.env.APP_URL ?? "").trim() || "http://localhost:3000";
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.error(
@@ -103,7 +106,7 @@ async function main() {
   console.log(`  role     : ${role}`);
   console.log(`  tenant   : ${tenantSlug ?? "(group-wide)"}`);
   if (!existing) console.log(`  password : ${password}`);
-  console.log(`\nSign in at ${process.env.APP_URL ?? "http://localhost:3000"}/login`);
+  console.log(`\nSign in at ${APP_URL}/login`);
 }
 
 main().catch((error) => {

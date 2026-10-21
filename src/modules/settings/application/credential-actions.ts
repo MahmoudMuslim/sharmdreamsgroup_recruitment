@@ -17,6 +17,7 @@ import {
   resolveConfig,
 } from "@/modules/settings/infrastructure/credentialResolver";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { appConfig } from "@/lib/config";
 import { aiConfig } from "@/lib/config.server";
 import {
   AI_CAPABILITIES,
@@ -566,7 +567,10 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
   }
 
   if (definition.id === "openrouter") {
-    headers["HTTP-Referer"] = process.env.APP_URL ?? "http://localhost:3001";
+    // `appConfig.url` already resolves APP_URL and falls back to the origin the
+    // stack publishes (3000), so an unset or empty APP_URL cannot send a
+    // provider a referer pointing at the dev server on 3001.
+    headers["HTTP-Referer"] = appConfig.url;
     headers["X-Title"] = "Sharm Dreams Talent Cloud";
   }
 

@@ -33,7 +33,7 @@ Copy `.env.example` → `.env.local`, then set these. The lists below are the va
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `APP_URL` | `http://localhost:3001` | Canonical app URL (`appConfig.url`), and the last resort for candidate-facing links. The address a test link carries is resolved by `src/lib/public-url.ts` in this order: **Settings → General → Public site address** (`organisation.public_url`), then `APP_URL` when it names a real host, then the host the request arrived on, then — in development only — this machine's LAN address. Set `APP_URL` (or the setting) on any deployment; a loopback value there means the cron drain has nothing better to fall back to. |
-| `SUPABASE_PROJECT_REF` / `SUPABASE_REST_URL` | derived from URL | Overrides. |
+| `SUPABASE_PROJECT_REF` | derived from URL | Override. (`SUPABASE_REST_URL` was retired in Task 17 — the deleted `src/lib/supabase/rest.ts` was its only reader, so naming it here is a no-op.) |
 | `SUPABASE_DB_PASSWORD` | — | Used by the direct-`pg` scripts only. |
 
 ### Optional — AI providers (Settings → API keys wins over these)

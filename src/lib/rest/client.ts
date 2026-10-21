@@ -28,9 +28,12 @@ interface RestClientConfig {
 export function createRestClient(config: RestClientConfig) {
   const doFetch = config.fetchImpl ?? fetch;
   // A trailing slash here produces `http://…/rest/v1//applications`, which
-  // PostgREST answers with a 404 that reads like a missing table. Config's own
-  // `restUrl` default has always ended in `/rest/v1/`, so the transport strips
-  // it rather than trusting every caller.
+  // PostgREST answers with a 404 that reads like a missing table. Every client
+  // is built from `SUPABASE_REST_BASE` — typed by hand in `.env.local` (host
+  // form, `http://localhost:54321/rest/v1`) and written in
+  // `docker/docker-compose.yml` (in-network form, `http://rest:3000` with no
+  // prefix) — and a trailing slash on either is trivially typeable, so the
+  // transport strips it rather than trusting every caller.
   const baseUrl = config.baseUrl.replace(/\/+$/, "");
   async function authHeaders(): Promise<Record<string, string>> {
     const bearer = typeof config.token === "function" ? await config.token() : config.token;

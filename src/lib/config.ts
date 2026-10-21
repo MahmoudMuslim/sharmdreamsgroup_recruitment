@@ -32,17 +32,18 @@ function assertServer(name: string, value: string): string {
 }
 
 /**
- * The fields below marked HOSTED-ONLY are the vendor's coordinate set: they are
- * how `NEXT_PUBLIC_SUPABASE_URL` / the service key / the database password still
- * reach the hosted project. They survive Task 17 because the scripts that keep
- * that project reachable — `scripts/apply-schema.mjs`, `scripts/dump-schema.mjs`,
- * `scripts/verify-schema.mjs`, `scripts/create-staff.mjs` — read them straight
- * from `process.env`, and Plan 2's `pg_dump` restore is the last thing that will
- * need them. Deleting the fields here would look tidy and break the dump path.
+ * The fields below marked HOSTED-ONLY are the NAMES of the vendor's environment
+ * surface — what `NEXT_PUBLIC_SUPABASE_URL` / the service key / the database
+ * password are called, kept in one place until Plan 2 deletes that surface.
+ * They have no runtime role for the hosted scripts: `scripts/apply-schema.mjs`,
+ * `scripts/dump-schema.mjs`, `scripts/verify-schema.mjs` and
+ * `scripts/create-staff.mjs` read `process.env` directly and never import this
+ * module, so deleting a field here would not change the dump path, and keeping
+ * one cannot rescue it. Measured readers of this object (all in `src`): `url` 2,
+ * `anonKey` 1, `serviceRoleKey` 1, `buckets` 4, `projectRef` 0, `dbPassword` 0.
+ * The last two survive only because this task's brief defers them to Plan 2.
  */
 export const supabaseConfig = {
-  /** Where the app's own PostgREST answers, including the `/rest/v1` prefix. */
-  restBase: optional(process.env.SUPABASE_REST_BASE),
   /** HOSTED-ONLY — deleted in Plan 2. Derived from the vendor URL, no app code reads it. */
   projectRef:
     optional(process.env.SUPABASE_PROJECT_REF) ||
@@ -51,17 +52,22 @@ export const supabaseConfig = {
    * vendor read this: `src/lib/files/store.ts` and the dead fallback branch in
    * `(candidate)/portal/actions.ts` (spec correction #6). */
   url: assertServer("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl),
-  /** HOSTED-ONLY — deleted in Plan 2. Same two byte-shipping importers as `url`. */
+  /** HOSTED-ONLY — deleted in Plan 2. ONE reader: the dead fallback branch in
+   * `(candidate)/portal/actions.ts`. It is not the `url` field's pair —
+   * `src/lib/files/store.ts` reads `serviceRoleKey`, not this. */
   anonKey: assertServer(
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
     optional(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   ),
-  /** HOSTED-ONLY — deleted in Plan 2. Read by `files/store.ts` for storage bytes
-   * and by the hosted-management scripts; no row read or write uses it since
-   * Task 11 moved `service.ts` onto a locally minted bearer. */
+  /** HOSTED-ONLY — deleted in Plan 2. ONE reader: `src/lib/files/store.ts`, the
+   * only app code that still ships bytes to the vendor. The hosted-management
+   * scripts read `SUPABASE_SERVICE_ROLE_KEY` from `process.env` themselves, and
+   * no row read or write uses this field since Task 11 moved `service.ts` onto a
+   * locally minted bearer. */
   serviceRoleKey: optional(process.env.SUPABASE_SERVICE_ROLE_KEY),
-  /** HOSTED-ONLY — deleted in Plan 2. The hosted connection string for the dump
-   * and schema scripts (`dump-schema.mjs`, `verify-schema.mjs`). */
+  /** HOSTED-ONLY — deleted in Plan 2. No reader anywhere: `dump-schema.mjs` and
+   * `verify-schema.mjs` parse `SUPABASE_DB_PASSWORD` out of `.env.local` on
+   * their own. The name is kept only as the env-surface record. */
   dbPassword: optional(process.env.SUPABASE_DB_PASSWORD),
   buckets: {
     candidateVideos: "candidate-videos",

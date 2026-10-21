@@ -24,7 +24,6 @@
     "@glinui/ui": "^0.1.1",
     "@handsontable/react": "^16.2.0",
     "@qoder-ai/qoder-agent-sdk": "^1.0.52",
-    "@supabase/server": "^1.9.1",
     "@supabase/supabase-js": "^2.117.3",
     "@thelioo/opencode-balancer": "^0.2.18",
     "@vercel/speed-insights": "^2.0.0",
