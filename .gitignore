@@ -46,6 +46,10 @@ PROMPT*.md
 # Root-level PDFs are somebody's document (a real CV was committed here), not
 # source. Assets the app serves belong in public/.
 /*.pdf
+# …but public/ is copied into the app image and served by nginx, so a personal
+# document must not land there either. Stored candidate files live in the
+# `uploads` volume, which no build context reads.
+/public/*.pdf
 
 # history-rewrite and installer leftovers that were both committed once
 /bfg*.jar
