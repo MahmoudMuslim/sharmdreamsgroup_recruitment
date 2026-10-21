@@ -1,4 +1,11 @@
 /*
+ * HOSTED-ONLY — retired with spec §15. This script talks to the Supabase project
+ * (`SUPABASE_PROJECT_REF`, the aws-0-eu-west-1 pooler), which the app no longer
+ * reads or writes. It stays in the tree only as the door that produced
+ * `supabase/schema.sql`; once the off-machine copy of the dump exists and the
+ * hosted project is closed, delete it. Schema changes after that point go to the
+ * local stack: `docker compose exec -T db psql -U postgres -d sharm_dreams`.
+ *
  * Applies supabase/schema.sql to the configured project, as one script.
  *
  * It used to do three more things, and all three were reasons not to run it:

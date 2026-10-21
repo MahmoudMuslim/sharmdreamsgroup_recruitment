@@ -1,12 +1,16 @@
 /*
+ * HOSTED-ONLY — retired with spec §15, delete it with `apply-schema.mjs` once the
+ * hosted project is closed. It compares the project's catalog against
+ * `supabase/schema.sql`, and is aimed at another database with `ZZ_DB_URL`, which
+ * is how the local stack gets checked against the file instead.
+ *
  * Checks that supabase/schema.sql describes the live database completely.
  * Compares catalog sets, so an absent object is a failure rather than a guess —
  * run it after every migration and before every deploy.
  *
  *   node scripts/verify-schema.mjs supabase/schema.sql
  *
- * Read-only. Point it at another database with ZZ_DB_URL to prove that a fresh
- * build matches production.
+ * Read-only.
  */
 import { readFileSync } from "fs";
 import { Client } from "pg";

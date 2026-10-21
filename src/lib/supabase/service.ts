@@ -18,9 +18,9 @@ import { authAdmin } from "@/lib/auth/admin-users";
  * ever fed the GoTrue admin handle these thirteen call sites used.
  */
 export function getSupabaseServiceClient() {
-  const base = process.env.SUPABASE_REST_BASE;
+  const base = process.env.REST_BASE_URL;
   if (!base) {
-    throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
+    throw new Error("[supabase] REST_BASE_URL is not set — run the local stack (Tasks 1-2).");
   }
   return {
     // Lazy bearer, so the factory stays synchronous AND no bearer can outlive

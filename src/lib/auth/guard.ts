@@ -36,8 +36,8 @@ const TIMEOUT_MEMO_MS = 60_000;
 let timeoutMemo: { minutes: number; readAt: number } | null = null;
 
 function restBaseUrl(): string {
-  const base = process.env.SUPABASE_REST_BASE;
-  if (!base) throw new Error("[guard] SUPABASE_REST_BASE is not set.");
+  const base = process.env.REST_BASE_URL;
+  if (!base) throw new Error("[guard] REST_BASE_URL is not set.");
   return base;
 }
 

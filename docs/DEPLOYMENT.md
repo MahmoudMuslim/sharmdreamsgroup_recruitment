@@ -1,6 +1,6 @@
 # Deployment
 
-The app is a standard **Next.js 16** server (App Router, Turbopack) with **no separate backend** — route handlers and Server Actions run in the Next.js process and talk to Supabase directly. Deploy it anywhere a Node server (or Vercel) runs, and point it at a Supabase project with the schema applied.
+The app is a standard **Next.js 16** server (App Router, Turbopack) with **no separate backend** — route handlers and Server Actions run in the Next.js process. It has three doors into its own data: rows over HTTP to our PostgREST, the identity reads and writers (password hashes, staff CRUD, `public.files` metadata) over `AUTH_DB_URL` with the `pg` pool, and file bytes on a local directory. The first door is RLS-enforced; the second reaches the `auth` schema, which is deliberately *not* in `PGRST_DB_SCHEMAS`, so no HTTP route can read it. Deploy it as the Docker stack described at the end of this file: one Compose project holding Postgres, PostgREST, the app, nginx and the cron poller. Nothing outside that project is required, and nothing in the app calls a hosted service for data.
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATION.md) · [AI_INTEGRATION.md](AI_INTEGRATION.md) · [TESTING.md](TESTING.md)
 
@@ -8,21 +8,26 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 
 ## Prerequisites
 
-- **Node.js 20+** (Next 16 / React 19).
-- A **Supabase project** (PostgreSQL 17) with `supabase/schema.sql` applied and `supabase/seed.sql` loaded.
+- **Docker with the Compose v2 plugin** — `docker/docker-compose.yml` is the stack, and the app container is only ever proved inside it.
+- **Node.js 24** for a host-side `npm run dev` against that stack (the image is `node:24.22.0-alpine3.24`).
 - At least one **AI provider key** (or the app runs with AI features degraded and a clear "No AI provider is configured" error).
+
+There is no external database to provision. Postgres, PostgREST and the gateway
+come up with `npm run docker:up`, and `npm run db:apply-local` loads
+`supabase/schema.sql` into the container's own cluster — see *Target: self-hosted
+Docker stack* at the end of this file.
 
 ---
 
 ## Environment variables — what the code actually reads
 
-Copy `.env.example` → `.env.local`, then set these. The lists below are the variables the source truly reads (`src/lib/config.ts`, `src/lib/config.server.ts`, `src/lib/crypto/secrets.ts`).
+Copy `.env.example` → `.env.local`, then set these. The lists below are the variables the source truly reads (`src/lib/config.ts`, `src/lib/config.server.ts`, `src/lib/crypto/secrets.ts`). Note that `.gitignore`'s `.env*` rule means the root template is not tracked in a fresh clone; `docker/.env.example` is, and carries the Compose stack's own values.
 
 Re-derive the whole list with
 `grep -rhoE "process\.env\.[A-Z_0-9]+" src | sed 's/process\.env\.//' | sort -u`
 and diff it against the tables here. Everything that table prints but these
 tables do not name is deliberately absent, because it is not operator config:
-`NODE_ENV`, `VERCEL`, `NEXT_PHASE` and `PORT` are read as facts about the host,
+`NODE_ENV`, `NEXT_PHASE` and `PORT` are read as facts about the host,
 and `HOME`, `USERPROFILE`, `QODER_CLI_HOME`, `QODER_CONFIG_DIR` are set and read
 by `src/modules/screening/infrastructure/qoderCompletion.ts` for its own agent-SDK
 worker directory.
@@ -31,22 +36,26 @@ worker directory.
 
 | Variable | Read by | Notes |
 |----------|---------|-------|
-| `NEXT_PUBLIC_SUPABASE_URL` | config.ts | Supabase project URL. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | config.ts | Public anon key (inlined into the client bundle). |
-| `SUPABASE_SERVICE_ROLE_KEY` | config.ts (server) | Privileged writes; never sent to the browser. |
+| `REST_BASE_URL` | `src/lib/supabase/{anon,server,service}.ts`, `src/lib/auth/guard.ts` | Where the app's PostgREST answers. Four modules read it straight from the environment and throw when it is unset, so **every row read and write fails without it**. The host's dev server uses `http://localhost:54321/rest/v1` (through the Caddy gateway) while a container in the compose network uses `http://rest:3000` with no prefix, because `/rest/v1` belongs to the proxy. It was called `SUPABASE_REST_BASE` until spec §15 Task 9 renamed it. |
 | `SETTINGS_ENCRYPTION_KEY` | crypto/secrets.ts | ≥ 32 chars. Generate: `node scripts/generate-encryption-key.mjs`. Without it, storing provider credentials throws `EncryptionUnavailableError`. |
 | `CRON_SECRET` | config.server.ts | Required by `/api/cron/*`; those routes **fail closed (503)** when it is unset. **Not in `.env.example` — add it.** |
 | `AUTH_JWT_SECRET` | `src/lib/auth/token.ts:59` (`secret()`) | HS256 secret for the session bearer the app mints and verifies itself. Throws `TokenConfigError` when absent or shorter than 32 chars, and that throw is on the sign-in path — **without it every login 500s**. Must equal `PGRST_JWT_SECRET`, or PostgREST refuses every token the app issues. |
-| `AUTH_DB_URL` | `src/lib/auth/db.ts:16` (`getAuthPool()`) | Postgres connection string for the app's own auth pool. Throws when unset, and that pool is what reads the password hash and writes staff rows — **without it password verification and all staff CRUD fail**. Host form `postgresql://postgres:…@localhost:54320/sharm_dreams`; inside the compose network the stack overwrites it with the `db:5432` form. |
+| `AUTH_DB_URL` | `src/lib/auth/db.ts:16` (`getAuthPool()`) | Postgres connection string for the app's own auth pool. Throws when unset, and that pool is what reads the password hash, writes staff rows and keeps the `public.files` size/mime metadata — **without it password verification, all staff CRUD and every stored-byte write fail**. Host form `postgresql://postgres:…@localhost:54320/sharm_dreams`; inside the compose network the stack overwrites it with the `db:5432` form. |
+| `UPLOADS_ROOT` | `src/lib/files/paths.ts:66` | The one directory every stored byte resolves inside; a path that lands outside it is refused. `/data/uploads` in the app container (the `uploads` named volume), `.data/uploads` for a host-side `next dev`. **Without it, upload and download throw** — see spec §7. |
+
+> The vendor's five names — `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+> `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF` — are read
+> by no module under `src` any more, and `next build` inlines no `NEXT_PUBLIC_*`
+> Supabase value into the client bundle. `node scripts/audit-secrets.mjs` asserts
+> both of those against the built artifact. They still appear in the four
+> hosted-only scripts under `scripts/`, which are the door the last dump came
+> through and are deleted once the hosted project is closed.
 
 ### Optional — app
 
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `APP_URL` | `http://localhost:3000` | Canonical app URL (`appConfig.url`), and the last resort for candidate-facing links. The address a test link carries is resolved by `src/lib/public-url.ts` in this order: **Settings → General → Public site address** (`organisation.public_url`), then `APP_URL` when it names a real host, then the host the request arrived on, then — in development only — this machine's LAN address. Set `APP_URL` (or the setting) on any deployment; a loopback value there means the cron drain has nothing better to fall back to. |
-| `SUPABASE_REST_BASE` | — | Where the app's PostgREST answers. Four modules read it straight from the environment (`src/lib/supabase/{anon,server,service}.ts` and `src/lib/auth/guard.ts`) and throw when it is unset, so it is required, not optional: the host's dev server uses `http://localhost:54321/rest/v1` (through the Caddy gateway) while a container in the compose network uses `http://rest:3000` with no prefix, because `/rest/v1` belongs to the proxy. |
-| `SUPABASE_PROJECT_REF` | derived from URL | Override. (`SUPABASE_REST_URL` was retired in Task 17 — the deleted `src/lib/supabase/rest.ts` was its only reader, so naming it here is a no-op.) |
-| `SUPABASE_DB_PASSWORD` | — | Used by the direct-`pg` scripts only. |
 | `AUTH_TOKEN_TTL_SECONDS` | `900` | `src/lib/auth/token.ts:93`. The bearer's lifetime; `cookies.ts` signs the session cookie with its own 86 400 s ceiling, and the proxy re-mints on every staff request, so this value only bounds a token that never gets refreshed. Anything that is not a whole number of seconds from 1 to 86 400 throws instead of minting a token with a null `exp` (which PostgREST reads as *never expires*). |
 | `AUTH_TOKEN_ISSUER` | `sharm-dreams-local` | `src/lib/auth/token.ts:36`. The `iss` every token carries, and the one verify compares against. Empty falls back to the default. |
 | `AUTH_TOKEN_AUDIENCE` | `sdg_local` | `src/lib/auth/token.ts:37`. The `aud` the app mints, verifies, **and the same variable `PGRST_JWT_AUD` is read from** in `docker/docker-compose.yml`, so the two cannot be rotated apart. Changing it signs out every session at once. |
@@ -66,7 +75,7 @@ worker directory.
 | `SMTP_HOST` / `SMTP_PORT` (587) / `SMTP_USER` / `SMTP_PASSWORD` / `EMAIL_FROM` | Email channel defaults; overridable in the encrypted store. |
 | `WHATSAPP_CRON_BATCH_SIZE` (50) / `GRADING_CRON_BATCH_SIZE` (10) | Sweep sizes. |
 
-> **`.env.example` drift to fix before trusting it:** the template still lists `WHATSAPP_TOKEN` (the registry's display var — the *runtime* reads `WHATSAPP_CLOUD_API_TOKEN`), a `WHATSAPP_WEBHOOK_URL` pointing at `/api/webhooks/whatsapp` (**that route does not exist**), `WHATSAPP_APP_SECRET` (not read), `ENABLE_*` feature flags (not read), and `NEXT_PUBLIC_APP_URL` at `:3000` (the code reads `APP_URL`, default `:3001`). It also omits `CRON_SECRET`. Treat the tables above as authoritative.
+> **`.env.example` drift to fix before trusting it:** the template still lists `WHATSAPP_TOKEN` (the registry's display var — the *runtime* reads `WHATSAPP_CLOUD_API_TOKEN`), a `WHATSAPP_WEBHOOK_URL` pointing at `/api/webhooks/whatsapp` (**that route does not exist**), `WHATSAPP_APP_SECRET` (not read), `ENABLE_*` feature flags (not read), and `APP_URL` at `:3000` while `npm run dev` actually listens on `:3001` (so the template's value is not the one a local link test will exercise). It also omits `CRON_SECRET`. Its `NEXT_PUBLIC_SUPABASE_*` / `SUPABASE_*` block and `NEXT_PUBLIC_APP_URL` were deleted in spec §15 Task 9; `REST_BASE_URL` replaced the first of those. Treat the tables above as authoritative.
 
 ---
 
@@ -75,17 +84,28 @@ worker directory.
 ```bash
 npm install
 
-# 1. Apply the database (pick one path)
-node scripts/apply-schema.mjs        # consolidated schema.sql (idempotent)
-node scripts/verify-schema.mjs       # confirm tables/policies landed
+# 1. Bring up the stack: Postgres on 127.0.0.1:54320, PostgREST behind the Caddy
+#    gateway on 127.0.0.1:54321.
+cp docker/.env.example docker/.env    # then fill in the secrets
+npm run docker:up
 
-# 2. Generate the encryption key, then seed the staff fixtures
+# 2. Apply the database and prove the identity/RLS shim answers like the app expects
+npm run db:apply-local
+npm run stack:prove
+
+# 3. Generate the encryption key, then seed the staff fixtures
 node scripts/generate-encryption-key.mjs
 npm run db:seed-local
 
-# 3. Local dev (Turbopack)
+# 4. Local dev (Turbopack) — needs REST_BASE_URL, AUTH_DB_URL, AUTH_JWT_SECRET,
+#    UPLOADS_ROOT and SETTINGS_ENCRYPTION_KEY in .env.local
 npm run dev                          # http://localhost:3001
 ```
+
+`node scripts/apply-schema.mjs` and `verify-schema.mjs` still exist, but they
+address the hosted project through the `SUPABASE_*` values in `.env.local`; the
+local path is `npm run db:apply-local`, which reads the same
+`supabase/schema.sql` against the `db` container.
 
 > **Staff accounts come from the stack, not from a script.** The hosted
 > `scripts/create-staff.mjs` is retired: it wrote into the vendor's GoTrue
@@ -117,28 +137,26 @@ Run them individually with `npm run check:routes` / `npm run check:themes`. Star
 
 ---
 
-## Target: Vercel
+## Target: a platform that is not the Compose stack
 
-1. Import the repo; set the **Environment Variables** above (at minimum the five required ones).
-2. Framework preset **Next.js**; build/start scripts come from `package.json`.
-3. Add `@qoder-ai/qoder-agent-sdk` is already marked `serverExternalPackages` in `next.config.ts` — no extra config needed for its on-disk worker.
-4. **Crons:** add a `vercel.json` `crons` entry (or use the Vercel UI) pointing at `/api/cron/whatsapp` and `/api/cron/grading`, sending the `x-cron-secret: $CRON_SECRET` header.
+There is no supported non-Docker production path, and there is no Vercel target:
+the app signs its own session tokens, reads its own `auth` schema over `pg`, and
+keeps candidate bytes on a filesystem it owns (`UPLOADS_ROOT`). A serverless host
+gives you none of those three. If you do run `next build` + `next start` on a bare
+Node host anyway, the requirements are the five required variables above, a
+PostgREST pointed at the same database, and a scheduler that sends
+`x-cron-secret` to `/api/cron/whatsapp` and `/api/cron/grading`.
 
 ## Target: Docker / any Node host
 
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
-EXPOSE 3000
-CMD ["npm","start"]
-```
-
-Provide the env vars at runtime; nothing is baked into the image. Put a scheduler (pg_cron, systemd timer, or an external cron) behind the two `/api/cron/*` endpoints with the shared secret header.
+The image is `docker/app/Dockerfile`, built by Compose, not by the sketch above.
+`prebuild` runs inside the builder stage, so the two guards gate the image too.
+Nothing vendor-facing is passed as a build argument: the client bundle inlines no
+key, which is what `node scripts/audit-secrets.mjs` checks against the built
+artifact. Provide the env at runtime through `docker/.env`; the app container
+takes the rest from `env_file: ../.env.local`, with its `environment:` block
+overriding the in-network forms of `REST_BASE_URL` and `AUTH_DB_URL` and the
+published `APP_URL`.
 
 ---
 
@@ -189,17 +207,18 @@ Both cron endpoints accept `GET` or `POST` and require `x-cron-secret`:
 ## Post-deploy checklist
 
 - [ ] `SETTINGS_ENCRYPTION_KEY` set and provider credentials save (Settings → API keys).
-- [ ] `CRON_SECRET` set; both cron routes return 200 with the header, 503 without.
+- [ ] `CRON_SECRET` set; both cron routes return 200 with the header, 503 without, and the `cron` container is actually calling them (`docker compose logs cron`).
 - [ ] A staff login reaches `/dashboard`; a candidate token reaches only its own attempt.
 - [ ] Public careers board, apply form, and the careers assistant work unauthenticated.
-- [ ] Storage buckets `resumes`, `candidate-audio`, `candidate-videos` exist with RLS.
+- [ ] `npm run stack:prove` — the identity/RLS parity gate over the running stack.
+- [ ] `UPLOADS_ROOT` is the mounted `uploads` volume and bytes round-trip through the streaming route: `npm run files:serve` against the container.
 - [ ] `npm run build` passes both prebuild guards.
 
 ---
 
 ## Security notes
 
-- Never expose `SUPABASE_SERVICE_ROLE_KEY` to the client; it is read only in server modules.
-- `provider_credentials` has RLS with **zero policies** — only the service role can read it; secrets are AES-256-GCM at rest.
-- Run `node scripts/audit-secrets.mjs` to scan for accidentally committed secrets before publishing.
-- Prefer the session (JWT) client everywhere so RLS stays the enforcement layer.
+- There is no long-lived privileged key to leak. The `service_role` bearer is minted per request by `src/lib/auth/token.ts` from `AUTH_JWT_SECRET` and lives for 60 s; nothing in the client bundle carries a credential at all, because `next build` no longer inlines a vendor key.
+- `provider_credentials` has RLS with **zero policies** — only the service-role bearer can read it; secrets are AES-256-GCM at rest.
+- Run `node scripts/audit-secrets.mjs` (and again with the image's `.next/static` copied out, as its header describes) before publishing: it scans the shipped bundle for every secret value in `.env.local`, then asserts the deploy surface reads no vendor credential.
+- Prefer the session-token client everywhere so RLS stays the enforcement layer. The direct `pg` pool (`AUTH_DB_URL`) is the deliberate exception — it is the only way in to the `auth` schema and to `public.files` metadata, and it is what `authAdmin` keeps narrow on purpose.

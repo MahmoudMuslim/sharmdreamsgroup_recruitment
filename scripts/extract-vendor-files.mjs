@@ -1,5 +1,12 @@
 /* scripts/extract-vendor-files.mjs
  *
+ * HOSTED-ONLY — retired with spec §15. The extraction it performed is finished
+ * and its output is in `docker/data/vendor-files`; the vendor storage API it
+ * reads needs `SUPABASE_SERVICE_ROLE_KEY`, which the app stopped using the day
+ * `src/lib/files/store.ts` became a disk store. Delete it with the other three
+ * hosted scripts once the off-machine copy of that tree exists and the project
+ * is closed.
+ *
  * Brings every stored byte home, read-only, before anything vendor-facing is
  * deleted (spec §15's ordering rule: after the package goes, a byte exists only
  * where we put it).

@@ -155,7 +155,7 @@ function GroupStory({ group }: { group: PublicCompany }) {
  * during the build's cache-warming phase, whatever its expiry — only what gets
  * baked depends on `cacheLife` (`cacheLife.md:266`). The image builds with no
  * database and no secrets (`.dockerignore` excludes `.env*`), and the anon client
- * refuses to work without `SUPABASE_REST_BASE`, so a warmed board would fail the
+ * refuses to work without `REST_BASE_URL`, so a warmed board would fail the
  * build. Stopping prerendering here is Next's own mechanism for exactly this
  * (`connection.md`), the same one every `(admin)` page already calls. Between
  * revalidations the running container still serves the cached list, so request

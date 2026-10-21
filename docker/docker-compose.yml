@@ -8,7 +8,7 @@
 # TLS at nginx and secrets that never enter the repo.
 #
 # Caddy stays up beside nginx on 127.0.0.1:54321 for one reason: the host's
-# `.env.local` points `SUPABASE_REST_BASE` at that address, so a `next dev`
+# `.env.local` points `REST_BASE_URL` at that address, so a `next dev`
 # running outside this file still has a REST gateway. nginx serves the same
 # `/rest/v1/` path, and Caddy goes away when that .env.local line does.
 #
@@ -147,27 +147,19 @@ services:
       # which nobody hit because that service was profile-gated and never ran.
       context: ..
       dockerfile: docker/app/Dockerfile
-      args:
-        # Inlined into the client bundle at BUILD time, so they cannot arrive as
-        # runtime env. The one reader left in `src` is the dead anon fallback at
-        # `(candidate)/portal/actions.ts:104` — `supabaseConfig.url` is built
-        # from the first of these, and an empty value does not fail the build,
-        # it fails that branch. spec §15 deletes the branch (Task 7) and then
-        # both args (Tasks 8-9).
-        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
     restart: unless-stopped
     # Every runtime secret the app reads, without any of them passing through
     # this file or an image layer. `environment:` below wins over anything the
-    # same name sets here, which is how the four values that must point INTO the
-    # compose network override the ones written for a host-side `next dev`.
+    # same name sets here — which is how the container gets the in-network forms
+    # of `REST_BASE_URL` and `AUTH_DB_URL` while `.env.local` keeps the loopback
+    # forms a host-side `next dev` needs.
     env_file: ../.env.local
     environment:
       NODE_ENV: production
       # Inside the compose network a container talks to PostgREST directly, so
       # there is NO /rest/v1 prefix — that prefix belongs to nginx and Caddy, and
       # only the host's `http://localhost:54321/rest/v1` form carries it.
-      SUPABASE_REST_BASE: http://rest:3000
+      REST_BASE_URL: http://rest:3000
       # The host form points at 127.0.0.1:54320; inside the network the service
       # name is `db` and the port is the container's own 5432.
       AUTH_DB_URL: postgres://postgres:${LOCAL_DB_PASSWORD}@db:5432/sharm_dreams

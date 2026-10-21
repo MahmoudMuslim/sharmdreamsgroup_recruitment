@@ -29,9 +29,9 @@ export async function createSupabaseServerClient() {
   // is bounced by the proxy before a page reaches here.
   const claims = bearer ? await verifySessionToken(bearer) : null;
   const token = claims?.role === "authenticated" ? bearer : null;
-  const base = process.env.SUPABASE_REST_BASE;
+  const base = process.env.REST_BASE_URL;
   if (!base) {
-    throw new Error("SUPABASE_REST_BASE is not set. Locally: http://localhost:54321/rest/v1");
+    throw new Error("REST_BASE_URL is not set. Locally: http://localhost:54321/rest/v1");
   }
   return {
     ...createRestClient({ baseUrl: base, token }),

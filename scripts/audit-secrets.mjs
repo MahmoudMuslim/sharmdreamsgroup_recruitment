@@ -1,3 +1,20 @@
+/*
+ * Two audits, and they retire differently.
+ *
+ * 1. A secret VALUE must never reach the browser bundle or the source tree. The
+ *    values are read from `.env.local`, so this half retires itself — once the
+ *    vendor lines are deleted from there, they drop out of `SECRETS` and stop
+ *    being scanned for.
+ * 2. A vendor NAME must never be *read* by the surface that builds and runs this
+ *    app (spec §15's fourth claim). The search is for `process.env.<NAME>`, not
+ *    the bare word: a comment recording that a key is gone is the proof it is
+ *    gone, and must not fail the gate. Docs, plans and the four retired hosted
+ *    scripts are outside this surface on purpose — see the note it prints.
+ *
+ *   node scripts/audit-secrets.mjs
+ *
+ * Prints no credential. Nothing here echoes a value back.
+ */
 import { readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 
@@ -24,20 +41,31 @@ const SECRETS = [
   ["service-role JWT payload", servicePayload],
 ].filter(([, v]) => v && v.length > 8);
 
-function walk(dir, out = []) {
+function walk(dir, skip = [], out = []) {
   for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name === ".git") continue;
+    if (name === "node_modules" || name === ".git" || skip.includes(name)) continue;
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) walk(full, out);
+    if (statSync(full).isDirectory()) walk(full, skip, out);
     else out.push(full);
   }
   return out;
 }
 
+/* Which bundle to read. The default is this repo's own `.next/static`, which is
+ * whatever `next dev` last wrote — useful for a quick check, but not the thing
+ * that ships. The shipped artifact is the `.next` inside the app image, so the
+ * §15 proof copies it out and passes its path:
+ *   docker create --name probe <image>
+ *   docker cp probe:/app/.next/static .probe-static
+ *   docker rm probe
+ *   node scripts/audit-secrets.mjs .probe-static
+ */
+const BUNDLE = process.argv[2] ?? join(".next", "static");
+
 let clean = true;
 
-console.log("=== .next/static (shipped to every browser) ===");
-const staticFiles = walk(".next/static");
+console.log("=== " + BUNDLE + " (shipped to every browser) ===");
+const staticFiles = walk(BUNDLE);
 for (const [label, value] of SECRETS) {
   const hits = staticFiles.filter((f) => readFileSync(f, "utf8").includes(value));
   if (hits.length) {
@@ -62,9 +90,96 @@ for (const [label, value] of SECRETS) {
 }
 console.log("  " + srcFiles.length + " files scanned");
 
-console.log("\n=== anon key (expected in the bundle — it is NEXT_PUBLIC) ===");
-const anonKey = get("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-const anonInBundle = staticFiles.filter((f) => readFileSync(f, "utf8").includes(anonKey));
-console.log("  present in " + anonInBundle.length + " bundle file(s) — by design");
+/* The vendor's own addresses. Nothing in the shipped bundle may name the hosted
+ * project any more: the anon key used to be in here deliberately because it was
+ * `NEXT_PUBLIC_*` and got inlined at build time, and that build arg is gone. */
+console.log("\n=== vendor addresses in the shipped bundle ===");
+const hostedUrl = get("NEXT_PUBLIC_SUPABASE_URL") ?? "";
+for (const [label, value] of [
+  ["NEXT_PUBLIC_SUPABASE_ANON_KEY value", get("NEXT_PUBLIC_SUPABASE_ANON_KEY")],
+  ["hosted project ref", hostedUrl.match(/^https:\/\/([a-z0-9]+)\./i)?.[1] ?? "lbxdeceropsxwohnzinl"],
+  ["hosted rest host", "supabase.co"],
+]) {
+  if (!value) continue;
+  const hits = staticFiles.filter((f) => readFileSync(f, "utf8").includes(value));
+  if (hits.length) {
+    clean = false;
+    console.log("  LEAK  " + label + " in " + hits.length + " file(s): " + hits.slice(0, 3).join(", "));
+  } else {
+    console.log("  clean  " + label + " — in 0 of " + staticFiles.length + " bundle files");
+  }
+}
 
-console.log("\n" + (clean ? "RESULT: no secrets in the browser bundle or source tree" : "RESULT: LEAKS FOUND"));
+/* The deploy surface: what `docker compose build` and `next build` read. A name
+ * still being read here means the app depends on a credential the owner has to
+ * keep, which is exactly what §15 says must stop being true. A bare mention in a
+ * comment is not a read, so each name has to be followed by `=` or `:` — that
+ * covers `NAME=value`, `- NAME: value`, `ARG NAME=` and `ENV NAME=` at once.
+ * `docker/data` is the extracted candidate bytes and `docker/.env` is the
+ * owner's untracked local file; neither is a surface the repo controls. */
+console.log("\n=== vendor env names read by the deploy surface ===");
+const VENDOR_NAMES = [
+  "NEXT_PUBLIC_SUPABASE_URL",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_DB_PASSWORD",
+  "SUPABASE_PROJECT_REF",
+  "SUPABASE_REST_BASE",
+  "VERCEL",
+];
+const deployFiles = [
+  ...walk("src"),
+  ...walk("docker", ["data", "node_modules", ".git", ".env"]),
+  ".env.example",
+  "next.config.ts",
+  "package.json",
+].filter((f) => {
+  try { return statSync(f).isFile(); } catch { return false; }
+});
+const readers = [];
+for (const file of deployFiles) {
+  const text = readFileSync(file, "utf8");
+  for (const name of VENDOR_NAMES) {
+    if (new RegExp(`${name}\\s*[=:]`).test(text)) readers.push(`${file} sets ${name}`);
+  }
+}
+if (readers.length) {
+  clean = false;
+  for (const r of readers) console.log("  VENDOR  " + r);
+} else {
+  console.log("  clean  " + deployFiles.length + " deploy-surface files set or read no vendor credential");
+}
+const sdkImporters = walk("src").filter((f) => /from\s+["']@supabase\//.test(readFileSync(f, "utf8")));
+if (sdkImporters.length) {
+  clean = false;
+  console.log("  VENDOR  `src` imports the vendor SDK in: " + sdkImporters.join(", "));
+} else {
+  console.log("  clean  `src` imports the vendor SDK in 0 files");
+}
+
+/* Honest remainder: the names live on in exactly three kinds of place, none of
+ * them a leak, all of them the owner's to delete after the hosted project is
+ * closed. Values are never printed; the variable names are, because the names
+ * are what is left to clean. */
+console.log("\n=== still present outside the deploy surface (owner action, not a leak) ===");
+const hostedScripts = walk("scripts").filter((f) => {
+  const text = readFileSync(f, "utf8");
+  return VENDOR_NAMES.some((n) => text.includes("process.env." + n) || text.includes("env." + n));
+});
+console.log("  hosted scripts that still read them: " + (hostedScripts.join(", ") || "none"));
+for (const label of [".env.local", join("docker", ".env")]) {
+  let names;
+  try {
+    names = readFileSync(label, "utf8")
+      .split(/\r?\n/)
+      .flatMap((l) => {
+        const m = l.match(/^([A-Z0-9_]+)=/);
+        return m && VENDOR_NAMES.includes(m[1]) ? [m[1]] : [];
+      });
+  } catch {
+    names = ["file absent"];
+  }
+  console.log(`  ${label} still holds: ${names.join(", ") || "nothing"}`);
+}
+
+console.log("\n" + (clean ? "RESULT: no secrets in the browser bundle, and no vendor credential in the deploy surface" : "RESULT: LEAKS FOUND"));

@@ -48,9 +48,9 @@ let anonClient: RestClient | null = null;
  * the group is not hiring, and a null job is a 404 on a live opening.
  */
 export function getSupabaseAnonClient(): RestClient {
-  const base = process.env.SUPABASE_REST_BASE;
+  const base = process.env.REST_BASE_URL;
   if (!base) {
-    throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
+    throw new Error("[supabase] REST_BASE_URL is not set — run the local stack (Tasks 1-2).");
   }
   anonClient ??= createRestClient({ baseUrl: base, token: null });
   return anonClient;

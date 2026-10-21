@@ -1,4 +1,11 @@
 /*
+ * HOSTED-ONLY — retired with spec §15. This is the file that produced
+ * `supabase/schema.sql` from the live project, and it is the last statement of
+ * what that database held. The local stack is now the thing being described, so
+ * after the off-machine copy of the dump exists and the project is closed,
+ * replace this script with a plain `pg_dump` against the `db` container, or
+ * delete it and keep the schema file as the source.
+ *
  * Dumps the live Supabase project's schema to stdout, shaped like a re-runnable
  * bootstrap file: every statement comes from Postgres' own pg_get_* definers, so
  * what lands in the file is what the database actually holds.

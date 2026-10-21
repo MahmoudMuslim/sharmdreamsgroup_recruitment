@@ -23,16 +23,12 @@ FROM node:24.22.0-alpine3.24 AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# Inlined into the client bundle at build time, so they must be present HERE and
-# not at runtime. Both are already public — the URL ships to every browser and
-# the anon key is a tokenless-role key — but neither may be read from the host's
-# `.env.local`, which is why `.dockerignore` excludes it and docker/.env carries
-# the two values instead.
-ARG NEXT_PUBLIC_SUPABASE_URL=""
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=""
-ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
-    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
-    NEXT_TELEMETRY_DISABLED=1 \
+# No build-time inlining of anything vendor-facing: the client bundle's only
+# origin is this stack's own, and it learns it at runtime from `APP_URL` (see
+# src/lib/config.ts). spec §15's second fitness claim is that a clean image holds
+# no trace of the hosted project, and the way to keep that true is to leave the
+# arguments that would have carried it out of the file.
+ENV NEXT_TELEMETRY_DISABLED=1 \
     NODE_ENV=production
 # `prebuild` runs scripts/check-staff-routes.mjs and scripts/check-themes.mjs,
 # which is why `scripts` survives .dockerignore. `.next/cache` is the
