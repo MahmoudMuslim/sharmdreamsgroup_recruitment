@@ -34,7 +34,7 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 
 ## ✨ Core Features
 
-- **Recruiter portal** (16 protected pages) — dashboard, analytics, reports, candidates, jobs, assessments, interviews, onboarding, sourcing, WhatsApp outbox, files, time tracking, activity audit, AI assistant, settings. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#-the-admin-portal--16-routed-pages).
+- **Recruiter portal** (16 protected pages) — dashboard, analytics, reports, candidates, jobs, question bank, assessments, interviews, onboarding, sourcing, WhatsApp outbox, files, time tracking, activity audit, AI assistant, settings, plus the one-profile candidate page at `/candidates/[id]`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-admin-portal--16-routed-pages).
 - **Public careers site** — job board, application intake with CV parsing, gate questions, and a grounded **careers chatbot** that captures leads.
 - **Candidate portal** — application tracker and a tokenized, timed **assessment runner** (Excel model, video pitch, case study, multiple choice) with an anti-cheating integrity monitor.
 - **AI screening & grading** — multi-provider gateway (OpenRouter, Google AI Studio, OpenCode, Qoder, Cloudflare Workers AI, NVIDIA NIM) with model + key failover and per-capability routing.
@@ -190,7 +190,7 @@ The first two read `SB_DB` (or `.env.local`'s `SUPABASE_DB_PASSWORD`); `verify-s
 - Secrets decrypted only at request time, never sent to the browser; `scripts/audit-secrets.mjs` runs in `prebuild` and fails the build if a vendor credential re-enters the deploy surface
 - Candidate bytes live on the stack's own `uploads` volume, resolved through `src/lib/files/paths.ts` (no path may escape `$UPLOADS_ROOT`) and served only by HMAC-signed, expiring links
 - Full audit trail (`activity_log`, `credential_audit_log`, `settings_audit_log`)
-- Details: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) · [docs/DATABASE.md](docs/DATABASE.md#rls-policies)
+- Details: [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md) · [docs/DATABASE.md](docs/DATABASE.md#row-level-security)
 
 ---
 
