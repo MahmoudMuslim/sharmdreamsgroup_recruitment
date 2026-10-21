@@ -251,14 +251,14 @@ for (const label of [".env.local", join("docker", ".env")]) {
  * to `npm install @supabase/middleware` and to pull `createServerClient` out of the
  * vendor's SSR package (that skill's line 184 is exactly the import this file's
  * regex below hunts for). They are not in `src` or `scripts`, and `.dockerignore`
- * never allow-lists them, so the shipped artifact is clean — but the repo tree
- * still carries instructions to re-add the dependency, and an agent pointed at this
- * workspace can be triggered by them. Deleting them is the owner's call (53 tracked
- * files is not a doc slice's business), so this prints where they are instead of
- * claiming they are gone. `git ls-files` is the cheap census of *tracked* copies,
- * which is the claim; the image builder has no repo to enumerate, and that is a
- * skip, not a zero. stderr is ignored so git's own "not a git repository" cannot
- * leak into a build log. */
+ * never allow-lists them, so the shipped artifact was clean — but the repo tree
+ * still carried instructions to re-add the dependency, and an agent pointed at this
+ * workspace could be triggered by them. All 53 copies (49 tool-dot-dirs plus
+ * `data/` and the root `skills/`) were removed in the self-host cleanup; this block
+ * stays as a regression guard so a re-vendored copy fails the census rather than
+ * silently returning. `git ls-files` is the cheap census of *tracked* copies; the
+ * image builder has no repo to enumerate, and that is a skip, not a zero. stderr is
+ * ignored so git's own "not a git repository" cannot leak into a build log. */
 let skillCopies;
 try {
   const tracked = execFileSync("git", ["ls-files"], {
