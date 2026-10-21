@@ -65,7 +65,23 @@ export function createRestClient(config: RestClientConfig) {
     // A head-count request has no body by contract; the count is the answer.
     if (shape.method === "HEAD") return { data: null, error: null, count };
 
-    const parsed = (await res.json()) as unknown;
+    /* Read the body as TEXT and parse it by hand, because a 2xx is not a
+     * promise of JSON: a bare `insert()` with no `return=representation` is a
+     * 201 with an EMPTY body, and PostgREST can also answer 200 with a non-JSON
+     * document (an HTML error page from the gateway in front of it). A bare
+     * `await res.json()` threw on both, and the throw escaped as an unhandled
+     * rejection out of the awaited chain — the one failure mode this transport
+     * is supposed to convert into `{ data: null, error }`. An empty or
+     * unparseable success body answers exactly like the 204 branch above: no
+     * rows, no error, because the write happened and nothing was promised back. */
+    const text = await res.text();
+    if (text === "") return { data: null, error: null, count };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text) as unknown;
+    } catch {
+      return { data: null, error: null, count };
+    }
 
     // `parsed` crosses to `R` here, at the one place a body becomes rows. `R`
     // is the row type the builder carries (`any[]` for a read, a single row for
@@ -77,13 +93,6 @@ export function createRestClient(config: RestClientConfig) {
     if (shape.single || shape.maybeSingle) {
       const list = Array.isArray(parsed) ? parsed : [parsed];
       if (list.length === 0 && shape.maybeSingle) return { data: null, error: null, count };
-      if (list.length !== 1) {
-        return { data: null, error: { message: `rest: expected one row, got ${list.length}`, code: "PGRST116" }, count };
-      }
-      return { data: list[0] as R, error: null, count };
-    }
-    if (shape.single) {
-      const list = Array.isArray(parsed) ? parsed : [parsed];
       if (list.length !== 1) {
         return { data: null, error: { message: `rest: expected one row, got ${list.length}`, code: "PGRST116" }, count };
       }
@@ -109,7 +118,21 @@ export function createRestClient(config: RestClientConfig) {
 
     const prefer: string[] = [];
     if (shape.count) prefer.push(`count=${shape.count}`);
-    if (shape.method === "POST" || shape.method === "PATCH") prefer.push("return=representation");
+    /* Representation follows the REQUEST, not the verb. `shape.returning` is set
+     * only by an explicit `.select(…)` / `.single()` / `.maybeSingle()` in the
+     * chain, which is what the two idioms mean in supabase-js:
+     *   `.insert(row).select("id").single()` → POST + return=representation, and
+     *     the action learns its new id;
+     *   `.delete().eq("id", id).select()`    → DELETE + return=representation,
+     *     and the removed rows come back — which is why DELETE is in this test
+     *     even though the verb alone would never ask for rows.
+     * A bare `.insert(row)` sends no representation and answers `data: null`,
+     * the same answer the vendor's client gives, so the ~91 call sites that only
+     * destructure `error` keep seeing exactly that. Gating on the verb instead
+     * would hand them rows they never asked for. */
+    if (shape.returning && (shape.method === "POST" || shape.method === "PATCH" || shape.method === "DELETE")) {
+      prefer.push("return=representation");
+    }
     if (shape.method === "POST" && shape.onConflict) {
       prefer.unshift(shape.ignoreDuplicates ? "resolution=ignore-duplicates" : "resolution=merge-duplicates");
     }
@@ -156,7 +179,14 @@ export function createRestClient(config: RestClientConfig) {
       }
       if (res.status === 204) return { data: null, error: null, count };
       const text = await res.text();
-      return { data: text ? (JSON.parse(text) as unknown) : null, error: null, count };
+      // Same rule as `send()`: a 2xx that is not JSON answers `data: null`
+      // rather than throwing out of the awaited call.
+      if (!text) return { data: null, error: null, count };
+      try {
+        return { data: JSON.parse(text) as unknown, error: null, count };
+      } catch {
+        return { data: null, error: null, count };
+      }
     },
   };
 }

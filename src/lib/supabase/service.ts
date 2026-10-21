@@ -22,7 +22,17 @@ export function getSupabaseServiceClient() {
   if (!base) {
     throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
   }
-  serviceAuth ??= createClient(supabaseConfig.url, supabaseConfig.serviceRoleKey!).auth;
+  /* The vendor handle outlives the row port until Task 14 writes `authAdmin()`,
+   * so the service key is still a hard requirement — and it must fail HERE, with
+   * its own name, not opaquely inside a GoTrue request eleven call sites later.
+   * `serviceRoleKey` is `string | undefined` (config's `optional()`), so without
+   * this the non-null assertion would hand `createClient` an undefined key and
+   * every admin call would come back as an auth error instead of a config error. */
+  const serviceRoleKey = supabaseConfig.serviceRoleKey;
+  if (!serviceRoleKey) {
+    throw new Error("[supabase] SUPABASE_SERVICE_ROLE_KEY is not configured");
+  }
+  serviceAuth ??= createClient(supabaseConfig.url, serviceRoleKey).auth;
   return {
     // Lazy bearer, so the factory stays synchronous AND no bearer can outlive
     // its own expiry: the token is minted per request, not per module.

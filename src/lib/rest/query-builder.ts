@@ -1,4 +1,4 @@
-import type { Result } from "./client";
+import type { Result } from "./client.ts";
 
 type Filter = [column: string, operator: string, value: unknown];
 type Modifier =
@@ -18,6 +18,15 @@ export interface Shape {
   ignoreDuplicates?: boolean;
   single: boolean;
   maybeSingle: boolean;
+  /**
+   * The chain asked for ROWS back — an explicit `.select(…)`, `.single()` or
+   * `.maybeSingle()` — as opposed to a bare write, whose result the caller only
+   * checks for `error`. This is what decides `Prefer: return=representation`,
+   * not the verb: supabase-js sends no representation for `insert(x)` and
+   * answers `data: null`, and a caller that never asked for rows must not
+   * start receiving them. See `select()` for why the verb cannot decide it.
+   */
+  returning: boolean;
 }
 
 /** Operators that take a pre-formed value the caller already bracketed. */
@@ -25,6 +34,13 @@ const RAW_VALUE_OPS = new Set(["in", "or", "and"]);
 
 /** Operators whose name is part of the filter key rather than a column test. */
 const LOGIC_OPS = new Set(["or", "and"]);
+
+/**
+ * The verbs `insert`/`update`/`delete`/`upsert` record. Membership is what
+ * `select()` tests before it is allowed to pick a read verb, so a chained read
+ * can never downgrade a mutation back into a GET.
+ */
+const WRITE_METHODS = new Set<string>(["POST", "PATCH", "DELETE"]);
 
 const FILTER_OPS = new Set([
   "eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "match", "in", "is",
@@ -106,14 +122,29 @@ export class QueryBuilder<R = Rows> {
   declare then: Awaitable<R>["then"];
 
   private shape: Shape = {
-    method: "GET", filters: [], modifiers: [], single: false, maybeSingle: false,
+    method: "GET", filters: [], modifiers: [], single: false, maybeSingle: false, returning: false,
   };
 
+  /**
+   * Read-side projection AND the write-side "give me the rows back" half of the
+   * same idiom. The two roles are why this method may never touch a verb that
+   * already says POST/PATCH/DELETE: every write in this repo is written as
+   * `.insert(row).select("id").single()` / `.update(…).eq(…).select()` /
+   * `.delete().eq(…).select()`, so a chained `.select()` that reset `method`
+   * to GET turned ~34 live mutations into plain reads of the table — no write,
+   * no error, and the caller read back a row it believed it had just written.
+   * The verb, once recorded by a write, wins; `select()` only chooses GET/HEAD
+   * when nothing has been recorded yet. (`.select()` before a write is not an
+   * idiom in this tree — measured: 0 of the 125 `.from(…)` write chains.)
+   */
   select(columns = "*", options?: { count?: Shape["count"]; head?: boolean }) {
     this.shape.select = columns;
-    this.shape.method = options?.head ? "HEAD" : "GET";
+    this.shape.returning = true;
     if (options?.count) this.shape.count = options.count;
     if (options?.head) this.shape.head = true;
+    if (!WRITE_METHODS.has(this.shape.method)) {
+      this.shape.method = options?.head ? "HEAD" : "GET";
+    }
     return this;
   }
 
@@ -193,9 +224,11 @@ export class QueryBuilder<R = Rows> {
   }
 
   /** Both terminals answer ONE row rather than a list, so they re-type the
-   * awaited `Result.data` to a single row the way the vendor's client does. */
-  single(): QueryBuilder<Row> { this.shape.single = true; return this; }
-  maybeSingle(): QueryBuilder<Row> { this.shape.maybeSingle = true; return this; }
+   * awaited `Result.data` to a single row the way the vendor's client does.
+   * They also count as the explicit ask for rows: a chain that ends in
+   * `single()` is a chain that intends to read what it just wrote. */
+  single(): QueryBuilder<Row> { this.shape.single = true; this.shape.returning = true; return this; }
+  maybeSingle(): QueryBuilder<Row> { this.shape.maybeSingle = true; this.shape.returning = true; return this; }
 
   /**
    * PostgREST grammar: `column=operator.value` in insertion order, `or=(…)` /
