@@ -18,11 +18,14 @@
 WHATSAPP_EVERY="${WHATSAPP_EVERY:-60}"
 GRADING_EVERY="${GRADING_EVERY:-300}"
 
-# The app. Locally that is `next dev` on the Windows host, which the container
-# reaches through host.docker.internal (extra_hosts in docker-compose.yml keeps
-# this same default valid on a Linux host). Set APP_URL in docker/.env to point
-# at the `app` service when the `full` profile is the one running.
-APP_URL="${APP_URL:-http://host.docker.internal:3000}"
+# Where the app answers. The Compose stack ALWAYS supplies this for the `cron`
+# service (docker/docker-compose.yml: `APP_URL: ${APP_URL:-http://app:3000}`), so
+# the value below is only reached when the image is run by hand, and it is the
+# same target Compose uses — the app container on the compose network.
+# Override APP_URL in docker/.env with http://host.docker.internal:3000 to point
+# the poller at a host-side `next dev` instead; `extra_hosts` in the same service
+# is what makes that name resolve on a Linux host.
+APP_URL="${APP_URL:-http://app:3000}"
 
 # busybox integer division truncates, and `$((x % 0))` is an error on every
 # single tick. Clamp both intervals to >= 1 and compute the ratio once: zero
@@ -48,6 +51,15 @@ GRADING_EVERY_TICKS=$((GRADING_EVERY / WHATSAPP_EVERY))
 [ "$GRADING_EVERY_TICKS" -lt 1 ] && GRADING_EVERY_TICKS=1
 
 hit() {
+  # The secret reaches wget through the config file created below, never as an
+  # argv `--header=`, because a process's command line is readable by anyone who
+  # can see the container: `docker top cron` on the host printed the whole value
+  # while this same file refused to echo it anywhere. GNU wget's `--config` also
+  # stops it reading /etc/wgetrc and ~/.wgetrc (neither holds anything this loop
+  # needs), and the `header =` line is its own documented way to add a request
+  # header. Busybox wget has no `--config`, which is why the Dockerfile installs
+  # GNU wget explicitly rather than relying on the base image's applet.
+  #
   # -q with -O - : wget exits non-zero on a 4xx/5xx, which is the point — a
   # refused or misconfigured sweep must print [FAIL], not nothing. -q also means
   # no body on a refusal (measured: GNU wget 1.24.5 prints nothing at all under
@@ -63,8 +75,11 @@ hit() {
   # no sweep, no heartbeat, no [FAIL]. Measured against a listener that never
   # answers: the defaults were still blocked at 100s, `--timeout=3 --tries=1`
   # came back in 3s. Busybox wget 1.36.1 parses and honours both long spellings
-  # too (measured), so the flags hold whichever wget the image ends up with.
-  body=$(wget -q -O - --timeout=15 --tries=1 --header="x-cron-secret: $CRON_SECRET" "$1" 2>&1)
+  # too (measured), so those two flags hold whichever wget the image ends up
+  # with. `--config` is the one flag that does not: busybox wget has no such
+  # option (measured — it rejects it), so this loop requires the GNU wget the
+  # Dockerfile installs.
+  body=$(wget -q -O - --timeout=15 --tries=1 --config="$HEADER_CONFIG" "$1" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "[ok] $1 $body"
@@ -78,6 +93,25 @@ if [ -z "$CRON_SECRET" ]; then
   echo "[cron] Set it in docker/.env to the same value the app has. Sleeping instead." >&2
   while :; do sleep 3600; done
 fi
+
+# The one place the secret is written: a private file GNU wget reads as its
+# config, so the value appears in no argv entry and in no `/proc/*/cmdline` —
+# neither inside the container nor on the host, where `docker top cron` used to
+# print it for anyone who could run docker. mktemp creates the file 0600; the
+# chmod is belt-and-braces for a TMPDIR on a filesystem that ignores the mode
+# argument, and the trap is why the file does not outlive the loop. It lives in
+# the container's own /tmp, so it never touches a mounted path or the repo.
+HEADER_CONFIG=$(mktemp "${TMPDIR:-/tmp}/sdg-cron-wget.XXXXXX") || {
+  echo "[cron] could not create a private wget config file — the loop cannot send the secret safely, so it is not starting." >&2
+  exit 1
+}
+trap 'rm -f "$HEADER_CONFIG"' EXIT INT TERM
+chmod 600 "$HEADER_CONFIG"
+# No quotes around the value. wgetrc takes the rest of the line verbatim, so
+# `header = "x-cron-secret: …"` sends a header whose NAME starts with a literal
+# double quote, and the app's HTTP parser rejects that with 400 Bad Request
+# (measured: quoted -> 400, unquoted -> 200 with the route's JSON body).
+printf 'header = x-cron-secret: %s\n' "$CRON_SECRET" > "$HEADER_CONFIG"
 
 echo "[cron] polling $APP_URL every ${WHATSAPP_EVERY}s; grading every ${GRADING_EVERY_TICKS} ticks (${GRADING_EVERY}s)"
 
