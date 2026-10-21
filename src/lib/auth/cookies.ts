@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { mintSessionToken } from "@/lib/auth/token";
 
@@ -45,12 +46,13 @@ const SESSION_TTL_SECONDS = 86_400;
  * That is counter-intuitive after the rule above, but the proxy reads the stamp
  * as `Number(request.cookies.get(LAST_ACTIVE_COOKIE)?.value)` and skips the
  * idle branch entirely when the result is not finite
- * (`src/lib/supabase/middleware.ts:137-144`), so an *absent* stamp reads as
+ * (`src/lib/auth/guard.ts:108-115`), so an *absent* stamp reads as
  * "active". A stamp that expired before its session would therefore disable the
  * timeout instead of enforcing it. 30 days is what
- * `src/lib/supabase/middleware.ts:159-167` already writes for this same cookie
- * name, so the two writers agree; Task 13 folds that file's duplicate
- * `sdg_staff_last_active` literal (`middleware.ts:21`) into this module.
+ * `src/lib/auth/guard.ts:127` already writes for this same cookie name, so the
+ * two writers agree — `startSession` and `writeSession` below share this
+ * `LAST_ACTIVE_TTL_SECONDS`, and the proxy imports `LAST_ACTIVE_COOKIE` rather
+ * than carrying its own `sdg_staff_last_active` string literal.
  */
 const LAST_ACTIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -80,4 +82,20 @@ export async function endSession(): Promise<void> {
   const jar = await cookies();
   jar.delete(SESSION_COOKIE);
   jar.delete(LAST_ACTIVE_COOKIE);
+}
+
+/** Set the bearer and stamp activity on a response the proxy is about to return. */
+export async function writeSession(
+  response: NextResponse,
+  userId: string,
+): Promise<void> {
+  const token = await mintSessionToken({ sub: userId, role: "authenticated" }, SESSION_TTL_SECONDS);
+  response.cookies.set(SESSION_COOKIE, token, cookieAttributes(SESSION_TTL_SECONDS));
+  response.cookies.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes(LAST_ACTIVE_TTL_SECONDS));
+}
+
+/** Drop both, on any response — including the redirect the idle timeout returns. */
+export function clearSession(response: NextResponse): void {
+  response.cookies.delete(SESSION_COOKIE);
+  response.cookies.delete(LAST_ACTIVE_COOKIE);
 }
