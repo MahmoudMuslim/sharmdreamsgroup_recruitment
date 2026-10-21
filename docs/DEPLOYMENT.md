@@ -81,11 +81,27 @@ node scripts/verify-schema.mjs       # confirm tables/policies landed
 
 # 2. Generate the encryption key, then create a first admin
 node scripts/generate-encryption-key.mjs
-node scripts/create-staff.mjs        # provisions a SUPER_ADMIN user + profile
+node scripts/create-staff.mjs        # HOSTED PROJECT ONLY - writes to GoTrue, deleted in Plan 2
 
 # 3. Local dev (Turbopack)
 npm run dev                          # http://localhost:3001
 ```
+
+> **On the self-hosted stack, `create-staff.mjs` is the wrong command.** It talks
+> to the vendor's hosted GoTrue (`supabase.auth.admin.*`), so it creates the
+> account in the Supabase project, reports success, and the local login — which
+> reads `auth.users` through `AUTH_DB_URL`
+> (`src/lib/auth/passwords.ts:37`) — cannot see it. What works locally:
+>
+> - `npm run db:seed-local` — the three staff fixtures, written straight into the
+>   local `auth.users` with pgcrypto bcrypt. Fixtures only.
+> - **Settings → Team** inside the running app (`/settings`, `createUser` in
+>   `src/modules/settings/application/user-actions.ts:258`) — real account
+>   provisioning through `authAdmin`. Needs a signed-in `SUPER_ADMIN`, so seed
+>   first, then create the people you actually want.
+>
+> `create-staff.mjs` is for the hosted project only and is scheduled for deletion
+> in Plan 2.
 
 ---
 

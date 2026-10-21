@@ -1,4 +1,8 @@
 /**
+ * HOSTED-ONLY: this writes to the vendor's GoTrue, never to the self-hosted
+ * stack, and Plan 2 deletes it. Use the Team console for staff accounts and
+ * `npm run db:seed-local` for local fixtures.
+ *
  * Provisions recruiter accounts in Supabase Auth and links each one to a
  * `user_profiles` row carrying the RBAC role and company (tenant).
  *
@@ -13,9 +17,6 @@ import { randomBytes } from "node:crypto";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-// Trim-aware: `APP_URL=` (empty but defined) in .env.local would otherwise slip
-// straight past `??` and print a host-less "/login".
-const APP_URL = (process.env.APP_URL ?? "").trim() || "http://localhost:3000";
 
 if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
   console.error(
@@ -106,7 +107,10 @@ async function main() {
   console.log(`  role     : ${role}`);
   console.log(`  tenant   : ${tenantSlug ?? "(group-wide)"}`);
   if (!existing) console.log(`  password : ${password}`);
-  console.log(`\nSign in at ${APP_URL}/login`);
+  // Deliberately no "sign in at …" line. It used to print `APP_URL` defaulting
+  // to http://localhost:3000, which since the stack went self-hosted is the
+  // local nginx front - a host where an account created here can never sign in,
+  // because local sign-in reads `auth.users`, not GoTrue.
 }
 
 main().catch((error) => {

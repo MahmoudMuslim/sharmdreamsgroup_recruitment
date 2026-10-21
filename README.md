@@ -144,7 +144,7 @@ node scripts/generate-encryption-key.mjs   # AES key (run once)
 node scripts/apply-migration.mjs <file>    # apply one SQL migration
 node scripts/dump-schema.mjs               # dump live DB schema to schema.sql
 node scripts/verify-schema.mjs             # verify schema against expectations
-node scripts/create-staff.mjs              # bootstrap a staff account
+node scripts/create-staff.mjs              # HOSTED project only (GoTrue), deleted in Plan 2 — local staff come from Settings -> Team or npm run db:seed-local
 node scripts/audit-secrets.mjs             # scan the repo for leaked secrets
 ```
 
