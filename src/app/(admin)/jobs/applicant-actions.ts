@@ -143,7 +143,7 @@ export async function getApplicantSubmission(
 
   const path = typeof row.cv_file_path === "string" ? row.cv_file_path : null;
   const links = path
-    ? await createCvLinks(supabase, path)
+    ? await createCvLinks(path)
     : { cv_url: null, cv_download_url: null };
 
   if (path && !links.cv_url) {

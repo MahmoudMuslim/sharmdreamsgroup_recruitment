@@ -88,22 +88,33 @@ if (url && SUPABASE_ONLY.test(sql)) {
 try {
   await c.connect();
   await c.query(sql);
-  const census = (
-    await c.query(
-      `select
-         (select count(*) from pg_class cl join pg_namespace n on n.oid = cl.relnamespace
-           where n.nspname = 'public' and cl.relkind in ('r','p')) tables,
-         (select count(*) from pg_policy p join pg_class cl on cl.oid = p.polrelid
-           join pg_namespace n on n.oid = cl.relnamespace
-           where n.nspname in ('public','storage')) policies,
-         (select count(*) from storage.buckets) buckets,
-         (select count(*) from permissions) permissions,
-         (select count(*) from role_permissions) role_permissions,
-         (select count(*) from notification_templates) templates,
-         (select count(*) from app_settings) app_settings`
-    )
-  ).rows[0];
+  /* Whether this database has a `storage` schema at all. The census used to count
+   * `storage.buckets` unconditionally, and on the local stack that is a `42P01`
+   * since 4458cb7 retired the stand-in — a successful apply reported as FAIL.
+   * Presence decides, per database, so a hosted project still gets the buckets
+   * column in the same position it always sat in. */
+  const hasStorage =
+    (await c.query(`select 1 from pg_namespace where nspname = 'storage'`)).rowCount > 0;
+  const terms = [
+    `(select count(*) from pg_class cl join pg_namespace n on n.oid = cl.relnamespace
+       where n.nspname = 'public' and cl.relkind in ('r','p')) tables`,
+    `(select count(*) from pg_policy p join pg_class cl on cl.oid = p.polrelid
+       join pg_namespace n on n.oid = cl.relnamespace
+       where n.nspname in ('public','storage')) policies`,
+    `(select count(*) from permissions) permissions`,
+    `(select count(*) from role_permissions) role_permissions`,
+    `(select count(*) from notification_templates) templates`,
+    `(select count(*) from app_settings) app_settings`,
+  ];
+  if (hasStorage) terms.splice(2, 0, `(select count(*) from storage.buckets) buckets`);
+  const census = (await c.query(`select ${terms.join(",\n         ")}`)).rows[0];
   console.log("OK — the project now holds:", census);
+  if (!hasStorage) {
+    console.log(
+      "note: no `storage` schema here, so the buckets count is skipped — the stand-in " +
+        "was retired in 4458cb7 and the disk store owns the bytes."
+    );
+  }
 } catch (e) {
   console.log("FAIL — " + (e instanceof Error ? e.message : String(e)));
   console.log("Nothing was reported as applied; check the file with verify-schema.mjs.");

@@ -6,10 +6,13 @@
  *    vendor lines are deleted from there, they drop out of `SECRETS` and stop
  *    being scanned for.
  * 2. A vendor NAME must never be *read* by the surface that builds and runs this
- *    app (spec §15's fourth claim). The search is for `process.env.<NAME>`, not
- *    the bare word: a comment recording that a key is gone is the proof it is
- *    gone, and must not fail the gate. Docs, plans and the four retired hosted
- *    scripts are outside this surface on purpose — see the note it prints.
+ *    app (spec §15's fourth claim). Three shapes count as a read, and only three:
+ *    `process.env.<NAME>`, a quoted key `"<NAME>"` / `'<NAME>'`, and an assignment
+ *    `<NAME> =` / `<NAME>:`. The bare word is not enough: a comment recording that
+ *    a key is gone is the proof it is gone, and must not fail the gate. Docs,
+ *    plans and the four retired hosted scripts are outside this surface on purpose
+ *    — see the note it prints. The vendor-SDK import scan covers `src` and
+ *    `scripts`, because §15 claim 1 is stated over both.
  *
  *   node scripts/audit-secrets.mjs
  *
@@ -113,8 +116,13 @@ for (const [label, value] of [
 /* The deploy surface: what `docker compose build` and `next build` read. A name
  * still being read here means the app depends on a credential the owner has to
  * keep, which is exactly what §15 says must stop being true. A bare mention in a
- * comment is not a read, so each name has to be followed by `=` or `:` — that
- * covers `NAME=value`, `- NAME: value`, `ARG NAME=` and `ENV NAME=` at once.
+ * comment is still not a read, so three shapes count — each one a place the value
+ * is genuinely taken:
+ *   `process.env.<NAME>`  a runtime read, the form §15 claim 1 names, and the one
+ *                         the old `<NAME>\s*[=:]` test missed entirely
+ *   `"<NAME>"` `'<NAME>'` a quoted key, i.e. `env["<NAME>"]` / `get("<NAME>")`
+ *   `<NAME>\s*[=:]`       a write: `NAME=value` and `- NAME: value` in compose,
+ *                         `ARG NAME=` / `ENV NAME=` in a Dockerfile
  * `docker/data` is the extracted candidate bytes and `docker/.env` is the
  * owner's untracked local file; neither is a surface the repo controls. */
 console.log("\n=== vendor env names read by the deploy surface ===");
@@ -126,6 +134,11 @@ const VENDOR_NAMES = [
   "SUPABASE_PROJECT_REF",
   "SUPABASE_REST_BASE",
   "VERCEL",
+];
+const READ_FORMS = [
+  ["process.env read", (name) => new RegExp(`process\\.env\\.${name}\\b`)],
+  ["quoted env key", (name) => new RegExp(`["']${name}["']`)],
+  ["assignment", (name) => new RegExp(`${name}\\s*[=:]`)],
 ];
 const deployFiles = [
   ...walk("src"),
@@ -140,21 +153,28 @@ const readers = [];
 for (const file of deployFiles) {
   const text = readFileSync(file, "utf8");
   for (const name of VENDOR_NAMES) {
-    if (new RegExp(`${name}\\s*[=:]`).test(text)) readers.push(`${file} sets ${name}`);
+    const forms = READ_FORMS.filter(([_, build]) => build(name).test(text)).map(([label]) => label);
+    if (forms.length) readers.push(`${file} ${forms.join(" + ")} ${name}`);
   }
 }
 if (readers.length) {
   clean = false;
   for (const r of readers) console.log("  VENDOR  " + r);
 } else {
-  console.log("  clean  " + deployFiles.length + " deploy-surface files set or read no vendor credential");
+  console.log(
+    "  clean  " +
+      deployFiles.length +
+      " deploy-surface files neither set nor read a vendor credential (no `process.env.<NAME>`, no quoted key, no `<NAME> =` / `<NAME>:`)"
+  );
 }
-const sdkImporters = walk("src").filter((f) => /from\s+["']@supabase\//.test(readFileSync(f, "utf8")));
+const sdkImporters = [...walk("src"), ...walk("scripts")].filter((f) =>
+  /from\s+["']@supabase\//.test(readFileSync(f, "utf8"))
+);
 if (sdkImporters.length) {
   clean = false;
-  console.log("  VENDOR  `src` imports the vendor SDK in: " + sdkImporters.join(", "));
+  console.log("  VENDOR  `src` + `scripts` import the vendor SDK in: " + sdkImporters.join(", "));
 } else {
-  console.log("  clean  `src` imports the vendor SDK in 0 files");
+  console.log("  clean  `src` + `scripts` import the vendor SDK in 0 files");
 }
 
 /* Honest remainder: the names live on in exactly three kinds of place, none of

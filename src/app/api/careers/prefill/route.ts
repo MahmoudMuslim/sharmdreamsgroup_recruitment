@@ -1,4 +1,5 @@
 import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
   CV_MAX_BYTES,
   CV_TYPE_ERROR,
@@ -33,6 +34,11 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request): Promise<Response> {
+  // Before the buffer, and before the model call this door pays for: an oversize
+  // CV must cost nothing at all. The message matches `cvSizeError()` below.
+  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;
+
   let form: FormData;
   try {
     form = await request.formData();

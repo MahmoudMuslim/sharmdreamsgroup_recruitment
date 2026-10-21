@@ -1,9 +1,36 @@
 -- Everything Supabase hosts in the `auth` schema that our own policies touch.
--- Re-measured on the local stack after Plan 2 Task 10 deleted the storage shim:
--- 80 of the 88 policies reach identity through auth.uid() indirectly, via
--- is_staff() (49), has_permission() (20), is_super_admin() (8),
--- current_user_profile_id() (7) and user_tenant_id() (5) — a policy can call more
--- than one, so those overlap. 3 more call auth.uid() directly.
+-- Re-measured on the running local stack (2026-10-21) with
+-- `docker compose -f docker/docker-compose.yml --env-file docker/.env exec -T db
+-- psql -U postgres -d sharm_dreams` (the same door as `npm run docker:psql`) and
+-- the CTE at the bottom of this comment, against the 88 policies in `public`:
+--   is_staff() 55, has_permission() 24, current_user_profile_id() 10,
+--   is_super_admin() 9, user_tenant_id() 5, a direct auth.uid() in 3 (1 of those
+--   also calls a helper). THESE OVERLAP — one policy can call two helpers — so
+--   they sum above the 80 they describe: 80 of the 88 reach an identity door.
+--   5 more are addressed by the `attempt_token` claim instead (2 of those also
+--   reach identity), and 5 reach neither: `applications_public_insert`,
+--   `tenants_read` and `provider_models_public_read`, whose whole qual is
+--   `true`/`is_active`, plus the two `files` rules keyed on bucket and path
+--   prefix. Those five stand on the `anon` grant, not on a claim.
+--
+--   with p as (
+--     select policyname as name,
+--            coalesce(qual, '') || ' ' || coalesce(with_check, '') as src
+--       from pg_policies where schemaname = 'public')
+--   select count(*) total,
+--          count(*) filter (where src like '%is_staff(%')                     is_staff,
+--          count(*) filter (where src like '%has_permission(%')               has_permission,
+--          count(*) filter (where src like '%current_user_profile_id(%')      cur_profile,
+--          count(*) filter (where src like '%is_super_admin(%')               is_super_admin,
+--          count(*) filter (where src like '%user_tenant_id(%')               user_tenant,
+--          count(*) filter (where src like '%auth.uid(%')                     direct_uid,
+--          count(*) filter (where src ~ '(is_staff\(|has_permission\(|current_user_profile_id\(|is_super_admin\(|user_tenant_id\(|auth\.uid\()') reaches_identity,
+--          count(*) filter (where src like '%attempt_token%')                 attempt_door,
+--          count(*) filter (where src like '%attempt_token%'
+--                 and src ~ '(is_staff\(|has_permission\(|current_user_profile_id\(|is_super_admin\(|user_tenant_id\(|auth\.uid\()') attempt_and_identity,
+--          count(*) filter (where src !~ '(is_staff\(|has_permission\(|current_user_profile_id\(|is_super_admin\(|user_tenant_id\(|auth\.uid\()'
+--                 and src not like '%attempt_token%')                          reaches_neither
+--     from p;
 
 create schema if not exists auth;
 

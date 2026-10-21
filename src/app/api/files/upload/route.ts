@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getFileStore } from "@/lib/files/store";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -26,6 +27,16 @@ import {
  * File Manager, so a failed insert takes the object straight back out.
  */
 export async function POST(request: NextRequest) {
+  // The ceiling only becomes bucket-specific once the body is parsed, so this
+  // first line uses the largest rule (`candidate-audio`, 20 MB): a body bigger
+  // than that cannot satisfy any bucket, and the check below still applies the
+  // one the caller actually asked for.
+  const oversize = oversizeUploadResponse(
+    request,
+    Math.max(...ATTACHMENT_RULES.map((rule) => rule.maxBytes))
+  );
+  if (oversize) return oversize;
+
   const user = await getSessionUser();
   if (!user || !isStaff(user.role)) {
     return NextResponse.json({ error: "Sign in as staff to attach files." }, { status: 401 });
