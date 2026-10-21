@@ -3638,6 +3638,13 @@ Expected: `[ '@supabase/supabase-js', 'pg' ]`. If `@supabase/ssr` is still liste
 Carry one forward note while you are in the toolchain (Task 9's review found it): `tsconfig.json` now sets `"allowImportingTsExtensions": true` for a single import specifier, and that option is only legal beside `"noEmit": true`. This task must **not** add a `tsc` emit step, a build script that compiles with `tsc`, or an `outDir`. If any later plan wants the repo to emit, that pairing has to be replaced with `rewriteRelativeImportExtensions` or the literal `./db.ts` specifier dies at runtime instead of at the compiler.
 
 - [ ] **Step 5: `@vercel/speed-insights` stays.** It is a third-party script tag, not a platform binding, and removing it changes what the owner sees in analytics while nothing else is being decided. Note it as Plan 2's item, with `NEXT_PUBLIC_*` cleanup and the rest of the vendor's environment surface.
+  > **Measured 2026-10-21, and this step's premise is wrong.** There is no script
+  > tag. `grep -rln "@vercel/" src/` → **0 files**, and `git log -S
+  > '@vercel/speed-insights' --oneline` shows only `bf00eac` (added it to
+  > `package.json`) and this plan — it never gained an importer. It is an
+  > installed-but-unimported dependency, so Plan 2's action is `npm uninstall
+  > @vercel/speed-insights`, not a re-point, and nothing in the owner's analytics
+  > changes when it goes. Task 18 Step 5's "still loaded" is corrected the same way.
 
 - [ ] **Step 6: Gates, then prove the orphan claim survived the build.**
 

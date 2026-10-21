@@ -20,9 +20,17 @@ in the tree. Self-hosting Supabase's own images (GoTrue, its PostgREST) does not
 count as leaving — that option was ruled out on principle, not cost.
 
 "Done" is the live portal running on the owner's own host, on the migrated data,
-with the existing 94 row-level-security policies still doing the enforcing, and
+with the existing 88 row-level-security policies still doing the enforcing, and
 nothing imported from the two vendors. The migration itself is finished only by
 the cut-over in §9.
+
+> **Policy count, corrected 2026-10-21.** This section said 94. The file says 88 —
+> `grep -c "^create policy" supabase/schema.sql` → **88** — and the live database
+> agrees: `select count(*) from pg_policies` on the restored local stack → **88**
+> (80 on `public`, 8 on `storage`). The six gone are the three `to public … using
+> (true)` and three `with check (true)` policies that Plan 1 Task 5 dropped off the
+> legacy `jobs` / `applicants` pair, and revoked `anon`'s table grants on both. The
+> 94 was true when this spec was approved; it is not what the port carried.
 
 ### Locked decisions (from the brainstorming gate)
 
@@ -33,7 +41,7 @@ the cut-over in §9.
 | Sequencing | **Approach A** — build the stack alongside the app, port in ordered slices; dev on this device first | B (port against the VPS), C (leave hosts first, own code later) |
 | Local data | **Restore the live `pg_dump` into the local dev DB too** (owner's deliberate non-recommended pick) | fresh start, seed-only dev DB |
 | Data layer | **Self-host PostgREST; leave the query call sites alone** | `pg` + hand-written SQL; a PostgREST-shaped shim over `pg` |
-| Row-level trust | Port the 94 RLS policies unchanged behind a `auth`/`storage` schema shim | rewrite policies |
+| Row-level trust | Port the RLS policies unchanged behind a `auth`/`storage` schema shim — 88 at execution time, not the 94 this table first said (see §1's correction) | rewrite policies |
 | Sign-in | Hand-rolled signed-cookie sessions over the migrated `auth.users` bcrypt hashes | `better-auth`, GoTrue |
 | Files | `/data/uploads` volume + a `files` table replacing `storage.objects`; own short-lived signed links | MinIO, split-by-size hybrid |
 | Cut-over | One planned freeze with DNS rollback | logical replication, freeze-writes-only |
@@ -42,24 +50,35 @@ the cut-over in §9.
 
 ## 2. Measured seams (these size the hand-written work)
 
-All figures re-derived from the working tree on 2026-10-20. They are the reason
-the migration is a re-point, not a rebuild.
+All figures re-derived from the working tree on 2026-10-20, **and re-measured on
+2026-10-21 after Plan 1 landed**, because several of them moved. They are the
+reason the migration is a re-point, not a rebuild. Each row is checkable with the
+command printed beside it.
 
-| Coupling | Count | Where |
-| --- | --- | --- |
-| `.from("table")` reads against PostgREST | **442** across 65 files | the query layer — kept as-is |
-| `.from(variable)` bucket/table refs | **26** | dynamic table/bucket names |
-| `createSupabaseServerClient()` constructions | **129** across 46 files | per-request; re-point one seam, not 129 |
-| Files importing `@supabase/*` | **13** | the only build-time vendor deps |
-| `supabase.auth.*` call sites | **24** (13 are `auth.admin.*`) | 13 in `src/modules/settings/application/user-actions.ts` |
-| `supabase.storage.from(bucket)` accessor lines | **5** | files slice |
-| RPC names to expose on PostgREST | **2** | `stop_time_entry`, `refresh_attempt_integrity` |
-| Inbound webhooks | **0** | no `hub.verify_token`/`x-hub-signature` anywhere in `src/` |
-| Realtime / Edge Functions / Vault / `generateLink` | **0** | unused — the port is smaller than it looks |
+| Coupling | Count (2026-10-21) | Check | Where |
+| --- | --- | --- | --- |
+| `.from("table")` reads against PostgREST | **442** across 65 files | `grep -rn '\.from("' src/ \| wc -l` | the query layer — kept as-is |
+| `.from(variable)` bucket/table refs | **17** (was 26) | the non-literal half of `grep -rn '\.from([A-Za-z_$]' src/`, after dropping `Array/Buffer/String/Number/Object.from` and comment hits | 12 dynamic table names + the 5 bucket refs now inside the files seam |
+| `createSupabaseServerClient()` call sites | **128** across 45 files, plus the definition at `src/lib/supabase/server.ts:12` | `grep -rn 'createSupabaseServerClient()' src/ \| wc -l` | per-request; re-point one seam, not 128 |
+| Files importing `@supabase/*` | **2** in `src/`, **3** repo-wide (was 13) | `grep -rl "@supabase/" src/` → `src/app/(candidate)/portal/actions.ts`, `src/lib/files/store.ts`; `grep -rln @supabase/supabase-js --include=*.{ts,tsx,mjs} . \| grep -v node_modules` adds `scripts/create-staff.mjs` | the vendor package survives Plan 1 exactly because these three still import it |
+| `supabase.auth.*` call sites | **15** — 13 are `auth.admin.*`, all in `user-actions.ts`, plus 2 `supabase.auth.getUser()` (`job-actions.ts:141`, `transcriptStore.ts:71`) (was 24) | `grep -roh 'supabase\.auth\.[a-zA-Z]*' src/ \| sort \| uniq -c` | the 13 became direct `auth.users` writes in Task 14; the 2 `getUser()` reads still resolve against the vendor client |
+| Storage accessors — `supabase.storage.from(bucket)` lines | **5, and they all live in one file now** (`src/lib/files/store.ts:70,76,81,90,94` — one each of `upload`, `createSignedUrl`, `download`, `remove`, `list`) | `grep -c "from(bucket)" src/lib/files/store.ts` → 5; `grep -rn "supabase\.storage" src/ \| wc -l` → **0** | files slice — and this is **not** the 16 the plan told Task 18 to write. Task 10 pulled every bucket call behind `getFileStore()`, so the 16 pre-seam accessor sites became 5 here plus 14 seam callers; quoting 16 now would be the same class of error as the original 5 |
+| …reached from | **14** `await getFileStore()` call sites across **14** files | `grep -rln "getFileStore()" src/ \| grep -v "src/lib/files/store.ts" \| wc -l` → 14 | the seam Task 10 built |
+| …and the naive grep | `grep -rn "\.storage" src/ \| wc -l` → **7** | all 7 are `storage_path` **column** reads (attachments, CV, dossier, files actions), not accessor calls | why a bare `.storage` count is not a seam count |
+| RPC names the app calls | **2** — `stop_time_entry`, `refresh_attempt_integrity` | `grep -rn "\.rpc(" src/` | `timelog/application/ledger.ts:323`, `api/attempt/[token]/integrity/route.ts:88` |
+| …vs the RPC surface actually exposed | **15** | every `public` function carries `execute` for `anon` and `authenticated`, so PostgREST lists all 15 as `/rpc/*` | an exposure to decide about in Plan 2, not a call site |
+| Inbound webhooks | **0** | no `hub.verify_token` / `x-hub-signature` anywhere in `src/` | unchanged |
+| Realtime / Edge Functions / Vault / `generateLink` | **0** each | `grep -rn '\.channel(\|supabase\.realtime\|functions\.invoke\|generateLink' src/` → 0 | unchanged — the port is smaller than it looks |
 
-Behaviour that changes on a persistent process (was serverless): **8** `after()`
-sites and **22** `await connection()` sites, plus module-global singletons at
-`anon.ts:5`, `service.ts:5`, `middleware.ts:34`. Audited in the sessions slice.
+Behaviour that changes on a persistent process (was serverless): **10** `after()`
+sites (was 8) and **25** `await connection()` sites (was 22). Quote the count with
+its pattern: `grep -rn '\bafter(' src/ | wc -l` prints **11**, and the eleventh hit
+is prose, not a call — a comment at `src/modules/settings/infrastructure/settingsReader.ts:9`. The module-global
+singletons this section named at `anon.ts:5`, `service.ts:5` and `middleware.ts:34`
+have moved or gone: measured 2026-10-21, the two that remain are
+`src/lib/supabase/anon.ts:3` (`let anonClient: RestClient | null`) and
+`src/lib/auth/db.ts:12` (the `pg` `Pool`); `service.ts` mints per call and holds no
+singleton, and `middleware.ts` no longer exists — it is `src/proxy.ts`.
 
 ---
 
@@ -98,7 +117,12 @@ these from memory — re-read the registry tag list._
 
 No MinIO, no Redis, no GoTrue. On KVM2 this same file gains TLS at nginx and
 secrets that never enter the repo; Caddy goes away when the host's `.env.local`
-`SUPABASE_REST_BASE` line does.
+`SUPABASE_REST_BASE` line does. **As of 2026-10-21 that line is still in the file
+(`grep -c SUPABASE_REST_BASE .env.local` → 1, and it still names port 54321), so
+Caddy runs beside nginx deliberately** — nginx serves its own `/rest/v1/` on 3000
+(`docker/nginx/nginx.conf:125`, `location /rest/v1/ { proxy_pass http://sdg_rest/; }`),
+and the two gateways are not in conflict: the container reads nginx, the host's
+`next dev` reads Caddy. Retiring Caddy is a Plan 2 item, not an oversight.
 
 `package.json:4` is bare `next dev` and `.env.local` already points `APP_URL` /
 `NEXT_PUBLIC_APP_URL` at 3000, so slice 1 only adds the new `SUPABASE_*`-shaped
@@ -114,13 +138,33 @@ restored dump's policies run unchanged. The existing
 this and already pass.
 
 - **Roles** `anon`, `authenticated`, `service_role` (`service_role` `bypassrls`),
-  created before any grant parses. PostgREST's `db-anon-role` is `authenticated`.
+  created before any grant parses. PostgREST's `db-anon-role` is **`anon`**
+  (`docker/docker-compose.yml:74`, `PGRST_DB_ANON_ROLE: anon`).
+  > This line said `authenticated`. That was wrong, and the wrongness was the
+  > dangerous kind: `db-anon-role` is the role PostgREST uses for a request that
+  > carries **no** JWT, so setting it to `authenticated` would have made every
+  > unauthenticated read arrive as the staff role. RLS would still have answered —
+  > and answered wrongly, because the policies key off the claims, not the role.
+  > `anon` is what makes "no token" mean "no identity" in the database.
 - **`auth` schema**: `auth.users` carrying the migrated `encrypted_password`
   (bcrypt), plus `auth.uid()` reading our own claim —
-  `nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'uid'`.
+  `nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'`.
+  > This line read `->> 'uid'`. The function actually deployed reads **`'sub'`**,
+  > verbatim from the live database:
+  > `select pg_get_functiondef(p.oid) … where n.nspname='auth' and p.proname='uid'`
+  > returns `select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid`.
+  > Our own token mints `sub`, so `'uid'` would have made `auth.uid()` return NULL
+  > and every identity-bearing policy admit nobody — silently, with no error.
   That single function is the door 80 of the 88 policies reach identity through
   (via `is_staff()` 66, `has_permission()` 41, `is_super_admin()` 12,
-  `current_user_profile_id()` 12, `user_tenant_id()` 11).
+  `current_user_profile_id()` 12, `user_tenant_id()` 11 — those five are
+  **occurrence** counts of the call text inside the file's `create policy`
+  statements, re-verified 2026-10-21 by splitting `supabase/schema.sql` on `;\n`
+  and counting per function). Only **3** policies call `auth.uid()` itself
+  (4 occurrences: `profiles_self_read`, `applications_candidate_self`, and
+  `profiles_self_update` which uses it in both `using` and `with check`); the rest
+  reach it transitively through the five helpers, which is what "the door 80 reach
+  identity through" actually means.
 - **`storage` schema** shimmed so its 8 policies parse, then replaced in §7.
 - **PG17 or newer is forced by the dump** — every grant carries the `maintain`
   privilege (PG17+ only). `pg_stat_statements` needs `shared_preload_libraries`.
@@ -132,6 +176,17 @@ this and already pass.
   policies and are referenced by no code. **Lock them down during this slice** —
   revoke + drop the `true` policies. Free win; it is the one place "RLS on 41/41"
   ≠ "RLS protecting 41/41".
+  > **Done in Plan 1 Task 5, and it is where the 94 became 88.** Measured on the
+  > live stack 2026-10-21: both tables now hold **0** policies, and a bearer request
+  > for them is refused at the grant, not the policy — `scripts/prove-local-stack.mjs`
+  > records HTTP 403 with PostgreSQL `42501` and "0 policies" for each. The
+  > reconciled partition of the surviving 88: **78** admit an identity and nothing
+  > else, **3** read only the `attempt_token` claim, **2** do both, **5** carry
+  > neither term (`tenants_read using (true)`, `applications_public_insert with
+  > check (true)`, `provider_models_public_read` on `is_active`, and the two
+  > `storage.objects` upload checks keyed on `bucket_id`). So the honest sentence is
+  > "80 of 88 reach identity, 5 read the attempt-token claim, 2 read both, and 5
+  > read neither" — not a set of buckets that sums to 88.
 - PostgREST config: `db-uri`, `db-schemas = public`, `jwt-secret = <our secret>`,
   expose the 2 RPC names.
 
@@ -143,9 +198,10 @@ same rows an equivalent Supabase request returns for the same `uid`.
 
 ## 6. Slice 3 — Sessions + cookies (replacing `@supabase/ssr`)
 
-Re-point **one** seam — `src/lib/supabase/server.ts:10` — so
+Re-point **one** seam — `src/lib/supabase/server.ts:12` (this section said `:10`;
+the function is on line 12 today) — so
 `createSupabaseServerClient()` returns a client of the same shape pointed at our
-PostgREST with a bearer from our cookie. The 129 call sites keep working.
+PostgREST with a bearer from our cookie. The 128 call sites keep working.
 
 - **Sign in:** verify the submitted password against the migrated bcrypt hash in
   `auth.users` (staff passwords keep working). Mint a short-lived (~15 min) signed
@@ -249,6 +305,12 @@ shim → **41 tables, 94 policies, 15 functions, 15 triggers, 4 buckets**, idemp
 on re-apply, and the **only** skipped statement is `supabase_vault`. So "port the 94
 policies unchanged behind a shim" is demonstrated end-to-end with zero PII. The
 live-dump restore remains a separate, explicitly-gated step later in slice 2.
+
+> That 94 is a record of what the throwaway run measured on 2026-10-20, and it is
+> left as written rather than edited away. Slice 2 then dropped six policies — the
+> three `to public … using (true)` and three `with check (true)` on the legacy
+> `jobs` / `applicants` pair (§5) — so the same command run today prints **88**
+> (`grep -c "^create policy" supabase/schema.sql`), which is the number §1 now uses.
 
 ---
 
