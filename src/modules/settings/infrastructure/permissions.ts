@@ -3,8 +3,8 @@ import "server-only";
 import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import type { RestClient } from "@/lib/rest/client";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { getSessionUser } from "@/lib/auth/session";
 import type { PermissionKey } from "@/modules/settings/domain/types";
 

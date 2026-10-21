@@ -1,7 +1,7 @@
 "use server";
 
 import { requireStaff } from "@/lib/auth/session";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import {
   SETTINGS_TRAIL_LIMIT,

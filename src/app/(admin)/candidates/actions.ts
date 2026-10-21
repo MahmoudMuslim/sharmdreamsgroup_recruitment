@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import {
   CANDIDATE_COUNT_SCAN_LIMIT,

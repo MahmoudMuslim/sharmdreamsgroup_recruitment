@@ -73,7 +73,7 @@ Because most risk is in auth, RLS, the file store and the AI gateway, verify the
 ### RLS
 - [ ] A staff query returns only their tenant's rows.
 - [ ] A candidate `access_token` reads/submits **only** its own attempt — and note which half enforces it: the route validates the token and writes through the service client, so break the policy deliberately and re-run `npm run files:prove` to see the backstop fire.
-- [ ] `provider_credentials` is unreadable except by the bypass-RLS login. The table has RLS enabled and **zero policies** (`supabase/schema.sql`), so a read through the session or anon door returns zero rows; only the service client's locally minted bearer sees them.
+- [ ] `provider_credentials` is unreadable except by the bypass-RLS login. The table has RLS enabled and **zero policies** (`db/schema.sql`), so a read through the session or anon door returns zero rows; only the service client's locally minted bearer sees them.
 
 ### Public careers
 - [ ] Board, single-job, apply form, gate questions, CV upload, and the careers assistant all work **unauthenticated**.

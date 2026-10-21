@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { getSupabaseAnonClient } from "@/lib/data-api/anon";
 import { parseGateRows, publicGateQuestions } from "@/modules/careers/gate-questions";
 
 /**

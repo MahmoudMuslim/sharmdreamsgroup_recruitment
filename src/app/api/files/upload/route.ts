@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { getFileStore } from "@/lib/files/store";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { getSessionUser, isStaff } from "@/lib/auth/session";

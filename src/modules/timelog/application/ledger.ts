@@ -14,7 +14,7 @@ import "server-only";
  * an empty result is reported as the failure it is.
  */
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { dayKeyInZone, formatInZone, fromZoneInputValue } from "@/lib/timezone";
 import {
   isTimeScope,
@@ -74,7 +74,7 @@ const EMBEDDED =
   "started_at, ended_at, user_profiles(full_name), job_openings(title), applications(full_name)";
 
 export const LEDGER_NOT_PROVISIONED =
-  "The time ledger has not been created yet. Apply supabase/migrations/025_time_entries.sql, then reload this page.";
+  "The time ledger has not been created yet. Apply db/migrations/025_time_entries.sql, then reload this page.";
 
 /** A joined one-to-one comes back as an object, an array or null depending on the driver. */
 type Embed = Record<string, unknown> | Record<string, unknown>[] | null | undefined;

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { supabaseConfig } from "@/lib/config";
 import { getFileStore } from "@/lib/files/store";

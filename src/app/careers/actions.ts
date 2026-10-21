@@ -2,8 +2,8 @@
 
 import { revalidatePath, cacheLife } from "next/cache";
 import { after } from "next/server";
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseAnonClient } from "@/lib/data-api/anon";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { extractCvText, type ExtractedCv as _ExtractedCv } from "@/modules/screening/infrastructure/cvParser";

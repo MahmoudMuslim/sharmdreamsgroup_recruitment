@@ -8,7 +8,7 @@
  *
  * Generated from the live project, so this file describes the database instead
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
- * reasoning behind any single object lives in supabase/migrations/001-*.sql.
+ * reasoning behind any single object lives in db/migrations/001-*.sql.
  *
  * Three sections are authored rather than dumped: the two seed blocks, and the
  * `public.files` table with its eight policies at the very end, which is the
@@ -16,8 +16,8 @@
  * §15 — Task 10 deleted those policies and the `storage` grants from this file).
  * Both seed blocks are dumps of live rows in authored shape. Regenerate with:
  *
- *   node scripts/dump-schema.mjs > supabase/schema.sql
- *   node scripts/verify-schema.mjs supabase/schema.sql   # must report no gaps
+ *   node scripts/dump-schema.mjs > db/schema.sql
+ *   node scripts/verify-schema.mjs db/schema.sql   # must report no gaps
  *
  * Order is dependency-driven, because this file has to apply on an empty
  * database: extensions and enums, then every table, then uniqueness, then the

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { engineActivityActor, recordActivity } from "@/modules/activity/application/record";

@@ -35,7 +35,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getAuthPool } from "@/lib/auth/db";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { isStoredPath, resolveObjectPath } from "./paths";
 import { mintFileLink } from "./signed-link";
 import type { FileStore, FileStoreEntry } from "./store";

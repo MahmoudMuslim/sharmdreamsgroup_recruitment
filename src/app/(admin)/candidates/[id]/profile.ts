@@ -26,7 +26,7 @@
 
 import { requireStaff } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/timezone";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import type { SoftSkillReport } from "@/types";
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
 import { attachmentRule } from "@/modules/careers/attachment-rules";
@@ -691,7 +691,7 @@ function trailChanges(
     return {
       rows: [],
       note: missing
-        ? "The change trail has not been created yet. Apply supabase/migrations/024_activity_log.sql, then reload this page."
+        ? "The change trail has not been created yet. Apply db/migrations/024_activity_log.sql, then reload this page."
         : `The change trail could not be read: ${message}`,
     };
   }

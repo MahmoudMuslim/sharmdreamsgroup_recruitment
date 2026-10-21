@@ -40,7 +40,7 @@ let anonClient: RestClient | null = null;
  * from reading `params`. Do not remove one of those and expect the build to
  * notice: it fails here, in the image, not locally where the stack is running.
  *
- * The service client (`src/lib/supabase/service.ts`) is the opposite case, and
+ * The service client (`src/lib/data-api/service.ts`) is the opposite case, and
  * the difference is what each does with a failed read: `readGlobalSettings`
  * answers with an empty Map and every caller falls back to shipped defaults, so
  * its `cacheLife("minutes")` can stay inside prerenders and the shells build.
@@ -50,7 +50,7 @@ let anonClient: RestClient | null = null;
 export function getSupabaseAnonClient(): RestClient {
   const base = process.env.REST_BASE_URL;
   if (!base) {
-    throw new Error("[supabase] REST_BASE_URL is not set — run the local stack (Tasks 1-2).");
+    throw new Error("[data-api] REST_BASE_URL is not set — run the local stack (docker/docker-compose.yml).");
   }
   anonClient ??= createRestClient({ baseUrl: base, token: null });
   return anonClient;

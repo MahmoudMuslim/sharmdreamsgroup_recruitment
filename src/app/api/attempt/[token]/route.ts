@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { buildPaper } from "@/modules/assessment/application/buildPaper";
 import { getAttemptSettings } from "@/modules/assessment/application/attemptSettings";
 import { isLinkExpired } from "@/modules/assessment/application/linkValidity";

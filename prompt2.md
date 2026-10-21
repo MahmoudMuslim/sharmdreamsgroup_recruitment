@@ -51,7 +51,7 @@ TalentSphere AI serves multi-company corporate groups (e.g., **Sharm Dreams Grou
 
 ---
 
-## 3. UNIFIED DATABASE SCHEMA & RBAC POLICIES (`supabase/schema.sql`)
+## 3. UNIFIED DATABASE SCHEMA & RBAC POLICIES (`db/schema.sql`)
 
 ```sql
 -- Enable Core PostgreSQL Extensions
@@ -394,7 +394,7 @@ src/
 Generate complete, production-grade, zero-placeholder code for all core modules:
 
 1. **Configuration Module (`src/lib/config.ts`):** Supabase client initializers (Anon + Service Role) and OpenRouter multi-model failover client.
-2. **Database Schema & RLS SQL (`supabase/schema.sql`):** PostgreSQL schema for `tenants_and_companies`, `roles`, `permissions`, `role_permissions`, `user_profiles`, `job_openings`, `assessment_templates`, `assessment_questions`, `candidate_attempts`, `scheduled_whatsapp_jobs`, `candidate_responses`, and PostgreSQL custom functions (`has_permission`) with strict Row Level Security (RLS) policies.
+2. **Database Schema & RLS SQL (`db/schema.sql`):** PostgreSQL schema for `tenants_and_companies`, `roles`, `permissions`, `role_permissions`, `user_profiles`, `job_openings`, `assessment_templates`, `assessment_questions`, `candidate_attempts`, `scheduled_whatsapp_jobs`, `candidate_responses`, and PostgreSQL custom functions (`has_permission`) with strict Row Level Security (RLS) policies.
 3. **Auth Middleware (`middleware.ts`):** Next.js middleware checking Supabase JWT session tokens and protecting admin routes.
 4. **User & Permission Management UI (`src/app/(admin)/settings/users/page.tsx`):** Recruiter/Hiring Manager administration panel with company assignment and role toggle capability.
 5. **Timed WhatsApp Dispatcher & Cron Route (`src/app/api/cron/whatsapp/route.ts`):** Cron endpoint querying scheduled jobs, constructing Meta WhatsApp template payloads with dynamic link tokens, and logging dispatch status.

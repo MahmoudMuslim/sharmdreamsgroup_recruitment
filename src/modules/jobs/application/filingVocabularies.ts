@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { MASTER_LIST_WORDS, type MasterRowKey } from "@/modules/settings/domain/masterDataLists";
 import {

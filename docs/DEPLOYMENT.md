@@ -14,7 +14,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 
 There is no external database to provision. Postgres, PostgREST and the gateway
 come up with `npm run docker:up`, and `npm run db:apply-local` loads
-`supabase/schema.sql` into the container's own cluster — see *Target: self-hosted
+`db/schema.sql` into the container's own cluster — see *Target: self-hosted
 Docker stack* at the end of this file.
 
 ---
@@ -36,7 +36,7 @@ worker directory.
 
 | Variable | Read by | Notes |
 |----------|---------|-------|
-| `REST_BASE_URL` | `src/lib/supabase/{anon,server,service}.ts`, `src/lib/auth/guard.ts` | Where the app's PostgREST answers. Four modules read it straight from the environment and throw when it is unset, so **every row read and write fails without it**. The host's dev server uses `http://localhost:54321/rest/v1` (through the Caddy gateway) while a container in the compose network uses `http://rest:3000` with no prefix, because `/rest/v1` belongs to the proxy. It was called `SUPABASE_REST_BASE` until spec §15 Task 9 renamed it. |
+| `REST_BASE_URL` | `src/lib/data-api/{anon,server,service}.ts`, `src/lib/auth/guard.ts` | Where the app's PostgREST answers. Four modules read it straight from the environment and throw when it is unset, so **every row read and write fails without it**. The host's dev server uses `http://localhost:54321/rest/v1` (through the Caddy gateway) while a container in the compose network uses `http://rest:3000` with no prefix, because `/rest/v1` belongs to the proxy. It was called `SUPABASE_REST_BASE` until spec §15 Task 9 renamed it. |
 | `SETTINGS_ENCRYPTION_KEY` | crypto/secrets.ts | ≥ 32 chars. Generate: `node scripts/generate-encryption-key.mjs`. Without it, storing provider credentials throws `EncryptionUnavailableError`. |
 | `CRON_SECRET` | config.server.ts | Required by `/api/cron/*`; those routes **fail closed (503)** when it is unset. **Not in `.env.example` — add it.** |
 | `AUTH_JWT_SECRET` | `src/lib/auth/token.ts:59` (`secret()`) | HS256 secret for the session bearer the app mints and verifies itself. Throws `TokenConfigError` when absent or shorter than 32 chars, and that throw is on the sign-in path — **without it every login 500s**. Must equal `PGRST_JWT_SECRET`, or PostgREST refuses every token the app issues. |
@@ -106,7 +106,7 @@ npm run dev                          # http://localhost:3001
 `node scripts/apply-schema.mjs` and `verify-schema.mjs` still exist, but they
 address the hosted project through the `SUPABASE_*` values in `.env.local`; the
 local path is `npm run db:apply-local`, which reads the same
-`supabase/schema.sql` against the `db` container.
+`db/schema.sql` against the `db` container.
 
 > **Staff accounts come from the stack, not from a script.** The hosted
 > `scripts/create-staff.mjs` is retired: it wrote into the vendor's GoTrue
@@ -175,7 +175,7 @@ published `APP_URL`.
 PostgREST, the built app, nginx in front on `${NGINX_PORT}`, and the cron
 poller. Values come from `docker/.env` (copy `docker/.env.example`);
 `npm run docker:up` starts it, `npm run db:apply-local` applies
-`supabase/schema.sql`, `npm run db:seed-local` writes the local staff fixtures.
+`db/schema.sql`, `npm run db:seed-local` writes the local staff fixtures.
 
 ### Rotating `LOCAL_PGRST_PASSWORD`
 

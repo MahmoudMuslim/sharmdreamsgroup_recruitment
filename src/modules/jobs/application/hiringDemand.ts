@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { GRID_ROW_LIMIT } from "@/modules/jobs/domain/hireable";
 
 type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;

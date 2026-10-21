@@ -1,5 +1,5 @@
 /*
- * Proves the eight `public.files` policies (supabase/schema.sql, Plan 2 Task 2)
+ * Proves the eight `public.files` policies (db/schema.sql, Plan 2 Task 2)
  * enforce the same rules the vendor's eight `storage.objects` policies did, over
  * the door that will actually carry them: the gateway, exactly as the File
  * Manager will call it.
@@ -352,7 +352,7 @@ const policyRows = await db.query(
     "where c.relname = 'files' order by polname"
 );
 const installedNames = policyRows.rows.map((r) => r.polname).sort();
-// Compared against the eight names in supabase/schema.sql, not just a count: a
+// Compared against the eight names in db/schema.sql, not just a count: a
 // re-dump or a hand edit that renames one policy and adds another would keep the
 // count at eight while changing what the door actually permits.
 const expectedNames = [

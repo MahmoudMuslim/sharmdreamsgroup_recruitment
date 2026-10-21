@@ -21,7 +21,7 @@
  * all), so the in-pipeline set is everything else a candidate can rest in without
  * the role having stopped hiring for them.
  *
- * Mirrors the `application_stage` enum in `supabase/schema.sql`; a fifth active
+ * Mirrors the `application_stage` enum in `db/schema.sql`; a fifth active
  * stage added there has to be added here too, or a real person is counted as
  * neither in-pipeline nor hired.
  */

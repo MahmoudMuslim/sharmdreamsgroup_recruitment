@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath, updateTag } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
 import { shippedTemplate, type TemplateWriteResult } from "@/modules/settings/domain/templates";
@@ -244,7 +244,7 @@ export async function updateRolePermission(
 
   // The gate is `settings.manage_roles`, not the `manage_platform` switch the rest
   // of this console reads, because the `role_permissions_write` policy on
-  // `role_permissions` (supabase/schema.sql:1650) checks that same key — a caller
+  // `role_permissions` (db/schema.sql:1650) checks that same key — a caller
   // who holds only `manage_platform` would pass an app check here and then be
   // rejected by the database on the upsert below. Keep the two gates identical.
   if (!(await hasPermissionForUser("settings.manage_roles"))) {

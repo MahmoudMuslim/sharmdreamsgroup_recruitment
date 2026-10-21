@@ -16,7 +16,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [DATABASE.md](DATABASE.md) · [AP
 | **2. Session** | `src/lib/auth/session.ts` → `getSessionUser()` | Maps the bearer's `sub` to a `user_profiles` row (role, tenant, name) — read *through* that bearer, so RLS still decides. Cached per request. |
 | **3. Route gate** | `requireStaff(route)` + `src/lib/auth/staffRoutes.ts` | May this role be in the admin portal at all? |
 | **4. RBAC** | `src/modules/settings/infrastructure/permissions.ts` | Does this role hold the specific permission for this action? |
-| **5. RLS** | `supabase/schema.sql` policies | Which *rows* may this user see, evaluated by Postgres on every query using `auth.uid()`? |
+| **5. RLS** | `db/schema.sql` policies | Which *rows* may this user see, evaluated by Postgres on every query using `auth.uid()`? |
 
 Layers 3–4 are application checks; **layer 5 (RLS) is the backstop** — even a bug that skips a code check still hits the database policy.
 
@@ -151,7 +151,7 @@ New staff are invited into `user_invites` (role + company + `expires_at`, defaul
 
 - **Candidates** authenticate to the portal with their tracking code (and email); RLS limits them to their own application.
 - **Assessment attempts** are reached only through an unguessable `access_token` in `/api/attempt/[token]/*`; RLS scopes a candidate's reads/writes to that attempt.
-- **Public careers** surfaces use the anon client (`src/lib/supabase/anon.ts` — the same PostgREST transport with `token: null`, so Postgres runs the query as the `anon` role) under public RLS: insert applications/attachments/leads, read published jobs. No session is created or required, and there is no anon *key* anywhere in the tree.
+- **Public careers** surfaces use the anon client (`src/lib/data-api/anon.ts` — the same PostgREST transport with `token: null`, so Postgres runs the query as the `anon` role) under public RLS: insert applications/attachments/leads, read published jobs. No session is created or required, and there is no anon *key* anywhere in the tree.
 
 ---
 

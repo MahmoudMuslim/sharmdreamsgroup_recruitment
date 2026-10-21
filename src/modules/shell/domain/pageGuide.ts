@@ -103,7 +103,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Cut the view by Today / 7 / 14 / 30 days and My hours / The company, click a bar in a breakdown to show only that slice, then export CSV, Excel or PDF.",
     ],
     edges: [
-      "The ledger table is not on the database yet. Until supabase/migrations/025_time_entries.sql is applied, this page reads its own empty state and every write is refused.",
+      "The ledger table is not on the database yet. Until db/migrations/025_time_entries.sql is applied, this page reads its own empty state and every write is refused.",
       "Everything here, including the read, needs the Track time permission.",
       "Only the person who logged a span can change it, and one timer runs at a time per person.",
       "The read is the newest 1,000 entries in the cut you picked.",
@@ -122,7 +122,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Export the filtered set as CSV, Excel or PDF.",
     ],
     edges: [
-      "The trail table is not on the database yet — supabase/migrations/024_activity_log.sql. Until it is applied the page says so and reads nothing.",
+      "The trail table is not on the database yet — db/migrations/024_activity_log.sql. Until it is applied the page says so and reads nothing.",
       "Needs the Manage platform settings permission.",
       "The screen draws the newest 120 matching rows and a download carries up to 2,000; narrow the window for the rest.",
       "Values under a secret, token, password, CV or answer key print as [withheld].",

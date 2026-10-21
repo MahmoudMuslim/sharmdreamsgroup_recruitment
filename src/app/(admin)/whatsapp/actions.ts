@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";

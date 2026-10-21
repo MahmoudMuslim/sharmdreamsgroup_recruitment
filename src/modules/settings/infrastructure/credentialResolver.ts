@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import { providerById } from "@/modules/settings/domain/providers";
 

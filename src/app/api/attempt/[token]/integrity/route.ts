@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import { NextResponse } from "next/server";

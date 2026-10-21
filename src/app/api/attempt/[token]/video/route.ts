@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { supabaseConfig } from "@/lib/config";

@@ -27,7 +27,7 @@
 -- beyond the `grant` below, not rolconnlimit, not rolvaliduntil.
 --
 -- `service_role` keeps BYPASSRLS because the app's service client is meant to
--- reach every row; that is what src/lib/supabase/service.ts assumes today.
+-- reach every row; that is what src/lib/data-api/service.ts assumes today.
 
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
@@ -76,6 +76,6 @@ end $$;
 
 grant anon, authenticated, service_role to authenticator;
 
--- supabase/schema.sql grants object-level privileges to these roles, so they
+-- db/schema.sql grants object-level privileges to these roles, so they
 -- must be able to hold the schemas it creates.
 grant usage on schema public to anon, authenticated, service_role;

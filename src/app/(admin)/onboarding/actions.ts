@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { tasksOf, type ChecklistTask } from "./checklist";
 

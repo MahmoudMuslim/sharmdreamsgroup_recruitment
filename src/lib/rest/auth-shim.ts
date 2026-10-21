@@ -13,7 +13,7 @@ export interface ShimUser { id: string; email: string | null; role: string; }
  * proxy (`guard.ts`, which nulls the claims unless `verified.role` is
  * `authenticated`), the per-request staff read (`session.ts`, `claims.role !==
  * "authenticated"`), this shim (`user()`, same test), and the REST transport
- * (`src/lib/supabase/server.ts`, which forwards the bearer only when the verified
+ * (`src/lib/data-api/server.ts`, which forwards the bearer only when the verified
  * role is `authenticated` and forwards `null` otherwise). Each of the four
  * requires `authenticated`, so a `service_role` or `anon` bearer in a session
  * cookie is refused everywhere rather than being a sign-in for the call sites

@@ -2,8 +2,8 @@
 
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { canManageStaffUsers } from "@/modules/settings/infrastructure/permissions";
 import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";

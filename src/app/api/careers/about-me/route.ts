@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { getSupabaseAnonClient } from "@/lib/data-api/anon";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { describeAboutFailure, writeAboutMe } from "@/modules/careers/about-me";
 import {

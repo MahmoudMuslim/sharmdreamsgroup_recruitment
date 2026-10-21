@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import { MAX_HISTORY_ATTACHMENT_CHARS } from "@/modules/assistant/domain/attachments";
 import { withoutStepFileBytes, type AssistantStep } from "@/modules/assistant/infrastructure/agent";

@@ -1,6 +1,6 @@
 "use server";
 
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 
 export interface TrackedApplication {
   id: string;

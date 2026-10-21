@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { getSupabaseAnonClient } from "@/lib/data-api/anon";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
   CV_MAX_BYTES,

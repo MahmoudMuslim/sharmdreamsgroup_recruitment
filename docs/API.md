@@ -5,7 +5,7 @@ Two server-side surfaces exist in this app:
 1. **Route handlers** under `src/app/api/**/route.ts` — HTTP endpoints for things a Server Action cannot do (multipart uploads, streaming, `GET` downloads, cron callbacks, the live SSE channel).
 2. **Server Actions** — `"use server"` functions exported from `*/actions.ts` files, invoked directly from client components. These carry the bulk of the read/write traffic.
 
-There is no separately deployed REST API *for the app*: both run inside the Next.js runtime and talk to **our own PostgREST** (`rest` in `docker/docker-compose.yml`) through `src/lib/supabase/*`, which is a thin seam over `src/lib/rest/*`. PostgREST is the database's HTTP face, not a second application tier — it exposes the `public` schema and applies RLS as the caller's role. The app also has two doors that bypass HTTP entirely: the `pg` pool (`src/lib/auth/db.ts`, for the `auth` schema and pgcrypto) and the disk (`UPLOADS_ROOT`, for file bytes).
+There is no separately deployed REST API *for the app*: both run inside the Next.js runtime and talk to **our own PostgREST** (`rest` in `docker/docker-compose.yml`) through `src/lib/data-api/*`, which is a thin seam over `src/lib/rest/*`. PostgREST is the database's HTTP face, not a second application tier — it exposes the `public` schema and applies RLS as the caller's role. The app also has two doors that bypass HTTP entirely: the `pg` pool (`src/lib/auth/db.ts`, for the `auth` schema and pgcrypto) and the disk (`UPLOADS_ROOT`, for file bytes).
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATION.md) · [DATABASE.md](DATABASE.md)
 
@@ -132,6 +132,6 @@ Server Actions are plain `export async function`s in a `"use server"` module, ca
 ## Conventions
 
 - **Validate at the boundary** with Zod before touching the database.
-- **Prefer the request client** (`src/lib/supabase/server.ts`) so RLS is the enforcement layer; use the service-role client only for privileged writes after re-checking permissions in code.
+- **Prefer the request client** (`src/lib/data-api/server.ts`) so RLS is the enforcement layer; use the service-role client only for privileged writes after re-checking permissions in code.
 - **Fail closed**: a missing secret or permission returns an error, never a permissive default.
 - **Record side effects**: writes that matter emit to `activity_log` / `settings_audit_log` / `credential_audit_log`. No write notifies the portal — `/api/live` finds the change on its next fingerprint poll.

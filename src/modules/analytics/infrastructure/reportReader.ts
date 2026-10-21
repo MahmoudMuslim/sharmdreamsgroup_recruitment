@@ -16,7 +16,7 @@
 
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import {

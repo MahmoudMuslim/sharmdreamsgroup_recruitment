@@ -560,9 +560,9 @@ export function GuidePanel({ open }: { open: Panel }) {
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           Two screens above read a table the database does not have yet:{" "}
           <span className="font-semibold">Activity</span> waits on
-          supabase/migrations/024_activity_log.sql and{" "}
+          db/migrations/024_activity_log.sql and{" "}
           <span className="font-semibold">Time Tracker</span> waits on
-          supabase/migrations/025_time_entries.sql. Each one says so on the page
+          db/migrations/025_time_entries.sql. Each one says so on the page
           until it is applied; every other screen here reads tables that are
           already live.
         </p>

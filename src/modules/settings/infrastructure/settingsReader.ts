@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cacheLife, cacheTag } from "next/cache";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { isValidTimeZone } from "@/lib/timezone";
 
 /**

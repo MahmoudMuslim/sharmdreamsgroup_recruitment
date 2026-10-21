@@ -1,5 +1,5 @@
 /*
- * Applies supabase/schema.sql to the LOCAL self-hosted stack, then reports the
+ * Applies db/schema.sql to the LOCAL self-hosted stack, then reports the
  * object counts. Replaces `ZZ_DB_URL=… node scripts/apply-schema.mjs` for local
  * work so nobody has to remember the escape hatch — or read the password.
  *
@@ -35,7 +35,7 @@ if (!local.LOCAL_DB_PASSWORD) {
   process.exit(1);
 }
 
-const sql = readFileSync(join(root, "supabase", "schema.sql"), "utf8");
+const sql = readFileSync(join(root, "db", "schema.sql"), "utf8");
 
 // Field-based, not a URL: a URI would need the password percent-encoded, and a
 // rotated password containing @, / or % silently misparses into the wrong
@@ -52,7 +52,7 @@ await c.connect();
 if (/^create extension if not exists "supabase_vault"/m.test(sql)) {
   await c.end();
   console.error(
-    "supabase/schema.sql still creates supabase_vault, which a vanilla image\n" +
+    "db/schema.sql still creates supabase_vault, which a vanilla image\n" +
     "cannot do. That statement is a hand-removal — see this task's Step 3.\n" +
     "If a re-dump restored it, re-delete it and update the AUTHORITATIVE marker."
   );
@@ -74,7 +74,7 @@ if (stands.rowCount) {
   console.log("retired the Supabase Storage stand-in (schema, its tables, its eight policies)");
 }
 
-console.log("applying supabase/schema.sql to the local stack as one atomic script…");
+console.log("applying db/schema.sql to the local stack as one atomic script…");
 await c.query(sql);
 
 const counts = await c.query(`

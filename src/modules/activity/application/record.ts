@@ -18,8 +18,8 @@ import "server-only";
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { getSessionUser } from "@/lib/auth/session";
 import { pageCount, pageOffset, parsePage } from "@/lib/paging";
 import {
@@ -260,7 +260,7 @@ export async function readActivityTrail(filters: ActivityFilters): Promise<Trail
       total: 0,
       page,
       error: missing
-        ? "The change trail has not been created yet. Apply supabase/migrations/024_activity_log.sql, then reload this page."
+        ? "The change trail has not been created yet. Apply db/migrations/024_activity_log.sql, then reload this page."
         : `The change trail could not be read: ${listed.error.message}`,
     };
   }

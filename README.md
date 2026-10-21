@@ -120,7 +120,7 @@ npm install
 cp docker/.env.example docker/.env   # then fill in its secrets — required before
                                      # docker:up and db:apply-local both read it
 npm run docker:up                # db + rest + gateway + app + nginx + cron
-npm run db:apply-local           # loads supabase/schema.sql into the stack's own cluster
+npm run db:apply-local           # loads db/schema.sql into the stack's own cluster
 npm run db:seed-local            # the three staff fixtures the local login reads
 npm run stack:prove              # proves the three data doors end to end
 cp .env.example .env.local       # host-side `npm run dev` only — see the note below
@@ -142,7 +142,7 @@ npm run build        # production build (prebuild: routes, themes, secret audit)
 ```
 
 ### Database
-`supabase/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `supabase/migrations/` (001–031, 026 never written) is the history the dump was made from, not a path anything applies. One migration runs the other way: `031_job_headcount.sql` is written and hand-carried into `schema.sql` but applied to no cluster, so `job_openings.positions_needed` is in the file of record and not in the running table — the hiring-demand read shows "not recorded" until the owner applies it. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
+`db/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `db/migrations/` (001–031, 026 never written) is the history the dump was made from, not a path anything applies. One migration runs the other way: `031_job_headcount.sql` is written and hand-carried into `schema.sql` but applied to no cluster, so `job_openings.positions_needed` is in the file of record and not in the running table — the hiring-demand read shows "not recorded" until the owner applies it. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
 
 ---
 
@@ -158,7 +158,7 @@ npm run audit:secrets       # validate the deploy surface holds no vendor creden
 
 # The stack
 npm run docker:up / docker:down / docker:logs / docker:psql / docker:wipe
-npm run db:apply-local      # apply supabase/schema.sql to the stack's own cluster
+npm run db:apply-local      # apply db/schema.sql to the stack's own cluster
 npm run db:seed-local       # local staff fixtures, written into the stack's auth.users
 
 # Proofs (see docs/TESTING.md for what each asserts)
@@ -178,7 +178,7 @@ node scripts/dump-schema.mjs               # dump the hosted schema into schema.
 node scripts/verify-schema.mjs <file>      # compare the hosted catalog against schema.sql
 ```
 
-The first two read `SB_DB` (or `.env.local`'s `SUPABASE_DB_PASSWORD`); `verify-schema.mjs` can be aimed at any other database with `ZZ_DB_URL`. Local SQL changes go through `npm run docker:psql`, and the `supabase/migrations/` files are history, not the apply path.
+The first two read `SB_DB` (or `.env.local`'s `SUPABASE_DB_PASSWORD`); `verify-schema.mjs` can be aimed at any other database with `ZZ_DB_URL`. Local SQL changes go through `npm run docker:psql`, and the `db/migrations/` files are history, not the apply path.
 
 ---
 

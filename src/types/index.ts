@@ -6,7 +6,7 @@
 import type { GateAnswer } from "@/modules/careers/gate-questions";
 
 // ---------------------------------------------------------------------------
-// Enums (mirrored in supabase/schema.sql)
+// Enums (mirrored in db/schema.sql)
 // ---------------------------------------------------------------------------
 
 export type UserRole = "SUPER_ADMIN" | "RECRUITER" | "HIRING_MANAGER" | "CANDIDATE";

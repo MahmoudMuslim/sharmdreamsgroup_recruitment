@@ -1,5 +1,5 @@
 -- Throwaway stand-in for the pieces Supabase hosts outside the project's own
--- schema, so supabase/schema.sql can be applied on a vanilla Postgres.
+-- schema, so db/schema.sql can be applied on a vanilla Postgres.
 -- Local proof only; never applied to the hosted project.
 --
 -- It now matches what the real stack stands in: `docker/db/initdb/` brings up

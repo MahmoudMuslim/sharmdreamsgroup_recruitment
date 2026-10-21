@@ -2,31 +2,31 @@
  * HOSTED-ONLY — retired with spec §15. This script talks to the Supabase project
  * (`SUPABASE_PROJECT_REF`, the aws-0-eu-west-1 pooler), which the app no longer
  * reads or writes. It stays in the tree only as the door that produced
- * `supabase/schema.sql`; once the off-machine copy of the dump exists and the
+ * `db/schema.sql`; once the off-machine copy of the dump exists and the
  * hosted project is closed, delete it. Schema changes after that point go to the
  * local stack: `docker compose exec -T db psql -U postgres -d sharm_dreams`.
  *
- * Applies supabase/schema.sql to the configured project, as one script.
+ * Applies db/schema.sql to the configured project, as one script.
  *
  * It used to do three more things, and all three were reasons not to run it:
- * it applied supabase/seed.sql, so a real project collected demo applications;
+ * it applied db/seed.sql, so a real project collected demo applications;
  * it created three staff accounts whose passwords are written into this file;
  * and it upserted their user_profiles rows, overwriting the role and locale of
  * whoever already owned those addresses. The schema file now carries the
  * console's own reference rows, so this script does exactly what its name says
  * and nothing else.
  *
- *   demo rows      -> supabase/seed.sql, applied by hand when you want them
+ *   demo rows      -> db/seed.sql, applied by hand when you want them
  *   staff accounts -> Settings -> Team in the running app, or npm run db:seed-local
  *
  * Usage:
- *   node scripts/apply-schema.mjs [file]      # default supabase/schema.sql
+ *   node scripts/apply-schema.mjs [file]      # default db/schema.sql
  *
  * The password is read from SB_DB, then SUPABASE_DB_PASSWORD from .env.local.
  * Aim it at another database with ZZ_DB_URL — that is how this script gets
  * proved on the throwaway instead of on the project.
  * Confirm the result with:
- *   node scripts/verify-schema.mjs supabase/schema.sql
+ *   node scripts/verify-schema.mjs db/schema.sql
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const file = process.argv[2] ?? join(root, "supabase", "schema.sql");
+const file = process.argv[2] ?? join(root, "db", "schema.sql");
 
 function loadEnv() {
   const raw = readFileSync(join(root, ".env.local"), "utf8");

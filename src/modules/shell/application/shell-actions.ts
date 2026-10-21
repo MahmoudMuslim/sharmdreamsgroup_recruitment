@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasAiProvider } from "@/lib/config.server";
 import {

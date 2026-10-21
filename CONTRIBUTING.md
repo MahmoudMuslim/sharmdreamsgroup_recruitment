@@ -30,7 +30,7 @@ npm install
 # 1. The stack's own config, then the database containers
 cp docker/.env.example docker/.env    # fill in its secrets; tracked, and required
 npm run docker:up                     # db + rest + gateway + app + nginx + cron
-npm run db:apply-local                # load supabase/schema.sql into the db container
+npm run db:apply-local                # load db/schema.sql into the db container
 npm run db:seed-local                 # staff fixtures the local login can use
 
 # 2. Your host-side .env.local (untracked — `.gitignore`'s `.env*` covers the root
@@ -57,10 +57,10 @@ src/
 │   ├── careers/    # public job board + apply + assistant
 │   └── api/        # route handlers
 ├── modules/        # clean-architecture domains (domain/application/infrastructure/presentation)
-├── lib/            # REST clients (lib/supabase + lib/rest), auth/sessions, files, crypto, config, theme, i18n
+├── lib/            # REST clients (lib/data-api + lib/rest), auth/sessions, files, crypto, config, theme, i18n
 ├── stores/         # Zustand
 └── types/          # shared TS interfaces
-supabase/           # schema.sql (the consolidated DDL the stack loads), migrations/ (history), seed.sql
+db/                  # schema.sql (the consolidated DDL the stack loads), migrations/ (history), seed.sql
 docker/             # docker-compose.yml, db/initdb/, nginx/, .env.example — the whole self-hosted stack
 scripts/            # build guards + DB/maintenance scripts
 docs/               # the documentation set above
@@ -71,7 +71,7 @@ docs/               # the documentation set above
 ## Conventions
 
 - **Server components by default**; add `"use client"` only where interactivity requires it.
-- **Layering**: pages/route-handlers authorize and render; business logic lives in `src/modules/<domain>`; the database is reached through one of exactly three doors — the PostgREST client (`src/lib/supabase` over `REST_BASE_URL`), the `pg` pool for the `auth` schema (`src/lib/auth/db.ts`), or the uploads volume (`src/lib/files`).
+- **Layering**: pages/route-handlers authorize and render; business logic lives in `src/modules/<domain>`; the database is reached through one of exactly three doors — the PostgREST client (`src/lib/data-api` over `REST_BASE_URL`), the `pg` pool for the `auth` schema (`src/lib/auth/db.ts`), or the uploads volume (`src/lib/files`).
 - **Validate at the boundary** with Zod before any DB write.
 - **Prefer the request's session bearer** (`createSupabaseServerClient`) so RLS enforces access. `getSupabaseServiceClient` mints a short-lived `service_role` bearer that **bypasses RLS** — use it only for a privileged write after re-checking the permission in code.
 - **Fail closed**: a missing secret or permission is an error, never a permissive default.
@@ -84,7 +84,7 @@ A new page under `src/app/(admin)/<route>/page.tsx` must be registered in **both
 
 ### Changing the database
 
-Edit `supabase/schema.sql` **and** add an ordered migration in `supabase/migrations/0NN_*.sql` — the schema file is what the stack loads, the migration is the history that explains the change. Apply to the running stack with `npm run db:apply-local` (whole file) or `npm run docker:psql` (one migration), then prove the identity/RLS contract still holds:
+Edit `db/schema.sql` **and** add an ordered migration in `db/migrations/0NN_*.sql` — the schema file is what the stack loads, the migration is the history that explains the change. Apply to the running stack with `npm run db:apply-local` (whole file) or `npm run docker:psql` (one migration), then prove the identity/RLS contract still holds:
 
 ```bash
 npm run stack:prove    # identity + RLS parity against the local stack
@@ -131,7 +131,7 @@ Then walk the relevant manual checks in [docs/TESTING.md](docs/TESTING.md) — i
 
 | Script | Purpose |
 |--------|---------|
-| `apply-local-schema.mjs` (`npm run db:apply-local`) | Load `supabase/schema.sql` into the stack's `db` container. |
+| `apply-local-schema.mjs` (`npm run db:apply-local`) | Load `db/schema.sql` into the stack's `db` container. |
 | `seed-local-staff.mjs` (`npm run db:seed-local`) | Write the local staff fixtures into the stack's `auth.users`. |
 | `generate-encryption-key.mjs` | Produce a `SETTINGS_ENCRYPTION_KEY`. |
 | `check-staff-routes.mjs` / `check-themes.mjs` / `audit-secrets.mjs` | Build guards — all three run in `prebuild`, so a `next build` (host or image) fails on an unguarded route, an unpainted theme, or a vendor credential in the deploy surface. |

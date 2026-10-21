@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { verifySessionToken } from "@/lib/auth/token";
 import { SESSION_COOKIE } from "@/lib/auth/cookies";
 import { loginSearch } from "@/lib/auth/login-target";

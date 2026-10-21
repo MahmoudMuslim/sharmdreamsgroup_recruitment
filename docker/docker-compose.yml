@@ -35,7 +35,7 @@ services:
       # rotating it in docker/.env is enough - no committed literal has to be
       # edited. Unset or empty leaves 00-roles.sql's first-boot default alone.
       LOCAL_PGRST_PASSWORD: ${LOCAL_PGRST_PASSWORD}
-    # PG17 or newer is forced by supabase/schema.sql: every grant it carries uses
+    # PG17 or newer is forced by db/schema.sql: every grant it carries uses
     # the `maintain` privilege, which does not exist before PG17. Nothing here
     # needs PG18 specifically, and nothing here breaks on it — pgcrypto's bcrypt
     # `crypt()`/`gen_salt('bf')` pair that src/lib/auth/db.ts verifies passwords
@@ -113,7 +113,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
 
   # The scheduler `/api/cron/whatsapp` and `/api/cron/grading never had: nothing
-  # on Vercel ever called them (no vercel.json) and nothing in supabase/ does
+  # on Vercel ever called them (no vercel.json) and nothing in db/ does
   # (no pg_cron). A supervised busybox loop as PID 1, not crond.
   cron:
     build: ./cron

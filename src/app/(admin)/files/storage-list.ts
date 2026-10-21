@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { getFileStore, type FileStoreEntry } from "@/lib/files/store";
 import type { BucketKey } from "./file-browser-types";
 

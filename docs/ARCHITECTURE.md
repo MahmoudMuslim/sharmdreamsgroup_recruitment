@@ -21,7 +21,7 @@ Browser ──► nginx ──► Next.js page / route handler / server action
                         src/modules/<domain>       ← business logic
                               │  session · anon · service client
                               ▼
-                        src/lib/supabase/* → src/lib/rest/*   ← one PostgREST transport
+                        src/lib/data-api/* → src/lib/rest/*   ← one PostgREST transport
                               ▼
                      REST_BASE_URL = http://rest:3000   (no prefix: the prefix
                               ▼       belongs to the proxies, see below)
@@ -64,7 +64,8 @@ src/
 │   ├── crypto/               # secrets.ts (AES-256-GCM)
 │   ├── files/                # paths · disk-store · signed-link · store
 │   ├── rest/                 # client · query-builder · auth-shim  (the transport)
-│   ├── supabase/             # anon · server · service  (names kept, contents are ours)
+│   ├── data-api/             # anon · server · service  (the three clients; was
+│   │                         # lib/supabase/ until the legacy-name cleanup)
 │   └── *.ts                  # config · config.server · currency · i18n · live ·
 │                             # locale-pref · paging · public-url · rail · textSearch ·
 │                             # theme · timezone · utils · alert-ack
@@ -151,15 +152,15 @@ Every entry below is a real `page.tsx` under `src/app/(admin)/` and is listed in
 
 ---
 
-## Data access (`src/lib/supabase` over `src/lib/rest`)
+## Data access (`src/lib/data-api` over `src/lib/rest`)
 
-`src/lib/supabase/` keeps its name for one reason: **198 call sites across 67 files** construct one of these three, and none of them needs to know the transport is now our own PostgREST (spec §11 forbade a rename that would churn every file for no behavioural gain). Measured by counting each constructor's calls, not its definition: `createSupabaseServerClient()` 129, `getSupabaseServiceClient()` 62, `getSupabaseAnonClient()` 7. Underneath, `src/lib/rest/` is the transport.
+The folder is `src/lib/data-api/`; it carried the vendor's name until the legacy-name cleanup renamed it. The three constructors kept theirs: **198 call sites across 67 files** name `createSupabaseServerClient()`, `getSupabaseServiceClient()` and `getSupabaseAnonClient()`, and none of them needs to know the transport is now our own PostgREST. Measured by counting each constructor's calls, not its definition: `createSupabaseServerClient()` 129, `getSupabaseServiceClient()` 62, `getSupabaseAnonClient()` 7. Underneath, `src/lib/rest/` is the transport.
 
 | File | Role |
 |------|------|
-| `supabase/server.ts` | **The one seam.** Per-request client built from the `sdg_session` bearer after it is verified; anything that is not a verified `authenticated` bearer is forwarded as `null`, so the request runs as `anon` and RLS answers it. Returns the `{ from, rpc, auth }` shape the old client had. |
-| `supabase/anon.ts` | Module-scoped client with no identity, for public, cacheable reads (`jobs_public_read` → PUBLISHED rows only). Kept separate because a cookie-bound client cannot be prerendered. |
-| `supabase/service.ts` | Service-role client. Mints a short-lived bearer locally with `AUTH_JWT_SECRET` (60 s, per call, so no bearer outlives its expiry); the `service_role` DB user carries `bypassrls`, so this **bypasses** RLS. |
+| `data-api/server.ts` | **The one seam.** Per-request client built from the `sdg_session` bearer after it is verified; anything that is not a verified `authenticated` bearer is forwarded as `null`, so the request runs as `anon` and RLS answers it. Returns the `{ from, rpc, auth }` shape the old client had. |
+| `data-api/anon.ts` | Module-scoped client with no identity, for public, cacheable reads (`jobs_public_read` → PUBLISHED rows only). Kept separate because a cookie-bound client cannot be prerendered. |
+| `data-api/service.ts` | Service-role client. Mints a short-lived bearer locally with `AUTH_JWT_SECRET` (60 s, per call, so no bearer outlives its expiry); the `service_role` DB user carries `bypassrls`, so this **bypasses** RLS. |
 | `rest/client.ts` | The PostgREST HTTP client — `from()`, `rpc()`, and the `auth.admin` handle. |
 | `rest/query-builder.ts` | The chainable filter/order/select builder that compiles to PostgREST query params. |
 | `rest/auth-shim.ts` | `auth.admin` as four parameterised statements over the `pg` pool (`src/lib/auth/db.ts`), because `auth` is deliberately outside `PGRST_DB_SCHEMAS` and no HTTP route may reach `auth.users`. |
@@ -178,7 +179,7 @@ Client selection is deliberate: **prefer the request client so RLS is the enforc
 ## Configuration & theming
 
 - `lib/config.ts` is **client-safe** and imports cleanly into browser code. It reads `APP_URL` and the four `AI_MODEL_*` chain names, and holds the four bucket names — no `NEXT_PUBLIC_*` value any more, because nothing is inlined at build time; the browser only ever needs the origin it was served from. `lib/config.server.ts` is guarded by `server-only` and holds the AI provider keys, WhatsApp/SMTP defaults, and cron config.
-- The self-hosting secrets are deliberately *not* in a config module — each is read where it is used, so a missing one fails at the door that needs it: `AUTH_JWT_SECRET` in `auth/token.ts` (and `files/signed-link.ts`), `SETTINGS_ENCRYPTION_KEY` in `crypto/secrets.ts`, `UPLOADS_ROOT` in `files/paths.ts`, `AUTH_DB_URL` in `auth/db.ts`. `REST_BASE_URL` is the one value four modules read straight from the environment and each throws on without it: `supabase/anon.ts:51`, `supabase/server.ts:32`, `supabase/service.ts:21` and `auth/guard.ts:39`.
+- The self-hosting secrets are deliberately *not* in a config module — each is read where it is used, so a missing one fails at the door that needs it: `AUTH_JWT_SECRET` in `auth/token.ts` (and `files/signed-link.ts`), `SETTINGS_ENCRYPTION_KEY` in `crypto/secrets.ts`, `UPLOADS_ROOT` in `files/paths.ts`, `AUTH_DB_URL` in `auth/db.ts`. `REST_BASE_URL` is the one value four modules read straight from the environment and each throws on without it: `data-api/anon.ts:51`, `data-api/server.ts:32`, `data-api/service.ts:21` and `auth/guard.ts:39`.
 - Theming is CSS-token driven (`app/globals.css` + `lib/theme.ts`): Base and Liquid-glass parents × Light/Dark, persisted in `localStorage` only (there is no per-user theme column) and applied pre-paint.
 
 ---

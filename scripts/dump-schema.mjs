@@ -1,6 +1,6 @@
 /*
  * HOSTED-ONLY — retired with spec §15. This is the file that produced
- * `supabase/schema.sql` from the live project, and it is the last statement of
+ * `db/schema.sql` from the live project, and it is the last statement of
  * what that database held. The local stack is now the thing being described, so
  * after the off-machine copy of the dump exists and the project is closed,
  * replace this script with a plain `pg_dump` against the `db` container, or
@@ -12,7 +12,7 @@
  *
  * Read-only — every query here is a SELECT.
  *
- *   node scripts/dump-schema.mjs > supabase/schema.sql
+ *   node scripts/dump-schema.mjs > db/schema.sql
  */
 import { readFileSync } from "fs";
 import { Client } from "pg";
@@ -55,12 +55,12 @@ function ident(value) {
 }
 
 /* This block must stay character-for-character identical to lines 1-29 of
- * `supabase/schema.sql`, because this script overwrites that file from the first
+ * `db/schema.sql`, because this script overwrites that file from the first
  * line: a paraphrase here silently reverts the prose 4458cb7 wrote there. Check it
  * after touching either side — render this `say()` argument and diff it:
  *
  *   node -e "const fs=require('fs'),t=String.fromCharCode(96),sl=String.fromCharCode(47);const s=fs.readFileSync('scripts/dump-schema.mjs','utf8');const i=s.indexOf('say('+t+sl+'*'),e=s.indexOf('*'+sl+t+');',i);fs.writeFileSync(process.argv[1],new Function('return '+s.slice(i+4,e+3))()+'\n')" /tmp/emitted-header.txt
- *   diff <(sed -n '1,29p' supabase/schema.sql) /tmp/emitted-header.txt
+ *   diff <(sed -n '1,29p' db/schema.sql) /tmp/emitted-header.txt
  *
  * (`String.fromCharCode(96)` is the backtick, because this block carries escaped
  * ones, and `(47)` the slash, because a literal `*` + `/` pair inside the comment
@@ -77,7 +77,7 @@ say(`/*
  *
  * Generated from the live project, so this file describes the database instead
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
- * reasoning behind any single object lives in supabase/migrations/001-*.sql.
+ * reasoning behind any single object lives in db/migrations/001-*.sql.
  *
  * Three sections are authored rather than dumped: the two seed blocks, and the
  * \`public.files\` table with its eight policies at the very end, which is the
@@ -85,8 +85,8 @@ say(`/*
  * §15 — Task 10 deleted those policies and the \`storage\` grants from this file).
  * Both seed blocks are dumps of live rows in authored shape. Regenerate with:
  *
- *   node scripts/dump-schema.mjs > supabase/schema.sql
- *   node scripts/verify-schema.mjs supabase/schema.sql   # must report no gaps
+ *   node scripts/dump-schema.mjs > db/schema.sql
+ *   node scripts/verify-schema.mjs db/schema.sql   # must report no gaps
  *
  * Order is dependency-driven, because this file has to apply on an empty
  * database: extensions and enums, then every table, then uniqueness, then the

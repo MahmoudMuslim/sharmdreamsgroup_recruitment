@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";

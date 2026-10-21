@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { benchmarkOf, type AttemptBenchmark } from "@/modules/assessment/domain/benchmark";
 
 /** The server client every read in this module is handed, rather than built twice. */

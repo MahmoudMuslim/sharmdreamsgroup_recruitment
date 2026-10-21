@@ -16,10 +16,11 @@ function optional(value: string | undefined, fallback = ""): string {
 /**
  * The four names below are the buckets *we* run, not the vendor's: they are the
  * directories under `UPLOADS_ROOT` that `src/lib/files/paths.ts` resolves within,
- * and the value a `files` row stores in its `bucket` column. The object keeps its
- * `supabase` name for the same reason `src/lib/supabase/` does — renaming it would
- * touch four call sites to say nothing new — and `candidateCvs` keeps the exact
- * spelling the "Track your application" copy and the extracted manifest use.
+ * and the value a `files` row stores in its `bucket` column. Those four strings are
+ * load-bearing, not cosmetic: `db/schema.sql` hard-codes the same spellings inside
+ * the storage RLS policies, so a value here that drifts makes a working upload fail
+ * its policy check — and `candidateCvs` keeps the exact spelling the "Track your
+ * application" copy and the extracted manifest use.
  */
 export const supabaseConfig = {
   buckets: {

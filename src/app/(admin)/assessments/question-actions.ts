@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { RestClient } from "@/lib/rest/client";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { hasAiProvider } from "@/lib/config.server";

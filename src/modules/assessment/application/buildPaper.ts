@@ -1,6 +1,6 @@
 "use server";
 
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { currentActivityContext, recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext } from "@/modules/assessment/application/runner-trail";
 

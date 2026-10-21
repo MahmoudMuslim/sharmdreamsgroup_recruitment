@@ -20,7 +20,7 @@ import { authAdmin } from "@/lib/auth/admin-users";
 export function getSupabaseServiceClient() {
   const base = process.env.REST_BASE_URL;
   if (!base) {
-    throw new Error("[supabase] REST_BASE_URL is not set — run the local stack (Tasks 1-2).");
+    throw new Error("[data-api] REST_BASE_URL is not set — run the local stack (docker/docker-compose.yml).");
   }
   return {
     // Lazy bearer, so the factory stays synchronous AND no bearer can outlive

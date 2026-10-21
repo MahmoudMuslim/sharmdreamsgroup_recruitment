@@ -1,4 +1,4 @@
-import type { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { createSupabaseServerClient } from "@/lib/data-api/server";
 import { closedOpeningRefusal, isHireable } from "@/modules/jobs/domain/hireable";
 
 type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;

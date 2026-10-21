@@ -6,7 +6,7 @@ import { Pool } from "pg";
  * the pool is reused — which is the point of leaving serverless (spec §9).
  *
  * Guarded as a module global so hot reloads during `next dev` do not open a new
- * pool per edit. The existing process-global singletons in src/lib/supabase/
+ * pool per edit. The existing process-global singletons in src/lib/data-api/
  * anon.ts:5 and service.ts:5 follow the same convention.
  */
 let pool: Pool | null = null;

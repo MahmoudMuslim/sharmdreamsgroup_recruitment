@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import { getFilingVocabularies } from "@/modules/jobs/application/filingVocabularies";

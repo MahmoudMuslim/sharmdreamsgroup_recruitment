@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";

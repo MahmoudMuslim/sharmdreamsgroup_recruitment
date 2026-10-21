@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { NextResponse } from "next/server";
 import type { SpreadsheetCellData } from "@/types";
 

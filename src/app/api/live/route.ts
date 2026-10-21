@@ -18,7 +18,7 @@
  */
 
 import { getSessionUser, isStaff } from "@/lib/auth/session";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseServerClient } from "@/lib/data-api/server";
 import {
   carryLastRead,
   diffLiveFingerprints,

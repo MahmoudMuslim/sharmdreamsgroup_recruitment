@@ -1,6 +1,6 @@
 # Database
 
-The whole application runs on **PostgreSQL 18.6 plus PostgREST 16.5, both containers this repo configures** (`docker/docker-compose.yml`), with the schema created idempotently in [`supabase/schema.sql`](../supabase/schema.sql). Every table lives in the `public` schema and is protected by **Row Level Security**. The authoritative definition is that file — this document is a map of it.
+The whole application runs on **PostgreSQL 18.6 plus PostgREST 16.5, both containers this repo configures** (`docker/docker-compose.yml`), with the schema created idempotently in [`db/schema.sql`](../db/schema.sql). Every table lives in the `public` schema and is protected by **Row Level Security**. The authoritative definition is that file — this document is a map of it.
 
 Counts below are measured from that file, not from a snapshot:
 
@@ -149,14 +149,14 @@ RLS is the enforcement layer for every read/write. Notable postures:
 - **Candidate attempts** — five policies key on `request.jwt.claims ->> 'attempt_token'` matching `candidate_attempts.access_token` (one of them the `files` upload rule that a path may only start with the token it was issued for). They are a **backstop, not the live path**: every `/api/attempt/[token]/*` route validates the unguessable token in code and then writes through the service client, so no HTTP caller in production presents an `attempt_token` bearer. `scripts/prove-files-rls.mjs` mints one anyway to prove the policies really fire.
 - **Staff queries** run on the caller's bearer, so a Hiring Manager's live fingerprint and reports cover only the rows their role + tenant may see.
 
-> Prefer the **request client** (`src/lib/supabase/server.ts`) so RLS applies. The **service-role** client (`src/lib/supabase/service.ts`) bypasses RLS via the `bypassrls` DB role and is used only for privileged server operations after a permission is re-checked in code.
+> Prefer the **request client** (`src/lib/data-api/server.ts`) so RLS applies. The **service-role** client (`src/lib/data-api/service.ts`) bypasses RLS via the `bypassrls` DB role and is used only for privileged server operations after a permission is re-checked in code.
 
 ---
 
 ## Migrations & seeding
 
-- `supabase/schema.sql` — the consolidated, idempotent schema **and** the console's reference data: every table, policy, function, trigger, index, plus 235 `insert … on conflict (id) do nothing` rows: 9 company rows in a `SEED DATA` section, then the 226 rows the `REFERENCE ROWS` section header introduces (roles, permissions, model config, `app_settings`, master data). The in-file comment at the end of that section says "226 reference rows above" and means the section, not the file — companies come first because parents precede children. This is the file the running stack is built from.
+- `db/schema.sql` — the consolidated, idempotent schema **and** the console's reference data: every table, policy, function, trigger, index, plus 235 `insert … on conflict (id) do nothing` rows: 9 company rows in a `SEED DATA` section, then the 226 rows the `REFERENCE ROWS` section header introduces (roles, permissions, model config, `app_settings`, master data). The in-file comment at the end of that section says "226 reference rows above" and means the section, not the file — companies come first because parents precede children. This is the file the running stack is built from.
 - `npm run db:apply-local` → `scripts/apply-local-schema.mjs` — applies it to the local `db` container as one atomic script. It pre-flights the `supabase_vault` create (a vanilla image cannot provide it, so it exits 1 with the file and remedy named), then drops a restored `storage` schema before the SQL runs — so a re-dump that silently resurrected a vendor policy fails loudly on a missing relation instead of quietly keeping a dead shim alive. Then `npm run db:seed-local` (staff logins) and `npm run stack:prove` (the parity gate).
-- `supabase/migrations/0xx_*.sql` — the 29 authored, ordered changes that grew the schema (RBAC, provider credentials, WhatsApp jobs, sourcing, activity log, time entries, company profiles, …). They are history, not the apply path: the local stack runs `schema.sql` alone, which already contains their effect.
-- `supabase/seed.sql` — demo data (fake applications and candidates). **Not applied automatically by anything**; apply by hand when you want a populated-looking board.
+- `db/migrations/0xx_*.sql` — the 30 authored, ordered changes that grew the schema (RBAC, provider credentials, WhatsApp jobs, sourcing, activity log, time entries, company profiles, …; 026 was never written). They are history, not the apply path: the local stack runs `schema.sql` alone, which already contains their effect.
+- `db/seed.sql` — demo data (fake applications and candidates). **Not applied automatically by anything**; apply by hand when you want a populated-looking board.
 - `scripts/apply-schema.mjs` / `verify-schema.mjs` / `dump-schema.mjs` — HOSTED-ONLY doors to the vendor project, banner-marked for deletion once the off-machine dump copy exists. `dump-schema.mjs` is how `schema.sql` was produced; `verify-schema.mjs` will report the retired `storage` section as a gap against the hosted database, which is correct and temporary.

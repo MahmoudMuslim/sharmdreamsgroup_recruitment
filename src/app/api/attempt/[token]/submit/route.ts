@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getSupabaseServiceClient } from "@/lib/data-api/service";
 import { after } from "next/server";
 import { gradeAttemptResponses } from "@/modules/assessment/application/gradeAttempt";
 import { recordActivity } from "@/modules/activity/application/record";
