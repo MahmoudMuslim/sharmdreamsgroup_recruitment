@@ -67,6 +67,71 @@ async function getSessionTimeoutMinutes(token: string): Promise<number> {
   return minutes;
 }
 
+/**
+ * How long the proxy remembers a bearer's profile role between requests.
+ *
+ * The proxy runs outside the RSC render, so the React `cache()` around
+ * `getSessionUser` never spans it: the guard paid its own `user_profiles` round
+ * trip on every staff-path click while the page render paid a second. The verdict
+ * is memoized per auth user for the same bound the idle-window read already
+ * accepts. It decides only the coarse candidate bounce; the authoritative gate is
+ * `requireStaff`, which reads the role fresh through RLS on every render, so a
+ * demotion landing mid-window is still refused at the page and at the row.
+ */
+const ROLE_MEMO_MS = 60_000;
+const ROLE_MEMO_MAX = 512;
+const roleMemo = new Map<string, { role: string | null; readAt: number }>();
+
+function rememberRole(sub: string, role: string | null, now: number): void {
+  // A process-lifetime Map keyed by every session's `sub` needs a bound. Drop the
+  // entries already past their window, then the single oldest, so the memo cannot
+  // grow without limit while the portal is up.
+  if (roleMemo.size >= ROLE_MEMO_MAX) {
+    for (const [key, entry] of roleMemo) {
+      if (now - entry.readAt >= ROLE_MEMO_MS) roleMemo.delete(key);
+      if (roleMemo.size < ROLE_MEMO_MAX) break;
+    }
+    if (roleMemo.size >= ROLE_MEMO_MAX) {
+      const oldest = roleMemo.keys().next().value;
+      if (oldest !== undefined) roleMemo.delete(oldest);
+    }
+  }
+  roleMemo.set(sub, { role, readAt: now });
+}
+
+/**
+ * The profile's role, memoized per auth user, or `null` for "no row or unreadable".
+ *
+ * A failed read is returned as `null` and NOT remembered — pinning "not staff"
+ * for a minute on a gateway blip would bounce a recruiter whose own page would
+ * admit them, the same reason the timeout memo refuses to remember an error. Both
+ * `null` outcomes (refused read, missing row) fall through to `requireStaff`,
+ * which is fresh and RLS-gated.
+ */
+async function getStaffRole(token: string, sub: string): Promise<string | null> {
+  const now = Date.now();
+  const hit = roleMemo.get(sub);
+  if (hit && now - hit.readAt < ROLE_MEMO_MS) return hit.role;
+
+  const api = createRestClient({ baseUrl: restBaseUrl(), token });
+  const { data, error } = await api
+    .from("user_profiles")
+    .select("role")
+    .eq("auth_user_id", sub)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[guard] staff role read failed; falling through to requireStaff", error.message);
+    return null;
+  }
+  const role = (data?.role as string | undefined) ?? null;
+  // `createRestClient` answers an unreachable gateway with `{ data: null, error }`
+  // rather than a throw, so this logged warning is the only trace the bounce
+  // failure mode leaves; silence would read as "no candidate got in".
+  rememberRole(sub, role, now);
+  return role;
+}
+
 export async function guardRequest(request: NextRequest): Promise<NextResponse> {
   const { pathname, search } = request.nextUrl;
   const wanted = pathname + search;
@@ -98,26 +163,12 @@ export async function guardRequest(request: NextRequest): Promise<NextResponse> 
     return NextResponse.next({ request: { headers: request.headers } });
   }
 
-  const api = createRestClient({ baseUrl: restBaseUrl(), token: bearer });
+  // A signed-in candidate must never see recruiter analytics. The role is
+  // memoized per auth user above; a `null` (no row or a failed read) falls
+  // through to the page-level `requireStaff`, the authoritative fresh gate.
+  const role = await getStaffRole(bearer, claims.sub);
 
-  // A signed-in candidate must never see recruiter analytics.
-  //
-  // `error` is logged, not branched on: "row missing" and "read refused" must
-  // both fall through to the page-level `requireStaff` (difference #3), but
-  // `createRestClient` answers an unreachable gateway with
-  // `{ data: null, error }` rather than a throw, so a logged error is the only
-  // trace this gate's failure mode leaves. Silence here reads as "no candidate
-  // got in", and the bounce would have stopped enforcing without anyone seeing.
-  const { data: profile, error: profileError } = await api
-    .from("user_profiles")
-    .select("role")
-    .eq("auth_user_id", claims.sub)
-    .maybeSingle();
-  if (profileError) {
-    console.warn("[guard] staff role read failed; falling through to requireStaff", profileError.message);
-  }
-
-  if (profile && !STAFF_ROLES.has(profile.role)) {
+  if (role && !STAFF_ROLES.has(role)) {
     const portalUrl = request.nextUrl.clone();
     portalUrl.pathname = "/portal";
     portalUrl.search = "?denied=staff-only";
