@@ -95,14 +95,17 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     scoresAreMaskedForCurrentUser(),
   ]);
 
-  const [applicationsResult, attemptsResult, jobsResult] = await Promise.all([
+  // The attempts are not read here: the whole table only feeds the board's
+  // assessment columns for the rows a panel can hold, so they come after the
+  // board's ids are known (below) as a bounded `.in` read — the same shape the
+  // drill-down already uses.
+  const [applicationsResult, jobsResult] = await Promise.all([
     supabase
       .from("applications")
       .select(
         "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_id, job_openings(id, title, department, status, closing_at)"
       )
       .is("archived_at", null),
-    supabase.from("candidate_attempts").select("application_id, total_score"),
     supabase
       .from("job_openings")
       .select("id, title, department, status, closing_at")
@@ -110,7 +113,6 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   ]);
 
   const applications = (applicationsResult.data ?? []) as ApplicationJoin[];
-  const attempts = (attemptsResult.data ?? []) as AttemptJoin[];
   const jobs = (jobsResult.data ?? []) as JobRow[];
   const activeJobs = jobs.filter((job) => job.status === "PUBLISHED").length;
   const now = Date.now();
@@ -235,9 +237,7 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   // newest-first when scores are masked). That is a cap, not the set — the
   // tiles above count every live application, and the view names the difference
   // rather than letting a stage rail look like a filter over the whole pipeline.
-  const scoreByApplication = new Map(attempts.map((a) => [a.application_id, a.total_score]));
-
-  const candidates: DashboardCandidate[] = [...applications]
+  const boardRows = [...applications]
     .sort((a, b) =>
       // Ranking by a hidden score would leak its order, so a masked caller gets
       // the board newest-first instead.
@@ -245,22 +245,41 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
         ? String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
         : (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1)
     )
-    .slice(0, BOARD_LIMIT)
-    .map((app) => {
-      const job = one<JobShape>(app.job_openings);
-      return {
-        application_id: app.id,
-        full_name: app.full_name,
-        job_title: job?.title ?? "",
-        department: job?.department ?? "",
-        match_score: masked ? null : app.ai_match_score,
-        stage: app.stage,
-        source: app.source,
-        applied_at: app.created_at,
-        has_assessment: scoreByApplication.has(app.id),
-        assessment_score: masked ? null : scoreByApplication.get(app.id) ?? null,
-      };
-    });
+    .slice(0, BOARD_LIMIT);
+
+  // Attempts are only wanted for the rows the board actually holds, so this read
+  // is bounded to their ids rather than the whole table. A masked caller still
+  // gets `has_assessment` (a yes/no, not a score), so the read runs either way.
+  const attemptsResult =
+    boardRows.length === 0
+      ? null
+      : await supabase
+          .from("candidate_attempts")
+          .select("application_id, total_score")
+          .in("application_id", boardRows.map((app) => app.id));
+
+  const scoreByApplication = new Map(
+    ((attemptsResult?.data ?? []) as AttemptJoin[]).map((attempt) => [
+      attempt.application_id,
+      attempt.total_score,
+    ])
+  );
+
+  const candidates: DashboardCandidate[] = boardRows.map((app) => {
+    const job = one<JobShape>(app.job_openings);
+    return {
+      application_id: app.id,
+      full_name: app.full_name,
+      job_title: job?.title ?? "",
+      department: job?.department ?? "",
+      match_score: masked ? null : app.ai_match_score,
+      stage: app.stage,
+      source: app.source,
+      applied_at: app.created_at,
+      has_assessment: scoreByApplication.has(app.id),
+      assessment_score: masked ? null : scoreByApplication.get(app.id) ?? null,
+    };
+  });
 
   // --- Role leaderboard ------------------------------------------------------
   // One row per opening, built from a map rather than a second query: the
