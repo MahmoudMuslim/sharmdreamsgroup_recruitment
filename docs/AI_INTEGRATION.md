@@ -37,7 +37,7 @@ Eight providers are registered in `providers.ts`, grouped for the Settings UI. S
 | `qoder` | ai | `QODER_API_KEY` | Qoder Cloud Agents (personal access token). |
 | `cloudflare_workers_ai` | ai | `CLOUDFLARE_AI_API_TOKEN` (+ `CLOUDFLARE_AI_ACCOUNT_ID`) | Needs an Account ID too — every call is addressed to an account. |
 | `nvidia_nim` | ai | `NVIDIA_API_KEY` | OpenAI-compatible; **not verifiable** (its public model list 200s even for a bad key) — use the diagnostics completion probe. |
-| `whatsapp` | communication | `WHATSAPP_TOKEN` (registry) | See [DEPLOYMENT.md](DEPLOYMENT.md) — the runtime reads `WHATSAPP_CLOUD_API_TOKEN`. |
+| `whatsapp` | communication | `WHATSAPP_TOKEN` | `resolveSecret("whatsapp")` reads a stored key first, this env var as the fallback — the connector does not use `omnichannelConfig` for the token. |
 | `smtp` | communication | `SMTP_PASSWORD` | Verified by logging in (no HTTP "am I configured" endpoint). |
 
 The registry supports **dynamic registration** (`providerRegistry.register/unregister/get/getByGroup`) so a new provider can be added without editing core code.

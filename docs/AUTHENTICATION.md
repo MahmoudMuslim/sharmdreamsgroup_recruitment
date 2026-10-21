@@ -139,7 +139,7 @@ Third-party secrets (AI keys, WhatsApp token, SMTP password) are stored in `prov
 
 ### WhatsApp webhook — verification token
 
-The omnichannel connector uses `WHATSAPP_VERIFY_TOKEN` (default `sharm-dreams-verify`) and the Graph API (`v21.0`) with `WHATSAPP_CLOUD_API_TOKEN` + `WHATSAPP_PHONE_NUMBER_ID`.
+The omnichannel connector uses `WHATSAPP_VERIFY_TOKEN` (default `sharm-dreams-verify`) and the Graph API (`v21.0`). The access token and sender id are resolved through `resolveSecret("whatsapp")` / `resolveConfig("whatsapp")` — a key stored in Settings → API keys wins, falling back to the `WHATSAPP_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID` env vars.
 
 ### Invites
 

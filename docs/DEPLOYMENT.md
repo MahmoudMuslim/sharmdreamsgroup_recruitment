@@ -70,13 +70,13 @@ worker directory.
 
 | Variable | Notes |
 |----------|-------|
-| `WHATSAPP_CLOUD_API_TOKEN` | **This is the name the runtime reads** (`omnichannelConfig.whatsapp.apiToken`). |
+| `WHATSAPP_TOKEN` | The access token the connector's env fallback reads (the registry's `envVar`; a key stored in Settings → API keys wins over it). The runtime resolves it through `resolveSecret("whatsapp")`, not through `omnichannelConfig`. |
 | `WHATSAPP_PHONE_NUMBER_ID` | Graph sender. |
 | `WHATSAPP_VERIFY_TOKEN` | Default `sharm-dreams-verify`. |
 | `SMTP_HOST` / `SMTP_PORT` (587) / `SMTP_USER` / `SMTP_PASSWORD` / `EMAIL_FROM` | Email channel defaults; overridable in the encrypted store. |
 | `WHATSAPP_CRON_BATCH_SIZE` (50) / `GRADING_CRON_BATCH_SIZE` (10) | Sweep sizes. |
 
-> **`.env.example` drift to fix before trusting it:** the template still lists `WHATSAPP_TOKEN` (the registry's display var — the *runtime* reads `WHATSAPP_CLOUD_API_TOKEN`), a `WHATSAPP_WEBHOOK_URL` pointing at `/api/webhooks/whatsapp` (**that route does not exist**), `WHATSAPP_APP_SECRET` (not read), `ENABLE_*` feature flags (not read), and `APP_URL` at `:3000` while `npm run dev` actually listens on `:3001` (so the template's value is not the one a local link test will exercise). It also omits `CRON_SECRET`. Its `NEXT_PUBLIC_SUPABASE_*` / `SUPABASE_*` block and `NEXT_PUBLIC_APP_URL` were deleted in spec §15 Task 9; `REST_BASE_URL` replaced the first of those. Treat the tables above as authoritative.
+> **`.env.example` drift to fix before trusting it:** the template's `WHATSAPP_TOKEN` is correct — it is the registry's `envVar`, which `resolveSecret("whatsapp")` honors as the env fallback (the earlier `WHATSAPP_CLOUD_API_TOKEN`/`omnichannelConfig.whatsapp.apiToken` read was dead: nothing consumed it, so it has been removed from `src/lib/config.server.ts`). The template still lists a `WHATSAPP_WEBHOOK_URL` pointing at `/api/webhooks/whatsapp` (**that route does not exist**), `WHATSAPP_APP_SECRET` (not read), `ENABLE_*` feature flags (not read), and `APP_URL` at `:3000` while `npm run dev` actually listens on `:3001` (so the template's value is not the one a local link test will exercise). It omits `CRON_SECRET`, and the self-hosted identity/storage vars the app hard-requires — `AUTH_JWT_SECRET`, `AUTH_DB_URL`, `UPLOADS_ROOT` (plus `AUTH_TOKEN_ISSUER`/`AUTH_TOKEN_AUDIENCE`/`COOKIE_SECURE`) — so follow `docker/.env.example` for those, not this file. Its `NEXT_PUBLIC_SUPABASE_*` / `SUPABASE_*` block and `NEXT_PUBLIC_APP_URL` were deleted in spec §15 Task 9; `REST_BASE_URL` replaced the first of those. Treat the tables above as authoritative.
 
 ---
 

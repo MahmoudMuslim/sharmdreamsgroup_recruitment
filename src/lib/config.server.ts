@@ -83,7 +83,9 @@ export function requireOpenRouterKey(): string {
 
 export const omnichannelConfig = {
   whatsapp: {
-    apiToken: optional("WHATSAPP_CLOUD_API_TOKEN", process.env.WHATSAPP_CLOUD_API_TOKEN),
+    // The access token is resolved by `resolveSecret("whatsapp")` in the
+    // connector, whose env fallback is the registry's `WHATSAPP_TOKEN` — this
+    // object never carries it, only the sender id and verify token below.
     phoneNumberId: optional("WHATSAPP_PHONE_NUMBER_ID", process.env.WHATSAPP_PHONE_NUMBER_ID),
     verifyToken: optional(
       "WHATSAPP_VERIFY_TOKEN",
