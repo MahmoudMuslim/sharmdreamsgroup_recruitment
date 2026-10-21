@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { mintSessionToken } from "@/lib/auth/token";
+import { appConfig } from "@/lib/config";
 
 /** The one cookie name for a staff session, and the signed bearer stored under
  * it. httpOnly, so no script on any page can read it.
@@ -56,15 +57,50 @@ const SESSION_TTL_SECONDS = 86_400;
  */
 const LAST_ACTIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
+/**
+ * Whether to mark the cookies `Secure`.
+ *
+ * This replaced `secure: process.env.NODE_ENV === "production"`, which was wrong
+ * in both directions and whose companion comment ("production terminates TLS at
+ * the gateway, Plan 2") the stack disproves: `docker/app/Dockerfile` bakes
+ * `NODE_ENV=production` into the runner image while nginx serves plain HTTP on
+ * `127.0.0.1:${NGINX_PORT}`, so the flag went out over plaintext and survived
+ * only because `localhost` is a trustworthy origin. On the LAN origin the same
+ * compose file recommends (`APP_URL_PUBLIC`), a `Secure` cookie on plain HTTP is
+ * dropped by the browser: sign-in answers `ok:true` and the portal bounces
+ * straight back to `/login` with no server-side error.
+ *
+ * So the flag now follows the origin the stack actually advertises, and one
+ * operator setting decides both: `appConfig.url` is what candidate links are
+ * built from (`src/lib/config.ts:88`), and it is also what decides whether the
+ * cookie may require TLS — a box that sets `APP_URL=https://…` gets `Secure`
+ * without knowing the override below exists. `COOKIE_SECURE` wins when set to
+ * `true`/`false` for the cases where the advertised origin and the transport
+ * genuinely differ (a TLS-terminating proxy in front of a plain-HTTP `APP_URL`,
+ * or a deliberate plaintext test host).
+ */
+function shouldMarkCookieSecure(): boolean {
+  const flag = (process.env.COOKIE_SECURE ?? "").trim().toLowerCase();
+  if (flag === "true") return true;
+  if (flag === "false") return false;
+  try {
+    return new URL(appConfig.url).protocol === "https:";
+  } catch {
+    // An `APP_URL` with no parseable protocol cannot promise TLS, so it does not
+    // get to set a flag that makes the cookie unsendable. `appConfig.url`
+    // already falls back to `http://localhost:3000` when the variable is empty;
+    // this is the malformed-value case (`localhost:3000`, a bare host).
+    return false;
+  }
+}
+
 /** The attributes the two writes share — only the lifetime differs per cookie. */
 function cookieAttributes(maxAge: number) {
   return {
     path: "/",
     httpOnly: true,
     sameSite: "lax" as const,
-    // Locally this is http://localhost and the flag would make the cookie
-    // unsendable; production terminates TLS at the gateway (Plan 2) and sets it.
-    secure: process.env.NODE_ENV === "production",
+    secure: shouldMarkCookieSecure(),
     maxAge,
   };
 }
