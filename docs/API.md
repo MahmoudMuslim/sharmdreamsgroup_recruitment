@@ -115,11 +115,13 @@ Server Actions are plain `export async function`s in a `"use server"` module, ca
 | `settings/application/settings-trail-actions.ts` | Read the settings/credential audit trails. |
 | `shell/application/shell-actions.ts` | Admin shell chrome (theme/preference persistence, quick keys). |
 | `assessment/application/buildPaper.ts` | Deterministically assemble a candidate's paper from a suite. |
+| `i18n/application/translationWrites.ts` | The Languages console's two writes — store a screen of reviewed wording as one JSONB map per locale under `i18n.<locale>`, and ask the model for a draft (which only fills the fields; nothing reaches the DB until a person saves). Both gated on `settings.manage_platform`, because RLS silently refuses an `app_settings` UPDATE without it. |
 
 ### Public + candidate actions
 
 | File | Auth | Responsibility |
 |------|------|---------------|
+| `src/app/login/actions.ts` | public (pre-session) | Staff sign-in / sign-out — `signInAction` verifies the bcrypt password, mints the `sdg_session` bearer + cookie, and holds an in-process brute-force floor (the vendor's rate limiter is gone); `signOutAction` tears the session down. |
 | `src/app/careers/actions.ts` | public | Published job/company reads, apply submission. |
 | `src/app/(candidate)/portal/actions.ts` | candidate token/email | Application tracking lookups. |
 
