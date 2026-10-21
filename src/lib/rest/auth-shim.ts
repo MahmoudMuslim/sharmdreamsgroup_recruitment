@@ -9,13 +9,19 @@ export interface ShimUser { id: string; email: string | null; role: string; }
  * re-implemented over our own token. There is no session to refresh, because a
  * session is now a signed cookie with an expiry and nothing else (spec §6).
  *
- * "A session" means one thing across the three layers that answer it: the proxy
- * (`src/lib/auth/guard.ts`), the per-request read (`src/lib/auth/session.ts`) and
- * this shim. All three require the `authenticated` role, so a `service_role` or
- * `anon` bearer in a session cookie is refused everywhere rather than being a
- * sign-in for the call sites behind the guard. `admin` is NOT hosted here — the
- * Team console reaches `authAdmin` through the service client, which is a
- * different handle no page-level call touches.
+ * "A session" means one thing across the four layers that read the cookie: the
+ * proxy (`guard.ts`, which nulls the claims unless `verified.role` is
+ * `authenticated`), the per-request staff read (`session.ts`, `claims.role !==
+ * "authenticated"`), this shim (`user()`, same test), and the REST transport
+ * (`src/lib/supabase/server.ts`, which forwards the bearer only when the verified
+ * role is `authenticated` and forwards `null` otherwise). Each of the four
+ * requires `authenticated`, so a `service_role` or `anon` bearer in a session
+ * cookie is refused everywhere rather than being a sign-in for the call sites
+ * behind the guard — including at the transport, which is what decides the
+ * Postgres role and would otherwise honour such a jar on a path the proxy does
+ * not gate. `admin` is NOT hosted here — the Team console reaches `authAdmin`
+ * through the service client, which is a different handle no page-level call
+ * touches.
  */
 export function createAuthShim(readCookie: (name: string) => string | undefined) {
   async function claims(): Promise<Claims | null> {
