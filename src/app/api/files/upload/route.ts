@@ -27,16 +27,6 @@ import {
  * File Manager, so a failed insert takes the object straight back out.
  */
 export async function POST(request: NextRequest) {
-  // The ceiling only becomes bucket-specific once the body is parsed, so this
-  // first line uses the largest rule (`candidate-audio`, 20 MB): a body bigger
-  // than that cannot satisfy any bucket, and the check below still applies the
-  // one the caller actually asked for.
-  const oversize = oversizeUploadResponse(
-    request,
-    Math.max(...ATTACHMENT_RULES.map((rule) => rule.maxBytes))
-  );
-  if (oversize) return oversize;
-
   const user = await getSessionUser();
   if (!user || !isStaff(user.role)) {
     return NextResponse.json({ error: "Sign in as staff to attach files." }, { status: 401 });
@@ -48,6 +38,17 @@ export async function POST(request: NextRequest) {
       { status: 403 }
     );
   }
+
+  // The ceiling only becomes bucket-specific once the body is parsed, so this
+  // uses the largest rule (`candidate-audio`, 20 MB): a body bigger than that
+  // cannot satisfy any bucket, and the check below still applies the one the
+  // caller actually asked for. It sits behind the staff gate so an anonymous
+  // request is refused for being anonymous, not for its Content-Length.
+  const oversize = oversizeUploadResponse(
+    request,
+    Math.max(...ATTACHMENT_RULES.map((rule) => rule.maxBytes))
+  );
+  if (oversize) return oversize;
 
   const form = await request.formData().catch(() => null);
   if (!form) return NextResponse.json({ error: "Could not read the upload." }, { status: 400 });
