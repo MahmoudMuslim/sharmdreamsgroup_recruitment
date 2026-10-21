@@ -135,6 +135,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     shows: [
       "Stage, source and company rails counted in the database, the list behind them, and a profile drawer holding the submitted application, the files, the gate answers, the tests, the alerts sent, the onboarding plan and the person's other applications.",
       "A candidate's name opens their own profile page: every application they hold across every opening, with the test links, interviews, files, messages and record changes from all of them.",
+      "The Integrity report on a test holds the signals the runner left, the paper's marks and, once graded, where that paper sits among the graded papers of the same suite. The line names how many papers the rank was taken from, and prints that count instead of a rank when too few are graded to rank against.",
     ],
     use: [
       "Click a rail to query the database for that stage rather than filter what is loaded. Search by name, email, role, company or tracking code; sort by newest, AI fit or name.",
@@ -243,6 +244,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "The drafting desk shows one reviewed suite shell beside its drafted questions, with the notes the review raised and the drafts it threw out.",
       "Below the suites, an Issued links board: one row per link a still-held candidate holds, with the suite, status, how many answers it carries, and the score when your role may see marks.",
       "A link's Answers or Paper button opens that candidate's whole paper — every question in the order they were dealt it, with the full typed answer, the changed spreadsheet cells, the pitch video and its transcript.",
+      "A graded paper's drawer adds where it ranks among the graded papers of the same suite, naming that population, and gives the count rather than a rank when there are too few papers to rank against. The line is not shown at all while your role has marks withheld.",
     ],
     use: [
       "New template names the suite, its role family, duration and company; Add question builds it.",

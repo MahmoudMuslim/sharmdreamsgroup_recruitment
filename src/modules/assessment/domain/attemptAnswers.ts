@@ -11,6 +11,8 @@
  * drawer that prints it agree on one vocabulary.
  */
 
+import type { AttemptBenchmark } from "./benchmark";
+
 /** One multiple-choice option, in the order *this* candidate saw it. */
 export interface AnswerOption {
   /** The stored handle (`OPT_1`), never shown as-is — the runner never printed it. */
@@ -90,6 +92,14 @@ export interface AttemptAnswers {
   questions: number;
   score: number | null;
   max_score: number | null;
+  /**
+   * This paper among the papers the same suite produced, or null when there is
+   * nothing to rank — an ungraded paper, or a reviewer whose marks are masked.
+   *
+   * The note is the whole claim, population included, so no surface can print a
+   * percentile without the count that earned it.
+   */
+  benchmark: AttemptBenchmark | null;
 
   time_limit_minutes: number;
   started_at: string | null;

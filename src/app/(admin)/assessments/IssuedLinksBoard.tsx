@@ -443,6 +443,15 @@ export function AnswersDrawer({
             </div>
           </dl>
 
+          {/* The rank and the count it came from, always together — the note is
+              written from the three figures, so a small population prints the
+              number found and no percentile rather than an em dash. */}
+          {paper.benchmark && (
+            <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/65">
+              {paper.benchmark.note}
+            </p>
+          )}
+
           <p className="text-[11px] leading-relaxed text-brand-ink/60">{answersScopeNote(paper)}</p>
 
           {paper.answers.length === 0 ? (

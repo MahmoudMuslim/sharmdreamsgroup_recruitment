@@ -14,6 +14,8 @@ import {
   gradeAttemptResponses,
   resyncAttemptTotals,
 } from "@/modules/assessment/application/gradeAttempt";
+import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
+import type { AttemptBenchmark } from "@/modules/assessment/domain/benchmark";
 
 export interface QuestionGrade {
   id: string;
@@ -42,6 +44,11 @@ export interface AttemptGrades {
   status: string;
   total_score: number | null;
   max_score: number | null;
+  /**
+   * This paper among the papers the same suite produced, or null when there is
+   * nothing to rank — an ungraded paper, or a reviewer whose marks are masked.
+   */
+  benchmark: AttemptBenchmark | null;
   /** `security.mask_scores_for_reviewers` — marks were dropped from these rows. */
   scores_masked: boolean;
   /**
@@ -114,7 +121,8 @@ export async function getAttemptGrades(attemptId: string): Promise<AttemptGrades
  * The marks themselves follow the same rule as the candidate table: under
  * `security.mask_scores_for_reviewers` they are dropped here, so a reviewer
  * without `scores.view_unmasked` cannot recover them from this report either.
- * Answers, recordings and the AI's written feedback stay visible.
+ * Answers, recordings and the AI's written feedback stay visible — but the
+ * benchmark does not, because it is a claim built out of everybody else's marks.
  */
 async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
   const [supabase, masked, mayGrade, automation] = await Promise.all([
@@ -127,19 +135,26 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")
-    .select("id, application_id, status, total_score, max_score, assessment_templates(name)")
+    .select(
+      "id, application_id, template_id, status, total_score, max_score, assessment_templates(name)"
+    )
     .eq("id", attemptId)
     .maybeSingle();
 
   if (!attempt) return null;
 
-  const { data: responses } = await supabase
-    .from("candidate_responses")
-    .select(
-      "id, question_id, answer_text, video_path, transcript, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
-    )
-    .eq("attempt_id", attempt.id)
-    .order("position", { referencedTable: "assessment_questions", ascending: true });
+  const [{ data: responses }, benchmark] = await Promise.all([
+    supabase
+      .from("candidate_responses")
+      .select(
+        "id, question_id, answer_text, video_path, transcript, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
+      )
+      .eq("attempt_id", attempt.id)
+      .order("position", { referencedTable: "assessment_questions", ascending: true }),
+    // Skipped, not just hidden, for a masked reviewer: the rank speaks about
+    // other candidates' marks, so asking for it at all is the wrong read.
+    masked ? Promise.resolve(null) : readAttemptBenchmark(supabase, attempt),
+  ]);
 
   const grades: QuestionGrade[] = [];
   let unscored = 0;
@@ -211,6 +226,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     status: attempt.status,
     total_score: masked || attempt.total_score === null ? null : Number(attempt.total_score),
     max_score: masked || attempt.max_score === null ? null : Number(attempt.max_score),
+    benchmark,
     scores_masked: masked,
     unscored,
     can_score: mayGrade && !masked,

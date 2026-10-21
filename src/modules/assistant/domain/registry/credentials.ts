@@ -496,7 +496,7 @@ export const credentials: readonly AssistantTool[] = [
     name: "get_attempt_grades",
     label: "Reading an attempt's grades",
     description:
-      "One assessment attempt answer by answer, in the order the exam was sat: the question, the candidate's own words, the transcript of a recording, the mark and whose verdict it is, and what the AI said for and against it. Also reports how many answers carry no mark at all, whether this recruiter may award them, and whether the engine can be asked to try again. Read this before award_marks or retry_grading: both the response id and the points bound a mark may come from are here, nowhere else.",
+      "One assessment attempt answer by answer, in the order the exam was sat: the question, the candidate's own words, the transcript of a recording, the mark and whose verdict it is, and what the AI said for and against it. Also reports how many answers carry no mark at all, whether this recruiter may award them, and whether the engine can be asked to try again. `benchmark.note` places the paper among the graded papers of the same suite and names that population; when there are too few papers to rank it says so and gives no percentile, and it is absent while marks are masked for this recruiter — never invent a rank the note did not give. Read this before award_marks or retry_grading: both the response id and the points bound a mark may come from are here, nowhere else.",
     args: { attempt_id: "string — from get_candidate_dossier" },
     run: async (args) => {
       const attemptId = str(args, "attempt_id");
@@ -512,6 +512,10 @@ export const credentials: readonly AssistantTool[] = [
         scores_masked: grades.scores_masked,
         total_score: grades.total_score,
         max_score: grades.max_score,
+        // Quote `benchmark.note` whole if the candidate's rank comes up. It
+        // already names the population it was taken from, and when that
+        // population is too small it says so instead of giving a percentile.
+        benchmark: grades.benchmark,
         unscored: grades.unscored,
         may_award_marks: grades.can_score,
         may_retry_grading: grades.can_retry,

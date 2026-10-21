@@ -270,6 +270,15 @@ export function IntegrityPanel({
                   </div>
                 </div>
 
+                {/* The rank beside its own population. The note carries the count,
+                    so a suite with too few graded papers shows the number found
+                    and says no rank is claimed rather than leaving a blank. */}
+                {grades?.benchmark && (
+                  <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/65">
+                    {grades.benchmark.note}
+                  </p>
+                )}
+
                 {report.scores_masked && (
                   <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/60">
                     The marks are withheld because “Mask scores for interviewers” is on and your

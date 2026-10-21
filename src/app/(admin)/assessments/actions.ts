@@ -12,6 +12,7 @@ import {
   type AttemptAnswer,
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
+import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
 import { LINKS_LIMIT, type IssuedLink } from "@/modules/assessment/domain/issuedLinks";
 import type { EditableQuestion } from "./QuestionEditorDrawer";
 
@@ -411,7 +412,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
 
   if (!attempt) return null;
 
-  const [{ data: questionRows }, { data: responseRows }] = await Promise.all([
+  const [{ data: questionRows }, { data: responseRows }, benchmark] = await Promise.all([
     supabase
       .from("assessment_questions")
       .select("id, title, prompt, instructions, question_type, config, points, position")
@@ -423,6 +424,10 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
         "question_id, answer_text, spreadsheet_state, video_path, video_duration_seconds, transcript, score, max_score, updated_at, ai_evaluation"
       )
       .eq("attempt_id", attempt.id),
+    // Not counted at all when this reviewer's marks are withheld: a percentile
+    // is a claim about other candidates' marks, which is the thing the setting
+    // exists to hide.
+    masked ? Promise.resolve(null) : readAttemptBenchmark(supabase, attempt),
   ]);
 
   const questions = (questionRows ?? []) as unknown as QuestionRow[];
@@ -549,6 +554,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     score:
       masked || attempt.total_score === null ? null : Number(attempt.total_score),
     max_score: masked || attempt.max_score === null ? null : Number(attempt.max_score),
+    benchmark,
     time_limit_minutes: attempt.time_limit_minutes ?? 0,
     started_at: attempt.started_at ?? null,
     expires_at: attempt.expires_at ?? null,
