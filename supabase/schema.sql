@@ -2134,7 +2134,7 @@ insert into public.tenants_and_companies (id, name, slug, sector, country, legal
 -- REFERENCE ROWS — the lookup data the console reads before it can render
 -- ============================================================================
 
-insert into public.permissions (key, label, group_name, description) values ('analytics.export', 'Export analytics', 'Analytics', 'Download data as CSV or PDF') on conflict (key) do nothing;
+insert into public.permissions (key, label, group_name, description) values ('analytics.export', 'Export analytics', 'Analytics', 'Download the Analytics, Reports and Candidates tables as CSV, Excel or PDF') on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('analytics.view', 'View analytics', 'Analytics', 'Access dashboards and reports') on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('assessments.assign', 'Assign assessments', 'Assessments', 'Send assessments to candidates') on conflict (key) do nothing;
 insert into public.permissions (key, label, group_name, description) values ('assessments.create', 'Create assessments', 'Assessments', 'Build and publish test suites') on conflict (key) do nothing;
