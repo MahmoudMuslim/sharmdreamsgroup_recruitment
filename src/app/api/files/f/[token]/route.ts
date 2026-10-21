@@ -139,6 +139,10 @@ function parseRange(header: string | null, size: number): { start: number; end: 
   }
   const start = Number(match[1]);
   if (!Number.isSafeInteger(start) || start >= size) return "unsatisfiable";
-  const end = match[2] === "" ? size - 1 : Math.min(Number(match[2]) - 1, size - 1);
+  // The end of a range is INCLUSIVE — `bytes=0-999` asks for 1000 bytes, and
+  // `bytes=5-5` for one. Treating it as a length would return 999 bytes and make
+  // a one-byte seek unsatisfiable, which is exactly what a media player does
+  // when it probes for a header.
+  const end = match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
   return end < start ? "unsatisfiable" : { start, end };
 }
