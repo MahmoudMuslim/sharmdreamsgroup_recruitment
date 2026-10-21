@@ -409,7 +409,7 @@ directive is the scope, in their words: *"stop using Supabase and Vercel Complet
 | `@vercel/speed-insights` importers | **0** | `package.json:29` only — an unused dependency, so its removal is one `npm uninstall`, no code edit |
 | vendor credentials still read in `src` | `url` **2**, `anonKey` **1**, `serviceRoleKey` **1** | all three are the two rows above; after Plan 2 each has 0 readers |
 | `supabaseConfig.buckets` readers | **4** | all four read `candidateVideos` — these stay, they name *our* buckets |
-| `storage.objects` policies to retire | **8** | `supabase/schema.sql:1759-1795` |
+| `storage.objects` policies to retire | **8** | `supabase/schema.sql:1761-1800` |
 | build args to delete | **2** | `docker/app/Dockerfile:31-34`, `docker/docker-compose.yml:138-144` |
 | `SUPABASE_REST_BASE` refs to rename | **12** | → `REST_BASE_URL` (§11) |
 
@@ -443,3 +443,38 @@ copy of the dump; nothing in this plan deletes anything on the vendor side.
 What this plan deliberately does **not** rename is §11's non-rename list, and it
 still holds: `src/lib/supabase/`, `createSupabaseServerClient()`,
 `supabase/schema.sql` and `scripts/local-supabase-stub.sql` keep their names.
+
+### Progress and measured corrections, 2026-10-21
+
+**Tasks 1 and 2 are done.** All 17 objects (3,969,349 bytes — candidate-cvs 13
+/ 929,670 B, candidate-videos 2 / 2,841,603 B, resumes 2 / 198,076 B,
+candidate-audio 0) are in git-ignored `docker/data/vendor-files/<bucket>/<path>`
+with a sha256 manifest, re-opened and re-hashed by
+`node scripts/verify-extracted-files.mjs` at 17/17; the hosted schema travels as
+`docker/data/hosted-2026-10-21.dump` (674,321 B, `PGDMP` magic verified).
+`public.files` and its eight policies are in `supabase/schema.sql`, applied to the
+local stack (policies 88 → **96**), and proved 20/20 by `npm run files:prove`.
+
+Three behaviours the proof measured, each of which changes a later task:
+
+1. **A policy refusal answers 401 to `anon` and 403 to `authenticated`,** with the
+   identical body `{"code":"42501","message":"new row violates row-level security
+   policy for table \"files\""}`. Task 5's upload path must key on the SQLSTATE,
+   never on the status: mapping 401 to "your session expired" would bounce an
+   anonymous candidate who merely tripped a predicate, and no staff session is
+   involved.
+2. **`bytes` is a JSON number over the gateway and a JS string over the pool.**
+   node-postgres parses int8 as a string to avoid float precision loss; PostgREST
+   serialises it as a number. So `disk-store.ts` coerces with `Number()` on every
+   row read, and the REST-facing readers must not assume a string.
+3. **The delete and upload paths cannot be proved by a status code.** PostgREST
+   answers 204 for a DELETE that matched zero rows because RLS hid them, so the
+   only evidence is an owner-side count of the specific path. Any future proof of
+   a `files` delete must copy that shape, and the staff SELECT policies are
+   load-bearing for staff DELETE to work at all.
+
+Also corrected: the table's `SUPABASE_REST_BASE` count of 12 is right for
+*tracked* files (`git grep -c`, docs excluded — 7 files, 12 occurrences). Three
+more occurrences sit in the root `.env.example` and `.env.local`, which are
+untracked and therefore the owner's own edit in Task 9, not a repo change.
+

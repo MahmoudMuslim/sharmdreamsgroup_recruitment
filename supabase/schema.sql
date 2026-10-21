@@ -8,8 +8,10 @@
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
  * reasoning behind any single object lives in supabase/migrations/001-*.sql.
  *
- * The two seed blocks at the end are the only sections this file authors rather
- * than dumps — and both are dumps of live rows in authored shape. Regenerate with:
+ * Three sections are authored rather than dumped: the two seed blocks, and the
+ * `public.files` table with its eight policies at the very end, which is the
+ * table the vendor's storage.objects replaces (Plan 2 Task 2, spec §15). Both
+ * seed blocks are dumps of live rows in authored shape. Regenerate with:
  *
  *   node scripts/dump-schema.mjs > supabase/schema.sql
  *   node scripts/verify-schema.mjs supabase/schema.sql   # must report no gaps
@@ -2484,3 +2486,85 @@ insert into public.app_settings (id, scope, company_id, key, value, description,
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('e677f3b8-6fd5-4c53-9c4f-2cdcc9302b02', 'GLOBAL', null, 'organisation.enabled_locales', '["en", "ar"]', 'Languages offered to candidates', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('f60b515b-fd34-493b-acda-02ad08f06880', 'GLOBAL', null, 'organisation.locale', '"en"', 'Default interface language', false, null) on conflict (id) do nothing;
 -- 226 reference rows above. Their order is load-bearing: parents before children.
+
+-- ============================================================================
+-- FILES — OUR OWN STORAGE TABLE (authored, not dumped)
+-- Added by Plan 2 Task 2 (spec §15). The eight policies below mirror, one for
+-- one, the eight `storage.objects` policies this table replaces, so a candidate
+-- video keeps the same rule it always had: the anonymous attempt token that is
+-- the first path segment. The predicates differ only in shape —
+-- `storage.foldername(name))[1]` becomes `split_part(path, '/', 1)` because the
+-- foldername function belonged to the vendor's storage schema.
+--
+-- Bytes live on disk under /data/uploads/<bucket>/<path>; this table is what
+-- makes a path listable, sized and typed. There is no `owner` column: the
+-- FileStore carries no session, so no writer could fill it and no reader would
+-- ever query it (spec §7 correction 4).
+--
+-- Writes go through the app's own pool, so these policies bind the PostgREST
+-- door — the File Manager's listings and metadata reads. No UPDATE policy
+-- exists because nothing updates a row in place: a re-upload replaces the bytes
+-- and upserts the same key.
+-- ============================================================================
+
+create table if not exists public.files (
+  id bigint generated always as identity primary key,
+  bucket text not null,
+  path text not null,
+  mime text,
+  bytes bigint,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint files_bucket_path_key unique (bucket, path)
+);
+
+-- The listing walks a prefix, which a plain btree on text cannot serve without
+-- operator classes: text_pattern_ops makes `starts_with` an index scan.
+create index if not exists files_bucket_path_prefix_idx on public.files (bucket, path text_pattern_ops);
+
+alter table public.files enable row level security;
+
+grant select, insert on table public.files to anon;
+grant select, insert, update, delete on table public.files to authenticated;
+grant all on table public.files to service_role;
+
+drop policy if exists "candidate video uploads" on public.files;
+create policy "candidate video uploads" on public.files
+  for insert
+  to anon, authenticated
+  with check (((bucket = 'candidate-videos'::text) AND (split_part(path, '/'::text, 1) = ((current_setting('request.jwt.claims'::text, true))::jsonb ->> 'attempt_token'::text))));
+drop policy if exists "candidates upload cvs" on public.files;
+create policy "candidates upload cvs" on public.files
+  for insert
+  to anon, authenticated
+  with check ((bucket = 'candidate-cvs'::text));
+drop policy if exists "public resume uploads" on public.files;
+create policy "public resume uploads" on public.files
+  for insert
+  to anon
+  with check (((bucket = 'resumes'::text) AND (split_part(path, '/'::text, 1) = 'public'::text)));
+drop policy if exists "staff delete candidate cvs" on public.files;
+create policy "staff delete candidate cvs" on public.files
+  for delete
+  to authenticated
+  using (((bucket = 'candidate-cvs'::text) AND is_staff()));
+drop policy if exists "staff delete candidate media" on public.files;
+create policy "staff delete candidate media" on public.files
+  for delete
+  to authenticated
+  using (((bucket = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
+drop policy if exists "staff read candidate cvs" on public.files;
+create policy "staff read candidate cvs" on public.files
+  for select
+  to authenticated
+  using (((bucket = 'candidate-cvs'::text) AND is_staff()));
+drop policy if exists "staff read candidate media" on public.files;
+create policy "staff read candidate media" on public.files
+  for select
+  to authenticated
+  using (((bucket = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
+drop policy if exists "staff upload candidate media" on public.files;
+create policy "staff upload candidate media" on public.files
+  for insert
+  to authenticated
+  with check (((bucket = ANY (ARRAY['resumes'::text, 'candidate-audio'::text])) AND is_staff() AND has_permission('candidates.write'::text) AND (split_part(path, '/'::text, 1) = 'applications'::text)));
