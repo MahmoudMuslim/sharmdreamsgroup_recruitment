@@ -8,6 +8,11 @@ import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
 import { gridWindowNote, isHireable } from "@/modules/jobs/domain/hireable";
+import {
+  demandLine,
+  demandUnavailableNote,
+  type HiringDemand,
+} from "@/modules/jobs/domain/hiringDemand";
 import { Pagination } from "@/modules/analytics/presentation/Pagination";
 import { PAGE_PARAM, PAGE_ROWS, clampPage, pageFromParams, pageSlice, pageWindow } from "@/lib/paging";
 import { JobCardActions } from "./JobCardActions";
@@ -18,7 +23,15 @@ export interface JobRow extends JobForEdit {
   requirements: string[] | null;
   posted_at: string | null;
   closing_at: string | null;
-  applications: { count: number }[];
+  /** Everyone live (not filed out) — the badge and the drawer count this. */
+  applicants: { count: number }[];
+  /** Applicants still in the working stages — a population now, not a movement. */
+  pipeline: { count: number }[];
+  /** Applicants who reached HIRED. */
+  hired: { count: number }[];
+  /** The `positions_needed` target, or null when none was recorded — or the column
+   * is not applied yet, which the grid flags separately via `headcountUnavailable`. */
+  positions_needed: number | null;
 }
 
 const STATUSES = ["PUBLISHED", "DRAFT", "PAUSED", "CLOSED"] as const;
@@ -31,7 +44,16 @@ const STATUS_TONE: Record<string, "neutral" | "gold" | "success" | "danger"> = {
 };
 
 function applicantsOf(job: JobRow) {
-  return job.applications?.[0]?.count ?? 0;
+  return job.applicants?.[0]?.count ?? 0;
+}
+
+/** The three demand figures for one opening, read off its aliased embeds. */
+function demandOf(job: JobRow): HiringDemand {
+  return {
+    needed: job.positions_needed,
+    inPipeline: job.pipeline?.[0]?.count ?? 0,
+    hired: job.hired?.[0]?.count ?? 0,
+  };
 }
 
 /**
@@ -85,6 +107,7 @@ function closingLabel(closingAt: string | null) {
 export function JobsBrowser({
   jobs,
   scopeTotal,
+  headcountUnavailable,
   options,
   canManage,
   canDecide,
@@ -95,6 +118,9 @@ export function JobsBrowser({
    * carry. The strip counts this; the rails and the search count `jobs`.
    */
   scopeTotal: number;
+  /** The `positions_needed` column could not be read at all (not applied yet), so
+   * every card showing "no target set" is a read failure, not a recruiter's blank. */
+  headcountUnavailable: boolean;
   options: JobFormOptions;
   canManage: boolean;
   /** `candidates.write` — who may move an applicant between stages from the drawer. */
@@ -319,6 +345,14 @@ export function JobsBrowser({
         <p className="text-[11px] leading-relaxed text-brand-ink/50">{windowNote}</p>
       )}
 
+      {/* When the target column is simply not there yet, every card would say "no
+          target set" — and that is a fact about the database, not the openings.
+          The grid says so once here so the per-card copy is not read as "nobody
+          set a headcount". */}
+      {headcountUnavailable && (
+        <p className="text-[11px] leading-relaxed text-brand-ink/50">{demandUnavailableNote()}</p>
+      )}
+
       {/* Toolbar */}
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center gap-3">
@@ -409,6 +443,7 @@ export function JobsBrowser({
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {pageRows.map((job) => {
             const applicants = applicantsOf(job);
+            const demand = demandOf(job);
             const closes = job.status === "PUBLISHED" ? closingLabel(job.closing_at) : null;
             const salary = formatSalaryRange(
               {
@@ -490,6 +525,12 @@ export function JobsBrowser({
                     max={maxApplicants}
                     tone={applicants > 0 ? "gold" : "ink"}
                   />
+                  {/* The demand read: the target beside the two populations that sit
+                      in the funnel now. `hiringDemand` says they are counts at this
+                      instant, never a rate or a movement. */}
+                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-brand-ink/50">
+                    {demandLine(demand)}
+                  </p>
                 </div>
 
                 {canManage && (

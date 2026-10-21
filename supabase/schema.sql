@@ -424,8 +424,12 @@ create table if not exists public.job_openings (
   created_by uuid,
   created_at timestamp with time zone default now() not null,
   salary_currency text default 'USD'::text not null,
+  positions_needed integer,
+  constraint job_openings_positions_needed_sane check ((positions_needed is null) or (positions_needed >= 1 and positions_needed <= 1000)),
   PRIMARY KEY (id)
 );
+comment on column public.job_openings.positions_needed is
+  'How many people this opening is hiring for. A target set when the requisition opens, never derived from applications; NULL means no target was recorded. See migration 031.';
 create table if not exists public.jobs (
   id text,
   title text not null,
