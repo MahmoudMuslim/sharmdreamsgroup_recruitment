@@ -27,9 +27,21 @@ APP_URL="${APP_URL:-http://host.docker.internal:3000}"
 # busybox integer division truncates, and `$((x % 0))` is an error on every
 # single tick. Clamp both intervals to >= 1 and compute the ratio once: zero
 # would mean a modulo-by-zero each tick, and `seq 1 0` emits nothing, which
-# would spin this loop hot with no sleep at all.
-case "$WHATSAPP_EVERY" in ''|*[!0-9]*) WHATSAPP_EVERY=60 ;; esac
-case "$GRADING_EVERY" in ''|*[!0-9]*) GRADING_EVERY=300 ;; esac
+# would spin this loop hot with no sleep at all. A non-numeric value also
+# prints what it replaced — a silent default would hide an operator typo in plain
+# configuration (not a secret), and the loop would look fine on the wrong clock.
+case "$WHATSAPP_EVERY" in
+  ''|*[!0-9]*)
+    echo "[cron] WHATSAPP_EVERY='$WHATSAPP_EVERY' is not a number — using 60" >&2
+    WHATSAPP_EVERY=60
+    ;;
+esac
+case "$GRADING_EVERY" in
+  ''|*[!0-9]*)
+    echo "[cron] GRADING_EVERY='$GRADING_EVERY' is not a number — using 300" >&2
+    GRADING_EVERY=300
+    ;;
+esac
 [ "$WHATSAPP_EVERY" -lt 1 ] && WHATSAPP_EVERY=1
 [ "$GRADING_EVERY" -lt 1 ] && GRADING_EVERY=1
 GRADING_EVERY_TICKS=$((GRADING_EVERY / WHATSAPP_EVERY))
@@ -43,7 +55,16 @@ hit() {
   # distinction: rc=6 is the server answering with an error status (401 wrong
   # secret, 503 app with no secret), rc=4 is a connection that never landed
   # (app down, wrong APP_URL). Both are printed, never swallowed.
-  body=$(wget -q -O - --header="x-cron-secret: $CRON_SECRET" "$1" 2>&1)
+  #
+  # --timeout=15 --tries=1 closes the other way this loop can go quiet. The
+  # manual's defaults for this image's GNU wget 1.24.5 are a 900s read timeout
+  # and 20 tries (`wget --help` names the flags but prints no values), so an app
+  # that accepts the socket and never answers could block one hit() for hours —
+  # no sweep, no heartbeat, no [FAIL]. Measured against a listener that never
+  # answers: the defaults were still blocked at 100s, `--timeout=3 --tries=1`
+  # came back in 3s. Busybox wget 1.36.1 parses and honours both long spellings
+  # too (measured), so the flags hold whichever wget the image ends up with.
+  body=$(wget -q -O - --timeout=15 --tries=1 --header="x-cron-secret: $CRON_SECRET" "$1" 2>&1)
   rc=$?
   if [ "$rc" -eq 0 ]; then
     echo "[ok] $1 $body"

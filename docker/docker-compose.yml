@@ -109,7 +109,9 @@ services:
     # own tree (volumes: ../../:/app) and rebuild their node_modules from a
     # Linux container — a repo-mutating side effect outside this task.
     command: ["npm", "run", "start"]
-    ports: ["${APP_PORT:-3000}:3000"]
+    ports:
+      # Loopback, like `db` and `gateway`: an un-prefixed mapping also binds 0.0.0.0/::.
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       # Inside the compose network a container talks to PostgREST directly, so
