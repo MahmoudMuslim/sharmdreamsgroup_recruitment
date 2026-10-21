@@ -13,10 +13,24 @@ import { coerceNumber } from "@/modules/settings/infrastructure/settingsReader";
 
 const STAFF_ROLES = new Set(["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"]);
 
-/** `security.session_timeout_minutes` fallback, matching the seeded row. */
+/**
+ * `security.session_timeout_minutes` fallback, matching the seeded row.
+ *
+ * Used only when the read fails or the row is unreadable, so a database hiccup
+ * leaves the timeout at the value the platform ships with rather than signing
+ * every recruiter out on a short window.
+ */
 const DEFAULT_SESSION_TIMEOUT_MINUTES = 480;
 
-/** How long the proxy remembers the idle window between requests. */
+/**
+ * How long the proxy remembers the idle window between requests.
+ *
+ * `readGlobalSettings` is cached for the render, but the proxy runs outside it
+ * and cannot use `"use cache"`, and one portal click fires this file once per
+ * matched request. Without a memo the same GLOBAL row was read on every one of
+ * them. A saved timeout therefore takes up to a minute to bite here — the bound
+ * the cached render reads already accept.
+ */
 const TIMEOUT_MEMO_MS = 60_000;
 
 let timeoutMemo: { minutes: number; readAt: number } | null = null;
@@ -87,11 +101,21 @@ export async function guardRequest(request: NextRequest): Promise<NextResponse> 
   const api = createRestClient({ baseUrl: restBaseUrl(), token: bearer });
 
   // A signed-in candidate must never see recruiter analytics.
-  const { data: profile } = await api
+  //
+  // `error` is logged, not branched on: "row missing" and "read refused" must
+  // both fall through to the page-level `requireStaff` (difference #3), but
+  // `createRestClient` answers an unreachable gateway with
+  // `{ data: null, error }` rather than a throw, so a logged error is the only
+  // trace this gate's failure mode leaves. Silence here reads as "no candidate
+  // got in", and the bounce would have stopped enforcing without anyone seeing.
+  const { data: profile, error: profileError } = await api
     .from("user_profiles")
     .select("role")
     .eq("auth_user_id", claims.sub)
     .maybeSingle();
+  if (profileError) {
+    console.warn("[guard] staff role read failed; falling through to requireStaff", profileError.message);
+  }
 
   if (profile && !STAFF_ROLES.has(profile.role)) {
     const portalUrl = request.nextUrl.clone();
