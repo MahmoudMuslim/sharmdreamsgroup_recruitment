@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "docker:up": "docker compose -f docker/docker-compose.yml --env-file docker/.env up -d",
+    "docker:build": "docker compose -f docker/docker-compose.yml --env-file docker/.env build",
     "docker:down": "docker compose -f docker/docker-compose.yml --env-file docker/.env down",
     "docker:wipe": "docker compose -f docker/docker-compose.yml --env-file docker/.env down -v",
     "docker:logs": "docker compose -f docker/docker-compose.yml --env-file docker/.env logs -f",

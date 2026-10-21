@@ -1,13 +1,28 @@
-# Sharm Dreams Talent Cloud — self-hosted data plane.
+# Sharm Dreams Talent Cloud — the self-hosted stack.
 #
-# The app runs OUTSIDE this file (`next dev` on host port 3000); see
+# `docker compose up` now runs the whole thing: Postgres, PostgREST, the built
+# Next.js app and nginx in front of it on http://localhost:3000, plus the cron
+# poller. See
 # docs/superpowers/specs/2026-10-20-docker-self-host-migration-design.md §4.
-# On KVM2 this same file becomes the production stack.
+# On KVM2 this same file becomes the production stack; the only differences are
+# TLS at nginx and secrets that never enter the repo.
+#
+# Caddy stays up beside nginx on 127.0.0.1:54321 for one reason: the host's
+# `.env.local` points `SUPABASE_REST_BASE` at that address, so a `next dev`
+# running outside this file still has a REST gateway. nginx serves the same
+# `/rest/v1/` path, and Caddy goes away when that .env.local line does.
+#
+# Image policy: every base is patch-pinned to the newest STABLE release and built
+# on `alpine3.24`, verified against the registry tag lists on 2026-10-21. Never
+# bump one from memory, and never use a `latest`/major-only alias in this file —
+# a floating tag is what makes a working production stack rebuild into a broken
+# one overnight. Postgres 19 is not stable yet (only `19rc1`), and Node's `lts`
+# alias still resolves to 24 while 26 is `current`, so the app image stays on 24.
 name: sharm-dreams-local
 
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:18.6-alpine3.24
     restart: unless-stopped
     shm_size: 128mb
     environment:
@@ -15,8 +30,18 @@ services:
       POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD}
       POSTGRES_DB: sharm_dreams
       PGDATA: /var/lib/postgresql/data/pgdata
-    # PG17 is forced by supabase/schema.sql: every grant it carries uses the
-    # `maintain` privilege, which does not exist before PG17.
+    # PG17 or newer is forced by supabase/schema.sql: every grant it carries uses
+    # the `maintain` privilege, which does not exist before PG17. Nothing here
+    # needs PG18 specifically, and nothing here breaks on it — pgcrypto's bcrypt
+    # `crypt()`/`gen_salt('bf')` pair that src/lib/auth/db.ts verifies passwords
+    # with is unchanged in 18, which added a separate core `hash_bcrypt()`
+    # instead of touching pgcrypto.
+    #
+    # This is a major-version change, so an existing `db-data` volume written by
+    # 17 cannot be opened: the 18 server aborts on the control-file version check
+    # and the container restart-loops. Rebuild the volume with `npm run
+    # docker:wipe` plus `db:apply-local` and `db:seed-local`; every row in it is
+    # reproducible from those scripts.
     command:
       - postgres
       - -c
@@ -36,7 +61,7 @@ services:
       retries: 30
 
   rest:
-    image: postgrest/postgrest:v16.5   # the tag confirmed in Task 1 Step 1; do not take a tag from memory
+    image: postgrest/postgrest:v16.5   # newest stable release; confirmed 2026-10-21 against the registry tag list, and it is the tag proven in Task 1 Step 1
     restart: unless-stopped
     depends_on:
       db:
@@ -59,7 +84,7 @@ services:
     # Deliberately no `ports:` - nothing may bypass the gateway.
 
   gateway:
-    image: caddy:2-alpine
+    image: caddy:2.11.7-alpine
     restart: unless-stopped
     depends_on:
       - rest
@@ -82,51 +107,101 @@ services:
     build: ./cron
     environment:
       CRON_SECRET: ${CRON_SECRET}
-      # The app is `next dev` on this Windows HOST, not a container, so the
-      # default reaches it through host.docker.internal; `extra_hosts` makes the
-      # same line valid on the Linux production host. Override APP_URL in
-      # docker/.env only when the `full` profile's `app` service is the target.
-      APP_URL: ${APP_URL:-http://host.docker.internal:3000}
+      # The app is a container in this file now, so the poller reaches it by
+      # service name and never leaves the compose network. Override APP_URL in
+      # docker/.env to point it at a host-side `next dev` instead; `extra_hosts`
+      # is what makes `host.docker.internal` resolve on a Linux production host.
+      APP_URL: ${APP_URL:-http://app:3000}
       WHATSAPP_EVERY: ${WHATSAPP_EVERY:-60}
       GRADING_EVERY: ${GRADING_EVERY:-300}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # Deliberately NO `depends_on`: Compose activates the profile of any service
-    # named there, so `depends_on: app` would start the `full`-profile app
-    # container as a side effect — and it publishes ${APP_PORT:-3000} onto the
-    # port the owner's dev servers live on. `hit()` already survives a down app:
-    # it logs [FAIL], sleeps, and retries, which is the correct behaviour.
+    # Deliberately NO `depends_on`. A poller whose whole job is to keep a queue
+    # moving while the app restarts must not be gated on the app being up: Compose
+    # would refuse to start cron at all if `app` failed to build, and the queue
+    # would sit undrained with nothing logging why. `hit()` already survives a
+    # down app — it logs [FAIL] rc=4, sleeps, and retries, which Step 5 proved.
     restart: unless-stopped
 
-  # Placeholder for the production shape; Plan 2 owns the real server image.
-  # Off by default: `docker compose up` is the data plane + cron only, which is
-  # what a Windows dev host wants with `next dev` on 3000.
+  # The application, built from source in the image. No bind-mount and no
+  # `npm run start` against the host tree: this repo's `.next/` belongs to the
+  # owner's dev server on 3001, and a container that wrote into it would serve
+  # them stale modules.
   app:
-    image: node:24-alpine3.20
-    profiles: ["full"]
-    working_dir: /app
-    # No `npm ci` here. This service would run as root inside the developer's
-    # own tree (volumes: ../../:/app) and rebuild their node_modules from a
-    # Linux container — a repo-mutating side effect outside this task.
-    command: ["npm", "run", "start"]
-    ports:
-      # Loopback, like `db` and `gateway`: an un-prefixed mapping also binds 0.0.0.0/::.
-      - "127.0.0.1:${APP_PORT:-3000}:3000"
+    build:
+      # Relative to THIS file's directory, so `..` is the repo root. `../..`
+      # would be `D:/Nextjs Projects` — the parent of the repo — and the old
+      # placeholder service's `volumes: [../../:/app]` had exactly that bug,
+      # which nobody hit because that service was profile-gated and never ran.
+      context: ..
+      dockerfile: docker/app/Dockerfile
+      args:
+        # Inlined into the client bundle at BUILD time, so they cannot arrive as
+        # runtime env. `src/lib/files/store.ts:49` still hands file bytes to the
+        # vendor through `supabaseConfig.url`, which is the first of these — an
+        # empty value here does not fail the build, it fails every upload later.
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+    restart: unless-stopped
+    # Every runtime secret the app reads, without any of them passing through
+    # this file or an image layer. `environment:` below wins over anything the
+    # same name sets here, which is how the four values that must point INTO the
+    # compose network override the ones written for a host-side `next dev`.
+    env_file: ../.env.local
     environment:
       NODE_ENV: production
       # Inside the compose network a container talks to PostgREST directly, so
-      # there is NO /rest/v1 prefix — that prefix is the gateway's, and only the
-      # host's `http://localhost:54321/rest/v1` form carries it.
+      # there is NO /rest/v1 prefix — that prefix belongs to nginx and Caddy, and
+      # only the host's `http://localhost:54321/rest/v1` form carries it.
       SUPABASE_REST_BASE: http://rest:3000
+      # The host form points at 127.0.0.1:54320; inside the network the service
+      # name is `db` and the port is the container's own 5432.
+      AUTH_DB_URL: postgres://postgres:${LOCAL_DB_PASSWORD}@db:5432/sharm_dreams
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
       CRON_SECRET: ${CRON_SECRET}
+      # Assessment links are built from this (src/lib/config.ts:57, whose
+      # `http://localhost:3001` fallback is the host dev server, not this stack).
+      # A candidate opening a link on a phone needs the LAN address instead, so
+      # this is the one value worth overriding in docker/.env.
+      APP_URL: ${APP_URL_PUBLIC:-http://localhost:${NGINX_PORT:-3000}}
       # Read by the APP (src/lib/config.server.ts `cronConfig`), never by the
       # cron container. `:-` is load-bearing: an empty value left in docker/.env
       # would otherwise reach `Number(process.env.WHATSAPP_CRON_BATCH_SIZE ?? 50)`
       # as an empty string — `??` does not fire on "" and the batch size becomes 0.
       WHATSAPP_CRON_BATCH_SIZE: ${WHATSAPP_CRON_BATCH_SIZE:-50}
       GRADING_CRON_BATCH_SIZE: ${GRADING_CRON_BATCH_SIZE:-10}
-    volumes: [../../:/app]
+    # Deliberately no `ports:`. nginx is the only way in, so an app that is not
+    # proxied is an app that is not reachable — the same rule `rest` follows.
+    expose: ["3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+
+  # The front door: one published origin for the app and for `/rest/v1/`.
+  nginx:
+    # 1.30 is nginx's stable branch (even minor numbers); 1.31 is the newer
+    # mainline release and deliberately not taken here — the front door wants
+    # bugfix-only releases. Same `alpine3.24` base as every other image in this
+    # file so one CVE sweep covers them all.
+    image: nginx:1.30.6-alpine3.24
+    restart: unless-stopped
+    depends_on:
+      - app
+      - rest
+    ports:
+      # Loopback, like every other published port here: an un-prefixed mapping
+      # also binds 0.0.0.0 and ::, which would put a staff sign-in form on the
+      # LAN. On KVM2 this mapping is replaced by 80/443 behind TLS.
+      - "127.0.0.1:${NGINX_PORT:-3000}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
 
 volumes:
   # A named volume, NOT a bind-mount into the repo: a restored live dump lives in

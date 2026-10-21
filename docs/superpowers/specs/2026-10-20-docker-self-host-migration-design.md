@@ -75,20 +75,30 @@ Everything below is ordered around that fact.
 
 ## 4. Slice 1 — Local stack topology
 
-Docker Compose on a private bridge network. The app runs **outside** Docker with
-`next dev` on the host, on **port 3000** (the owner's existing dev server on 3001
-is left untouched).
+Docker Compose on a private bridge network. Slice 1 ran the app **outside**
+Docker with `next dev` on the host, on **port 3000** (the owner's existing dev
+server on 3001 is left untouched); the app is now built into the `app` container
+behind nginx on that same 3000, and the host `next dev` remains available by
+pointing the cron container at `host.docker.internal:3000`.
 
 | Service | Image | Role | Host port |
 | --- | --- | --- | --- |
-| `db` | `postgres:17-alpine` | plain Postgres; the restored dump | `54320 → 5432` |
-| `rest` | `postgrest/postgrest` | serves the 442 reads; turns our JWT into `request.jwt.claims` | `54321 → 3000` |
-| `web` | host `next dev` | the app | **3000** |
-| `cron` | thin `curl`/node image | scheduler hitting `/api/cron/grading` + `/api/cron/whatsapp` | outbound only |
+| `db` | `postgres:18.6-alpine3.24` | plain Postgres; the restored dump | `54320 → 5432` |
+| `rest` | `postgrest/postgrest:v16.5` | serves the 442 reads; turns our JWT into `request.jwt.claims` | none — gateway/nginx only |
+| `gateway` | `caddy:2.11.7-alpine` | `/rest/v1` for the host's `next dev` | `54321 → 8080` |
+| `app` | built from `docker/app/Dockerfile`, `node:24.22.0-alpine3.24` | the built Next.js app | none — nginx only |
+| `nginx` | `nginx:1.30.6-alpine3.24` | the public front for app + `/rest/v1` | **3000** → 80 |
+| `cron` | built from `docker/cron/Dockerfile`, `alpine:3.24.2` | scheduler hitting `/api/cron/grading` + `/api/cron/whatsapp` | outbound only |
 
-No MinIO, no Redis, no GoTrue. On KVM2 the same file gains a Caddy/Nginx TLS front,
-`web` becomes a built image, and the browser reaches PostgREST through the reverse
-proxy at `/rest/v1` (locally the app talks to `localhost:54321` directly).
+_Image policy, set 2026-10-21: every base is patch-pinned to the newest **stable**
+release on one Alpine (3.24) so a single CVE sweep covers the stack. Postgres 19
+is excluded as `19rc1` only, nginx 1.31 as mainline (1.30 is the stable branch),
+and Node 26 as `current` (the `lts` alias still resolves to 24). Bump none of
+these from memory — re-read the registry tag list._
+
+No MinIO, no Redis, no GoTrue. On KVM2 this same file gains TLS at nginx and
+secrets that never enter the repo; Caddy goes away when the host's `.env.local`
+`SUPABASE_REST_BASE` line does.
 
 `package.json:4` is bare `next dev` and `.env.local` already points `APP_URL` /
 `NEXT_PUBLIC_APP_URL` at 3000, so slice 1 only adds the new `SUPABASE_*`-shaped
@@ -112,8 +122,10 @@ this and already pass.
   (via `is_staff()` 66, `has_permission()` 41, `is_super_admin()` 12,
   `current_user_profile_id()` 12, `user_tenant_id()` 11).
 - **`storage` schema** shimmed so its 8 policies parse, then replaced in §7.
-- **PG17 is forced by the dump** — every grant carries the `maintain` privilege
-  (PG17+ only). `pg_stat_statements` needs `shared_preload_libraries`.
+- **PG17 or newer is forced by the dump** — every grant carries the `maintain`
+  privilege (PG17+ only). `pg_stat_statements` needs `shared_preload_libraries`.
+  The stack runs 18.6: nothing in the dump needs 18, and nothing in it breaks on
+  18, but a major bump means the `db-data` volume must be recreated, not reused.
 - **Delete, don't port**: `create schema vault` + `supabase_vault` (schema.sql:30-31)
   and the two `alter publication supabase_realtime …` lines — nothing uses them.
 - **`jobs` / `applicants`** currently get `grant … to anon` with `using (true)`

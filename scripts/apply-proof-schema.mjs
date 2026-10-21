@@ -12,7 +12,7 @@
  * Local Docker only — it never connects to the Supabase project.
  *
  *   docker run -d --name schema-proof -e POSTGRES_PASSWORD=zzproof \
- *     -e POSTGRES_DB=postgres -p 55432:5432 postgres:17-alpine \
+ *     -e POSTGRES_DB=postgres -p 55432:5432 postgres:18.6-alpine3.24 \
  *     -c shared_preload_libraries=pg_stat_statements
  *
  *   node scripts/apply-proof-schema.mjs [file]      # default supabase/schema.sql

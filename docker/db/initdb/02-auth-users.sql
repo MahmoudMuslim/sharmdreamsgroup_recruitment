@@ -6,8 +6,10 @@
 create schema if not exists auth;
 
 -- The migrated directory. Plan 2 keeps this table and writes it directly;
--- spec §5 requires encrypted_password to survive the dump restore, and PG17
--- pgcrypto compares bcrypt ($2a$) hashes, so no Node dependency is needed.
+-- spec §5 requires encrypted_password to survive the dump restore, and pgcrypto
+-- compares bcrypt ($2a$) hashes, so no Node dependency is needed. Re-measured on
+-- postgres:18.6-alpine3.24: 18 added a separate core `hash_bcrypt()` and left
+-- `crypt()`/`gen_salt('bf')` alone, so all three seeded staff rows verify t/t/t.
 create table if not exists auth.users (
   id uuid primary key default gen_random_uuid(),
   aud text not null default 'authenticated',
@@ -31,7 +33,9 @@ create table if not exists auth.users (
 -- postgres:17-alpine, that shape fails at CREATE FUNCTION with `return type
 -- mismatch in function declared to return uuid / Actual return type is text`,
 -- because pg_cast has no text→uuid row (castcontext would have to be 'i' or
--- 'a'). The explicit cast is an I/O conversion, which is legal here.
+-- 'a'). The explicit cast is an I/O conversion, which is legal here — and still
+-- required on 18.6, where this file creates the same three functions without
+-- error.
 create or replace function auth.uid() returns uuid
 language sql stable as
 $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
