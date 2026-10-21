@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { getFileStore } from "@/lib/files/store";
+import { displayName, isStoredPath } from "@/lib/files/paths";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { stageLabel, formatBytes } from "@/lib/utils";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -11,8 +12,6 @@ import { LIST_LIMIT, WALK_LIST_LIMIT, listObjects, objectMetadata } from "./stor
 import {
   BUCKETS,
   bucketInfo,
-  displayName,
-  isStoredPath,
   type BucketKey,
   type BucketStat,
   type DeleteResult,

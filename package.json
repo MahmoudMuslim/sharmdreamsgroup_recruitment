@@ -14,6 +14,7 @@
     "db:seed-local": "node scripts/seed-local-staff.mjs",
     "stack:prove": "node scripts/prove-local-stack.mjs",
     "files:prove": "node scripts/prove-files-rls.mjs",
+    "files:paths": "node scripts/prove-file-paths.mjs",
     "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs",
     "build": "next build",
     "check:routes": "node scripts/check-staff-routes.mjs",

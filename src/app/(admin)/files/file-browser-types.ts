@@ -107,20 +107,7 @@ export type DeleteResult =
   | { ok: true; name: string; note?: string }
   | { ok: false; error: string };
 
-/**
- * Upload paths prefix the leaf with a random uuid; what follows it is the
- * filename the candidate chose.
- */
-export function displayName(path: string): string {
-  const leaf = path.split("/").pop() || path;
-  return leaf.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, "") || leaf;
-}
-
-/** Storage keys are plain object names, never paths that escape a bucket. */
-export function isStoredPath(value: string): boolean {
-  if (!value || value.length > 1024) return false;
-  if (value.startsWith("/") || value !== value.trim()) return false;
-  if (value.includes("\\")) return false;
-  if (/[\u0000-\u001f]/.test(value)) return false;
-  return !value.split("/").includes("..");
-}
+// `displayName` and `isStoredPath` used to live at the bottom of this file.
+// Plan 2 moved them to `src/lib/files/paths.ts`, where the disk store resolves
+// a byte with them — a lib cannot import a page module's type file, and one
+// copy of the rule is the point. Importers now point straight at `@/lib/files/paths`.

@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getFileStore } from "@/lib/files/store";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { bucketInfo, displayName, isStoredPath } from "@/app/(admin)/files/file-browser-types";
+import { bucketInfo } from "@/app/(admin)/files/file-browser-types";
+import { displayName, isStoredPath } from "@/lib/files/paths";
 import { objectMetadata } from "@/app/(admin)/files/storage-list";
 
 /** Long enough to open a PDF or play a recording, short enough to be worthless later. */
