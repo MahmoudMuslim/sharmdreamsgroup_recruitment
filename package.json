@@ -25,7 +25,6 @@
     "@handsontable/react": "^16.2.0",
     "@qoder-ai/qoder-agent-sdk": "^1.0.52",
     "@supabase/server": "^1.9.1",
-    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
     "@thelioo/opencode-balancer": "^0.2.18",
     "@vercel/speed-insights": "^2.0.0",
@@ -40,6 +39,7 @@
     "next": "16.4.0",
     "nodemailer": "^10.1.0",
     "pdf-lib": "^1.17.1",
+    "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
@@ -59,7 +59,6 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "^16.4.0",
-    "pg": "^8.23.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

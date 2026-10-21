@@ -31,30 +31,55 @@ function assertServer(name: string, value: string): string {
   return value || "";
 }
 
+/**
+ * The fields below marked HOSTED-ONLY are the vendor's coordinate set: they are
+ * how `NEXT_PUBLIC_SUPABASE_URL` / the service key / the database password still
+ * reach the hosted project. They survive Task 17 because the scripts that keep
+ * that project reachable — `scripts/apply-schema.mjs`, `scripts/dump-schema.mjs`,
+ * `scripts/verify-schema.mjs`, `scripts/create-staff.mjs` — read them straight
+ * from `process.env`, and Plan 2's `pg_dump` restore is the last thing that will
+ * need them. Deleting the fields here would look tidy and break the dump path.
+ */
 export const supabaseConfig = {
+  /** Where the app's own PostgREST answers, including the `/rest/v1` prefix. */
+  restBase: optional(process.env.SUPABASE_REST_BASE),
+  /** HOSTED-ONLY — deleted in Plan 2. Derived from the vendor URL, no app code reads it. */
   projectRef:
     optional(process.env.SUPABASE_PROJECT_REF) ||
     supabaseUrl.replace(/^https:\/\//, "").split(".")[0],
+  /** HOSTED-ONLY — deleted in Plan 2. The two files that still ship BYTES to the
+   * vendor read this: `src/lib/files/store.ts` and the dead fallback branch in
+   * `(candidate)/portal/actions.ts` (spec correction #6). */
   url: assertServer("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl),
-  restUrl:
-    optional(process.env.SUPABASE_REST_URL) || `${supabaseUrl}/rest/v1/`,
+  /** HOSTED-ONLY — deleted in Plan 2. Same two byte-shipping importers as `url`. */
   anonKey: assertServer(
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
     optional(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
   ),
-  /** Only ever read from server modules — never serialised to the client. */
+  /** HOSTED-ONLY — deleted in Plan 2. Read by `files/store.ts` for storage bytes
+   * and by the hosted-management scripts; no row read or write uses it since
+   * Task 11 moved `service.ts` onto a locally minted bearer. */
   serviceRoleKey: optional(process.env.SUPABASE_SERVICE_ROLE_KEY),
+  /** HOSTED-ONLY — deleted in Plan 2. The hosted connection string for the dump
+   * and schema scripts (`dump-schema.mjs`, `verify-schema.mjs`). */
   dbPassword: optional(process.env.SUPABASE_DB_PASSWORD),
   buckets: {
     candidateVideos: "candidate-videos",
     candidateAudio: "candidate-audio",
-    candidateCvs: "candidate-cvs",
     resumes: "resumes",
+    // Supabase's own docs and the "Track your application" copy both call this
+    // bucket by name; appConfig omitting it is why a CV link reads as broken
+    // rather than as unconfigured.
+    candidateCvs: "candidate-cvs",
   },
 } as const;
 
 export const appConfig = {
-  url: optional(process.env.APP_URL, "http://localhost:3001"),
+  // The app now answers on the stack's own origin (nginx publishes 3000), so an
+  // `APP_URL`-less build has to fall back to a host a candidate can still reach.
+  // `3001` is the dev server, and a link that points there from a production page
+  // is the task-#313 bug.
+  url: optional(process.env.APP_URL, "http://localhost:3000"),
   name: "Sharm Dreams Talent Cloud",
   defaultLocale: "en" as const,
 } as const;
