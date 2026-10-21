@@ -2644,21 +2644,49 @@ export const SESSION_COOKIE = "sdg_session";
 export const LAST_ACTIVE_COOKIE = "sdg_staff_last_active";
 
 /**
- * Session lifetime in seconds, used for the bearer's `exp` and the cookie's
- * `maxAge` together.
+ * The bearer's lifetime in seconds, used for its `exp` and for the
+ * `sdg_session` cookie's `maxAge` together.
  *
- * They must be equal: a cookie that outlives its bearer reads as "signed in"
- * while every query 401s, and a bearer that outlives its cookie is unreachable.
- * One hour rather than Task 8's 15-minute default because the proxy re-mints on
- * every staff request (Task 13), so this is the ceiling on an *idle* gap, not on
- * a session's length — the idle ceiling staff can actually configure is
- * `security.session_timeout_minutes`, whose seeded default is 480. A 15-minute
- * bearer would silently sign out an unread dashboard tab every quarter-hour
- * regardless of that setting.
+ * Those two must be equal: a cookie that outlives its bearer reads as "signed
+ * in" while every query 401s, and a bearer that outlives its cookie is
+ * unreachable.
+ *
+ * The value is 24 hours because `security.session_timeout_minutes` is
+ * operator-configurable from 15 to 1440 minutes
+ * (`src/modules/settings/domain/schema.ts:235-236`, seeded at 480), and the
+ * idle timeout is enforced by Task 13's proxy by comparing that window against
+ * `sdg_staff_last_active`. A one-hour bearer would sign an unread dashboard tab
+ * out at 60 minutes on an 8-hour setting: the bearer's expiry becomes the de
+ * facto timeout and the setting stops meaning anything. At 86_400 the bearer
+ * lives exactly as long as the longest window staff can configure, so the idle
+ * check always bites first or at the same instant. Task 8's 15-minute default
+ * would be worse still, silently signing an idle tab out every quarter-hour
+ * regardless of any setting.
+ *
+ * This is a ceiling on an *idle* gap, not on a session's length — Task 13
+ * re-mints the bearer on every staff request, so an active staff member never
+ * sees it.
  */
-const SESSION_TTL_SECONDS = 3600;
+const SESSION_TTL_SECONDS = 86_400;
 
-function cookieAttributes() {
+/**
+ * The idle stamp lives 30 days, deliberately longer than the bearer it
+ * accompanies.
+ *
+ * That is counter-intuitive after the rule above, but the proxy reads the stamp
+ * as `Number(request.cookies.get(LAST_ACTIVE_COOKIE)?.value)` and skips the
+ * idle branch entirely when the result is not finite
+ * (`src/lib/supabase/middleware.ts:137-144`), so an *absent* stamp reads as
+ * "active". A stamp that expired before its session would therefore disable the
+ * timeout instead of enforcing it. 30 days is what
+ * `src/lib/supabase/middleware.ts:159-167` already writes for this same cookie
+ * name, so the two writers agree; Task 13 folds that file's duplicate
+ * `sdg_staff_last_active` literal (`middleware.ts:21`) into this module.
+ */
+const LAST_ACTIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** The attributes the two writes share — only the lifetime differs per cookie. */
+function cookieAttributes(maxAge: number) {
   return {
     path: "/",
     httpOnly: true,
@@ -2666,17 +2694,17 @@ function cookieAttributes() {
     // Locally this is http://localhost and the flag would make the cookie
     // unsendable; production terminates TLS at the gateway (Plan 2) and sets it.
     secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge,
   };
 }
 
 export async function startSession(userId: string): Promise<void> {
   const jar = await cookies();
   const token = await mintSessionToken({ sub: userId, role: "authenticated" }, SESSION_TTL_SECONDS);
-  jar.set(SESSION_COOKIE, token, cookieAttributes());
+  jar.set(SESSION_COOKIE, token, cookieAttributes(SESSION_TTL_SECONDS));
   // Stamp activity at the door so the first portal request after sign-in is not
   // itself judged as an idle one.
-  jar.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes());
+  jar.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes(LAST_ACTIVE_TTL_SECONDS));
 }
 
 export async function endSession(): Promise<void> {
@@ -2688,7 +2716,9 @@ export async function endSession(): Promise<void> {
 
 That is the whole file for now — two writers, not three. The renewal the proxy needs is `writeSession`, which Task 13 adds here: the proxy cannot call `cookies()` at all, so a `next/headers`-based `renewSession` would be dead code the moment it was written, and dead code in the identity spine is worse than missing code.
 
-Neither setter takes an email: `SessionUser.email` already comes from `user_profiles`, and a parameter the function discards would misdescribe the interface. Both writes share the one `cookieAttributes()` object because the idle stamp must expire exactly when the bearer does — a `LAST_ACTIVE` cookie that outlives the session reads as "active" to the next person who signs in at that address. The app owns exactly these two cookie names, so `endSession` deletes exactly these two; sweeping other names "just in case" would delete a cookie Plan 2 has not invented yet.
+**Correction applied when this task was implemented (ledger `T12-R2`/`T12-R3`):** the draft's `SESSION_TTL_SECONDS = 3600` and its single shared `cookieAttributes()` object are both superseded by the fence above — a one-hour bearer capped the idle ceiling below the longest window staff can configure (15…1440 min), and the idle stamp must outlive the bearer or its absence reads as "active". Task 13's writer reuses `cookieAttributes(maxAge)` with the two module-local lifetimes in this same file.
+
+Neither setter takes an email: `SessionUser.email` already comes from `user_profiles`, and a parameter the function discards would misdescribe the interface. The two writes share the one `cookieAttributes(maxAge)` helper but **not** one lifetime: the session cookie's `maxAge` equals its bearer's `exp`, while the idle stamp lives 30 days, because the proxy skips its idle branch when the stamp is unreadable (`middleware.ts:137-144`) — an *absent* stamp reads as "active", so a stamp that expired with the bearer would disable the timeout instead of enforcing it. The app owns exactly these two cookie names, so `endSession` deletes exactly these two; sweeping other names "just in case" would delete a cookie Plan 2 has not invented yet.
 
 - [ ] **Step 2: Write the sign-in action**, `src/app/login/actions.ts`. It must be `"use server"` with **async function exports only** — a synchronous export in that file is a build failure in Next 16, and the isolated-build probe in Task 18 is what catches it.
 
@@ -2775,6 +2805,8 @@ export async function signInAction(formData: FormData): Promise<SignInState> {
 ```
 
 The `unknown_user` / `wrong_password` reasons collapse into one sentence on purpose: the page must not tell a stranger whether an address has an account. Task 9's dummy-hash compare is what makes that sentence true rather than decorative.
+
+**Corrected as this task was implemented (ledger `T12-R4`…`T12-R6`) — the fence above is the draft, the landed `src/app/login/actions.ts` is the contract.** Four things in it were wrong: (1) `await endSession()` on *every* failure tore down a live session on a merely-wrong password, while the throttled and empty-credential returns left it alone — `verifyStaffPassword` answers `banned` only *after* the password compared true (`src/lib/auth/passwords.ts:48-49`), so the teardown belongs on the `banned` branch alone; (2) `recordFailure(email)` ran *after* the ~250 ms bcrypt `await`, so a concurrent burst all read an under-limit Map and every request reached the verifier — the charge now happens before the `await`, in the same synchronous block as the check, which makes "8 attempts" 8 concurrent attempts too; (3) a `banned` answer consumed the same budget, which buried the one sentence that tells a disabled staff member to ask a super admin — it now releases its pre-charge like a success does, and only the two guessing reasons count; (4) the Map was keyed by an attacker-chosen string with no eviction path for a key never retried, so a long-lived container grew without bound — expired entries are now swept where the write already happens, and `MAX_TRACKED_KEYS` caps it.
 
 - [ ] **Step 3: Add the sign-out action** to the same file:
 
@@ -2871,7 +2903,7 @@ Body: the reason the browser can no longer sign in (no browser-reachable auth en
 - Delete: `src/lib/supabase/middleware.ts`
 
 **Interfaces:**
-- Consumes: `verifySessionToken(token)` from Task 8, `SESSION_COOKIE` / `LAST_ACTIVE_COOKIE` / `cookieAttributes()` / `SESSION_TTL_SECONDS` from Task 12 (all module-local in `cookies.ts`, which is why the writers land in the same file), `isStaffPath()` / `loginSearch()` which stay where they are, `coerceNumber` from `@/modules/settings/infrastructure/settingsReader`.
+- Consumes: `verifySessionToken(token)` from Task 8, `SESSION_COOKIE` / `LAST_ACTIVE_COOKIE` / `cookieAttributes(maxAge)` / `SESSION_TTL_SECONDS` / `LAST_ACTIVE_TTL_SECONDS` from Task 12 (all module-local in `cookies.ts`, which is why the writers land in the same file — the bearer is written with the first lifetime and the stamp with the second), `isStaffPath()` / `loginSearch()` which stay where they are, `coerceNumber` from `@/modules/settings/infrastructure/settingsReader`.
 - Produces: `guardRequest(request: NextRequest): Promise<NextResponse>` — the only thing `src/proxy.ts` calls — plus `writeSession(response, userId)` and `clearSession(response)` on `src/lib/auth/cookies.ts`. Task 15's browser proof and Task 18's acceptance both drive `guardRequest`.
 
 - [ ] **Step 1: Add the proxy-side cookie writers** to `src/lib/auth/cookies.ts`. This is the half Task 12 deliberately left unwritten, and the reason is worth knowing before it confuses you: the proxy is not allowed to mutate `next/headers`' cookie store. It reads `request.cookies` and returns a `NextResponse`, so the only cookie it can set is one on that response object. Hence two shapes of the same contract. Add the `NextResponse` import to the file's existing import block — `mintSessionToken` is already imported there by Task 12, and a duplicate import is a lint error, not a style choice:
@@ -2885,8 +2917,8 @@ export async function writeSession(
   userId: string,
 ): Promise<void> {
   const token = await mintSessionToken({ sub: userId, role: "authenticated" }, SESSION_TTL_SECONDS);
-  response.cookies.set(SESSION_COOKIE, token, cookieAttributes());
-  response.cookies.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes());
+  response.cookies.set(SESSION_COOKIE, token, cookieAttributes(SESSION_TTL_SECONDS));
+  response.cookies.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes(LAST_ACTIVE_TTL_SECONDS));
 }
 
 /** Drop both, on any response — including the redirect the idle timeout returns. */
