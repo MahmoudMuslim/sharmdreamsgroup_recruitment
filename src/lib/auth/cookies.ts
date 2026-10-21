@@ -46,11 +46,11 @@ const SESSION_TTL_SECONDS = 86_400;
  * That is counter-intuitive after the rule above, but the proxy reads the stamp
  * as `Number(request.cookies.get(LAST_ACTIVE_COOKIE)?.value)` and skips the
  * idle branch entirely when the result is not finite
- * (`src/lib/auth/guard.ts:108-115`), so an *absent* stamp reads as
- * "active". A stamp that expired before its session would therefore disable the
- * timeout instead of enforcing it. 30 days is what
- * `src/lib/auth/guard.ts:127` already writes for this same cookie name, so the
- * two writers agree — `startSession` and `writeSession` below share this
+ * (`guardRequest`'s `Number.isFinite(lastActive)` guard), so an *absent* stamp
+ * reads as "active". A stamp that expired before its session would therefore
+ * disable the timeout instead of enforcing it. 30 days is what the `writeSession`
+ * call at the end of `guardRequest` already writes for this same cookie name, so
+ * the two writers agree — `startSession` and `writeSession` below share this
  * `LAST_ACTIVE_TTL_SECONDS`, and the proxy imports `LAST_ACTIVE_COOKIE` rather
  * than carrying its own `sdg_staff_last_active` string literal.
  */
