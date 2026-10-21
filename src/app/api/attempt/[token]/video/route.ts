@@ -36,7 +36,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const extension = video.type.includes("mp4") ? "mp4" : "webm";
   const path = `${token}/${questionId}-${Date.now()}.${extension}`;
 
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { error: uploadError } = await files.upload({
     bucket: supabaseConfig.buckets.candidateVideos,
     path,

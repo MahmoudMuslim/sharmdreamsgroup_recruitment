@@ -1,5 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getFileStore } from "@/lib/files/store";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -48,8 +47,7 @@ export async function GET(request: NextRequest) {
   const { mimeType } = await objectMetadata(bucket.key, path);
   const inline = !wantsDownload && isSafeToView(mimeType);
 
-  const supabase = await createSupabaseServerClient();
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { url, error } = await files.signedUrl({
     bucket: bucket.key,
     path,

@@ -26,7 +26,7 @@ export async function deleteAttachment(attachmentId: string): Promise<Attachment
   }
 
   const supabase = await createSupabaseServerClient();
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
 
   const { data: row } = await supabase
     .from("application_attachments")

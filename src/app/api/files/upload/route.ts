@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
 
   // The parent record is read through RLS first, so a recruiter cannot attach a
   // file to a candidate sitting in another tenant's pipeline.

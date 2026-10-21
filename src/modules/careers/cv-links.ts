@@ -48,7 +48,7 @@ export function cvDisplayName(path: string | null): string | null {
 export async function createCvLinks(supabase: StaffClient, path: string): Promise<CvLinks> {
   const name = cvDisplayName(path) ?? "cv";
 
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const [view, download] = await Promise.all([
     files.signedUrl({ bucket: CV_BUCKET, path, seconds: CV_URL_LIFETIME_SECONDS }),
     files.signedUrl({ bucket: CV_BUCKET, path, seconds: CV_URL_LIFETIME_SECONDS, download: name }),

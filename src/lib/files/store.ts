@@ -5,14 +5,15 @@
  * The dated decision this file exists to record: during Plan 1 the *rows* move
  * to the local Postgres/PostgREST stack while the *bytes* stay with the vendor,
  * because the local `storage.objects` shim holds metadata and no file. So the
- * port runs two backends at once, and every method here still talks to the
- * client it is handed. Plan 2 replaces the body of `getFileStore` with a
- * disk-backed store over `/data/uploads` and a `files` table (spec §7); no call
- * site changes, and the `client` parameter stops being read rather than being
- * cast away.
+ * port runs two backends at once. Since Task 11 the row factories are no longer
+ * vendor clients, so the bytes no longer travel under the caller's identity —
+ * see `vendor` below for what that widens and why it is deliberate. Plan 2
+ * replaces the body of `getFileStore` with a disk-backed store over
+ * `/data/uploads` and a `files` table (spec §7); no call site changes.
  */
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
+import { supabaseConfig } from "@/lib/config";
 
 export interface FileStoreEntry {
   path: string;
@@ -31,9 +32,25 @@ export interface FileStore {
   list(input: { bucket: string; prefix: string; limit?: number; sortBy?: { column: "name" | "created_at" | "updated_at"; order: "asc" | "desc" } }): Promise<{ entries: FileStoreEntry[]; error?: string }>;
 }
 
+/**
+ * The bytes still live with the vendor (spec §7: the local `storage.objects`
+ * shim holds metadata, not files), and after Task 11 the vendor has no other
+ * identity for us — our session token is signed with `AUTH_JWT_SECRET`, which
+ * gotrue will not accept. So every byte the portal touches here moves under
+ * the service key, which is a deliberate widening relative to the eight staff
+ * sites that used to run under the signed-in staff JWT and the vendor's bucket
+ * policies. The portal's own checks — the staff guard, the ownership predicates
+ * in the actions, the format table on the upload routes — are now the gate on
+ * a byte. Plan 2 deletes this whole path: `getFileStore()` returns a
+ * disk-backed store over `/data/uploads` + a `files` table, the vendor client
+ * and `@supabase/supabase-js` go with it (Task 17's importer list shrinks by
+ * this file), and the widening ends the day the bytes do.
+ */
+const vendor = createClient(supabaseConfig.url, supabaseConfig.serviceRoleKey!);
+
 /** Plan 2 returns a disk-backed store here; no call site changes. */
-export async function getFileStore(client: { storage: SupabaseClient["storage"] }): Promise<FileStore> {
-  const { storage } = client;
+export async function getFileStore(): Promise<FileStore> {
+  const { storage } = vendor;
   return {
     async upload({ bucket, path, body, contentType, upsert }) {
       const { error } = await storage
@@ -70,7 +87,7 @@ export async function getFileStore(client: { storage: SupabaseClient["storage"] 
           path: `${prefix}${entry.name}`,
           name: entry.name,
           isFolder: typeof entry.id !== "string",
-          bytes: typeof entry.metadata?.size === "number" ? entry.metadata.size : null,
+          bytes: typeof entry.metadata?.size === "number" && Number.isFinite(entry.metadata.size) ? entry.metadata.size : null,
           mimeType: typeof entry.metadata?.mimetype === "string" ? entry.metadata.mimetype : null,
           updatedAt: entry.updated_at ?? null,
         })),

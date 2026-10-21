@@ -24,7 +24,7 @@ export async function listObjects(
   prefix: string,
   limit = LIST_LIMIT
 ): Promise<ListOutcome> {
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { entries, error } = await files.list({
     bucket,
     prefix,

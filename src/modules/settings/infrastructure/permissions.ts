@@ -2,7 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
 import { getSessionUser } from "@/lib/auth/session";
@@ -25,7 +25,7 @@ export async function permissionsForCurrentUser(): Promise<Set<PermissionKey>> {
 }
 
 /** The grants for one role, read with whichever client the caller holds. */
-async function readGrants(supabase: SupabaseClient, roleKey: string): Promise<Set<PermissionKey>> {
+async function readGrants(supabase: RestClient, roleKey: string): Promise<Set<PermissionKey>> {
   const { data, error } = await supabase
     .from("role_permissions")
     .select("permission_key")

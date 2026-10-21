@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getFileStore } from "@/lib/files/store";
 import { requireStaff } from "@/lib/auth/session";
@@ -190,7 +190,7 @@ interface CvReadSource {
  * download, parse, write, trail and revalidation. Two ways in, one set of rules.
  */
 async function storeCvText(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   input: {
     applicationId: string;
     replace?: boolean;
@@ -221,7 +221,7 @@ async function storeCvText(
     };
   }
 
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { bytes, error: downloadError } = await files.download({
     bucket: input.source.bucket,
     path: input.source.path,

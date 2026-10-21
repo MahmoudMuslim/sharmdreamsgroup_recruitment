@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { RestClient } from "@/lib/rest/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -779,7 +779,7 @@ export async function copyBankQuestion(request: BankCopyRequest): Promise<BankCo
 }
 
 /** A role the copy can land on: it has to exist and be published, or nobody would be asked it. */
-async function readFormPlace(supabase: SupabaseClient, jobId: string): Promise<Place> {
+async function readFormPlace(supabase: RestClient, jobId: string): Promise<Place> {
   if (!UUID_PATTERN.test(jobId)) {
     return { ok: false, error: "Choose one of the open roles, or ask it for every role." };
   }
@@ -802,7 +802,7 @@ async function readFormPlace(supabase: SupabaseClient, jobId: string): Promise<P
 }
 
 /** A suite the copy can land in: it has to exist and not be paused, or no candidate could sit it. */
-async function readSuitePlace(supabase: SupabaseClient, templateId: string): Promise<Place> {
+async function readSuitePlace(supabase: RestClient, templateId: string): Promise<Place> {
   if (!UUID_PATTERN.test(templateId)) {
     return { ok: false, error: "Choose the suite to copy it into." };
   }
@@ -825,7 +825,7 @@ async function readSuitePlace(supabase: SupabaseClient, templateId: string): Pro
 }
 
 async function readGateSource(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   id: string
 ): Promise<
   { ok: true; question: BankQuestion; jobId: string | null } | { ok: false; error: string }
@@ -863,7 +863,7 @@ interface SuiteSourceRow {
 }
 
 async function readSuiteSource(
-  supabase: SupabaseClient,
+  supabase: RestClient,
   id: string
 ): Promise<{ ok: true; row: SuiteSourceRow } | { ok: false; error: string }> {
   const { data } = await supabase
@@ -876,7 +876,7 @@ async function readSuiteSource(
 }
 
 /** Where the next question of a suite lands: at the end, after whatever is there now. */
-async function nextPosition(supabase: SupabaseClient, templateId: string): Promise<number> {
+async function nextPosition(supabase: RestClient, templateId: string): Promise<number> {
   const { count } = await supabase
     .from("assessment_questions")
     .select("id", { count: "exact", head: true })
@@ -944,7 +944,7 @@ async function ontoForm(
 /** Apply form → suite: the one accepted answer becomes the one right option. */
 async function ontoSuiteFromForm(
   source: BankQuestion,
-  supabase: SupabaseClient,
+  supabase: RestClient,
   templateId: string,
   suiteLabel: string
 ): Promise<BankCopyResult> {
@@ -969,7 +969,7 @@ async function ontoSuiteFromForm(
 /** Suite → suite: the same kind, marks, guidance and answer set, another suite. */
 async function ontoSuiteFromSuite(
   row: SuiteSourceRow,
-  supabase: SupabaseClient,
+  supabase: RestClient,
   templateId: string,
   suiteLabel: string
 ): Promise<BankCopyResult> {

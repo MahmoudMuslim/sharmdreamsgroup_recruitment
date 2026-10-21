@@ -81,7 +81,7 @@ export async function POST(request: Request): Promise<Response> {
   const leaf = fileEntry.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-80) || "cv";
   const path = `applications/${jobId}/${crypto.randomUUID()}-${leaf}`;
 
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { error } = await files.upload({
     bucket: "candidate-cvs",
     path,

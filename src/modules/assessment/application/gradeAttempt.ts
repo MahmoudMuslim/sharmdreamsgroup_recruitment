@@ -475,7 +475,7 @@ async function ensureTranscript(
   if (response.transcript?.trim()) return response.transcript.trim();
   if (!response.video_path) return "";
 
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { bytes, contentType, error: downloadError } = await files.download({
     bucket: supabaseConfig.buckets.candidateVideos,
     path: response.video_path,

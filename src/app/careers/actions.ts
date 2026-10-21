@@ -359,7 +359,7 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   let finalCvText = cvText;
 
   if (input.cvFilePath) {
-    const files = await getFileStore(supabase);
+    const files = await getFileStore();
     const { bytes: fileData, error: downloadError } = await files.download({
       bucket: "candidate-cvs",
       path: input.cvFilePath,

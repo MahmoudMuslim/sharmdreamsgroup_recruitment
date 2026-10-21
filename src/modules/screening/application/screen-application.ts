@@ -207,8 +207,7 @@ function mimeForPath(path: string): string {
 
 /** Best-effort read of the stored CV file; empty string when unavailable. */
 async function cvTextFromStorage(path: string): Promise<string> {
-  const supabase = getSupabaseServiceClient();
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
   const { bytes: file, error } = await files.download({ bucket: CV_BUCKET, path });
   if (error || !file) return "";
 

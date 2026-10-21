@@ -123,7 +123,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     hasPermissionForUser("assessments.grade"),
     getAiAutomationSettings(),
   ]);
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
 
   const { data: attempt } = await supabase
     .from("candidate_attempts")

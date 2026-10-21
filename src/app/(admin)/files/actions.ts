@@ -120,7 +120,7 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
   if (!isStoredPath(path)) return { ok: false, error: "That is not a valid storage key." };
 
   const supabase = await createSupabaseServerClient();
-  const files = await getFileStore(supabase);
+  const files = await getFileStore();
 
   // Read the object's size and type before removing it: the audit entry is
   // worthless if the only copy of that detail was the file itself.

@@ -53,8 +53,14 @@ export const getSessionUser = cache(
     return {
       authUserId: user.id,
       profileId: profile.id as string,
-      email: profile.email ?? user.email ?? "",
-      fullName: profile.full_name ?? user.email ?? "Unknown user",
+      // Both identity fields come from `user_profiles`, not from the token's
+      // claims. The shim's `user.email` is always `null` (Step 5: nothing may
+      // trust a claim for identity), and the profile row is where this portal
+      // already keeps the address a recruiter is known by — the same read Task
+      // 14 makes. So the old `?? user.email` fallbacks are dropped rather than
+      // pointed at an invented claim.
+      email: profile.email ?? "",
+      fullName: profile.full_name ?? profile.email ?? "Unknown user",
       role: profile.role as UserRole,
       tenantId: profile.tenant_id ?? null,
     };

@@ -1,7 +1,6 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { supabaseConfig } from "@/lib/config";
+import { createRestClient, type RestClient } from "@/lib/rest/client";
 
-let anonClient: SupabaseClient | null = null;
+let anonClient: RestClient | null = null;
 
 /**
  * Anonymous (anon-key) Supabase client for public, cacheable reads.
@@ -25,22 +24,18 @@ let anonClient: SupabaseClient | null = null;
  *
  * Never import from client components — the anon key is public by design, but
  * the instance is server-scoped so the two are not confused.
+ *
+ * Dated change (Task 11): this client is now our PostgREST transport with
+ * `token: null`, and the credential-free mock it used to fall back to is gone.
+ * Without the vendor there is no "no credentials" state worth supporting — the
+ * base URL is a local container — so a build with the stack down now fails
+ * loudly instead of quietly prerendering an empty careers page.
  */
-export function getSupabaseAnonClient(): SupabaseClient {
-  if (!anonClient) {
-    // During build without credentials, return a mock client that throws on use
-    if (!supabaseConfig.url || !supabaseConfig.anonKey) {
-      const mockClient = {
-        from: () => ({
-          select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: [], error: null }) }), maybeSingle: () => Promise.resolve({ data: null, error: null }) }),
-        }),
-        storage: { from: () => ({ download: () => Promise.resolve({ data: null, error: { message: "No credentials" } }) }) },
-      } as unknown as SupabaseClient;
-      return mockClient;
-    }
-    anonClient = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
-      auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
-    });
+export function getSupabaseAnonClient(): RestClient {
+  const base = process.env.SUPABASE_REST_BASE;
+  if (!base) {
+    throw new Error("[supabase] SUPABASE_REST_BASE is not set — run the local stack (Tasks 1-2).");
   }
+  anonClient ??= createRestClient({ baseUrl: base, token: null });
   return anonClient;
 }

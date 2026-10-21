@@ -1,30 +1,23 @@
-import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { supabaseConfig } from "@/lib/config";
+import { SESSION_COOKIE } from "@/lib/auth/cookies";
+import { createRestClient } from "@/lib/rest/client";
+import { createAuthShim } from "@/lib/rest/auth-shim";
 
 /**
- * Server-side Supabase client bound to the request cookie jar.
- * Used by Server Components and Server Actions that act on behalf of the
- * signed-in recruiter/admin (anon key + user JWT — RLS enforced).
+ * The one seam. 129 call sites construct this per request; none of them knows
+ * that PostgREST is now ours. Returns the same `{ from, rpc, auth }` shape the
+ * supabase-js client did, which is why the port is a re-point rather than a
+ * rewrite (spec §6).
  */
 export async function createSupabaseServerClient() {
-  const cookieStore = await cookies();
-
-  return createServerClient(supabaseConfig.url, supabaseConfig.anonKey, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        try {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options);
-          });
-        } catch {
-          // Called from a Server Component render pass — safe to ignore
-          // because the session cannot be refreshed from a layout render.
-        }
-      },
-    },
-  });
+  const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value ?? null;
+  const base = process.env.SUPABASE_REST_BASE;
+  if (!base) {
+    throw new Error("SUPABASE_REST_BASE is not set. Locally: http://localhost:54321/rest/v1");
+  }
+  return {
+    ...createRestClient({ baseUrl: base, token }),
+    auth: createAuthShim((name) => jar.get(name)?.value),
+  };
 }
