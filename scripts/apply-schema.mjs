@@ -10,7 +10,7 @@
  * and nothing else.
  *
  *   demo rows      -> supabase/seed.sql, applied by hand when you want them
- *   staff accounts -> node scripts/create-staff.mjs <email> <name> [ROLE] [slug]
+ *   staff accounts -> Settings -> Team in the running app, or npm run db:seed-local
  *
  * Usage:
  *   node scripts/apply-schema.mjs [file]      # default supabase/schema.sql

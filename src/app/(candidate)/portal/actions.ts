@@ -1,8 +1,6 @@
 "use server";
 
 import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { supabaseConfig } from "@/lib/config";
-import { createClient } from "@supabase/supabase-js";
 
 export interface TrackedApplication {
   id: string;
@@ -96,15 +94,7 @@ export async function trackApplication(trackingCode: string): Promise<TrackResul
     return { ok: false, applications: [], notices: [], error: "Enter the tracking code you were given when you applied." };
   }
 
-  let supabase: ReturnType<typeof getSupabaseServiceClient>;
-  try {
-    supabase = getSupabaseServiceClient();
-  } catch {
-    // Service role not configured — fall back to the anon key.
-    supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
-      auth: { persistSession: false },
-    }) as unknown as ReturnType<typeof getSupabaseServiceClient>;
-  }
+  const supabase = getSupabaseServiceClient();
 
   const { data, error } = await supabase
     .from("applications")

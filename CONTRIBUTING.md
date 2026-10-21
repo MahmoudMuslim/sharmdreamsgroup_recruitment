@@ -29,7 +29,6 @@ npm install
 cp .env.example .env.local      # then read docs/DEPLOYMENT.md — the template has known drift
 node scripts/generate-encryption-key.mjs
 node scripts/apply-schema.mjs
-node scripts/create-staff.mjs   # HOSTED project only (GoTrue) — for the self-hosted stack run npm run db:seed-local for fixtures and create people in Settings → Team; see docs/DEPLOYMENT.md
 npm run dev                     # http://localhost:3001
 ```
 
@@ -112,7 +111,7 @@ Then walk the relevant manual checks in [docs/TESTING.md](docs/TESTING.md).
 | `apply-schema.mjs` / `apply-migration.mjs` | Apply consolidated schema / a single migration. |
 | `verify-schema.mjs` | Confirm the applied DB matches `schema.sql`. |
 | `dump-schema.mjs` | Export the current DB schema. |
-| `create-staff.mjs` | Provision a staff user + profile. |
+| `seed-local-staff.mjs` | Write the local staff fixtures into the stack's `auth.users`. |
 | `generate-encryption-key.mjs` | Produce a `SETTINGS_ENCRYPTION_KEY`. |
 | `audit-secrets.mjs` | Scan the tree for committed secrets. |
 | `check-staff-routes.mjs` / `check-themes.mjs` | Build guards (run by `prebuild`). |

@@ -86,7 +86,7 @@ src/
 
 Full walkthrough (data flow, read/write path, module boundaries): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane; `@supabase/supabase-js` survives in three files only — `src/lib/files/store.ts` still sends file bytes to the vendor, and `(candidate)/portal/actions.ts` and `scripts/create-staff.mjs` keep legacy reads Plan 2 removes) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
+**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane; nothing in `src` or `scripts` imports `@supabase/supabase-js` any more — file bytes come off our own `uploads` volume, and the package itself is uninstalled in Plan 2 Task 8) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
 
 ---
 
@@ -144,7 +144,7 @@ node scripts/generate-encryption-key.mjs   # AES key (run once)
 node scripts/apply-migration.mjs <file>    # apply one SQL migration
 node scripts/dump-schema.mjs               # dump live DB schema to schema.sql
 node scripts/verify-schema.mjs             # verify schema against expectations
-node scripts/create-staff.mjs              # HOSTED project only (GoTrue), deleted in Plan 2 — local staff come from Settings -> Team or npm run db:seed-local
+node scripts/seed-local-staff.mjs           # local staff fixtures, written into the stack's auth.users
 node scripts/audit-secrets.mjs             # scan the repo for leaked secrets
 ```
 
