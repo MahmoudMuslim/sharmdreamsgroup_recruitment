@@ -506,3 +506,57 @@ the shim alive. Measured on a throwaway container and on this stack:
 with the 17 `files` rows intact; `stack:prove` 8/8, `files:prove` 20/20,
 `files:paths` 61/61, `files:links` 76/76, `files:serve` 42/42.
 
+**Task 11 closed the plan: the five claims hold on a stack built from a wiped
+volume.** `docker compose down -v` deleted both named volumes and the network;
+`up -d --build` then rebuilt the image with no build args, and
+`db:apply-local` → `db:seed-local` → bytes back into the fresh volume brought it up
+at **42 tables / 88 policies / 15 functions / 15 triggers / 17 file rows**. Two
+details of that rebuild are worth keeping, because each is a claim that could be
+read the wrong way:
+
+- On the *from-nothing* database the retirement line does not print. The drop is
+  guarded by `select 1 from pg_namespace where nspname = 'storage'`, and a database
+  initialised from `docker/db/initdb/` has no such schema — so the absence of the
+  log is the proof that `03-storage-shim.sql` is gone from the create path, not
+  that the drop failed. `GET /rest/v1/storage.objects` answers **404 PGRST205**
+  through the gateway while anon `GET /rest/v1/files` answers **200 `[]`**: the
+  vendor door is closed and ours is RLS-bound.
+- The rehearsal was made reversible before it ran: the live local database dumped
+  to `docker/data/pre-task11-wipe.dump` (235,889 B, `PGDMP`) and its uploads tree
+  copied to `docker/data/pre-task11-uploads/` (17 files, 3.9 MB), both git-ignored.
+  A wipe nobody can undo is not an acceptance test.
+
+Claim 1: `npm ls @supabase/supabase-js @vercel/speed-insights` → `(empty)`, and both
+`from "@supabase/` and `@vercel/` grep **0** hits across `src scripts` (plus
+`package.json` for the latter). Claim 2: `.next/static` copied out of the *running
+container* — 79 files, **0** hits for the anon key, the hosted project ref and the
+hosted REST host. Claim 3: `public.files` per bucket matches `find /data/uploads
+-type f` object for object (13 / 929,670 B, 2 / 2,841,603 B, 2 / 198,076 B, 0), and
+containment holds at `files:paths` 61/61 with `files:links` 76/76. Claim 4: the
+audit's deploy surface — 340 files — sets and reads no vendor credential. Claim 5:
+the Plan 1 gates all still pass, `stack:prove` 8/8, the nginx session probe 7/7
+(including a 107,908-byte RLS-scoped `/candidates` render and an unbuffered
+`/api/live` stream), `files:serve` 42/42, `check-staff-routes` 16/16/16,
+`check-themes` 4, `eslint src scripts` 0 errors with the single pre-existing
+`PortalTracker.tsx:418` warning.
+
+Two baselines this plan had been quoting wrong, now measured. `tsc --noEmit` is
+**0 errors**, not "2 stale lines": both came from `.next/types/validator.ts`
+(generated 2026-10-14) still validating the deleted
+`src/app/(admin)/apply-questions/page.tsx`, and one `npx next typegen` cleared them.
+And `npm run audit-secrets` with no argument still reports 3 LEAKs, because its
+default bundle is this repo's own `.next/static`, a pre-Task-9 artifact of 56 files
+— the claim is about the *image*, which is clean, so the fix is to rebuild or pass
+the bundle as `$1`, never to relax the gate.
+
+**What §15 deliberately leaves to the owner.** `.env.local` still holds
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_PASSWORD`, `docker/.env` still holds
+the first two, and the four HOSTED-ONLY scripts still read them. Deleting them
+before an off-machine copy of `docker/data/hosted-2026-10-21.dump` exists would
+burn the only door back to the hosted rows while the copy is still a single local
+file, so the audit prints them under "owner action, not a leak" and the plan ends
+there. The §15 ordering rule — extract, prove, cut over, delete — is why this is the
+last paragraph rather than a task. The owner's remaining list, in order, is in
+[`docs/STATUS-2026-10-20.md`](../../STATUS-2026-10-20.md) §8.2.
+
