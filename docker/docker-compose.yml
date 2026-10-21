@@ -159,8 +159,8 @@ services:
       AUTH_DB_URL: postgres://postgres:${LOCAL_DB_PASSWORD}@db:5432/sharm_dreams
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
       CRON_SECRET: ${CRON_SECRET}
-      # Assessment links are built from this (src/lib/config.ts:57, whose
-      # `http://localhost:3001` fallback is the host dev server, not this stack).
+      # Assessment links are built from this (src/lib/config.ts:88, whose
+      # `http://localhost:3000` fallback is this stack's own published port).
       # A candidate opening a link on a phone needs the LAN address instead, so
       # this is the one value worth overriding in docker/.env.
       APP_URL: ${APP_URL_PUBLIC:-http://localhost:${NGINX_PORT:-3000}}

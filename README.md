@@ -86,7 +86,7 @@ src/
 
 Full walkthrough (data flow, read/write path, module boundaries): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 17 + PostgREST (own data plane; `@supabase/supabase-js` remains only where a file's bytes still travel to the vendor) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
+**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane; `@supabase/supabase-js` survives in three files only — `src/lib/files/store.ts` still sends file bytes to the vendor, and `(candidate)/portal/actions.ts` and `scripts/create-staff.mjs` keep legacy reads Plan 2 removes) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
 
 ---
 
