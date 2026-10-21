@@ -1,51 +1,3 @@
-import { getDashboardAnalytics } from "@/app/(admin)/dashboard/actions";
-import { getCandidateList, getCandidateTally } from "@/app/(admin)/candidates/actions";
-import {
-  draftCandidateFeedback,
-  screenApplication,
-  updateApplicationStage,
-  type PipelineStage,
-} from "@/app/(admin)/candidates/candidate-actions";
-import { getTemplates } from "@/app/(admin)/assessments/actions";
-import { assignTemplate } from "@/app/(admin)/assessments/assessment-actions";
-import {
-  createJobOpening,
-  deleteJobOpening,
-  refileFiling,
-  setJobStatus,
-  updateJobOpening,
-  type JobDraft,
-} from "@/app/(admin)/jobs/job-actions";
-import {
-  getApplicantSubmission,
-  getJobApplicants,
-} from "@/app/(admin)/jobs/applicant-actions";
-import {
-  deleteProspect,
-  getProspectPool,
-  importProspects,
-  saveProspect,
-  setProspectStage,
-} from "@/app/(admin)/sourcing/actions";
-import {
-  PROSPECT_STAGES,
-  poolScopeNote,
-  prospectSearchWords,
-  searchPool,
-  type ProspectStage,
-} from "@/app/(admin)/sourcing/pool-model";
-import { cancelWhatsAppJob, getOutbox, queueWhatsAppMessage } from "@/app/(admin)/whatsapp/actions";
-import {
-  OUTBOX_BUCKETS,
-  emailScopeNote,
-  emailSearchWords,
-  outboxScopeNote,
-  queueSearchWords,
-  searchEmails,
-  searchQueue,
-  type OutboxBucket,
-} from "@/app/(admin)/whatsapp/outbox-model";
-import { loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import { listSettingsTrail } from "@/modules/settings/application/settings-trail-actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
 import {
@@ -137,96 +89,12 @@ import {
 import { writeAssistantFile } from "@/modules/assistant/infrastructure/fileWriter";
 import { reachNote } from "@/modules/assistant/domain/reach-note";
 import {
-  getQuestionsForEditor,
-  getTemplateDetail,
-} from "@/app/(admin)/assessments/actions";
-import {
   searchSuites,
   suiteReadNote,
   suiteSearchWords,
 } from "@/modules/assessment/domain/suiteSearch";
-import {
-  deleteTemplate,
-  saveTemplate,
-  setTemplateActive,
-} from "@/app/(admin)/assessments/assessment-actions";
-import {
-  deleteQuestion,
-  moveQuestion,
-  saveQuestion,
-  type ChoiceDraft,
-  type QuestionDraft,
-} from "@/app/(admin)/assessments/question-actions";
-import {
-  deleteAttempt,
-  extendAttemptLink,
-  reissueAttemptLink,
-  revokeAttempt,
-} from "@/app/(admin)/candidates/attempt-actions";
-import {
-  getAttemptGrades,
-  retryAttemptGrading,
-  scoreAttemptResponse,
-} from "@/app/(admin)/candidates/assessment-actions";
-import { deleteAttachment } from "@/app/(admin)/candidates/attachment-actions";
-import {
-  createCandidate,
-  sendBulkEmail,
-  sendBulkWhatsApp,
-  sendCandidateFeedback,
-  setCandidateArchive,
-  updateCandidateContact,
-} from "@/app/(admin)/candidates/candidate-actions";
-import { getCandidateDossier } from "@/app/(admin)/candidates/dossier-actions";
-import { readAttachmentAsCv, readRecordCv } from "@/app/(admin)/candidates/cv-actions";
-import {
-  generateInterviewGuide,
-  rescheduleInterview,
-  scheduleInterview,
-  setInterviewStatus,
-} from "@/app/(admin)/candidates/interview-actions";
-import {
-  deleteGateQuestion,
-  getGateConsoleData,
-  moveGateQuestion,
-  saveGateQuestion,
-  setGateQuestionActive,
-} from "@/app/(admin)/questions/actions";
-import { deleteStoredFile, getFileBrowserData, openFolder } from "@/app/(admin)/files/actions";
-import {
-  fileSearchWords,
-  folderReadNote,
-  searchFiles,
-} from "@/app/(admin)/files/file-search";
-import { BUCKETS } from "@/app/(admin)/files/file-browser-types";
-import { LIST_LIMIT } from "@/app/(admin)/files/storage-list";
-import { getInterviewAgenda } from "@/app/(admin)/interviews/actions";
-import {
-  AGENDA_CHAT_ROW_LIMIT,
-  agendaReadNote,
-  agendaWindowDays,
-} from "@/app/(admin)/interviews/agenda-model";
-import { getOnboardingData } from "@/app/(admin)/onboarding/actions";
-import { generateOnboardingPlan } from "@/app/(admin)/onboarding/onboarding-actions";
-import { deleteTask, saveTask, setTaskCompleted } from "@/app/(admin)/onboarding/task-actions";
-import {
-  deleteNotificationTemplate,
-  resetNotificationTemplate,
-  saveNotificationTemplate,
-  updateRolePermission,
-} from "@/app/(admin)/settings/actions";
-import { convertProspect, sendProspectOutreach } from "@/app/(admin)/sourcing/actions";
-import { getProspectProfile, pasteProspectProfile } from "@/app/(admin)/sourcing/profile-actions";
-import { getAnalyticsReport } from "@/app/(admin)/analytics/actions";
-import { getRowReport } from "@/app/(admin)/reports/actions";
 import { REPORTS } from "@/modules/analytics/domain/documents";
 import { ANALYTICS_WINDOWS } from "@/modules/analytics/domain/report";
-import {
-  getEmailOutbox,
-  resendEmailMessage,
-  retryWhatsAppJob,
-  updateWhatsAppJob,
-} from "@/app/(admin)/whatsapp/actions";
 import {
   createMasterRecord,
   deleteMasterRecord,
@@ -240,11 +108,121 @@ import {
   updateStaffDetails,
   updateStaffRole,
 } from "@/modules/settings/application/user-actions";
-import { TASK_CATEGORIES, TASK_OWNERS } from "@/app/(admin)/onboarding/checklist";
 import { searchWeb, readWebPage } from "@/modules/assistant/infrastructure/webLookup";
 import type { GateOption } from "@/modules/careers/gate-questions";
 import type { AssignableStaffRole, MasterEntity, MasterPayload } from "@/modules/settings/domain/types";
 import type { QuestionConfig, QuestionType } from "@/types";
+import {
+  getDashboardAnalytics,
+  getCandidateList,
+  getCandidateTally,
+  draftCandidateFeedback,
+  screenApplication,
+  updateApplicationStage,
+  type PipelineStage,
+  getTemplates,
+  assignTemplate,
+  createJobOpening,
+  deleteJobOpening,
+  refileFiling,
+  setJobStatus,
+  updateJobOpening,
+  type JobDraft,
+  getApplicantSubmission,
+  getJobApplicants,
+  deleteProspect,
+  getProspectPool,
+  importProspects,
+  saveProspect,
+  setProspectStage,
+  PROSPECT_STAGES,
+  poolScopeNote,
+  prospectSearchWords,
+  searchPool,
+  type ProspectStage,
+  cancelWhatsAppJob,
+  getOutbox,
+  queueWhatsAppMessage,
+  OUTBOX_BUCKETS,
+  emailScopeNote,
+  emailSearchWords,
+  outboxScopeNote,
+  queueSearchWords,
+  searchEmails,
+  searchQueue,
+  type OutboxBucket,
+  loadSettings,
+  saveSettings,
+  getQuestionsForEditor,
+  getTemplateDetail,
+  deleteTemplate,
+  saveTemplate,
+  setTemplateActive,
+  deleteQuestion,
+  moveQuestion,
+  saveQuestion,
+  type ChoiceDraft,
+  type QuestionDraft,
+  deleteAttempt,
+  extendAttemptLink,
+  reissueAttemptLink,
+  revokeAttempt,
+  getAttemptGrades,
+  retryAttemptGrading,
+  scoreAttemptResponse,
+  deleteAttachment,
+  createCandidate,
+  sendBulkEmail,
+  sendBulkWhatsApp,
+  sendCandidateFeedback,
+  setCandidateArchive,
+  updateCandidateContact,
+  getCandidateDossier,
+  readAttachmentAsCv,
+  readRecordCv,
+  generateInterviewGuide,
+  rescheduleInterview,
+  scheduleInterview,
+  setInterviewStatus,
+  deleteGateQuestion,
+  getGateConsoleData,
+  moveGateQuestion,
+  saveGateQuestion,
+  setGateQuestionActive,
+  deleteStoredFile,
+  getFileBrowserData,
+  openFolder,
+  fileSearchWords,
+  folderReadNote,
+  searchFiles,
+  BUCKETS,
+  LIST_LIMIT,
+  getInterviewAgenda,
+  AGENDA_CHAT_ROW_LIMIT,
+  agendaReadNote,
+  agendaWindowDays,
+  getOnboardingData,
+  generateOnboardingPlan,
+  deleteTask,
+  saveTask,
+  setTaskCompleted,
+  deleteNotificationTemplate,
+  resetNotificationTemplate,
+  saveNotificationTemplate,
+  updateRolePermission,
+  convertProspect,
+  sendProspectOutreach,
+  getProspectProfile,
+  pasteProspectProfile,
+  getAnalyticsReport,
+  getRowReport,
+  getEmailOutbox,
+  resendEmailMessage,
+  retryWhatsAppJob,
+  updateWhatsAppJob,
+  TASK_CATEGORIES,
+  TASK_OWNERS,
+} from "@/modules/assistant/application/sources";
 
 /**
  * The assistant's tool registry.
