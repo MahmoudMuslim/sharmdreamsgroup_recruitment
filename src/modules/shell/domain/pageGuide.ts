@@ -395,7 +395,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Both trails page and search: by key, value, action or person.",
     ],
     edges: [
-      "Writes and both trails need the Manage platform settings permission; staff accounts need Manage users.",
+      "Writes and both trails need the Manage platform settings permission; role and permission grants need Manage roles (the same key the database checks); staff accounts need Manage users.",
       "A stored key always wins over the environment variable of the same name, and removing one falls back to the environment. A saved key is never displayed back to you.",
       "A second master-data row carrying the same words is refused, because a job opening stores only the name.",
       "A wording override that drops or invents a {placeholder}, or runs past 2000 characters, refuses the whole save rather than writing the half it likes.",

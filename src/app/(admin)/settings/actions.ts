@@ -242,8 +242,13 @@ export async function updateRolePermission(
 ): Promise<{ ok: boolean; error?: string }> {
   const user = await requireStaff("/settings");
 
-  if (!(await hasPermissionForUser("settings.manage_platform"))) {
-    return { ok: false, error: "Editing roles and permissions requires the Manage platform settings permission." };
+  // The gate is `settings.manage_roles`, not the `manage_platform` switch the rest
+  // of this console reads, because the `role_permissions_write` policy on
+  // `role_permissions` (supabase/schema.sql:1650) checks that same key — a caller
+  // who holds only `manage_platform` would pass an app check here and then be
+  // rejected by the database on the upsert below. Keep the two gates identical.
+  if (!(await hasPermissionForUser("settings.manage_roles"))) {
+    return { ok: false, error: "Editing roles and permissions requires the Manage roles permission." };
   }
 
   const supabase = await createSupabaseServerClient();

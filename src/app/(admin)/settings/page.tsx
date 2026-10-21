@@ -143,12 +143,18 @@ export default async function SettingsPage({
   const pageNumber = trailPage(typeof params.page === "string" ? params.page : undefined);
   const searchWords = trailFind(typeof params.find === "string" ? params.find : undefined);
 
-  const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
+  // The permission matrix gates on `settings.manage_roles`, the key the
+  // `role_permissions_write` policy checks — not the `manage_platform` that drives
+  // every other console here, so a role granted `manage_platform` alone sees locked
+  // toggles rather than clicks the database will refuse. Reads the same cached grants
+  // as `editable`, so it costs no extra query.
+  const [bundle, master, staffConsole, editable, canManageRoles, canManageStaff, organisationTimezone] =
     await Promise.all([
       loadSettings(),
       getMasterData(),
       loadStaffConsole(),
       hasPermissionForUser("settings.manage_platform"),
+      hasPermissionForUser("settings.manage_roles"),
       canManageStaffUsers(),
       getOrganisationTimeZone(),
     ]);
@@ -211,7 +217,7 @@ export default async function SettingsPage({
               roles={bundle.roles}
               permissions={bundle.permissions}
               grants={bundle.grants}
-              editable={editable}
+              editable={canManageRoles}
             />
           )}
 
