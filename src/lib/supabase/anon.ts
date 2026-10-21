@@ -28,8 +28,24 @@ let anonClient: RestClient | null = null;
  * Dated change (Task 11): this client is now our PostgREST transport with
  * `token: null`, and the credential-free mock it used to fall back to is gone.
  * Without the vendor there is no "no credentials" state worth supporting — the
- * base URL is a local container — so a build with the stack down now fails
- * loudly instead of quietly prerendering an empty careers page.
+ * base URL is a local container — so a misconfigured runtime fails loudly here.
+ *
+ * Which is also why no route may reach it during `next build`. The image is
+ * built with no database and no secrets by design (`.dockerignore` excludes
+ * `.env*` so nothing can be baked into a layer), and a `use cache` scope that is
+ * reachable from a prerendered route is *executed* in the build's cache-warming
+ * phase whatever its `cacheLife` — expiry only decides what gets baked. So the
+ * page that reads it has to stop prerendering first, with `await connection()`
+ * (`connection.md`), which is what `/careers` does and what `/careers/[id]` gets
+ * from reading `params`. Do not remove one of those and expect the build to
+ * notice: it fails here, in the image, not locally where the stack is running.
+ *
+ * The service client (`src/lib/supabase/service.ts`) is the opposite case, and
+ * the difference is what each does with a failed read: `readGlobalSettings`
+ * answers with an empty Map and every caller falls back to shipped defaults, so
+ * its `cacheLife("minutes")` can stay inside prerenders and the shells build.
+ * Public reads cannot do that — an empty job list is a careers board that says
+ * the group is not hiring, and a null job is a 404 on a live opening.
  */
 export function getSupabaseAnonClient(): RestClient {
   const base = process.env.SUPABASE_REST_BASE;

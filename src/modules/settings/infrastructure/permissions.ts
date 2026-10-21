@@ -52,7 +52,13 @@ async function readGrants(supabase: RestClient, roleKey: string): Promise<Set<Pe
  * The database is still the source of truth: `updateRolePermission` evicts this
  * tag in the same action that writes a grant, so a change shows up on the next
  * render. Eviction is local to the serving instance, so a second one converges
- * when `minutes` expires.
+ * when the entry revalidates up to fifteen minutes later.
+ *
+ * This lifetime is what it is for a reason: `minutes` keeps the entry inside
+ * prerenders (`cacheLife.md:266` — an `expire` under 5 minutes makes a cache a
+ * dynamic hole), and a shell that could not be built is worse than a grant list
+ * that revalidates. Staff routes read it behind a session, so none of them is
+ * prerendered with a real answer in it either way.
  */
 async function cachedGrantsForRole(roleKey: string): Promise<Set<PermissionKey> | null> {
   "use cache";

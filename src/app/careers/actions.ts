@@ -94,12 +94,13 @@ function toJob(row: Record<string, unknown>): PublicJob {
  *
  * Read through the anon client and cached, because a job board is the same for
  * every visitor. RLS still applies — an anonymous read cannot see anything but
- * PUBLISHED rows — but caching it here means the page renders as a static shell
- * instead of hitting the database per request.
+ * PUBLISHED rows — but caching it here means the board is one read per
+ * revalidation window instead of one per page view.
  *
  * Staleness is handled on both sides, because a cached list plus an uncached
  * write path is how a just-published job silently fails to appear:
- *   • the window is short (`minutes`), bounding worst-case staleness;
+ *   • the window is short — `minutes` revalidates every minute and expires in
+ *     an hour — which bounds worst-case staleness;
  *   • `createJobOpening` calls revalidatePath("/careers"), so a role published
  *     through the app evicts the entry immediately.
  */
@@ -108,25 +109,14 @@ export async function getPublicJobs(): Promise<PublicJob[]> {
   cacheLife("minutes");
 
   const supabase = getSupabaseAnonClient();
+  const { data, error } = await supabase
+    .from("job_openings")
+    .select(JOB_COLUMNS)
+    .eq("status", "PUBLISHED")
+    .order("posted_at", { ascending: false });
 
-  try {
-    const { data, error } = await supabase
-      .from("job_openings")
-      .select(JOB_COLUMNS)
-      .eq("status", "PUBLISHED")
-      .order("posted_at", { ascending: false });
-
-    if (error) {
-      // During build without valid credentials, return empty array
-      console.warn("[getPublicJobs] Supabase error (likely build time):", error.message);
-      return [];
-    }
-    return ((data ?? []) as unknown as Record<string, unknown>[]).map(toJob);
-  } catch (e) {
-    // Handle network/auth errors during build
-    console.warn("[getPublicJobs] Build-time error, returning empty:", e);
-    return [];
-  }
+  if (error) throw new Error(`[getPublicJobs] ${error.message}`);
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map(toJob);
 }
 
 /**
@@ -146,58 +136,42 @@ export async function getPublicCompanies(): Promise<PublicCompany[]> {
   cacheLife("minutes");
 
   const supabase = getSupabaseAnonClient();
+  const { data, error } = await supabase
+    .from("tenants_and_companies")
+    .select(COMPANY_COLUMNS)
+    .eq("is_active", true)
+    .order("sort_order");
 
-  try {
-    const { data, error } = await supabase
-      .from("tenants_and_companies")
-      .select(COMPANY_COLUMNS)
-      .eq("is_active", true)
-      .order("sort_order");
-
-    if (error) {
-      console.warn("[getPublicCompanies] Supabase error (likely build time):", error.message);
-      return [];
-    }
-    return ((data ?? []) as unknown as Record<string, unknown>[]).map(toPublicCompany);
-  } catch (e) {
-    console.warn("[getPublicCompanies] Build-time error, returning empty:", e);
-    return [];
-  }
+  if (error) throw new Error(`[getPublicCompanies] ${error.message}`);
+  return ((data ?? []) as unknown as Record<string, unknown>[]).map(toPublicCompany);
 }
 
 /**
  * One published role, or null. Drafts are invisible even by direct URL.
  *
- * Cached briefly so the detail page can be prerendered. The staleness cost is
- * bounded and stated rather than hidden: a role published in the last few
- * minutes may briefly 404, and a role closed in the last few minutes may briefly
- * still resolve. `cacheLife("minutes")` keeps both windows to roughly one
- * revalidation cycle instead of the hours the list page uses.
+ * Cached briefly so a wave of visitors to one role is one read, not one per
+ * page view. The staleness cost is bounded and stated rather than hidden: a
+ * role published within the last minute may briefly 404, and a role closed
+ * within the last minute may briefly still resolve — `revalidate: 60` keeps
+ * both windows to about one revalidation cycle.
  */
 export async function getPublicJob(id: string): Promise<PublicJob | null> {
   "use cache";
   cacheLife("minutes");
 
   const supabase = getSupabaseAnonClient();
+  const { data, error } = await supabase
+    .from("job_openings")
+    .select(JOB_COLUMNS)
+    .eq("id", id)
+    .eq("status", "PUBLISHED")
+    .maybeSingle();
 
-  try {
-    const { data, error } = await supabase
-      .from("job_openings")
-      .select(JOB_COLUMNS)
-      .eq("id", id)
-      .eq("status", "PUBLISHED")
-      .maybeSingle();
-
-    if (error) {
-      console.warn("[getPublicJob] Supabase error (likely build time):", error.message);
-      return null;
-    }
-    if (!data) return null;
-    return toJob(data as unknown as Record<string, unknown>);
-  } catch (e) {
-    console.warn("[getPublicJob] Build-time error, returning null:", e);
-    return null;
-  }
+  // A failed read is not a missing role: the page turns `null` into a 404, and a
+  // REST blip would then tell a candidate that a live opening does not exist.
+  if (error) throw new Error(`[getPublicJob] ${error.message}`);
+  if (!data) return null;
+  return toJob(data as unknown as Record<string, unknown>);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -17,9 +17,18 @@ import { isValidTimeZone } from "@/lib/timezone";
  * asks for the timezone, the score mask and the interview-question switch
  * separately, and an hour of portal traffic used to mean one query per ask.
  *
- * Staleness is bounded twice over: `minutes` revalidates on its own, and
- * `saveSettings` evicts the tag the moment anything is written, so a saved
- * number is read fresh on the next render rather than five minutes later.
+ * Staleness is bounded twice over: the entry revalidates, and `saveSettings`
+ * evicts the tag the moment anything is written, so a saved number is read fresh
+ * on the next render rather than a `minutes` later.
+ *
+ * The lifetime also has to keep this entry *inside* prerenders — the root layout
+ * awaits it for every route, `/_not-found` included, and `cacheLife.md:266` makes
+ * a scope whose `expire` is under 5 minutes a dynamic hole, which then fails the
+ * build for any route that does not wrap the read in `<Suspense>`. So a build
+ * with no database (the Docker image: `.dockerignore` excludes `.env*`) bakes the
+ * empty Map below, i.e. the shipped wording, and the first real read happens on
+ * the running container. Do not lengthen the public careers expiries to match —
+ * those reads use the anon client, which throws rather than answering empty.
  */
 export async function readGlobalSettings(keys: string[]): Promise<Map<string, unknown>> {
   "use cache";

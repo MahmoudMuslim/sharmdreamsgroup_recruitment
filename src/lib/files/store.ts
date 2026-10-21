@@ -46,11 +46,24 @@ export interface FileStore {
  * and `@supabase/supabase-js` go with it (Task 17's importer list shrinks by
  * this file), and the widening ends the day the bytes do.
  */
-const vendor = createClient(supabaseConfig.url, supabaseConfig.serviceRoleKey!);
+/**
+ * Built on first use, never at module scope. `next build` imports every route
+ * module to collect its config, and a keyless `createClient` throws
+ * `supabaseKey is required` right there — which is what a container build hits,
+ * because the image's build context carries no secrets by design
+ * (`.dockerignore` excludes `.env.local` so no credential can be baked into a
+ * layer). Deferring construction to the first byte means the build needs
+ * nothing and the runtime still gets the real key from the environment.
+ */
+let vendor: ReturnType<typeof createClient> | null = null;
+function getVendor() {
+  vendor ??= createClient(supabaseConfig.url, supabaseConfig.serviceRoleKey!);
+  return vendor;
+}
 
 /** Plan 2 returns a disk-backed store here; no call site changes. */
 export async function getFileStore(): Promise<FileStore> {
-  const { storage } = vendor;
+  const { storage } = getVendor();
   return {
     async upload({ bucket, path, body, contentType, upsert }) {
       const { error } = await storage

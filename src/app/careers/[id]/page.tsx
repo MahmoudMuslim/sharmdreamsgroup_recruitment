@@ -45,23 +45,17 @@ export async function generateMetadata({
  * Which role is on screen comes from the URL, and a role published after the
  * build is only known on request — so navigating into this page is not instant,
  * exactly like every other dynamic route here.
+ *
+ * There is deliberately no `generateStaticParams` on this route. Listing the
+ * published roles means reading them, and the only place that read could run is
+ * `next build` — which, in the Docker image, happens in a build container with
+ * no database and no secrets by design (`.dockerignore` excludes `.env*`). So
+ * every role is served from the App Shell and upgraded on first request, which
+ * is what the local stack wants anyway: it has no CDN to bake HTML into, and
+ * `use cache` on the reads already keeps the board off the database between
+ * revalidations.
  */
 export const instant = false;
-
-export async function generateStaticParams() {
-  // Prerenders every published role at build time. A role published later is
-  // picked up on the first request via dynamicParams.
-  const jobs = await getPublicJobs();
-  
-  // During build without valid Supabase credentials, return a dummy job
-  // to satisfy Next.js static param validation. The real job data will
-  // be fetched at request time via dynamicParams.
-  if (jobs.length === 0) {
-    return [{ id: "build-time-placeholder" }];
-  }
-  
-  return jobs.map((job) => ({ id: job.id }));
-}
 
 /**
  * Who would be hiring, in the words they filed for themselves.
