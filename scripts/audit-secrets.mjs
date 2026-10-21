@@ -15,15 +15,32 @@
  *    `scripts`, because §15 claim 1 is stated over both.
  *
  *   node scripts/audit-secrets.mjs
+ *   node scripts/audit-secrets.mjs .probe-static   # the bundle copied out of the image
+ *
+ * The exit code is the gate, and it is deliberate about what it gates. The
+ * deploy-surface name scan and the SDK-import scan need neither a built bundle
+ * nor `.env.local`, so they are always fatal — that is §15 claim 4, and it is
+ * what `prebuild` runs on every build, host and image. The bundle scan needs both,
+ * and on the host the default bundle is whatever `next dev` last wrote, so it is
+ * informational unless a bundle is named on the command line; a stale `.next`
+ * failing a build would be a false alarm about an artifact that never ships.
  *
  * Prints no credential. Nothing here echoes a value back.
  */
-import { readFileSync, readdirSync, statSync } from "fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "fs";
 import { join } from "path";
 
-// The values that must NEVER reach a browser bundle or a tracked file.
-const env = readFileSync(".env.local", "utf8");
-const get = (n) => env.match(new RegExp(`^${n}=(.+)$`, "m"))?.[1]?.trim();
+/* The values that must NEVER reach a browser bundle or a tracked file.
+ * `.env.local` is untracked and absent inside the image builder, which runs this
+ * through `prebuild` — so a missing file means there are no live values to look
+ * for, not that the audit passed. It says so. */
+let envText = "";
+try {
+  envText = readFileSync(".env.local", "utf8");
+} catch {
+  console.log("note: no .env.local here, so the secret-VALUE half has no values to match");
+}
+const get = (n) => envText.match(new RegExp(`^${n}=(.+)$`, "m"))?.[1]?.trim();
 
 // The service-role secret and the anon key share a JWT prefix, so identify the
 // service role by its role claim rather than its whole value.
@@ -64,15 +81,28 @@ function walk(dir, skip = [], out = []) {
  *   node scripts/audit-secrets.mjs .probe-static
  */
 const BUNDLE = process.argv[2] ?? join(".next", "static");
+const BUNDLE_NAMED = process.argv[2] !== undefined;
 
 let clean = true;
+let bundleLeaks = 0;
 
-console.log("=== " + BUNDLE + " (shipped to every browser) ===");
-const staticFiles = walk(BUNDLE);
-for (const [label, value] of SECRETS) {
+const bundleExists = existsSync(BUNDLE);
+console.log(
+  "=== " +
+    BUNDLE +
+    " (shipped to every browser" +
+    (BUNDLE_NAMED ? ", named on the command line — its leaks are fatal" : ", this tree's dev artifact — informational") +
+    ") ==="
+);
+const staticFiles = bundleExists ? walk(BUNDLE) : [];
+if (!bundleExists) {
+  console.log("  skipped  no bundle at this path yet");
+}
+for (const [label, value] of bundleExists ? SECRETS : []) {
   const hits = staticFiles.filter((f) => readFileSync(f, "utf8").includes(value));
   if (hits.length) {
-    clean = false;
+    bundleLeaks++;
+    if (BUNDLE_NAMED) clean = false;
     console.log("  LEAK  " + label + " in " + hits.length + " file(s): " + hits.slice(0, 3).join(", "));
   }
 }
@@ -91,22 +121,31 @@ for (const [label, value] of SECRETS) {
     console.log("  LEAK  " + label + " in: " + hits.slice(0, 3).join(", "));
   }
 }
-console.log("  " + srcFiles.length + " files scanned");
+console.log(
+  "  " +
+    srcFiles.length +
+    " files scanned" +
+    (SECRETS.length ? ` across ${SECRETS.length} secret values` : " — nothing to match, no .env.local here")
+);
 
 /* The vendor's own addresses. Nothing in the shipped bundle may name the hosted
  * project any more: the anon key used to be in here deliberately because it was
  * `NEXT_PUBLIC_*` and got inlined at build time, and that build arg is gone. */
-console.log("\n=== vendor addresses in the shipped bundle ===");
+console.log(
+  "\n=== vendor addresses in the shipped bundle ===" +
+    (bundleExists ? "" : "\n  skipped  no bundle to address-match against")
+);
 const hostedUrl = get("NEXT_PUBLIC_SUPABASE_URL") ?? "";
-for (const [label, value] of [
+for (const [label, value] of bundleExists ? [
   ["NEXT_PUBLIC_SUPABASE_ANON_KEY value", get("NEXT_PUBLIC_SUPABASE_ANON_KEY")],
   ["hosted project ref", hostedUrl.match(/^https:\/\/([a-z0-9]+)\./i)?.[1] ?? "lbxdeceropsxwohnzinl"],
   ["hosted rest host", "supabase.co"],
-]) {
+] : []) {
   if (!value) continue;
   const hits = staticFiles.filter((f) => readFileSync(f, "utf8").includes(value));
   if (hits.length) {
-    clean = false;
+    bundleLeaks++;
+    if (BUNDLE_NAMED) clean = false;
     console.log("  LEAK  " + label + " in " + hits.length + " file(s): " + hits.slice(0, 3).join(", "));
   } else {
     console.log("  clean  " + label + " — in 0 of " + staticFiles.length + " bundle files");
@@ -202,4 +241,12 @@ for (const label of [".env.local", join("docker", ".env")]) {
   console.log(`  ${label} still holds: ${names.join(", ") || "nothing"}`);
 }
 
-console.log("\n" + (clean ? "RESULT: no secrets in the browser bundle, and no vendor credential in the deploy surface" : "RESULT: LEAKS FOUND"));
+console.log(
+  "\n" +
+    (clean
+      ? "RESULT: PASS — the deploy surface sets and reads no vendor credential, and no live secret value sits in the tracked source" +
+        (bundleLeaks ? ` (${bundleLeaks} bundle finding${bundleLeaks === 1 ? "" : "s"} above are informational; pass a bundle path to make them fatal)` : "")
+      : "RESULT: LEAKS FOUND")
+);
+
+process.exitCode = clean ? 0 : 1;

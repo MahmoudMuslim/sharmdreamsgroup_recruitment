@@ -18,10 +18,11 @@
     "files:links": "node scripts/prove-signed-links.mjs",
     "files:load": "node scripts/load-vendor-files.mjs",
     "files:serve": "node scripts/prove-serving.mjs",
-    "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs",
+    "prebuild": "node scripts/check-staff-routes.mjs && node scripts/check-themes.mjs && node scripts/audit-secrets.mjs",
     "build": "next build",
     "check:routes": "node scripts/check-staff-routes.mjs",
     "check:themes": "node scripts/check-themes.mjs",
+    "audit:secrets": "node scripts/audit-secrets.mjs",
     "start": "next start",
     "lint": "eslint"
   },
