@@ -5,6 +5,7 @@ import {
   OPENING_READ_LIMIT,
   type JobStatus,
 } from "@/modules/jobs/domain/hireable";
+import { HIRED_STAGE, IN_PIPELINE_STAGES } from "@/modules/jobs/domain/hiringDemand";
 
 /**
  * Read queries the assistant needs that no screen action already exposes.
@@ -42,11 +43,24 @@ export interface AssistantJobRow {
   salary_currency: string | null;
   posted_at: string | null;
   closing_at: string | null;
+  /** Live applicants total — everyone not archived, whatever their stage. */
   applicants: number;
+  /**
+   * Who sits in the funnel being worked, and who is hired.
+   *
+   * The same two stage-grouped counts the openings grid prints beside each
+   * card, so a chat answer cannot report a tally the table splits three ways.
+   * These are populations at an instant — who holds a stage now — never a
+   * movement, a conversion or a rate. The headcount target is deliberately not
+   * here: that column is not applied yet, and the grid reads it in its own
+   * degradable query rather than coupling every opening read to it.
+   */
+  in_pipeline: number;
+  hired: number;
 }
 
 const JOB_SELECT =
-  "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applications(count)";
+  "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applicants:applications(count), pipeline:applications(count), hired:applications(count)";
 
 interface RawJobRow {
   id: string;
@@ -65,7 +79,9 @@ interface RawJobRow {
   salary_currency: string | null;
   posted_at: string | null;
   closing_at: string | null;
-  applications?: { count: number }[] | null;
+  applicants?: { count: number }[] | null;
+  pipeline?: { count: number }[] | null;
+  hired?: { count: number }[] | null;
 }
 
 function companyNameOf(row: RawJobRow): string | null {
@@ -92,7 +108,9 @@ function toJob(row: RawJobRow): AssistantJobRow {
     salary_currency: row.salary_currency,
     posted_at: row.posted_at,
     closing_at: row.closing_at,
-    applicants: row.applications?.[0]?.count ?? 0,
+    applicants: row.applicants?.[0]?.count ?? 0,
+    in_pipeline: row.pipeline?.[0]?.count ?? 0,
+    hired: row.hired?.[0]?.count ?? 0,
   };
 }
 
@@ -181,13 +199,22 @@ export async function listJobOpenings(
 
   const [rows, count] = await Promise.all([
     scoped.rows
-      .is("applications.archived_at", null)
+      // The three count embeds each carry their own filter on the dotted alias
+      // key — the form PostgREST accepts; the inline `applications(count,stage.eq…)`
+      // is rejected. `applicants` is every live candidate, `pipeline` the stages
+      // still being worked, `hired` the HIRED rows. The head count below selects
+      // only `id`, so it carries none of these and stays the set's full size.
+      .is("applicants.archived_at", null)
+      .is("pipeline.archived_at", null)
+      .in("pipeline.stage", IN_PIPELINE_STAGES)
+      .is("hired.archived_at", null)
+      .eq("hired.stage", HIRED_STAGE)
       .order("created_at", { ascending: false })
       .limit(OPENING_READ_LIMIT),
-    // The same parent predicate, counted. A head count cannot carry the nested
-    // filter above: probed on the live pool, `applications.archived_at` on a
-    // `count()` embed returns no number at all. That embed only trims each row's
-    // applicant tally, so it moves no opening in or out of the set.
+    // A head count cannot carry the nested filter above: probed on the live pool,
+    // `applications.archived_at` on a `count()` embed returns no number at all.
+    // The embeds only trim each row's tallies, so they move no opening in or out
+    // of the set `total` describes.
     scoped.count,
   ]);
 
@@ -213,7 +240,15 @@ export async function getJobOpening(jobId: string): Promise<AssistantJobRow | nu
   const { data, error } = await supabase
     .from("job_openings")
     .select(JOB_SELECT)
-    .is("applications.archived_at", null)
+    // The same three aliased embeds as the grid read, so `get_job` and
+    // `update_job` see one opening's funnel the way the list does. JOB_SELECT
+    // no longer carries a plain `applications` alias, so a filter on that key
+    // would be rejected here too.
+    .is("applicants.archived_at", null)
+    .is("pipeline.archived_at", null)
+    .in("pipeline.stage", IN_PIPELINE_STAGES)
+    .is("hired.archived_at", null)
+    .eq("hired.stage", HIRED_STAGE)
     .eq("id", jobId)
     .maybeSingle();
 

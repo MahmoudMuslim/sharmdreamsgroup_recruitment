@@ -875,7 +875,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "list_jobs",
     label: "Reading job openings",
     description:
-      "Job openings newest first, with their status, company, department, location, salary band and applicant count. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
+      "Job openings newest first, with their status, company, department, location, salary band and applicant count split the way the openings grid splits it: `applicants` everyone live, `in_pipeline` who holds a stage still being worked, `hired` the hired ones. These three are populations at an instant — who sits where now — never a movement, conversion or rate, and no headcount target is claimed here. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
     args: {
       status: `string — optional, one of ${JOB_STATUSES.join(
         ", "
@@ -924,6 +924,12 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
           sector: job.sector,
           salary: `${job.min_salary_usd ?? "?"}–${job.max_salary_usd ?? "?"} ${job.salary_currency ?? ""}`.trim(),
           applicants: job.applicants,
+          // The grid's three-way split, so the chat and the table report the same
+          // figures. These are populations at an instant — who holds a stage now —
+          // never a movement or conversion. No headcount target: that column is
+          // not applied yet, and the grid reads it in its own degradable query.
+          in_pipeline: job.in_pipeline,
+          hired: job.hired,
         })),
       };
     },
@@ -932,7 +938,7 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
     name: "get_job",
     label: "Reading one opening",
     description:
-      "One opening in full, including its description and requirement list. Read this before editing so unchanged fields are not lost.",
+      "One opening in full, including its description and requirement list and the same live / in-pipeline / hired counts the grid shows beside its card (populations at an instant, not a movement, and no headcount target). Read this before editing so unchanged fields are not lost.",
     args: { job_id: "string — the opening's id from list_jobs" },
     run: async (args) => {
       const job = await getJobOpening(str(args, "job_id"));
