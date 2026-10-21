@@ -18,6 +18,15 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 
 Copy `.env.example` → `.env.local`, then set these. The lists below are the variables the source truly reads (`src/lib/config.ts`, `src/lib/config.server.ts`, `src/lib/crypto/secrets.ts`).
 
+Re-derive the whole list with
+`grep -rhoE "process\.env\.[A-Z_0-9]+" src | sed 's/process\.env\.//' | sort -u`
+and diff it against the tables here. Everything that table prints but these
+tables do not name is deliberately absent, because it is not operator config:
+`NODE_ENV`, `VERCEL`, `NEXT_PHASE` and `PORT` are read as facts about the host,
+and `HOME`, `USERPROFILE`, `QODER_CLI_HOME`, `QODER_CONFIG_DIR` are set and read
+by `src/modules/screening/infrastructure/qoderCompletion.ts` for its own agent-SDK
+worker directory.
+
 ### Required
 
 | Variable | Read by | Notes |
@@ -27,6 +36,8 @@ Copy `.env.example` → `.env.local`, then set these. The lists below are the va
 | `SUPABASE_SERVICE_ROLE_KEY` | config.ts (server) | Privileged writes; never sent to the browser. |
 | `SETTINGS_ENCRYPTION_KEY` | crypto/secrets.ts | ≥ 32 chars. Generate: `node scripts/generate-encryption-key.mjs`. Without it, storing provider credentials throws `EncryptionUnavailableError`. |
 | `CRON_SECRET` | config.server.ts | Required by `/api/cron/*`; those routes **fail closed (503)** when it is unset. **Not in `.env.example` — add it.** |
+| `AUTH_JWT_SECRET` | `src/lib/auth/token.ts:59` (`secret()`) | HS256 secret for the session bearer the app mints and verifies itself. Throws `TokenConfigError` when absent or shorter than 32 chars, and that throw is on the sign-in path — **without it every login 500s**. Must equal `PGRST_JWT_SECRET`, or PostgREST refuses every token the app issues. |
+| `AUTH_DB_URL` | `src/lib/auth/db.ts:16` (`getAuthPool()`) | Postgres connection string for the app's own auth pool. Throws when unset, and that pool is what reads the password hash and writes staff rows — **without it password verification and all staff CRUD fail**. Host form `postgresql://postgres:…@localhost:54320/sharm_dreams`; inside the compose network the stack overwrites it with the `db:5432` form. |
 
 ### Optional — app
 
@@ -36,6 +47,10 @@ Copy `.env.example` → `.env.local`, then set these. The lists below are the va
 | `SUPABASE_REST_BASE` | — | Where the app's PostgREST answers. Four modules read it straight from the environment (`src/lib/supabase/{anon,server,service}.ts` and `src/lib/auth/guard.ts`) and throw when it is unset, so it is required, not optional: the host's dev server uses `http://localhost:54321/rest/v1` (through the Caddy gateway) while a container in the compose network uses `http://rest:3000` with no prefix, because `/rest/v1` belongs to the proxy. |
 | `SUPABASE_PROJECT_REF` | derived from URL | Override. (`SUPABASE_REST_URL` was retired in Task 17 — the deleted `src/lib/supabase/rest.ts` was its only reader, so naming it here is a no-op.) |
 | `SUPABASE_DB_PASSWORD` | — | Used by the direct-`pg` scripts only. |
+| `AUTH_TOKEN_TTL_SECONDS` | `900` | `src/lib/auth/token.ts:93`. The bearer's lifetime; `cookies.ts` signs the session cookie with its own 86 400 s ceiling, and the proxy re-mints on every staff request, so this value only bounds a token that never gets refreshed. Anything that is not a whole number of seconds from 1 to 86 400 throws instead of minting a token with a null `exp` (which PostgREST reads as *never expires*). |
+| `AUTH_TOKEN_ISSUER` | `sharm-dreams-local` | `src/lib/auth/token.ts:36`. The `iss` every token carries, and the one verify compares against. Empty falls back to the default. |
+| `AUTH_TOKEN_AUDIENCE` | `sdg_local` | `src/lib/auth/token.ts:37`. The `aud` the app mints, verifies, **and the same variable `PGRST_JWT_AUD` is read from** in `docker/docker-compose.yml`, so the two cannot be rotated apart. Changing it signs out every session at once. |
+| `COOKIE_SECURE` | — | `src/lib/auth/cookies.ts:83`. Forces the session cookies' `Secure` flag (`true`/`false`); anything else, including unset, decides it from `APP_URL`'s scheme. Set it behind a TLS-terminating proxy that fronts a plain-HTTP `APP_URL`. |
 
 ### Optional — AI providers (Settings → API keys wins over these)
 
