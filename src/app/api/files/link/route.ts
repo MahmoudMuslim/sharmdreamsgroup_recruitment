@@ -4,7 +4,6 @@ import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { bucketInfo } from "@/app/(admin)/files/file-browser-types";
 import { displayName, isStoredPath } from "@/lib/files/paths";
-import { objectMetadata } from "@/app/(admin)/files/storage-list";
 
 /** Long enough to open a PDF or play a recording, short enough to be worthless later. */
 const LINK_LIFETIME_SECONDS = 15 * 60;
@@ -40,21 +39,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  /*
-   * An object keeps whatever content type its upload declared, so only formats
-   * a browser cannot execute inline are opened directly. Anything else is
-   * offered as a download instead of being rendered on this origin.
-   */
-  const { mimeType } = await objectMetadata(bucket.key, path);
-  const inline = !wantsDownload && isSafeToView(mimeType);
-
   const files = await getFileStore();
   const { url, error } = await files.signedUrl({
     bucket: bucket.key,
     path,
     seconds: LINK_LIFETIME_SECONDS,
-    // The inline branch sends no disposition; only a download asks for one.
-    download: inline ? undefined : displayName(path),
+    // Only an explicit download asks for one. Anything a browser cannot safely
+    // render inline is offered as a download by the link itself, which reads the
+    // stored content type — the rule is in `signed-link.ts`, not here, so a mint
+    // site cannot forget it.
+    download: wantsDownload ? displayName(path) : undefined,
   });
 
   if (error || !url) {
@@ -62,20 +56,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "That file is no longer in storage." }, { status: 404 });
   }
 
-  return NextResponse.redirect(url, {
+  // The store mints a same-origin path, because a link that named a host would
+  // break the moment the portal is reached by another one. A redirect needs
+  // absolute, so this request's own origin supplies it.
+  return NextResponse.redirect(new URL(url, request.url), {
     status: 307,
     headers: { "Cache-Control": "no-store" },
   });
-}
-
-function isSafeToView(mimeType: string | null): boolean {
-  if (!mimeType) return false;
-  const type = mimeType.toLowerCase();
-  return (
-    type === "application/pdf" ||
-    type === "text/plain" ||
-    type.startsWith("video/") ||
-    type.startsWith("audio/") ||
-    type.startsWith("image/")
-  );
 }
