@@ -38,8 +38,17 @@ build.log
 .env*
 
 # Prompt/notes files can contain pasted credentials — never track them.
-prompt.md
-PROMPT.md
+# A glob because `prompt2.md` slipped past the two literal names this used to
+# list: it carried the retired vendor project's host, and it was in the repo.
+prompt*.md
+PROMPT*.md
+
+# Root-level PDFs are somebody's document (a real CV was committed here), not
+# source. Assets the app serves belong in public/.
+/*.pdf
+
+# history-rewrite and installer leftovers that were both committed once
+/bfg*.jar
 
 # vercel
 .vercel
