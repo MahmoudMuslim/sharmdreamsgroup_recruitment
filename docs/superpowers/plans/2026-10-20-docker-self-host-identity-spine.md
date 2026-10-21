@@ -3148,16 +3148,17 @@ Body: the three deliberate differences listed in Step 2, and the fact that the `
 
 ### Task 14: The session read, and the admin surface the Team console needs
 
-Two things still assume the vendor after Task 13: [src/lib/auth/session.ts:37-49](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/auth/session.ts#L37-L49) resolves the signed-in staff member through `supabase.auth.getUser()`, and [src/modules/settings/application/user-actions.ts](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts) drives the entire Team console through `supabase.auth.admin.*` — **13 call sites, all in that one file**, measured as `listUsers` ×5, `updateUserById` ×5, `deleteUser` ×2, `createUser` ×1. Those are the staff create / deactivate / password-reset / edit actions built in tasks #52 and #182–#184, and without an equivalent the Team console is a page of buttons that throw.
+Two things still assume the vendor after Task 13: [src/lib/auth/session.ts:37-49](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/auth/session.ts#L37-L49) resolves the signed-in staff member through `supabase.auth.getUser()`, and [src/modules/settings/application/user-actions.ts](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts) drives the entire Team console through `supabase.auth.admin.*` — **13 call sites, all in that one file**, measured as `listUsers` ×6 ([user-actions.ts:143](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L143), [:279](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L279), [:469](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L469), [:791](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L791), [:1002](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L1002), [:1102](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L1102)), `updateUserById` ×4 ([:550](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L550), [:606](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L606), [:817](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L817), [:839](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L839)), `deleteUser` ×2 ([:239](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L239), [:914](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L914)), `createUser` ×1 ([:220](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L220)) — 6+4+2+1 = 13. Those are the staff create / deactivate / password-reset / edit actions built in tasks #52 and #182–#184, and without an equivalent the Team console is a page of buttons that throw.
 
 The admin surface is *not* a PostgREST problem — `auth` is deliberately outside `PGRST_DB_SCHEMAS` (Task 2), so no HTTP route may reach `auth.users`. It is a `pg` problem: the same pool Task 9 opened can read and write that table as the superuser. That is why the shim sits on the pool and not on the builder.
 
 **Files:**
 - Modify: `src/lib/auth/session.ts`
 - Create: `src/lib/auth/admin-users.ts`
-- Modify: `src/lib/rest/auth-shim.ts` (add `admin`)
-- Modify: `src/modules/settings/application/user-actions.ts` (type annotations only)
-- Modify: the 6 other files that import `type { SupabaseClient }` — [question-actions.ts:4](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/app/%28admin%29/assessments/question-actions.ts#L4), `suite-authoring-actions.ts:4`, `cv-actions.ts:4`, `questions/actions.ts:4`, `changeWatch.ts:4`, `permissions.ts:5`
+- Modify: `src/lib/supabase/service.ts` (replace the vendor `auth` handle with `admin: authAdmin`)
+- Modify: `src/lib/rest/auth-shim.ts` (one line: what counts as a session)
+- Modify: `src/modules/settings/application/user-actions.ts` (the `ServiceClient` doc comment only — Step 4)
+- Already done in Task 11, verified not re-edited: `question-actions.ts`, `suite-authoring-actions.ts`, `cv-actions.ts`, `questions/actions.ts`, `src/modules/live/infrastructure/changeWatch.ts`, `permissions.ts` all import `type { RestClient }`
 
 **Interfaces:**
 - Consumes: `verifySessionToken()` (Task 8), `getAuthPool()` (Task 9), `createRestClient()` (Task 11), the cookie jar.
@@ -3257,7 +3258,13 @@ export const authAdmin = {
   async listUsers({ page, perPage }: { page: number; perPage: number }): Promise<Result<{ users: AdminUserRow[] }>> {
     const offset = (Math.max(1, page) - 1) * perPage;
     const { rows, error } = await run(
-      `select id, email, raw_user_meta_data as user_metadata, banned_until
+      // `banned_until` is cast to text HERE, not left as the `timestamptz` `pg`
+      // hands back as a JS Date: `AdminUserRow` declares `string | null`, and
+      // `user-actions.ts:483` puts the value into a `Record<string, string|null>`
+      // that the Team console renders. Returning a Date would make that type a
+      // lie that only shows up as a formatting bug in the browser.
+      `select id, email, raw_user_meta_data as user_metadata,
+              to_char(banned_until at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as banned_until
          from auth.users order by created_at limit $1 offset $2`,
       [perPage, offset],
     );
@@ -3285,13 +3292,18 @@ export const authAdmin = {
 
   async updateUserById(
     id: string,
-    patch: { email?: string; password?: string; ban_duration?: string; user_metadata?: Record<string, unknown> },
+    patch: { email?: string; email_confirm?: boolean; password?: string; ban_duration?: string; user_metadata?: Record<string, unknown> },
   ): Promise<Result<null>> {
     const sets: string[] = [];
     const values: unknown[] = [];
     if (patch.email) {
       values.push(patch.email.toLowerCase());
       sets.push(`email = $${values.length}`);
+      // GoTrue's `email_confirm` is the same column Task 12's INSERT writes, and
+      // the Team console's rename path sets it: a moved address that comes back
+      // unconfirmed is an account that cannot sign in.
+      values.push(patch.email_confirm !== false);
+      sets.push(`email_confirmed_at = case when $${values.length} then coalesce(email_confirmed_at, now()) else null end`);
     }
     if (patch.password) {
       values.push(patch.password);
@@ -3305,7 +3317,7 @@ export const authAdmin = {
       values.push(JSON.stringify(patch.user_metadata));
       sets.push(`raw_user_meta_data = $${values.length}::jsonb`);
     }
-    if (sets.length === 0) return { data: { user: null }, error: null };
+    if (sets.length === 0) return { data: null, error: null };
 
     values.push(id);
     sets.push("updated_at = now()");
@@ -3338,45 +3350,41 @@ The `23505` unique-violation code survives this path untouched: `run` forwards P
 
 The `sets` fragments in `updateUserById` are the only place in this file where SQL is assembled rather than written: each pushed string is a literal column assignment, and every value still travels as a `$n` parameter. Keep it that way — a caller-supplied column name here would be the injection this whole file exists to avoid.
 
-- [ ] **Step 3: Attach it to the shim** so the 13 sites keep compiling. In `src/lib/rest/auth-shim.ts`, add `admin: authAdmin` to the returned object and import it. That is the whole step — and it is why the shim exists rather than a rewrite of `user-actions.ts`.
+- [ ] **Step 3: Attach it to the SERVICE client** so the 13 sites keep compiling. `src/lib/rest/auth-shim.ts` is the wrong host for `admin` and was named here before the call sites were counted: every one of the 13 reaches `auth.admin.*` through `getSupabaseServiceClient()`, while the shim is attached to `createSupabaseServerClient()` — a handle no admin call ever touches. So in `src/lib/supabase/service.ts`: delete the `serviceAuth` global and its `createClient` import, delete the `SUPABASE_SERVICE_ROLE_KEY` throw (it existed only to feed that handle — the row calls sign with `mintServiceToken`), and return `auth: { admin: authAdmin }` beside the spread. `ReturnType<typeof getSupabaseServiceClient>` — which is what `user-actions.ts` calls `ServiceClient` — then still has `.auth.admin.*`, and nothing else in `src` reads `.auth` on this object: measured, the only other `.auth.*` uses are `getUser()` on the *server* client (`session.ts:41`, `job-actions.ts:141`, `transcriptStore.ts:71`, `credential-actions.ts:252/388/462/657`, `user-actions.ts:311`), and those already go through the shim.
 
-- [ ] **Step 4: Swap the type annotations.** In all 7 files, replace
+  Update this file's own doc comment while you are in it — "`auth` is the ONE surface still pointed at the vendor" is false from this commit onward.
 
-```ts
-import type { SupabaseClient } from "@supabase/supabase-js";
-```
+  One more line, in `src/lib/rest/auth-shim.ts:19`, because this task is what makes it wrong: `if (!c || c.role === "anon") return null;` accepts *any* non-`anon` claim as a user, while Step 1's `getSessionUser` and `src/lib/auth/guard.ts:71` both require `role === "authenticated"`. A `service_role` bearer in the session cookie is dropped at the door by the guard and still read as a signed-in user by every call site behind it. Not exploitable today — minting requires `AUTH_JWT_SECRET`, and anyone holding it can use PostgREST directly — but the two layers must state one definition of "a session". Change the shim to `if (!c || c.role !== "authenticated") return null;`.
 
-with
-
-```ts
-import type { RestClient } from "@/lib/rest/client";
-```
-
-and every `supabase: SupabaseClient` parameter with `supabase: RestClient`. Then check none were left:
+- [ ] **Step 4: Confirm the type annotations are already swapped, and fix the prose that says otherwise.** This step was written against the tree before Task 11 moved the row calls; re-measured at HEAD there is nothing left to swap — `question-actions.ts:4`, `suite-authoring-actions.ts:4`, `cv-actions.ts:4`, `questions/actions.ts:4`, `permissions.ts:5` and `changeWatch.ts:4` (its real path is `src/modules/live/infrastructure/changeWatch.ts`, not the settings one written here) all already import `type { RestClient } from "@/lib/rest/client"`. Run the check rather than trusting this sentence:
 
 ```bash
-grep -rn "SupabaseClient" src | grep -v "app/(candidate)"
+grep -rn "SupabaseClient" src
 ```
 
-Expected: empty. `src/app/(candidate)/portal/actions.ts` is allowed to still import `createClient` from `@supabase/supabase-js` — it is the owner's off-limits file, and the consequence is spec correction #6: the package stays installed through Plan 1.
+Expected: one line, `src/modules/settings/application/user-actions.ts:21`, inside the doc comment above `type ServiceClient`. That comment is now false twice over — it says the thirteen admin calls "keep compiling against the passed-through handle", and Step 3 removes the handle. Rewrite it to say what the object actually is now: a `RestClient` shape over `src/lib/rest` plus the local `authAdmin`. The other prose to correct is `src/lib/rest/auth-shim.ts`'s own comment if Step 3's edit makes it stale.
+
+`src/app/(candidate)/portal/actions.ts` is allowed to still import `createClient` from `@supabase/supabase-js` — it is the owner's off-limits file, and the consequence is spec correction #6: the package stays installed through Plan 1.
 
 - [ ] **Step 5: Gates**, then the live proof in Task 15.
 
 ```bash
 ./node_modules/.bin/tsc --noEmit -p tsconfig.json
-./node_modules/.bin/eslint src/lib/auth src/lib/rest src/modules/settings
+./node_modules/.bin/eslint src/lib/auth src/lib/rest src/lib/supabase src/modules/settings
 node scripts/check-staff-routes.mjs
 ```
 
 - [ ] **Step 6: Commit.**
 
 ```bash
-git add src/lib/auth src/lib/rest/auth-shim.ts src/modules/settings/application/user-actions.ts
+git add src/lib/auth src/lib/supabase/service.ts src/lib/rest/auth-shim.ts src/modules/settings/application/user-actions.ts
 git add -u src
 git commit -m "feat(auth): resolve staff sessions and team CRUD without an auth service"
 ```
 
-Body: the 13 admin sites with the verb each one uses, the `23505` code forwarding, the `user.email` claim fallback that was deliberately dropped, and the fact that `getSessionUser` kept its `cache()` wrapper on purpose (task #327).
+Body: the 13 admin sites with the verb each one uses (**6 `listUsers`, 4 `updateUserById`, 2 `deleteUser`, 1 `createUser`**), the `23505` code forwarding, the `user.email` claim fallback that was deliberately dropped, the fact that `getSessionUser` kept its `cache()` wrapper on purpose (task #327), and that the vendor service handle is gone — after this commit nothing in `src` except the owner's off-limits `portal/actions.ts` and `src/lib/files/store.ts` (Task 17) reaches `@supabase/supabase-js` for auth.
+
+**Corrections applied when this task was reviewed (ledger `T14-R1`…`T14-R4`):** the draft attached `authAdmin` to `src/lib/rest/auth-shim.ts`, which is the handle the Team console never uses — Step 3 now attaches it to the service client and deletes the vendor passthrough that only existed to feed the 13 admin calls; Step 4's seven-file annotation swap had already happened in Task 11, so it is now a check plus a prose fix; `updateUserById`'s patch gained `email_confirm` because [user-actions.ts:839-842](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/modules/settings/application/user-actions.ts#L839-L842) sends it as a plain literal; and `listUsers` casts `banned_until` to UTC text because `pg` hands back a `Date` while `AdminUserRow` and the console's `Record<string, string | null>` both say `string`.
 
 ---
 
@@ -3395,8 +3403,11 @@ Nothing in Tasks 12–14 is believed until a person signs in. This is the task w
 ```
 SUPABASE_REST_BASE=http://localhost:54321/rest/v1
 AUTH_JWT_SECRET=<the docker/.env value, copied not printed>
+AUTH_DB_URL=<the same docker/.env value, copied not printed>
 APP_URL=http://localhost:3000
 ```
+
+`AUTH_DB_URL` belongs in this list because Task 14 put it on the critical path: `getAuthPool()` throws without it, and after that task both sign-in (`verifyStaffPassword`) and every Team-console action run through that pool. PostgREST never sees this string — it is the app's own superuser connection, which is exactly why it stays out of `PGRST_DB_URI`.
 
 `APP_URL` matters beyond cosmetics: task #313 made assessment links use the host the app actually runs on, so a stale `3001` here would send a candidate to a port nothing listens on.
 
