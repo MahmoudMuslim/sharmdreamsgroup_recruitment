@@ -13,21 +13,49 @@ export const SESSION_COOKIE = "sdg_session";
 export const LAST_ACTIVE_COOKIE = "sdg_staff_last_active";
 
 /**
- * Session lifetime in seconds, used for the bearer's `exp` and the cookie's
- * `maxAge` together.
+ * The bearer's lifetime in seconds, used for its `exp` and for the
+ * `sdg_session` cookie's `maxAge` together.
  *
- * They must be equal: a cookie that outlives its bearer reads as "signed in"
- * while every query 401s, and a bearer that outlives its cookie is unreachable.
- * One hour rather than Task 8's 15-minute default because the proxy re-mints on
- * every staff request (Task 13), so this is the ceiling on an *idle* gap, not on
- * a session's length — the idle ceiling staff can actually configure is
- * `security.session_timeout_minutes`, whose seeded default is 480. A 15-minute
- * bearer would silently sign out an unread dashboard tab every quarter-hour
- * regardless of that setting.
+ * Those two must be equal: a cookie that outlives its bearer reads as "signed
+ * in" while every query 401s, and a bearer that outlives its cookie is
+ * unreachable.
+ *
+ * The value is 24 hours because `security.session_timeout_minutes` is
+ * operator-configurable from 15 to 1440 minutes
+ * (`src/modules/settings/domain/schema.ts:235-236`, seeded at 480), and the
+ * idle timeout is enforced by Task 13's proxy by comparing that window against
+ * `sdg_staff_last_active`. A one-hour bearer would sign an unread dashboard tab
+ * out at 60 minutes on an 8-hour setting: the bearer's expiry becomes the de
+ * facto timeout and the setting stops meaning anything. At 86_400 the bearer
+ * lives exactly as long as the longest window staff can configure, so the idle
+ * check always bites first or at the same instant. Task 8's 15-minute default
+ * would be worse still, silently signing an idle tab out every quarter-hour
+ * regardless of any setting.
+ *
+ * This is a ceiling on an *idle* gap, not on a session's length — Task 13
+ * re-mints the bearer on every staff request, so an active staff member never
+ * sees it.
  */
-const SESSION_TTL_SECONDS = 3600;
+const SESSION_TTL_SECONDS = 86_400;
 
-function cookieAttributes() {
+/**
+ * The idle stamp lives 30 days, deliberately longer than the bearer it
+ * accompanies.
+ *
+ * That is counter-intuitive after the rule above, but the proxy reads the stamp
+ * as `Number(request.cookies.get(LAST_ACTIVE_COOKIE)?.value)` and skips the
+ * idle branch entirely when the result is not finite
+ * (`src/lib/supabase/middleware.ts:137-144`), so an *absent* stamp reads as
+ * "active". A stamp that expired before its session would therefore disable the
+ * timeout instead of enforcing it. 30 days is what
+ * `src/lib/supabase/middleware.ts:159-167` already writes for this same cookie
+ * name, so the two writers agree; Task 13 folds that file's duplicate
+ * `sdg_staff_last_active` literal (`middleware.ts:21`) into this module.
+ */
+const LAST_ACTIVE_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** The attributes the two writes share — only the lifetime differs per cookie. */
+function cookieAttributes(maxAge: number) {
   return {
     path: "/",
     httpOnly: true,
@@ -35,17 +63,17 @@ function cookieAttributes() {
     // Locally this is http://localhost and the flag would make the cookie
     // unsendable; production terminates TLS at the gateway (Plan 2) and sets it.
     secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge,
   };
 }
 
 export async function startSession(userId: string): Promise<void> {
   const jar = await cookies();
   const token = await mintSessionToken({ sub: userId, role: "authenticated" }, SESSION_TTL_SECONDS);
-  jar.set(SESSION_COOKIE, token, cookieAttributes());
+  jar.set(SESSION_COOKIE, token, cookieAttributes(SESSION_TTL_SECONDS));
   // Stamp activity at the door so the first portal request after sign-in is not
   // itself judged as an idle one.
-  jar.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes());
+  jar.set(LAST_ACTIVE_COOKIE, String(Date.now()), cookieAttributes(LAST_ACTIVE_TTL_SECONDS));
 }
 
 export async function endSession(): Promise<void> {
