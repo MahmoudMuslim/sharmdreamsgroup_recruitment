@@ -2948,10 +2948,24 @@ import { coerceNumber } from "@/modules/settings/infrastructure/settingsReader";
 
 const STAFF_ROLES = new Set(["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"]);
 
-/** `security.session_timeout_minutes` fallback, matching the seeded row. */
+/**
+ * `security.session_timeout_minutes` fallback, matching the seeded row.
+ *
+ * Used only when the read fails or the row is unreadable, so a database hiccup
+ * leaves the timeout at the value the platform ships with rather than signing
+ * every recruiter out on a short window.
+ */
 const DEFAULT_SESSION_TIMEOUT_MINUTES = 480;
 
-/** How long the proxy remembers the idle window between requests. */
+/**
+ * How long the proxy remembers the idle window between requests.
+ *
+ * `readGlobalSettings` is cached for the render, but the proxy runs outside it
+ * and cannot use `"use cache"`, and one portal click fires this file once per
+ * matched request. Without a memo the same GLOBAL row was read on every one of
+ * them. A saved timeout therefore takes up to a minute to bite here — the bound
+ * the cached render reads already accept.
+ */
 const TIMEOUT_MEMO_MS = 60_000;
 
 let timeoutMemo: { minutes: number; readAt: number } | null = null;
@@ -3022,11 +3036,21 @@ export async function guardRequest(request: NextRequest): Promise<NextResponse> 
   const api = createRestClient({ baseUrl: restBaseUrl(), token: bearer });
 
   // A signed-in candidate must never see recruiter analytics.
-  const { data: profile } = await api
+  //
+  // `error` is logged, not branched on: "row missing" and "read refused" must
+  // both fall through to the page-level `requireStaff` (difference #3), but
+  // `createRestClient` answers an unreachable gateway with
+  // `{ data: null, error }` rather than a throw, so a logged error is the only
+  // trace this gate's failure mode leaves. Silence here reads as "no candidate
+  // got in", and the bounce would have stopped enforcing without anyone seeing.
+  const { data: profile, error: profileError } = await api
     .from("user_profiles")
     .select("role")
     .eq("auth_user_id", claims.sub)
     .maybeSingle();
+  if (profileError) {
+    console.warn("[guard] staff role read failed; falling through to requireStaff", profileError.message);
+  }
 
   if (profile && !STAFF_ROLES.has(profile.role)) {
     const portalUrl = request.nextUrl.clone();
@@ -3069,6 +3093,8 @@ Three differences from the file it replaces, and each is deliberate:
 1. There is no `sb-` prefix loop any more. `clearSession` deletes the two cookies this app owns, because those are the only two it sets. Deleting other names "just in case" would delete a cookie Plan 2 has not invented yet.
 2. It **renewal-writes on every staff request**, which the old file could not do — the vendor's token was refreshed inside `getUser()`, and here the bearer is re-minted with a fresh `exp`. This is what keeps a working recruiter signed in past the bearer's own lifetime.
 3. `profile && !STAFF_ROLES.has(...)` keeps the current file's odd-but-correct shape: a **missing profile row does not redirect here**, it falls through to the page-level `requireStaff`, which is the guard that has the redirect-with-context. "No profile" and "wrong role" are different failures and only one of them is a candidate poking at the portal.
+
+**Corrections applied when this task was reviewed (ledger `T13-R1`/`T13-R3`):** The fence above originally carried one-line versions of the two timeout comments, which threw away the reasoning that protects correction #5 — a reader who does not know the proxy runs outside the render cache and cannot use `"use cache"` is exactly the reader who "improves" the memo, and a reader who does not know the 60 s bound is *user-visible* ("a saved timeout takes up to a minute to bite") cannot judge whether it is acceptable. The deleted file's full paragraphs are restored. Separately, difference #3's shape silently swallowed the profile read's `error`: `createRestClient` answers an unreachable gateway with `{ data: null, error }` rather than a throw, so "PostgREST is down", "row missing" and "read refused" all read as a falsy profile, and the only layer keeping a signed-in candidate out of recruiter analytics would stop enforcing with no trace. The pass-through semantics are unchanged — an outage must not lock a recruiter out — but the error is now logged, because a silent fail-open is indistinguishable from "no candidate got in".
 
 - [ ] **Step 3: Re-point `src/proxy.ts`** — keep the matcher and the file, change the import:
 
