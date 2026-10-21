@@ -121,7 +121,11 @@ line that points at the REST gateway goes with it. **As of 2026-10-21 that line 
 still in the file, so Caddy runs beside nginx deliberately** — nginx serves its own
 `/rest/v1/` on 3000 (`docker/nginx/nginx.conf:138`, `location /rest/v1/ { proxy_pass http://sdg_rest/; }`),
 and the two gateways are not in conflict: the container reads nginx, the host's
-`next dev` reads Caddy. Retiring Caddy is a Plan 2 item, not an oversight.
+`next dev` reads Caddy. This sentence used to read "Retiring Caddy is a Plan 2
+item, not an oversight." **Plan 2 closed without one** — §15 has no gateway task and
+no gateway claim — so the promise was this spec's defect, not the implementer's, and
+the item now belongs to the owner rather than to a finished plan: it is
+`docs/STATUS-2026-10-20.md` §8.2 action 8.
 
 > Corrected 2026-10-21 after Plan 2 Task 9: the line was `SUPABASE_REST_BASE`, and
 > it is now `REST_BASE_URL` (`grep -c SUPABASE_REST_BASE .env.local` → 0,

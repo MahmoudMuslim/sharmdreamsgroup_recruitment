@@ -130,7 +130,7 @@ node scripts/generate-encryption-key.mjs   # AES-256-GCM key for credential stor
 > `.gitignore`'s `.env*` rule means the **root** template is not tracked, so a fresh
 > clone has no `.env.example` to copy; `docker/.env.example` is tracked and is the one
 > the stack needs. Create the root `.env.local` by hand (or copy an existing
-> developer's) and set the five required variables below. Full list and the known
+> developer's) and set the six required variables below. Full list and the known
 > template drift: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Required env: `REST_BASE_URL`, `AUTH_DB_URL`, `AUTH_JWT_SECRET`, `UPLOADS_ROOT`, `SETTINGS_ENCRYPTION_KEY`, and `CRON_SECRET` (the cron routes fail closed without it). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete, code-verified list — including which provider keys are optional fallbacks and the known `.env.example` drift.

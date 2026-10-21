@@ -28,6 +28,7 @@
  * Prints no credential. Nothing here echoes a value back.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "fs";
+import { execFileSync } from "child_process";
 import { join } from "path";
 
 /* The values that must NEVER reach a browser bundle or a tracked file.
@@ -216,10 +217,10 @@ if (sdkImporters.length) {
   console.log("  clean  `src` + `scripts` import the vendor SDK in 0 files");
 }
 
-/* Honest remainder: the names live on in exactly three kinds of place, none of
- * them a leak, all of them the owner's to delete after the hosted project is
- * closed. Values are never printed; the variable names are, because the names
- * are what is left to clean. */
+/* Honest remainder: the names live on in exactly four kinds of place, none of
+ * them a leak — the first three are the owner's to delete after the hosted project
+ * is closed, and the fourth is a decision the owner has to make. Values are never
+ * printed; the variable names are, because the names are what is left to clean. */
 console.log("\n=== still present outside the deploy surface (owner action, not a leak) ===");
 const hostedScripts = walk("scripts").filter((f) => {
   const text = readFileSync(f, "utf8");
@@ -240,6 +241,29 @@ for (const label of [".env.local", join("docker", ".env")]) {
   }
   console.log(`  ${label} still holds: ${names.join(", ") || "nothing"}`);
 }
+
+/* A fourth place, and the one §15 claim 1's grep structurally cannot see: tracked
+ * copies of a vendored `supabase-server` agent skill, each of which instructs an
+ * agent to `npm install @supabase/ssr` and import from `@supabase/`. They are not
+ * in `src` or `scripts`, and `.dockerignore` never allow-lists them, so the shipped
+ * artifact is clean — but the repo tree still carries instructions to re-add the
+ * dependency, and an agent pointed at this workspace can be triggered by them.
+ * Deleting them is the owner's call (53 tracked files is not a doc slice's
+ * business), so this prints where they are instead of claiming they are gone.
+ * `git ls-files` is the cheap census of *tracked* copies, which is the claim; the
+ * image builder has no repo to enumerate, and that is a skip, not a zero. */
+let skillCopies;
+try {
+  const tracked = execFileSync("git", ["ls-files"], { encoding: "utf8" })
+    .split(/\r?\n/)
+    .filter((f) => f.endsWith("skills/supabase-server/SKILL.md"));
+  skillCopies = tracked.length
+    ? `${tracked.length} tracked copies, e.g. ${tracked[0]}`
+    : "none tracked";
+} catch {
+  skillCopies = "not enumerable here (no git repo)";
+}
+console.log("  vendored agent instructions that re-prescribe the SDK: " + skillCopies);
 
 console.log(
   "\n" +

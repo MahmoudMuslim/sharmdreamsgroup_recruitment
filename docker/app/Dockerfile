@@ -30,10 +30,11 @@ COPY . .
 # arguments that would have carried it out of the file.
 ENV NEXT_TELEMETRY_DISABLED=1 \
     NODE_ENV=production
-# `prebuild` runs scripts/check-staff-routes.mjs and scripts/check-themes.mjs,
-# which is why `scripts` survives .dockerignore. `.next/cache` is the
-# incremental build cache: dead weight in an image, and `next start` never reads
-# it, so it is deleted in this stage rather than copied into the next one.
+# `prebuild` runs scripts/check-staff-routes.mjs, scripts/check-themes.mjs and
+# scripts/audit-secrets.mjs, which is why `scripts` survives .dockerignore.
+# `.next/cache` is the incremental build cache: dead weight in an image, and
+# `next start` never reads it, so it is deleted in this stage rather than copied
+# into the next one.
 RUN npm run build && rm -rf .next/cache .next/trace
 
 FROM node:24.22.0-alpine3.24 AS runner

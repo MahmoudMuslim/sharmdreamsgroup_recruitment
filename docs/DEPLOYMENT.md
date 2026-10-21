@@ -145,7 +145,7 @@ There is no supported non-Docker production path, and there is no Vercel target:
 the app signs its own session tokens, reads its own `auth` schema over `pg`, and
 keeps candidate bytes on a filesystem it owns (`UPLOADS_ROOT`). A serverless host
 gives you none of those three. If you do run `next build` + `next start` on a bare
-Node host anyway, the requirements are the five required variables above, a
+Node host anyway, the requirements are the six required variables above, a
 PostgREST pointed at the same database, and a scheduler that sends
 `x-cron-secret` to `/api/cron/whatsapp` and `/api/cron/grading`.
 
