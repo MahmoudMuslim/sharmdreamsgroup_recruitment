@@ -54,6 +54,12 @@ COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 COPY --from=builder --chown=node:node /app/next.config.ts ./next.config.ts
 COPY --from=builder --chown=node:node /app/next-env.d.ts ./next-env.d.ts
+# Stored bytes live in the `uploads` volume at this exact path, and the directory
+# has to exist in the IMAGE with node owning it: Docker seeds a fresh named
+# volume from the image's target directory, so creating it here is what lets the
+# app write after `USER node`. A `docker compose down -v` therefore costs an
+# empty tree, not a permission error on the first upload.
+RUN mkdir -p /data/uploads && chown node:node /data/uploads
 USER node
 EXPOSE 3000
 # node as PID 1, not `npm run start`: npm forwards SIGTERM only after its own

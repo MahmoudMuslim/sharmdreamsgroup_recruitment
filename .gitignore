@@ -53,3 +53,6 @@ docker/data/*
 !docker/data/.gitkeep
 docker/.env
 !docker/.env.example
+# The host-side twin of the container's /data/uploads volume. Same rule: these
+# are candidate CVs and pitch recordings, and a `git add .` must never see them.
+.data/

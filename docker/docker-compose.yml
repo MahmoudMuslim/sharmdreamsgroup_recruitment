@@ -149,9 +149,11 @@ services:
       dockerfile: docker/app/Dockerfile
       args:
         # Inlined into the client bundle at BUILD time, so they cannot arrive as
-        # runtime env. `src/lib/files/store.ts:49` still hands file bytes to the
-        # vendor through `supabaseConfig.url`, which is the first of these — an
-        # empty value here does not fail the build, it fails every upload later.
+        # runtime env. The one reader left in `src` is the dead anon fallback at
+        # `(candidate)/portal/actions.ts:104` — `supabaseConfig.url` is built
+        # from the first of these, and an empty value does not fail the build,
+        # it fails that branch. spec §15 deletes the branch (Task 7) and then
+        # both args (Tasks 8-9).
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
     restart: unless-stopped
@@ -195,6 +197,17 @@ services:
       # as an empty string — `??` does not fire on "" and the batch size becomes 0.
       WHATSAPP_CRON_BATCH_SIZE: ${WHATSAPP_CRON_BATCH_SIZE:-50}
       GRADING_CRON_BATCH_SIZE: ${GRADING_CRON_BATCH_SIZE:-10}
+      # Where `src/lib/files/paths.ts` hangs the tree of stored bytes. The image
+      # creates /data/uploads owned by `node`, and Docker copies those ownership
+      # bits into a fresh named volume, so the app can write without running as
+      # root. A host-side `next dev` uses the `.data/uploads` twin instead and
+      # sets this in .env.local.
+      UPLOADS_ROOT: ${UPLOADS_ROOT:-/data/uploads}
+    # The only writable mount in this stack. The bytes are candidate PII, so they
+    # live in a named volume, never in the repo tree — the same rule `db-data`
+    # follows (spec §10).
+    volumes:
+      - uploads:/data/uploads
     # Deliberately no `ports:`. nginx is the only way in, so an app that is not
     # proxied is an app that is not reachable — the same rule `rest` follows.
     expose: ["3000"]
@@ -232,3 +245,8 @@ volumes:
   # A named volume, NOT a bind-mount into the repo: a restored live dump lives in
   # here and must never be picked up by `git add .` (spec §10).
   db-data:
+  # Stored bytes: every CV, resume and pitch recording the app holds. Same
+  # reasoning as `db-data` — this is the other half of the production data, and
+  # `docker compose down` leaves both alone. Only `down -v` destroys them, which
+  # is why `npm run docker:wipe` is a last resort and not part of any workflow.
+  uploads:
