@@ -1,7 +1,9 @@
 -- Everything Supabase hosts in the `auth` schema that our own policies touch.
--- 80 of the 94 policies reach identity through auth.uid() indirectly, via
--- is_staff() (66), has_permission() (41), is_super_admin() (12),
--- current_user_profile_id() (12) and user_tenant_id() (11).
+-- Re-measured on the local stack after Plan 2 Task 10 deleted the storage shim:
+-- 80 of the 88 policies reach identity through auth.uid() indirectly, via
+-- is_staff() (49), has_permission() (20), is_super_admin() (8),
+-- current_user_profile_id() (7) and user_tenant_id() (5) — a policy can call more
+-- than one, so those overlap. 3 more call auth.uid() directly.
 
 create schema if not exists auth;
 

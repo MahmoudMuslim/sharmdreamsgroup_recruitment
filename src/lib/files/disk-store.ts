@@ -6,8 +6,9 @@
  * file.
  *
  * - **Listings go out through the session's REST client.** `public.files` has
- *   eight RLS policies (spec §7, Task 2) that are the ported shape of the eight
- *   `storage.objects` policies this replaces, and they bind the PostgREST door.
+ *   eight RLS policies (spec §7, Task 2), ported one for one from the eight
+ *   `storage.objects` policies that Task 10 deleted with the `storage` schema,
+ *   and they bind the PostgREST door.
  *   A browse of the File Manager therefore runs as the signed-in staff member:
  *   a `candidate-cvs` listing needs `is_staff()`, and a bearer that is not a
  *   staff session gets an empty list rather than somebody's CVs.
@@ -20,7 +21,8 @@
  *   which is not a session, so a session-scoped read of that upload's `files`
  *   row would refuse a byte the route is entitled to serve. `store.ts` already
  *   made this trade in Plan 1 ("the portal's own checks … are now the gate on a
- *   byte"); Plan 2 keeps it, and ends it the day the vendor does.
+ *   byte"); Task 10 deleted the vendor's storage schema and the trade is simply
+ *   permanent now, because a filesystem has no row policies to bind.
  *
  * Writes never land on the final name first: the payload goes to a sibling
  * `*.tmp-<uuid>` and is renamed over the target. A crash mid-write then leaves a

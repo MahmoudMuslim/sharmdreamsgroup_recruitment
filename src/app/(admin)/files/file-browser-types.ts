@@ -1,6 +1,6 @@
 /**
  * The private buckets this portal stores candidate files in, and what the
- * storage policies actually permit.
+ * `public.files` policies actually permit.
  *
  * This is one module because the truth is scattered across SQL policies: staff
  * may list and read every bucket, and `staff delete candidate cvs` plus
@@ -17,7 +17,7 @@ export interface BucketInfo {
   label: string;
   /** Which code path writes here — including "nothing", when that is the answer. */
   writtenBy: string;
-  /** Whether storage.objects RLS lets a staff session delete an object. */
+  /** Whether the `files` RLS policies let a staff session delete an object. */
   deletable: boolean;
 }
 

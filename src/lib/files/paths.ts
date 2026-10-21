@@ -46,12 +46,15 @@ export function displayName(pathValue: string): string {
  * would let `..` be a bucket.
  *
  * Nothing here checks the value against the four known buckets. That list is
- * `supabaseConfig.buckets` and `BUCKETS` in the admin module, and neither is
- * importable from here without dragging `src/lib/config.ts` — which throws at
- * module scope when a vendor variable is absent — into a byte-level path
- * decision. No caller can supply a bucket anyway: every one of the 14 sites
- * passes a literal or a config field, so an unknown-but-well-formed name is a
- * programmer error, not an attack, and containment below already holds.
+ * `supabaseConfig.buckets` and `BUCKETS` in the admin module, and this file is
+ * deliberately kept free of both so that `scripts/prove-file-paths.mjs` can
+ * import it in plain Node and so a byte-level path decision never depends on a
+ * configuration module. It also would not help: since Plan 2 the bucket is a
+ * directory name and a `files` column value, not a row the vendor provisioned,
+ * so an allow-list here would be a second copy to keep in step rather than a
+ * gate. No caller can supply a bucket anyway: every one of the 14 sites passes a
+ * literal or a config field, so an unknown-but-well-formed name is a programmer
+ * error, not an attack, and containment below already holds.
  */
 export function isBucketName(value: string): boolean {
   return /^[a-z0-9][a-z0-9._-]{1,63}$/.test(value);

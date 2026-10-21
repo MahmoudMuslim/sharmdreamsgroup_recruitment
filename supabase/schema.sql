@@ -2,7 +2,9 @@
  * Sharm Dreams Talent Cloud — schema of record.
  * AUTHORITATIVE: this file carries hand edits that `node scripts/dump-schema.mjs`
  * does not reproduce (the vault removal, the locked-down jobs/applicants
- * policies). A re-dump must re-apply them, not silently restore them.
+ * policies, and the storage statements Task 10 deleted — the dump tool still
+ * emits them because it reads the hosted project, where `storage` is the
+ * vendor's own schema). A re-dump must re-apply them, not silently restore them.
  *
  * Generated from the live project, so this file describes the database instead
  * of intending to: every statement is Postgres' own pg_get_* definer. The design
@@ -10,8 +12,9 @@
  *
  * Three sections are authored rather than dumped: the two seed blocks, and the
  * `public.files` table with its eight policies at the very end, which is the
- * table the vendor's storage.objects replaces (Plan 2 Task 2, spec §15). Both
- * seed blocks are dumps of live rows in authored shape. Regenerate with:
+ * table that replaced the vendor's storage.objects (Plan 2 Tasks 2 and 10, spec
+ * §15 — Task 10 deleted those policies and the `storage` grants from this file).
+ * Both seed blocks are dumps of live rows in authored shape. Regenerate with:
  *
  *   node scripts/dump-schema.mjs > supabase/schema.sql
  *   node scripts/verify-schema.mjs supabase/schema.sql   # must report no gaps
@@ -20,9 +23,9 @@
  * database: extensions and enums, then every table, then uniqueness, then the
  * foreign keys that point at it, then functions, then the indexes and policies
  * that call those functions, then the rows the console reads before it can
- * render anything. It applies on a Supabase project — some policies reference
- * auth.uid() and storage.objects — but not on vanilla Postgres, where the auth
- * and storage schemas have to be stood in for first.
+ * render anything. It applies on vanilla Postgres with only the `auth` schema
+ * stood in (`docker/db/initdb/02-auth-users.sql`); the `storage` stand-in that
+ * used to be required alongside it is gone, and nothing here references it.
  */
 
 -- ============================================================================
@@ -1758,46 +1761,6 @@ create policy "profiles_self_update" on public.user_profiles
   to public
   using ((auth_user_id = auth.uid()))
   with check ((auth_user_id = auth.uid()));
-drop policy if exists "candidate video uploads" on storage.objects;
-create policy "candidate video uploads" on storage.objects
-  for INSERT
-  to anon, authenticated
-  with check (((bucket_id = 'candidate-videos'::text) AND ((storage.foldername(name))[1] = ((current_setting('request.jwt.claims'::text, true))::jsonb ->> 'attempt_token'::text))));
-drop policy if exists "candidates upload cvs" on storage.objects;
-create policy "candidates upload cvs" on storage.objects
-  for INSERT
-  to anon, authenticated
-  with check ((bucket_id = 'candidate-cvs'::text));
-drop policy if exists "public resume uploads" on storage.objects;
-create policy "public resume uploads" on storage.objects
-  for INSERT
-  to anon
-  with check (((bucket_id = 'resumes'::text) AND ((storage.foldername(name))[1] = 'public'::text)));
-drop policy if exists "staff delete candidate cvs" on storage.objects;
-create policy "staff delete candidate cvs" on storage.objects
-  for DELETE
-  to authenticated
-  using (((bucket_id = 'candidate-cvs'::text) AND is_staff()));
-drop policy if exists "staff delete candidate media" on storage.objects;
-create policy "staff delete candidate media" on storage.objects
-  for DELETE
-  to authenticated
-  using (((bucket_id = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
-drop policy if exists "staff read candidate cvs" on storage.objects;
-create policy "staff read candidate cvs" on storage.objects
-  for SELECT
-  to authenticated
-  using (((bucket_id = 'candidate-cvs'::text) AND is_staff()));
-drop policy if exists "staff read candidate media" on storage.objects;
-create policy "staff read candidate media" on storage.objects
-  for SELECT
-  to authenticated
-  using (((bucket_id = ANY (ARRAY['candidate-videos'::text, 'candidate-audio'::text, 'resumes'::text])) AND is_staff()));
-drop policy if exists "staff upload candidate media" on storage.objects;
-create policy "staff upload candidate media" on storage.objects
-  for INSERT
-  to authenticated
-  with check (((bucket_id = ANY (ARRAY['resumes'::text, 'candidate-audio'::text])) AND is_staff() AND has_permission('candidates.write'::text) AND ((storage.foldername(name))[1] = 'applications'::text)));
 
 -- ============================================================================
 -- TRIGGERS
@@ -2109,72 +2072,6 @@ grant execute on function public.user_tenant_id to authenticated;
 grant execute on function public.user_tenant_id to postgres;
 grant execute on function public.user_tenant_id to public;
 grant execute on function public.user_tenant_id to service_role;
-
--- ============================================================================
--- STORAGE SCHEMA PRIVILEGES
--- ============================================================================
-
-grant usage on schema storage to anon;
-grant usage on schema storage to authenticated;
-grant usage on schema storage to service_role;
-grant delete on table storage.buckets to anon;
-grant insert on table storage.buckets to anon;
-grant select on table storage.buckets to anon;
-grant update on table storage.buckets to anon;
-grant delete on table storage.buckets to authenticated;
-grant insert on table storage.buckets to authenticated;
-grant select on table storage.buckets to authenticated;
-grant update on table storage.buckets to authenticated;
-grant delete on table storage.buckets to service_role;
-grant insert on table storage.buckets to service_role;
-grant maintain on table storage.buckets to service_role;
-grant references on table storage.buckets to service_role;
-grant select on table storage.buckets to service_role;
-grant trigger on table storage.buckets to service_role;
-grant truncate on table storage.buckets to service_role;
-grant update on table storage.buckets to service_role;
-grant delete on table storage.objects to anon;
-grant insert on table storage.objects to anon;
-grant select on table storage.objects to anon;
-grant update on table storage.objects to anon;
-grant delete on table storage.objects to authenticated;
-grant insert on table storage.objects to authenticated;
-grant select on table storage.objects to authenticated;
-grant update on table storage.objects to authenticated;
-grant delete on table storage.objects to service_role;
-grant insert on table storage.objects to service_role;
-grant maintain on table storage.objects to service_role;
-grant references on table storage.objects to service_role;
-grant select on table storage.objects to service_role;
-grant trigger on table storage.objects to service_role;
-grant truncate on table storage.objects to service_role;
-grant update on table storage.objects to service_role;
-grant execute on function storage.foldername(name text) to public;
-
--- ============================================================================
--- STORAGE BUCKETS
--- ============================================================================
-
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('candidate-audio', 'candidate-audio', false, 20971520, array['audio/webm', 'audio/mpeg', 'audio/mp4']::text[])
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('candidate-cvs', 'candidate-cvs', false, null, null)
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('candidate-videos', 'candidate-videos', false, 52428800, array['video/webm', 'video/mp4']::text[])
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('resumes', 'resumes', false, 10485760, array['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']::text[])
-on conflict (id) do update
-  set file_size_limit = excluded.file_size_limit,
-      allowed_mime_types = excluded.allowed_mime_types;
 
 -- ============================================================================
 -- REALTIME PUBLICATION
@@ -2490,11 +2387,16 @@ insert into public.app_settings (id, scope, company_id, key, value, description,
 -- ============================================================================
 -- FILES — OUR OWN STORAGE TABLE (authored, not dumped)
 -- Added by Plan 2 Task 2 (spec §15). The eight policies below mirror, one for
--- one, the eight `storage.objects` policies this table replaces, so a candidate
--- video keeps the same rule it always had: the anonymous attempt token that is
--- the first path segment. The predicates differ only in shape —
--- `storage.foldername(name))[1]` becomes `split_part(path, '/', 1)` because the
+-- one, the eight `storage.objects` policies that used to sit in this file, so a
+-- candidate video kept the same rule it always had: the anonymous attempt token
+-- that is the first path segment. The predicates differ only in shape —
+-- `(storage.foldername(name))[1]` became `split_part(path, '/', 1)` because the
 -- foldername function belonged to the vendor's storage schema.
+--
+-- Task 10 deleted those eight policies, the `storage` grants and the four
+-- `storage.buckets` rows. Nothing in this file needs the `storage` schema now,
+-- and nothing under `src` ever queried it after the cut-over: `files` is the
+-- only metadata table, the disk under `UPLOADS_ROOT` the only byte store.
 --
 -- Bytes live on disk under /data/uploads/<bucket>/<path>; this table is what
 -- makes a path listable, sized and typed. There is no `owner` column: the

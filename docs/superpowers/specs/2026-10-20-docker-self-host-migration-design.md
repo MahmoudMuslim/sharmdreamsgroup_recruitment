@@ -395,8 +395,10 @@ directive is the scope, in their words: *"stop using Supabase and Vercel Complet
    `SUPABASE_DB_PASSWORD` no longer exist in any env file, example, build arg or
    `src/lib/config.ts` field; `scripts/audit-secrets.mjs` asserts their *absence*.
 5. The identity spine is untouched: the Plan 1 gates still pass as they did at
-   `28a9467`, with only the storage shim's **8** `storage.objects` policies retired
-   (88 → 80 in `supabase/schema.sql`).
+   `28a9467`, and the only schema loss is the storage shim's **8** `storage.objects`
+   policies. (The "88 → 80" written here first counted the file before Task 2 added
+   the 8 `public.files` policies; measured both ends, it is 96 → 88 — the same 8
+   deletions, landing on 80 pre-existing policies plus the 8 that replace them.)
 
 ### The vendor surface, measured 2026-10-21 — this is the whole job
 
@@ -477,4 +479,30 @@ Also corrected: the table's `SUPABASE_REST_BASE` count of 12 is right for
 *tracked* files (`git grep -c`, docs excluded — 7 files, 12 occurrences). Three
 more occurrences sit in the root `.env.example` and `.env.local`, which are
 untracked and therefore the owner's own edit in Task 9, not a repo change.
+
+**Task 10 retired the storage shim.** `docker/db/initdb/03-storage-shim.sql` is
+deleted, and with it the last `storage` object the local stack ever had. Its four
+`storage.buckets` rows were metadata only: `resumes` 10 MB, `candidate-audio` 20 MB
+and `candidate-videos` 50 MB are the exact numbers `ATTACHMENT_RULES` and the video
+route already enforce, and `candidate-cvs` carried no limit at all — the portal's
+own `CV_MAX_BYTES` (5 MB, checked in the wizard and in three routes) has always been
+that bucket's only gate. So nothing loosened here, and from now on the portal's
+checks are all there is, because the disk store deliberately enforces path
+containment and nothing else.
+`supabase/schema.sql` lost the 8 policies on `storage.objects`, the `storage`
+grants block and the bucket inserts. `scripts/local-supabase-stub.sql` — kept by
+name, §11 — lost its `storage` half too, so the proof now stands in exactly what
+`docker/db/initdb/` does.
+
+The drop itself is in `scripts/apply-local-schema.mjs`, not in the schema file:
+`scripts/apply-schema.mjs` reads the same SQL against the hosted project, where
+`storage` is the vendor's real schema and a cascade drop would delete candidate
+bytes. Doing it before the apply turns the apply into the proof — a re-dump that
+restored a storage policy now fails on the local stack instead of quietly keeping
+the shim alive. Measured on a throwaway container and on this stack:
+`node scripts/apply-proof-schema.mjs` applies the file atomically, twice, with no
+`storage` schema in reach (42 tables, 88 policies, 15 functions, 15 triggers);
+`npm run db:apply-local` logged the retirement and reported the same 88 policies
+with the 17 `files` rows intact; `stack:prove` 8/8, `files:prove` 20/20,
+`files:paths` 61/61, `files:links` 76/76, `files:serve` 42/42.
 

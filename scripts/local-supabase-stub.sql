@@ -1,6 +1,12 @@
 -- Throwaway stand-in for the pieces Supabase hosts outside the project's own
 -- schema, so supabase/schema.sql can be applied on a vanilla Postgres.
--- Local proof only; nothing here is committed.
+-- Local proof only; never applied to the hosted project.
+--
+-- It now matches what the real stack stands in: `docker/db/initdb/` brings up
+-- the roles, the extensions and `auth.users`, and nothing else. The `storage`
+-- half of this file — two tables, the foldername helper and their policies — was
+-- deleted with Plan 2 Task 10, so this proof applies the schema of record with no
+-- storage schema in reach, which is the shape the shipping stack has.
 
 create role anon nologin noinherit;
 create role authenticated nologin noinherit;
@@ -18,36 +24,12 @@ create table auth.users (
   created_at timestamptz default now()
 );
 create function auth.uid() returns uuid language sql stable as
-  $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+  $$ select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid $$;
 create function auth.jwt() returns jsonb language sql stable as
   $$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $$;
 
-create schema storage;
-create table storage.buckets (
-  id text primary key,
-  name text not null,
-  public boolean default false,
-  file_size_limit bigint,
-  allowed_mime_types text[],
-  created_at timestamptz default now()
-);
-create table storage.objects (
-  id uuid primary key default gen_random_uuid(),
-  bucket_id text references storage.buckets(id),
-  name text,
-  owner uuid,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now(),
-  last_accessed_at timestamptz,
-  metadata jsonb
-);
-alter table storage.buckets enable row level security;
-alter table storage.objects enable row level security;
-create function storage.foldername(name text) returns text[] language sql immutable as
-  $$ select string_to_array(name, '/') $$;
-
 create publication supabase_realtime;
 
-grant usage on schema auth, storage, extensions, vault to anon, authenticated, service_role;
-grant all on all tables in schema auth, storage to service_role;
-grant execute on function auth.uid(), auth.jwt(), storage.foldername(text) to anon, authenticated, service_role;
+grant usage on schema auth, extensions, vault to anon, authenticated, service_role;
+grant all on all tables in schema auth to service_role;
+grant execute on function auth.uid(), auth.jwt() to anon, authenticated, service_role;

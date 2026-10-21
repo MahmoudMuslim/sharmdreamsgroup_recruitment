@@ -6,6 +6,11 @@
  *   npm run docker:up && node scripts/apply-local-schema.mjs
  *
  * Reads docker/.env, never .env.local, and never connects to the vendor.
+ *
+ * This is also where the Supabase Storage stand-in gets retired. It belongs
+ * here, not in schema.sql: `scripts/apply-schema.mjs` reads the same file and
+ * still runs against the hosted project, where `storage` is the vendor's own
+ * schema and a cascade drop would delete real buckets and objects.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -54,6 +59,21 @@ if (/^create extension if not exists "supabase_vault"/m.test(sql)) {
   process.exit(1);
 }
 
+// Retire the stand-in before applying, so the apply itself is the proof that
+// nothing in schema.sql reaches into `storage` any more — a re-dump that
+// restored a storage policy would fail here instead of silently keeping the
+// vendor's schema alive on a stack that no longer needs it.
+//
+// The local `storage` schema only ever held the shim's two tables, their eight
+// policies and the bucket rows. `public.files` has no foreign key to it, and a
+// dependency scan of the live stack found no public object reaching it, so a
+// cascade drop removes exactly what Task 10 means to remove.
+const stands = await c.query("select 1 from pg_namespace where nspname = 'storage'");
+if (stands.rowCount) {
+  await c.query("drop schema if exists storage cascade");
+  console.log("retired the Supabase Storage stand-in (schema, its tables, its eight policies)");
+}
+
 console.log("applying supabase/schema.sql to the local stack as one atomic script…");
 await c.query(sql);
 
@@ -63,13 +83,13 @@ const counts = await c.query(`
       where n.nspname = 'public' and c.relkind in ('r','p')) as tables,
     (select count(*) from pg_policy p join pg_class c on c.oid = p.polrelid
       join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname in ('public','storage')) as policies,
+      where n.nspname = 'public') as policies,
     (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public') as functions,
     (select count(*) from pg_trigger t join pg_class c on c.oid = t.tgrelid
       join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public' and not t.tgisinternal) as triggers,
-    (select count(*) from storage.buckets) as buckets`);
+    (select count(*) from public.files) as file_rows`);
 console.log("local stack now holds:", counts.rows[0]);
 await c.end();
 
