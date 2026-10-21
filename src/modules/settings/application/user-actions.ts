@@ -15,11 +15,11 @@ import type { AssignableStaffRole, StaffInvite } from "@/modules/settings/domain
 /**
  * The service client, typed from the seam itself rather than from the vendor.
  *
- * This module is the one place that still needs the vendor `auth` handle: its
- * thirteen `supabase.auth.admin.*` calls are GoTrue admin operations that
- * Task 14 owns, and they keep compiling against the passed-through handle. The
- * row calls beside them go over `src/lib/rest`, so `SupabaseClient` would no
- * longer describe what these helpers are handed.
+ * Both halves of this handle are local now: the thirteen `auth.admin.*` calls
+ * run on `authAdmin` (`src/lib/auth/admin-users.ts`), four parameterised `pg`
+ * statements, because no HTTP route may reach `auth.users`; the row calls beside
+ * them are the `RestClient` shape over `src/lib/rest`. Nothing on this object
+ * is passed through to GoTrue any more.
  */
 type ServiceClient = ReturnType<typeof getSupabaseServiceClient>;
 import { recordActivity } from "@/modules/activity/application/record";
