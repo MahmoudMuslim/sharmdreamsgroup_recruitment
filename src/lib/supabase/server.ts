@@ -4,7 +4,7 @@ import { createRestClient } from "@/lib/rest/client";
 import { createAuthShim } from "@/lib/rest/auth-shim";
 
 /**
- * The one seam. 129 call sites construct this per request; none of them knows
+ * The one seam. 127 call sites construct this per request; none of them knows
  * that PostgREST is now ours. Returns the same `{ from, rpc, auth }` shape the
  * supabase-js client did, which is why the port is a re-point rather than a
  * rewrite (spec §6).

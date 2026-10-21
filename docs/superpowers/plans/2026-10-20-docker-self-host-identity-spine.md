@@ -4,7 +4,7 @@
 
 **Goal:** Stand up a local Docker stack (Postgres 17 + PostgREST + Caddy + cron) that serves the existing 442 PostgREST reads and the 94 ported RLS policies, and replace `@supabase/ssr` with hand-rolled signed-cookie sessions — so the portal runs on this device with a token we mint ourselves.
 
-**Architecture:** One Compose file owns the data plane; the app stays outside Docker (`next dev` on port 3000) and talks to PostgREST through a Caddy gateway that also strips `/rest/v1`. Everything Supabase hosted outside `public` (roles, `auth`, `storage`, `extensions`) is stood in by `docker/db/initdb/*.sql`, so `supabase/schema.sql` — including its policies — applies unchanged. Identity is a single re-pointed seam (`src/lib/supabase/server.ts`) plus a small `src/lib/auth/` module set; the 129 call sites that construct that client are not touched.
+**Architecture:** One Compose file owns the data plane; the app stays outside Docker (`next dev` on port 3000) and talks to PostgREST through a Caddy gateway that also strips `/rest/v1`. Everything Supabase hosted outside `public` (roles, `auth`, `storage`, `extensions`) is stood in by `docker/db/initdb/*.sql`, so `supabase/schema.sql` — including its policies — applies unchanged. Identity is a single re-pointed seam (`src/lib/supabase/server.ts`) plus a small `src/lib/auth/` module set; the 127 call sites that construct that client are not touched.
 
 **Tech Stack:** Docker Compose, `postgres:17-alpine`, `postgrest/postgrest:v16.5`, `caddy:2-alpine`, Node 24 + `pg` (moving from devDependency to dependency), `pgcrypto` `crypt()` for bcrypt verification, HS256 tokens signed with `node:crypto`, Next.js 16.4 App Router (`proxy` replaces `middleware`).
 
@@ -2021,7 +2021,7 @@ Body: the 16 sites with their `file:line`, the count of files touched, the autho
 
 **Interfaces:**
 - Consumes: `SUPABASE_REST_BASE` (the gateway `http://localhost:54321/rest/v1`), `mintSessionToken()` / `verifySessionToken()` / `mintServiceToken()` from Task 8.
-- Produces: `createRestClient({ baseUrl, token }) => RestClient` where `RestClient` is `{ from(table): Query; rpc(name, body): Promise<Result> }` — `token` may be a string, `null`, or a function returning either, so a service client can mint per request without its callers changing shape (T11-R2); `createAuthShim(readCookie)`; `SESSION_COOKIE = "sdg_session"`; and `createSupabaseServerClient()` — **same name, same import path, same call shape** — returning `{ ...RestClient, auth }`. All 129 call sites and their 454 table chains (442 of them a literal) keep compiling, and `getSupabaseServiceClient()` keeps its synchronous call shape at all 64 of its call sites.
+- Produces: `createRestClient({ baseUrl, token }) => RestClient` where `RestClient` is `{ from(table): Query; rpc(name, body): Promise<Result> }` — `token` may be a string, `null`, or a function returning either, so a service client can mint per request without its callers changing shape (T11-R2); `createAuthShim(readCookie)`; `SESSION_COOKIE = "sdg_session"`; and `createSupabaseServerClient()` — **same name, same import path, same call shape** — returning `{ ...RestClient, auth }`. All 127 call sites and their 454 table chains (442 of them a literal) keep compiling, and `getSupabaseServiceClient()` keeps its synchronous call shape at all 62 of its call sites.
 
 **Why this task creates `src/lib/auth/cookies.ts` (T11-R1).** Step 5's shim needs `SESSION_COOKIE`, and the draft of this task had Task 12 own that file — measured against the tree, `src/lib/auth/` today holds `db.ts login-target.ts passwords.ts session.ts staffRoutes token.ts`, so importing a constant from a file that does not exist until the next task means Task 11's own `tsc` gate cannot pass. The file is therefore created here with the single constant, and Task 12 adds `cookieAttributes()`, `SESSION_TTL_SECONDS` and the writer pair to the same module. The alternative — repeating the literal `"sdg_session"` in Step 6, Step 5, Task 13 and Task 15 — is the drift the plan already forbids in Task 12's Interfaces block.
 
@@ -2470,7 +2470,7 @@ import { createRestClient } from "@/lib/rest/client";
 import { createAuthShim } from "@/lib/rest/auth-shim";
 
 /**
- * The one seam. 129 call sites construct this per request; none of them knows
+ * The one seam. 127 call sites construct this per request; none of them knows
  * that PostgREST is now ours. Returns the same `{ from, rpc, auth }` shape the
  * supabase-js client did, which is why the port is a re-point rather than a
  * rewrite (spec §6).
@@ -2491,7 +2491,7 @@ export async function createSupabaseServerClient() {
 
 Two notes on that file. The cookie name comes from `src/lib/auth/cookies.ts` (Step 4b), not a literal — the same constant is what Task 12 writes, Task 13's proxy reads and Task 15 inspects in DevTools. And `process.env` is read here instead of `src/lib/config.ts` deliberately: `config.ts`'s existing `restUrl` is derived from `NEXT_PUBLIC_SUPABASE_URL` and ends in `/rest/v1/`, which is the vendor URL this task is retiring, so pointing the new transport at it would send the app back to the vendor through the door Task 11 is closing. Task 17 replaces `restUrl` with `restBase: optional(process.env.SUPABASE_REST_BASE)` in `config.ts` and these three reads with it; a trailing slash in the value is already harmless because `createRestClient` strips it.
 
-- [ ] **Step 7: Re-point the other two server factories**, or the port is decorative. `createSupabaseServerClient` reaching the local stack means nothing while **64 call sites of `getSupabaseServiceClient()` across 22 consumer files** still reach the vendor and 8 of `getSupabaseAnonClient()` across 6 files reach it too — the service client in particular writes candidate records, drains the WhatsApp queue and reads the tracking codes, so leaving it on the vendor would split every flow down the middle.
+- [ ] **Step 7: Re-point the other two server factories**, or the port is decorative. `createSupabaseServerClient` reaching the local stack means nothing while **62 call sites of `getSupabaseServiceClient()` across 22 consumer files** still reach the vendor and 8 of `getSupabaseAnonClient()` across 6 files reach it too — the service client in particular writes candidate records, drains the WhatsApp queue and reads the tracking codes, so leaving it on the vendor would split every flow down the middle.
 
 Two surfaces the service factory still has to answer for, measured before writing this step: `getFileStore(supabase)` at four of its sites (Step 7b) and `supabase.auth.admin.*` at **13 sites in `src/modules/settings/application/user-actions.ts`** (113, 134, 211, 230, 254, 270, 460, 521, 541, 587, 597, 633, 687, 776, 782, 808, 830, 881, 905, 967, 993, 1074, 1093, 1167 — the *client* is made 13 times, some clients make two admin calls). Those 13 calls are GoTrue's admin API over a `users` table that does not become ours until Task 14, so this task re-points the **rows** and hands back the vendor's `auth` untouched:
 
@@ -2530,7 +2530,7 @@ export function getSupabaseServiceClient() {
 }
 ```
 
-That is the second reason `token` is a function (T11-R2). A module-global client holding a 60-second token is a bug — a page rendered at the 61st second would send an expired bearer and get a 401 that reads like an RLS failure; a global holding an hour-long token trades that for an hour of un-revocable privilege. Minting per call costs a local HMAC over a 36-byte payload, measured in microseconds, and buys both: the shortest TTL in the system *and* the call shape every one of the 64 sites already uses. **No call site changes in this step, and `await` must not be added to any of them** — if `tsc` reports a `Promise` here, the factory went async by accident.
+That is the second reason `token` is a function (T11-R2). A module-global client holding a 60-second token is a bug — a page rendered at the 61st second would send an expired bearer and get a 401 that reads like an RLS failure; a global holding an hour-long token trades that for an hour of un-revocable privilege. Minting per call costs a local HMAC over a 36-byte payload, measured in microseconds, and buys both: the shortest TTL in the system *and* the call shape every one of the 62 sites already uses. **No call site changes in this step, and `await` must not be added to any of them** — if `tsc` reports a `Promise` here, the factory went async by accident.
 
 `src/lib/supabase/anon.ts` keeps its whole doc comment — the `jobs_public_read` reasoning is still exactly why a tokenless read is safe to prerender — and replaces the body with `createRestClient({ baseUrl, token: null })`. **Delete the mock-client branch** (`anon.ts:31-40`), which today silently returns empty data during a build with no credentials. Without the vendor there is no "no credentials" state that is worth supporting: the base URL is a local container, and the build now genuinely requires the stack to be up. That is a real consequence of this migration, not a regression — say so in the commit body, because it means `npm run build` on a machine with no `docker compose up` will now fail loudly where it used to produce a quietly empty careers page.
 
@@ -2559,7 +2559,7 @@ export async function getFileStore(): Promise<FileStore> {
 }
 ```
 
-Then change all 15 `getFileStore(supabase)` call sites to `getFileStore()` — the client variable stays wherever the same file also reads rows, and `storage-list.ts` / `cv-links.ts` keep the parameter their callers pass for *their* row queries. `tsc` finds every one you miss: an extra argument to a zero-parameter function is an error, not a warning.
+Then change the 15 `getFileStore(supabase)` call sites (14 files) to `getFileStore()` — the client variable stays wherever the same file also reads rows, and `storage-list.ts` / `cv-links.ts` keep the parameter their callers pass for *their* row queries. `tsc` finds every one you miss: an extra argument to a zero-parameter function is an error, not a warning.
 
 - [ ] **Step 8: Prove the builder against the running stack** (this is the first time app code and PostgREST meet):
 
@@ -2589,7 +2589,7 @@ The `sub` must be **looked up, not invented** (T11-R3): `profiles_self_read` is 
 
 Expected: `rows 3 error null` (Task 6 seeded three profiles, and a `SUPER_ADMIN`'s `auth_user_id` makes `is_staff()` true for all of them), then `count 3`. If the row count is 3 but `count` is `null`, the HEAD/`Prefer: count=exact` path is wrong — that is the bug this probe exists to catch, since three sites read counts that way.
 
-- [ ] **Step 9: Typecheck, lint, and run the whole repo's gates** — 129 call sites now resolve to a new type, so this is the first gate that will actually complain:
+- [ ] **Step 9: Typecheck, lint, and run the whole repo's gates** — 127 call sites now resolve to a new type, so this is the first gate that will actually complain:
 
 ```bash
 ./node_modules/.bin/tsc --noEmit -p tsconfig.json
@@ -2606,7 +2606,7 @@ git add -u src
 git commit -m "feat(rest): serve the 454 query chains from our own PostgREST client"
 ```
 
-Body: the tsc error count you started with and ended with; any builder method you had to add beyond the measured 24; the 15 `getFileStore(supabase)` → `getFileStore()` edits with the reason Step 7b gives (a staff byte has no vendor identity after this task, so the service key is the only credential that reaches the vendor's storage API, and the portal's own checks are now the gate on a file); the deliberate removal of `anon.ts`'s credential-free mock, with the consequence that `npm run build` now requires the local stack; the fact that `getSupabaseServiceClient()` stayed synchronous at all 64 sites; and the deliberate intermediate state the next two tasks inherit — reads go through our PostgREST while `src/proxy.ts` still verifies a gotrue session and the Team console's 13 `auth.admin.*` calls still hit the vendor, which is also why `src/lib/auth/cookies.ts` is created here with one constant rather than waiting for Task 12.
+Body: the tsc error count you started with and ended with; any builder method you had to add beyond the measured 24; the 15 `getFileStore(supabase)` → `getFileStore()` edits with the reason Step 7b gives (a staff byte has no vendor identity after this task, so the service key is the only credential that reaches the vendor's storage API, and the portal's own checks are now the gate on a file); the deliberate removal of `anon.ts`'s credential-free mock, with the consequence that `npm run build` now requires the local stack; the fact that `getSupabaseServiceClient()` stayed synchronous at all 62 sites; and the deliberate intermediate state the next two tasks inherit — reads go through our PostgREST while `src/proxy.ts` still verifies a gotrue session and the Team console's 13 `auth.admin.*` calls still hit the vendor, which is also why `src/lib/auth/cookies.ts` is created here with one constant rather than waiting for Task 12.
 
 ---
 
