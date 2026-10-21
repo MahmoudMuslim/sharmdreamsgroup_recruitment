@@ -114,6 +114,39 @@ Provide the env vars at runtime; nothing is baked into the image. Put a schedule
 
 ---
 
+## Target: self-hosted Docker stack (KVM2)
+
+`docker/docker-compose.yml` is the stack the app now runs on — Postgres,
+PostgREST, the built app, nginx in front on `${NGINX_PORT}`, and the cron
+poller. Values come from `docker/.env` (copy `docker/.env.example`);
+`npm run docker:up` starts it, `npm run db:apply-local` applies
+`supabase/schema.sql`, `npm run db:seed-local` writes the local staff fixtures.
+
+### Rotating `LOCAL_PGRST_PASSWORD`
+
+The PostgREST login role's password is **env-authoritative on a fresh volume**:
+`docker/db/initdb/05-set-pgrst-password.sh` runs after `00-roles.sql` and resets
+`authenticator` to `LOCAL_PGRST_PASSWORD`, which the same file passes to
+`PGRST_DB_URI`. The literal in `00-roles.sql` is only the first-boot default used
+when the variable is unset or empty.
+
+To rotate it on a host:
+
+1. Change `LOCAL_PGRST_PASSWORD` in the secrets file that feeds `docker/.env`
+   (never in the committed `.env.example`).
+2. `npm run docker:wipe` — **this deletes the `db-data` volume.**
+3. `npm run docker:up`, then `npm run db:apply-local` and `npm run db:seed-local`
+   (or restore a `pg_dump`) to rebuild the database it removed.
+
+Step 2 is not optional bookkeeping: `/docker-entrypoint-initdb.d` runs only while
+`PGDATA` is empty, so on an existing volume the role keeps the password it was
+first given and `rest` restart-loops against a `PGRST_DB_URI` that no longer
+matches it. That is the failure this rule exists to prevent — if you see `rest`
+cycling with a `password authentication failed for user "authenticator"`, the
+volume predates the value in `docker/.env`.
+
+---
+
 ## Scheduled jobs
 
 Both cron endpoints accept `GET` or `POST` and require `x-cron-secret`:

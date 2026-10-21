@@ -30,6 +30,11 @@ services:
       POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD}
       POSTGRES_DB: sharm_dreams
       PGDATA: /var/lib/postgresql/data/pgdata
+      # Read by db/initdb/05-set-pgrst-password.sh, which resets the
+      # `authenticator` role's password to this value on every fresh volume, so
+      # rotating it in docker/.env is enough - no committed literal has to be
+      # edited. Unset or empty leaves 00-roles.sql's first-boot default alone.
+      LOCAL_PGRST_PASSWORD: ${LOCAL_PGRST_PASSWORD}
     # PG17 or newer is forced by supabase/schema.sql: every grant it carries uses
     # the `maintain` privilege, which does not exist before PG17. Nothing here
     # needs PG18 specifically, and nothing here breaks on it — pgcrypto's bcrypt

@@ -47,10 +47,18 @@ do $$ begin
   end if;
 end $$;
 
--- The login role. This password must equal LOCAL_PGRST_PASSWORD in docker/.env.
--- It is a local dev credential by design; KVM2 replaces the whole file from a
--- secret that never enters the repo. A manual re-run resets it to this literal,
--- so a rotated value must be mirrored here or this file skipped.
+-- The login role. The literal below is ONLY the first-boot default:
+-- db/initdb/05-set-pgrst-password.sh runs after this file on a fresh volume and
+-- resets the password from LOCAL_PGRST_PASSWORD, so on any host whose
+-- docker/.env carries a value that one is authoritative and this literal never
+-- survives. Keep them equal only for a host that has no LOCAL_PGRST_PASSWORD set
+-- at all; PGRST_DB_URI is built from `${LOCAL_PGRST_PASSWORD}`, so a role
+-- password that does not match it means `rest` cannot connect.
+-- Rotating the value later takes a wipe, not a restart, because initdb runs only
+-- while PGDATA is empty — see the rotation rule in docs/DEPLOYMENT.md.
+--
+-- It is a local dev credential by design; on KVM2 the secrets file replaces the
+-- value and 05-*.sh applies it.
 --
 -- No `nologin` here: Postgres does NOT let the last keyword win — `create role
 -- authenticator nologin … login …` raises `ERROR: conflicting or redundant

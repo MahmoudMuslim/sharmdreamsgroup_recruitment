@@ -9,4 +9,8 @@ docker/*.yml text eol=lf
 docker/**/*.yml text eol=lf
 docker/Caddyfile text eol=lf
 docker/db/initdb/*.sql text eol=lf
+# The initdb shell script too: a CRLF `#!/bin/sh` is `/bin/sh^M`, and initdb only
+# runs on an empty volume, so the breakage would show up on the first fresh host
+# and nowhere else.
+docker/db/initdb/*.sh text eol=lf
 docker/cron/*.sh text eol=lf
