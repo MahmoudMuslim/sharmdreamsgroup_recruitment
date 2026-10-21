@@ -6,11 +6,12 @@
  *
  *   node scripts/extract-vendor-files.mjs
  *
- * Deliberately uses the storage HTTP API with `fetch` rather than
- * `@supabase/supabase-js`: this file stays in the tree as the record of how the
- * extraction was done, and an SDK import would break spec §15's fitness claim
- * (`grep -rn 'from "@supabase/' src scripts` answering 0) on the day the
- * package is uninstalled.
+ * Deliberately uses the storage HTTP API with `fetch` rather than the SDK: this
+ * file stays in the tree as the record of how the extraction was done, and an SDK
+ * import would have broken spec §15's first fitness claim — the grep for SDK
+ * imports under `src` and `scripts` answering 0 — on the day the package was
+ * uninstalled. It is that day now, and the claim holds because this file never
+ * needed the package.
  *
  * Writes only into git-ignored `docker/data/` — these objects are candidate CVs
  * and pitch recordings, so nothing here may be stageable. Prints no credential:

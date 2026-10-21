@@ -86,7 +86,7 @@ src/
 
 Full walkthrough (data flow, read/write path, module boundaries): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane; nothing in `src` or `scripts` imports `@supabase/supabase-js` any more — file bytes come off our own `uploads` volume, and the package itself is uninstalled in Plan 2 Task 8) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
+**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane — `@supabase/supabase-js` and `@vercel/speed-insights` are uninstalled, nothing in `src` or `scripts` imports either, and file bytes come off our own `uploads` volume) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
 
 ---
 

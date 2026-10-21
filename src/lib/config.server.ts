@@ -1,8 +1,8 @@
 import "server-only";
 
 /**
- * Server-only configuration: AI provider keys, the Supabase service-role
- * secret and third-party integration credentials.
+ * Server-only configuration: AI provider keys and third-party integration
+ * credentials.
  *
  * The `server-only` guard makes it a build error if any Client Component ever
  * imports this file, which is what previously broke every page in the app

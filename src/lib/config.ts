@@ -2,80 +2,30 @@
  * Client-safe configuration.
  *
  * IMPORTANT: this module is imported by browser code, so it must never touch
- * server-only secrets. AI provider keys and the service-role key live in
+ * server-only secrets. AI provider keys and the third-party credentials live in
  * `config.server.ts`, which is guarded with `server-only`.
  *
- * Validation here is limited to the NEXT_PUBLIC_* values that are inlined into
- * the client bundle at build time.
+ * Nothing here reads a `NEXT_PUBLIC_*` value any more: the app's own origin is
+ * the only one a browser needs, and it is set per deployment by `APP_URL`.
  */
 
 function optional(value: string | undefined, fallback = ""): string {
   return value && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-const supabaseUrl = optional(process.env.NEXT_PUBLIC_SUPABASE_URL);
-
-/** Raises only on the server at runtime, where the value is actually required.
- * During build (static generation), we allow missing values to avoid build failures. */
-function assertServer(name: string, value: string): string {
-  // Skip validation during Next.js build/static generation
-  const isBuildTime = process.env.NEXT_PHASE === "phase-production-build" ||
-                      process.env.NEXT_PHASE === "phase-development-build" ||
-                      process.env.NODE_ENV === "production" && typeof window === "undefined" && !process.env.VERCEL;
-  
-  if (!value && typeof window === "undefined" && !isBuildTime) {
-    throw new Error(
-      `[config] Missing required environment variable: ${name}. Add it to .env.local (see .env.example).`
-    );
-  }
-  return value || "";
-}
-
 /**
- * The fields below marked HOSTED-ONLY are the NAMES of the vendor's environment
- * surface — what `NEXT_PUBLIC_SUPABASE_URL` / the service key / the database
- * password are called, kept in one place until Plan 2 deletes that surface.
- * They have no runtime role for the hosted scripts: `scripts/apply-schema.mjs`,
- * `scripts/dump-schema.mjs`, `scripts/verify-schema.mjs` and
- * `scripts/create-staff.mjs` read `process.env` directly and never import this
- * module, so deleting a field here would not change the dump path, and keeping
- * one cannot rescue it. Measured readers of this object (all in `src`): `url` 2,
- * `anonKey` 1, `serviceRoleKey` 1, `buckets` 4, `projectRef` 0, `dbPassword` 0.
- * The last two survive only because this task's brief defers them to Plan 2.
+ * The four names below are the buckets *we* run, not the vendor's: they are the
+ * directories under `UPLOADS_ROOT` that `src/lib/files/paths.ts` resolves within,
+ * and the value a `files` row stores in its `bucket` column. The object keeps its
+ * `supabase` name for the same reason `src/lib/supabase/` does — renaming it would
+ * touch four call sites to say nothing new — and `candidateCvs` keeps the exact
+ * spelling the "Track your application" copy and the extracted manifest use.
  */
 export const supabaseConfig = {
-  /** HOSTED-ONLY — deleted in Plan 2. Derived from the vendor URL, no app code reads it. */
-  projectRef:
-    optional(process.env.SUPABASE_PROJECT_REF) ||
-    supabaseUrl.replace(/^https:\/\//, "").split(".")[0],
-  /** HOSTED-ONLY — deleted in Plan 2. The two files that still ship BYTES to the
-   * vendor read this: `src/lib/files/store.ts` and the dead fallback branch in
-   * `(candidate)/portal/actions.ts` (spec correction #6). */
-  url: assertServer("NEXT_PUBLIC_SUPABASE_URL", supabaseUrl),
-  /** HOSTED-ONLY — deleted in Plan 2. ONE reader: the dead fallback branch in
-   * `(candidate)/portal/actions.ts`. It is not the `url` field's pair —
-   * `src/lib/files/store.ts` reads `serviceRoleKey`, not this. */
-  anonKey: assertServer(
-    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
-    optional(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
-  ),
-  /** HOSTED-ONLY — deleted in Plan 2. ONE reader: `src/lib/files/store.ts`, the
-   * only app code that still ships bytes to the vendor. The hosted-management
-   * scripts read `SUPABASE_SERVICE_ROLE_KEY` from `process.env` themselves, and
-   * no row read or write uses this field since Task 11 moved `service.ts` onto a
-   * locally minted bearer. */
-  serviceRoleKey: optional(process.env.SUPABASE_SERVICE_ROLE_KEY),
-  /** HOSTED-ONLY — deleted in Plan 2. No reader anywhere: `dump-schema.mjs` and
-   * `verify-schema.mjs` parse `SUPABASE_DB_PASSWORD` out of `.env.local` on
-   * their own. The name is kept only as the env-surface record. */
-  dbPassword: optional(process.env.SUPABASE_DB_PASSWORD),
   buckets: {
     candidateVideos: "candidate-videos",
     candidateAudio: "candidate-audio",
     resumes: "resumes",
-    // Supabase's own docs and the "Track your application" copy both call this
-    // bucket by name; appConfig omitting it is why a CV link reads as broken
-    // rather than as unconfigured.
     candidateCvs: "candidate-cvs",
   },
 } as const;

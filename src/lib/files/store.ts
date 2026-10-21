@@ -9,9 +9,9 @@
  * no longer travelled under the caller's identity — the widening that this file's
  * previous header documented instead of hiding.
  *
- * Plan 2 closes it. `getFileStore()` returns the disk-backed store over
- * `$UPLOADS_ROOT/<bucket>/<path>` + the `public.files` table (spec §7), the vendor
- * client and `@supabase/supabase-js` leave with it, and no call site changed: the
+ * Plan 2 closed it. `getFileStore()` returns the disk-backed store over
+ * `$UPLOADS_ROOT/<bucket>/<path>` + the `public.files` table (spec §7); the vendor
+ * client and `@supabase/supabase-js` left with it, and no call site changed: the
  * interface below is what the 14 `getFileStore()` callers code against, which is
  * the whole reason it stayed exactly as it was. Read `disk-store.ts` for which
  * door each method uses and why a browse and a byte do not use the same one.
