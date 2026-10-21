@@ -2894,7 +2894,7 @@ Body: the reason the browser can no longer sign in (no browser-reachable auth en
 
 ### Task 13: The idle window, ported into the Next 16 proxy
 
-[src/lib/supabase/middleware.ts](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/supabase/middleware.ts) is 171 lines that do five things, and exactly one of them needs the vendor: `createServerClient(...)` + `supabase.auth.getUser()` is a **network round trip on every matched request** whose only answer is "is this JWT valid". [src/lib/auth/token.ts](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/auth/token.ts) from Task 8 answers that locally with an HMAC compare, so the port is a downgrade in latency and an upgrade in behaviour. Everything else in the file — the staff-path redirect, the role check, the timeout read, the idle sign-out, the `sb-` jar cleanup — moves unchanged.
+[src/lib/supabase/middleware.ts](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/supabase/middleware.ts) is 171 lines that do five things, and exactly one of them needs the vendor: `createServerClient(...)` + `supabase.auth.getUser()` is a **network round trip on every matched request** whose only answer is "is this JWT valid". [src/lib/auth/token.ts](file:///D:/Nextjs%20Projects/sharm_dreams_group/src/lib/auth/token.ts) from Task 8 answers that locally with an HMAC compare, so the port is a downgrade in latency and an upgrade in behaviour. Everything else in the file — the staff-path redirect, the role check, the timeout read, the idle sign-out — moves unchanged. The `sb-` jar cleanup does **not**: Step 2's difference #1 replaces it with `clearSession`, which deletes exactly the two cookies this app owns.
 
 **Files:**
 - Create: `src/lib/auth/guard.ts`
@@ -3067,7 +3067,7 @@ export async function guardRequest(request: NextRequest): Promise<NextResponse> 
 Three differences from the file it replaces, and each is deliberate:
 
 1. There is no `sb-` prefix loop any more. `clearSession` deletes the two cookies this app owns, because those are the only two it sets. Deleting other names "just in case" would delete a cookie Plan 2 has not invented yet.
-2. It **renewal-writes on every staff request**, which the old file could not do — the vendor's token was refreshed inside `getUser()`, and here the bearer is re-minted with a fresh `exp`. This is what keeps a working recruiter signed in past the bearer's own hour.
+2. It **renewal-writes on every staff request**, which the old file could not do — the vendor's token was refreshed inside `getUser()`, and here the bearer is re-minted with a fresh `exp`. This is what keeps a working recruiter signed in past the bearer's own lifetime.
 3. `profile && !STAFF_ROLES.has(...)` keeps the current file's odd-but-correct shape: a **missing profile row does not redirect here**, it falls through to the page-level `requireStaff`, which is the guard that has the redirect-with-context. "No profile" and "wrong role" are different failures and only one of them is a candidate poking at the portal.
 
 - [ ] **Step 3: Re-point `src/proxy.ts`** — keep the matcher and the file, change the import:
