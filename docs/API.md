@@ -33,6 +33,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 | `POST` | `/api/careers/upload` | public | CV upload as multipart. Validated against `modules/careers/cv-rules` (size/type) before it reaches storage. Two-step flow: upload, then submit via the apply action. |
 | `POST` | `/api/careers/prefill` | public | Parses an uploaded CV to prefill the apply form; same content/size guards as upload. |
 | `GET` | `/api/careers/questions` | public | Returns a role's gate questions for the apply form (`application_gate_questions`). 404 if the role is not accepting applications. |
+| `POST` | `/api/careers/about-me` | public | Drafts the apply form's "About me" box from a LinkedIn profile link or the applicant's own CV. Reads only — no row is written and no file is stored, because the upload route owns storage. A LinkedIn link that returns the login wall, and a CV with no readable text, are each reported as themselves and pointed at the doors this form has; only `linkedin.com` / `linkedin.cn` hosts are fetched, and the model's prose is clamped to the field's own limits. |
 
 ### Staff — files, branding, live
 
@@ -41,6 +42,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 | `GET` | `/api/branding/logo` | public | Resolves the configured company logo and `302`-redirects to it. |
 | `GET` | `/api/files/link` | staff + `candidates.read` | Mints a short-lived signed URL for a stored candidate file. 403 without the permission; 404 for unknown files. |
 | `POST` | `/api/files/upload` | staff | Stores a file a recruiter attaches to a candidate record (multipart; bucket rules checked first). |
+| `GET` `HEAD` | `/api/files/f/[token]` | the signed link itself — **no session check** | The byte door that replaced `storage.createSignedUrl` and the vendor's CDN: one HMAC-signed, expiring URL opens exactly one file, exactly one way. The token carries its own expiry and its own content type (taken from the `files` row at mint time, because a directory entry has none), and `resolveObjectPath` refuses a key that resolves outside its bucket — so a token minted by an older build cannot read a path this build would not sign. `206` + `Content-Range` and the `HEAD` probe are load-bearing, not niceties: without them a pitch recording cannot seek, and Safari shows it unplayable. Everything is `no-store`; the links it honours are minted by the guarded doors above. |
 | `GET` | `/api/live` | staff session | The portal's live channel. Fingerprints the watched hiring tables on the caller's own session client and names which areas moved; the browser re-reads affected data through its own RLS-scoped queries. No row content crosses this channel. |
 
 ### Staff — exports (the "one door" pattern)
