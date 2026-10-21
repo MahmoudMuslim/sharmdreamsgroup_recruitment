@@ -89,7 +89,7 @@ src/
 
 Full walkthrough (data flow, read/write path, module boundaries): [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane — `@supabase/supabase-js` and `@vercel/speed-insights` are uninstalled, nothing in `src` or `scripts` imports either, and file bytes come off our own `uploads` volume) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · Recharts · Framer Motion · Sonner · exceljs / pdf-lib · mammoth / unpdf · `@thelioo/opencode-balancer` · `@qoder-ai/qoder-agent-sdk`.
+**Tech stack:** Next.js 16.4 (App Router, Turbopack) · React 19.3 · TypeScript 5 · Tailwind CSS 4 · PostgreSQL 18 + PostgREST (own data plane — `@supabase/supabase-js` and `@vercel/speed-insights` are uninstalled, nothing in `src` or `scripts` imports either, and file bytes come off our own `uploads` volume) · Zustand 5 · Zod 4 · Handsontable + HyperFormula · exceljs / pdf-lib · mammoth / unpdf · `@qoder-ai/qoder-agent-sdk`.
 
 ---
 
@@ -100,7 +100,7 @@ A hand-rolled, dependency-light library (no component framework) in `modules/ana
 **Primitives** (`ui.tsx`): `PageHeader`, `Card`/`CardHeader`, `Button` (`primary`/`outline`/`ghost`), `Badge` (5 tones), `Meter`, `StatTile`, `FilterRail`, `EmptyState`.
 **Overlays & forms**: `Drawer` (Escape-close, focus capture, scroll lock), `Field`/`TextInput`/`TextArea`/`Select`, `FormMessage`, `DrawerActions`.
 **Shell**: `AppBar` (grouped nav rail, `/` command search, per-route Guide, alerts, theme + language toggle), `AdminShell`, typed `NAV` table, `SdgMark`/`SdgLockup` brand.
-**Feedback**: `LiveChrome`/`LiveBadge`/`useLive`, Recharts `ReplyChart`, assistant `RichReply`, assessment runners.
+**Feedback**: `LiveChrome`/`LiveBadge`/`useLive`, assistant `ReplyChart`/`RichReply`, assessment runners.
 
 **Theming** (`lib/theme.ts`): two palette parents × two tones — Base (opaque) and Liquid glass (translucent film over a moving backdrop), each in Light/Dark. Persisted in `localStorage`, applied pre-paint to avoid flash. `scripts/check-themes.mjs` fails the build if a theme maps to no CSS.
 
