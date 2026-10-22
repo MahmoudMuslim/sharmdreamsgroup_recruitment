@@ -27,8 +27,10 @@ Re-derive the whole list with
 `grep -rhoE "process\.env\.[A-Z_0-9]+" src | sed 's/process\.env\.//' | sort -u`
 and diff it against the tables here. Everything that table prints but these
 tables do not name is deliberately absent, because it is not operator config:
-`NODE_ENV`, `NEXT_PHASE` and `PORT` are read as facts about the host,
-and `HOME`, `USERPROFILE`, `QODER_CLI_HOME`, `QODER_CONFIG_DIR` are set and read
+`NODE_ENV` and `PORT` are read together at `src/lib/public-url.ts:72-73` as
+facts about the host (the grep's other `NODE_ENV` hit, `src/lib/auth/cookies.ts:63`,
+is a comment about the form that code replaced).
+Similarly `HOME`, `USERPROFILE`, `QODER_CLI_HOME`, `QODER_CONFIG_DIR` are set and read
 by `src/modules/screening/infrastructure/qoderCompletion.ts` for its own agent-SDK
 worker directory.
 
