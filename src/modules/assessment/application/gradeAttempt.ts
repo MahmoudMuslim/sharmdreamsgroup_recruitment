@@ -17,6 +17,10 @@ import {
   type AttemptTotals as ResponseTotals,
 } from "@/modules/assessment/domain/attemptTotals";
 import {
+  sweepCandidates,
+  type SweepCandidate,
+} from "@/modules/assessment/domain/sweepSelection";
+import {
   evaluateCaseStudy,
   evaluateExcelModel,
   evaluateVideoPitch,
@@ -43,8 +47,9 @@ import type { QuestionEvaluation, SpreadsheetCellData } from "@/types";
  * A pitch is graded from its transcript — the recording is sent to a speech
  * model once, stored on the response, and only then scored, so a retry never
  * re-transcribes. Recordings that no model can transcribe (no speech, no
- * transcription key, too large) are flagged for manual review instead of
- * failing the pass forever.
+ * transcription key, too large) are parked for manual review instead of
+ * failing the pass forever; the scheduled sweep leaves a parked answer alone,
+ * while a recruiter asking again may re-offer it.
  *
  * Failure-tolerant by design: the candidate's submission is already persisted
  * before grading runs, so an AI error just leaves that response ungraded and
@@ -75,6 +80,8 @@ interface ResponseRow {
   transcript: string | null;
   score: number | null;
   max_score: number;
+  /** A parked note names a blocker no retry can clear. */
+  ai_evaluation: { parked?: boolean } | null;
 }
 
 interface GradedEvaluation {
@@ -152,11 +159,14 @@ async function gradingTrail(
 
 export async function gradeAttemptResponses(
   attemptId: string,
-  options: { passes?: number } = {}
+  options: { passes?: number; skipParked?: boolean } = {}
 ): Promise<{ graded: number; failed: number }> {
   // A recruiter watching a button wait wants one try and an answer; the submit
-  // route and the cron sweep get the full retry budget for free.
+  // route and the cron sweep get the full retry budget for free. Only the sweep
+  // skips parked answers: its next pass comes on its own in five minutes, while
+  // a person asking may deliberately be re-offering one after fixing its cause.
   const passes = Math.max(1, options.passes ?? GRADING_PASSES);
+  const skipParked = options.skipParked ?? false;
 
   const restClient = getServiceRestClient();
   const trail = await gradingTrail(restClient, attemptId);
@@ -180,7 +190,7 @@ export async function gradeAttemptResponses(
   // permanently half-graded — resubmission is blocked once SUBMITTED.
   for (let pass = 0; pass < passes; pass += 1) {
     if (pass > 0) await delay(PASS_DELAY_MS);
-    const result = await gradePendingResponses(restClient, attemptId, trail);
+    const result = await gradePendingResponses(restClient, attemptId, trail, skipParked);
     graded += result.graded;
     failed = result.failed;
     if (failed === 0) break;
@@ -204,29 +214,37 @@ export async function gradeAttemptResponses(
 }
 
 /**
- * Re-grades submitted attempts that still have unscored written/model
- * responses — the recovery path for attempts whose grading ran during a
- * provider outage. A cron sweep calls this; each attempt reuses the same
- * gated, pass-based grading as fresh submissions.
+ * Re-grades submitted attempts that still have work a pass can do — the
+ * recovery path for attempts whose grading ran during a provider outage, and
+ * the close-out for a paper whose finalize write never landed.
+ *
+ * A cron sweep calls this. Fully marked papers are closed by the same finalize
+ * step a fresh submission gets, with no model involved; papers with open answers
+ * are sent through the gated, pass-based grading only while AI is available, and
+ * an answer the engine parked for a person is left for that person.
  */
 export async function regradeStuckAttempts(
   limit: number
-): Promise<{ swept: number; graded: number; failed: number }> {
+): Promise<{ swept: number; graded: number; failed: number; closed: number }> {
   const { aiEnabled } = await getAiAutomationSettings();
-  if (!aiEnabled || !hasAiProvider()) return { swept: 0, graded: 0, failed: 0 };
+  const aiReady = aiEnabled && hasAiProvider();
 
   const restClient = getServiceRestClient();
 
-  // Inner join on null-score responses: only attempts with at least one
-  // response the submit route left for AI grading.
+  // Every submitted paper with at least one stored answer. The old query asked
+  // only for a null-score answer, which cannot see a paper whose finalize write
+  // failed after the last mark: no model is needed to close that one, and with
+  // AI off it is the only kind of paper this sweep can help.
   const { data } = await restClient
     .from("candidate_attempts")
-    .select("id, candidate_responses!inner(score)")
+    .select("id, candidate_responses!inner(score, ai_evaluation)")
     .eq("status", "SUBMITTED")
-    .is("candidate_responses.score", null)
     .limit(limit);
 
-  const attemptIds = [...new Set(((data ?? []) as { id: string }[]).map((row) => row.id))];
+  const attemptIds = sweepCandidates(
+    (data ?? []) as unknown as SweepCandidate[],
+    aiReady
+  );
 
   // The sweep is the scheduler's own work: everything it grades is recorded as
   // arriving through cron, with no recruiter behind it.
@@ -234,12 +252,30 @@ export async function regradeStuckAttempts(
     let graded = 0;
     let failed = 0;
     for (const attemptId of attemptIds) {
-      const result = await gradeAttemptResponses(attemptId);
+      const result = await gradeAttemptResponses(attemptId, { skipParked: true });
       graded += result.graded;
       failed += result.failed;
     }
 
+    // A paper the sweep finished is worth counting separately: when every mark
+    // was already on the rows, `graded` is zero and the summary would otherwise
+    // read as if the pass did nothing.
+    let closed = 0;
     if (attemptIds.length > 0) {
+      const { data: after } = await restClient
+        .from("candidate_attempts")
+        .select("id, status")
+        .in("id", attemptIds);
+      closed = ((after ?? []) as { status?: string }[]).filter(
+        (row) => row.status === "GRADED"
+      ).length;
+    }
+
+    if (attemptIds.length > 0) {
+      const parts = [`${graded} response${graded === 1 ? "" : "s"} scored`];
+      if (closed > 0) parts.push(`${closed} paper${closed === 1 ? "" : "s"} now graded`);
+      if (failed > 0) parts.push(`${failed} still unscored`);
+
       await recordActivity({
         actorKind: "SYSTEM",
         actorLabel: "Re-grade sweep",
@@ -247,12 +283,12 @@ export async function regradeStuckAttempts(
         area: "assessments",
         action: "grading_sweep",
         entity: "attempt",
-        summary: `Re-grade sweep revisited ${attemptIds.length} submitted attempt${attemptIds.length === 1 ? "" : "s"} — ${graded} response${graded === 1 ? "" : "s"} scored${failed ? `, ${failed} still unscored` : ""}`,
-        detail: { attempts: attemptIds.length, graded, failed },
+        summary: `Re-grade sweep revisited ${attemptIds.length} submitted attempt${attemptIds.length === 1 ? "" : "s"} — ${parts.join(", ")}`,
+        detail: { attempts: attemptIds.length, graded, failed, closed },
       });
     }
 
-    return { swept: attemptIds.length, graded, failed };
+    return { swept: attemptIds.length, graded, failed, closed };
   });
 }
 
@@ -260,17 +296,21 @@ export async function regradeStuckAttempts(
 async function gradePendingResponses(
   restClient: ReturnType<typeof getServiceRestClient>,
   attemptId: string,
-  trail: GradingTrail
+  trail: GradingTrail,
+  skipParked: boolean
 ): Promise<{ graded: number; failed: number }> {
   const { data: responses } = await restClient
     .from("candidate_responses")
-    .select("id, question_id, answer_text, spreadsheet_state, video_path, transcript, score, max_score")
+    .select(
+      "id, question_id, answer_text, spreadsheet_state, video_path, transcript, score, max_score, ai_evaluation"
+    )
     .eq("attempt_id", attemptId)
     .is("score", null);
 
   const gradeable = ((responses ?? []) as ResponseRow[]).filter(
     (row) =>
-      Boolean(row.answer_text) || Boolean(row.spreadsheet_state) || Boolean(row.video_path)
+      (Boolean(row.answer_text) || Boolean(row.spreadsheet_state) || Boolean(row.video_path)) &&
+      !(skipParked && row.ai_evaluation?.parked === true)
   );
   if (gradeable.length === 0) return { graded: 0, failed: 0 };
 
@@ -293,7 +333,7 @@ async function gradePendingResponses(
       if (outcome.status === "UNSUPPORTED") continue;
 
       if (outcome.status === "MANUAL") {
-        await writeManualNote(restClient, response.id, outcome.reason, trail, question.title);
+        await writeManualNote(restClient, response.id, outcome.reason, trail, question.title, true);
         continue;
       }
 
@@ -333,15 +373,16 @@ async function gradePendingResponses(
       });
     } catch (error) {
       if (error instanceof ManualReviewRequiredError) {
-        // A blocker no retry can clear — hand the row to the reviewer.
-        await writeManualNote(restClient, response.id, error.message, trail, question.title);
+        // A blocker no retry can clear — hand the row to the reviewer, and mark
+        // it so the scheduled sweep does not pay for the same call every pass.
+        await writeManualNote(restClient, response.id, error.message, trail, question.title, true);
         continue;
       }
       if (error instanceof TruncatedJsonResponseError) {
         // Explain the blank in the report rather than leaving it unremarked, but
         // still count it as failed: a later pass may reach a model with enough
-        // output room to finish the verdict.
-        await writeManualNote(restClient, response.id, error.message, trail, question.title);
+        // output room to finish the verdict. Not parked — the sweep may retry it.
+        await writeManualNote(restClient, response.id, error.message, trail, question.title, false);
         failed += 1;
         console.error(
           `AI grading truncated for response ${response.id} (${question.title}): ${error.message}`
@@ -362,18 +403,29 @@ class ManualReviewRequiredError extends Error {}
 /**
  * Leaves the row unscored but explains itself — the reason surfaces in the
  * assessment report so nobody has to guess why grading stopped there.
+ *
+ * `parked` says the blocker survives another pass: the scheduled sweep skips
+ * those rows instead of re-running an impossible call every five minutes.
+ * A truncation is not parked — a later pass may fit the verdict.
  */
 async function writeManualNote(
   restClient: ReturnType<typeof getServiceRestClient>,
   responseId: string,
   reason: string,
   trail: GradingTrail,
-  questionTitle: string
+  questionTitle: string,
+  parked: boolean
 ): Promise<void> {
   await restClient
     .from("candidate_responses")
     .update({
-      ai_evaluation: { score: null, rationale: reason, strengths: [], improvements: [] },
+      ai_evaluation: {
+        score: null,
+        rationale: reason,
+        strengths: [],
+        improvements: [],
+        parked,
+      },
     })
     .eq("id", responseId);
 

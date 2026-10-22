@@ -58,8 +58,8 @@ export interface AttemptGrades {
    *
    * A count, not a mark, so it survives masking and can still tell a reviewer
    * the attempt is unfinished. Nothing else on this console closes that gap:
-   * the grading engine is the only other writer, and no scheduler runs its
-   * retry sweep — see `scoreAttemptResponse`.
+   * the grading engine is the only other writer, and its scheduled sweep leaves
+   * an answer parked for a person alone — see `scoreAttemptResponse`.
    */
   unscored: number;
   /**
@@ -468,11 +468,15 @@ async function openAnswers(
  * Ask the engine to try this attempt's open answers again — or to close a paper
  * every answer of which already carries a mark.
  *
- * The retry path lived only in `/api/cron/grading`, and nothing schedules that
- * route — so an answer the AI failed to score at submit had no way of ever
- * getting a mark except from a person. One pass, deliberately: whoever asks is
- * watching a spinner or waiting on a reply, and the engine's three-pass budget
- * with its twenty-second waits is for callers nobody is waiting on.
+ * The sweep reaches this path on its own schedule, but a recruiter should not
+ * have to wait for the next pass to find out whether an answer can still be
+ * scored. One pass, deliberately: whoever asks is watching a spinner or waiting
+ * on a reply, and the engine's three-pass budget with its twenty-second waits is
+ * for callers nobody is waiting on.
+ *
+ * This door also re-offers an answer the engine parked for a person, which the
+ * sweep deliberately skips: most parked answers are blockers no repeat call can
+ * clear, but a person may have just fixed the cause.
  *
  * A paper can also sit SUBMITTED with nothing left to score: the AI-off grading
  * path used to return before finalizing, and a finalize write can fail. The

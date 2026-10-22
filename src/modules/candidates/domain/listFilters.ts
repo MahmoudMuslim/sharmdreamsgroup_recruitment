@@ -36,11 +36,12 @@ export type CandidateSort = "recent" | "fit" | "name";
  *
  * `GRADED` has its marks and `EXPIRED` means the link closed before an answer was
  * filed, so neither is waiting on anyone. `SUBMITTED` is what the grading engine
- * leaves an attempt in when it never finished scoring it — and nothing schedules
- * a second pass, so it waits for a person. The attention feed counts exactly
- * these, the candidates page lists them under `?ungraded=1`, and the download
- * carries the same filter, so the three share the words rather than restating
- * them.
+ * leaves an attempt in when it could not finish scoring it. The scheduled sweep
+ * retries open answers every few minutes, but an answer the engine parked for a
+ * person stays open until someone marks it — so the queue is still a person's
+ * work. The attention feed counts exactly these, the candidates page lists them
+ * under `?ungraded=1`, and the download carries the same filter, so the three
+ * share the words rather than restating them.
  */
 export const UNSCORED_ATTEMPT_STATUS = "SUBMITTED";
 

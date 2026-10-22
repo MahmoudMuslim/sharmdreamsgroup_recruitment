@@ -51,9 +51,9 @@ function scoreTone(score: number | null) {
  * What the report may honestly say about an unfinished attempt.
  *
  * The chip this replaces promised "Grading in progress" for every non-GRADED
- * status. Nothing is in progress: no scheduler calls `/api/cron/grading`, so
- * the retry sweep only runs if someone hits it, and an answer the engine parked
- * stays parked. Each line here states only what the status and the response
+ * status. Nothing is in progress: the scheduled sweep retries open answers but
+ * deliberately leaves a parked one alone, so a paper still waiting on a person
+ * stays that way. Each line here states only what the status and the response
  * rows prove — and names the desk below when this reviewer can finish the job.
  */
 function statusNote(grades: AttemptGrades): { text: string; actionable: boolean } | null {

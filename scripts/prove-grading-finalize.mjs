@@ -15,10 +15,12 @@
  *      finalize step, and the AI-on path still grades before it finalizes;
  *   3. the desk — the report's run and the assistant's tool reach the engine
  *      when nothing is left to score, and only a submitted paper may be closed;
- *   4. the doors — the submit route and the console's retry both reach the
+ *   4. the sweep — which submitted papers the scheduled pass visits, now that
+ *      it closes fully marked papers and leaves parked answers alone;
+ *   5. the doors — the submit route and the console's retry both reach the
  *      same function, so the fix is not stranded behind one entry point.
  *
- * (2), (3) and (4) are text assertions, deliberately: the engine imports
+ * (2)–(5) are text assertions, deliberately: the engine imports
  * `server-only` and writes through REST, so it cannot be imported by a plain
  * Node process. They catch the files being edited apart.
  */
@@ -27,6 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { attemptTotalsFrom } from "../src/modules/assessment/domain/attemptTotals.ts";
+import { sweepCandidates } from "../src/modules/assessment/domain/sweepSelection.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Line endings differ by checkout (CRLF on Windows), and two assertions here
@@ -220,7 +223,101 @@ check(
 );
 
 // ---------------------------------------------------------------------------
-// 4. Both doors reach the engine
+// 4. The scheduled sweep
+// ---------------------------------------------------------------------------
+const markedPaper = [{ id: "marked", candidate_responses: [{ score: 4 }] }];
+const openPaper = [{ id: "open", candidate_responses: [{ score: null }] }];
+const parkedPaper = [
+  {
+    id: "parked",
+    candidate_responses: [{ score: null, ai_evaluation: { parked: true } }],
+  },
+];
+const mixedPaper = [
+  {
+    id: "mixed",
+    candidate_responses: [
+      { score: null, ai_evaluation: { parked: true } },
+      { score: null, ai_evaluation: { parked: false } },
+    ],
+  },
+];
+const answerless = [
+  { id: "no-answers", candidate_responses: [] },
+  { id: "no-rows", candidate_responses: null },
+];
+const twice = [
+  { id: "twice", candidate_responses: [{ score: 1 }] },
+  { id: "twice", candidate_responses: [{ score: 2 }] },
+];
+
+check(
+  "a fully marked paper is swept with no AI, so its status can be closed",
+  same(sweepCandidates(markedPaper, false), ["marked"])
+);
+check(
+  "an open paper is swept while a model is ready",
+  same(sweepCandidates(openPaper, true), ["open"])
+);
+check(
+  "an open paper is left alone when no model is ready",
+  same(sweepCandidates(openPaper, false), [])
+);
+check(
+  "a parked answer is not retried by the sweep",
+  same(sweepCandidates(parkedPaper, true), [])
+);
+check(
+  "a paper with a retriable answer beside a parked one is still swept",
+  same(sweepCandidates(mixedPaper, true), ["mixed"])
+);
+check(
+  "a paper with no stored answers is never swept",
+  same(sweepCandidates(answerless, true), [])
+);
+check(
+  "an attempt embedded twice is swept once",
+  same(sweepCandidates(twice, true), ["twice"])
+);
+
+check(
+  "the sweep no longer stops outright when AI is off",
+  !engine.includes("if (!aiEnabled || !hasAiProvider()) return { swept: 0, graded: 0, failed: 0 };") &&
+    engine.includes("const aiReady = aiEnabled && hasAiProvider();")
+);
+check(
+  "the sweep asks for every submitted paper, not only ones with a blank mark",
+  engine.includes("select(\"id, candidate_responses!inner(score, ai_evaluation)\")") &&
+    !engine.includes('.is("candidate_responses.score", null)')
+);
+check(
+  "the sweep selects through the domain rule",
+  engine.includes("sweepCandidates(") && engine.includes("SweepCandidate")
+);
+check(
+  "the sweep leaves parked answers to a person",
+  engine.includes("await gradeAttemptResponses(attemptId, { skipParked: true });") &&
+    engine.includes("row.ai_evaluation?.parked === true")
+);
+check(
+  "only a blocker no retry can clear is marked parked",
+  engine.includes(
+    "await writeManualNote(restClient, response.id, outcome.reason, trail, question.title, true);"
+  ) &&
+    engine.includes(
+      "await writeManualNote(restClient, response.id, error.message, trail, question.title, true);"
+    ) &&
+    engine.includes(
+      "await writeManualNote(restClient, response.id, error.message, trail, question.title, false);"
+    )
+);
+check(
+  "the sweep says how many papers it closed, not only how many marks it wrote",
+  engine.includes("now graded") && engine.includes("graded, failed, closed")
+);
+
+// ---------------------------------------------------------------------------
+// 5. Both doors reach the engine
 // ---------------------------------------------------------------------------
 check(
   "the submit route defers grading rather than blocking the candidate",
