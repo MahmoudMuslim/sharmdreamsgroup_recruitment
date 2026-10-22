@@ -36,6 +36,12 @@ build.log
 
 # env files (can opt-in for committing if needed)
 .env*
+# …and this is the opt-in. The template holds placeholders only, README and
+# docs/DEPLOYMENT.md both point a new deploy at it, and `scripts/audit-secrets.mjs`
+# reads it as a deploy-surface file — none of which works on a fresh clone while
+# `.env*` above swallows it. `docker/.env.example` has always had this exception;
+# the root one did not.
+!.env.example
 
 # Prompt/notes files can contain pasted credentials — never track them.
 # A glob because `prompt2.md` slipped past the two literal names this used to
