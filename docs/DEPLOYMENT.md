@@ -21,7 +21,7 @@ Docker stack* at the end of this file.
 
 ## Environment variables — what the code actually reads
 
-Copy `.env.example` → `.env.local`, then set these. The lists below are the variables the source truly reads (`src/lib/config.ts`, `src/lib/config.server.ts`, `src/lib/crypto/secrets.ts`). Note that `.gitignore`'s `.env*` rule means the root template is not tracked in a fresh clone; `docker/.env.example` is, and carries the Compose stack's own values.
+Copy `.env.example` → `.env.local`, then set these. The lists below are the variables the source truly reads (`src/lib/config.ts`, `src/lib/config.server.ts`, `src/lib/crypto/secrets.ts`). Both templates are tracked — `.gitignore`'s `.env*` rule carries a `!.env.example` exception — and `docker/.env.example` holds the Compose stack's own values; only the *copies* (`docker/.env`, `.env.local`) are ignored. What the root template cannot do is carry all six required variables — see the drift note below.
 
 Re-derive the whole list with
 `grep -rhoE "process\.env\.[A-Z_0-9]+" src | sed 's/process\.env\.//' | sort -u`
@@ -41,7 +41,7 @@ worker directory.
 | `CRON_SECRET` | config.server.ts | Required by `/api/cron/*`; those routes **fail closed (503)** when it is unset. **Not in `.env.example` — add it.** |
 | `AUTH_JWT_SECRET` | `src/lib/auth/token.ts:59` (`secret()`) | HS256 secret for the session bearer the app mints and verifies itself. Throws `TokenConfigError` when absent or shorter than 32 chars, and that throw is on the sign-in path — **without it every login 500s**. Must equal `PGRST_JWT_SECRET`, or PostgREST refuses every token the app issues. |
 | `AUTH_DB_URL` | `src/lib/auth/db.ts:16` (`getAuthPool()`) | Postgres connection string for the app's own auth pool. Throws when unset, and that pool is what reads the password hash, writes staff rows and keeps the `public.files` size/mime metadata — **without it password verification, all staff CRUD and every stored-byte write fail**. Host form `postgresql://postgres:…@localhost:54320/sharm_dreams`; inside the compose network the stack overwrites it with the `db:5432` form. |
-| `UPLOADS_ROOT` | `src/lib/files/paths.ts:66` | The one directory every stored byte resolves inside; a path that lands outside it is refused. `/data/uploads` in the app container (the `uploads` named volume), `.data/uploads` for a host-side `next dev`. **Without it, upload and download throw** — see spec §7. |
+| `UPLOADS_ROOT` | `src/lib/files/paths.ts:69` (`uploadsRoot()`) | The one directory every stored byte resolves inside; a path that lands outside it is refused. `/data/uploads` in the app container (the `uploads` named volume), `.data/uploads` for a host-side `next dev`. **Without it, upload and download throw** — see spec §7. |
 
 > The vendor's five names — `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
 > `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF` — are read

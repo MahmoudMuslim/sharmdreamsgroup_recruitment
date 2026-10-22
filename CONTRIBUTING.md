@@ -28,7 +28,8 @@ This guide covers setup, layout, conventions, and the checks that must pass befo
 npm install
 
 # 1. Both env files first — `docker:up` cannot start without either
-cp docker/.env.example docker/.env    # fill in its secrets (this file is untracked)
+cp docker/.env.example docker/.env    # fill in its secrets (the template is tracked,
+                                      # the copy is ignored)
 cp .env.example .env.local            # the `app` service reads it as `env_file`;
                                       # Compose exits 1 when it is missing
 node scripts/generate-encryption-key.mjs   # prints the AES key line for .env.local
