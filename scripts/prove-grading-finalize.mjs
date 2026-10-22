@@ -130,14 +130,14 @@ check(
 check(
   "the AI-off branch is the one that finalizes",
   engine.includes(
-    "await finalizeAttemptTotals(attemptId, trail);\n    return { graded: 0, failed: 0 };"
+    "await finalizeAttemptTotals(attemptId, trail, false);\n    return { graded: 0, failed: 0 };"
   )
 );
 
 const trailAt = engine.indexOf("const trail = await gradingTrail(restClient, attemptId);");
 const aiAt = engine.indexOf("const { aiEnabled } = await getAiAutomationSettings();");
 const offFinalizeAt = engine.indexOf(
-  "await finalizeAttemptTotals(attemptId, trail);\n    return { graded: 0, failed: 0 };"
+  "await finalizeAttemptTotals(attemptId, trail, false);\n    return { graded: 0, failed: 0 };"
 );
 check(
   "the trail is read before the AI switch is asked",
@@ -151,13 +151,24 @@ check(
 );
 check(
   "the engine finalizes on both paths",
-  (engine.match(/await finalizeAttemptTotals\(attemptId, trail\);/g) ?? []).length === 2,
-  String((engine.match(/await finalizeAttemptTotals\(attemptId, trail\);/g) ?? []).length)
+  (engine.match(/await finalizeAttemptTotals\(attemptId, trail, (?:false|graded > 0)\);/g) ?? [])
+    .length === 2,
+  String(
+    (engine.match(/await finalizeAttemptTotals\(attemptId, trail, (?:false|graded > 0)\);/g) ?? [])
+      .length
+  )
 );
 check(
   "the AI-on path still grades before it finalizes",
-  engine.indexOf("const result = await gradePendingResponses(restClient, attemptId, trail);") <
-    engine.lastIndexOf("await finalizeAttemptTotals(attemptId, trail);")
+  engine.indexOf("const result = await gradePendingResponses(restClient, attemptId, trail, skipParked);") >= 0 &&
+    engine.indexOf("const result = await gradePendingResponses(restClient, attemptId, trail, skipParked);") <
+      engine.lastIndexOf("await finalizeAttemptTotals(attemptId, trail, graded > 0);")
+);
+check(
+  "only a run that sent an answer to a model credits the AI",
+  engine.includes("function closingActor(") &&
+    engine.includes('actorLabel: "Grading engine"') &&
+    engine.includes("await finalizeAttemptTotals(attemptId, trail, graded > 0);")
 );
 check(
   "the file says an AI-off deployment still finishes a self-marked paper",

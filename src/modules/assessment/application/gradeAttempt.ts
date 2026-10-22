@@ -179,7 +179,7 @@ export async function gradeAttemptResponses(
     // fully marked paper SUBMITTED forever on an AI-off deployment — and a
     // suite's second-test rule, which fires on the crossing into GRADED, would
     // never run. An unfinished paper is written back as SUBMITTED, unchanged.
-    await finalizeAttemptTotals(attemptId, trail);
+    await finalizeAttemptTotals(attemptId, trail, false);
     return { graded: 0, failed: 0 };
   }
 
@@ -196,7 +196,7 @@ export async function gradeAttemptResponses(
     if (failed === 0) break;
   }
 
-  await finalizeAttemptTotals(attemptId, trail);
+  await finalizeAttemptTotals(attemptId, trail, graded > 0);
 
   if (failed > 0) {
     await recordActivity({
@@ -624,10 +624,33 @@ export async function resyncAttemptTotals(
   return { ...totals, error: error?.message };
 }
 
+/**
+ * Who a run's closing row names.
+ *
+ * Only a run that actually sent an answer to a model may say an AI graded the
+ * paper. A finalize that merely writes totals for marks already on the rows —
+ * the AI-off path, or a sweep closing a fully marked paper — names the grading
+ * engine with no model behind it.
+ */
+function closingActor(
+  trail: GradingTrail,
+  usedModel: boolean
+): GradingTrail["actor"] {
+  if (usedModel) return trail.actor;
+  return {
+    actorKind: "SYSTEM",
+    actorLabel: "Grading engine",
+    actorId: trail.actor.actorId,
+    companyId: trail.actor.companyId,
+    via: trail.actor.via,
+  };
+}
+
 /** Recomputes attempt totals and records the crossing into GRADED, if this pass caused it. */
 async function finalizeAttemptTotals(
   attemptId: string,
-  trail: GradingTrail
+  trail: GradingTrail,
+  usedModel: boolean
 ): Promise<void> {
   const totals = await resyncAttemptTotals(attemptId);
 
@@ -635,7 +658,7 @@ async function finalizeAttemptTotals(
   // totals to an already-graded attempt would otherwise repeat the same row.
   if (totals.complete && !totals.error && !trail.wasGraded) {
     await recordActivity({
-      ...trail.actor,
+      ...closingActor(trail, usedModel),
       area: "assessments",
       action: "attempt_graded",
       entity: "attempt",
