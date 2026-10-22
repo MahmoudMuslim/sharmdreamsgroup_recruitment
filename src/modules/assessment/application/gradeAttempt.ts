@@ -13,6 +13,10 @@ import type { ActivityEntry } from "@/modules/activity/domain/trail";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { routeFollowUp } from "@/modules/assessment/application/routeFollowUp";
 import {
+  attemptTotalsFrom,
+  type AttemptTotals as ResponseTotals,
+} from "@/modules/assessment/domain/attemptTotals";
+import {
   evaluateCaseStudy,
   evaluateExcelModel,
   evaluateVideoPitch,
@@ -30,6 +34,11 @@ import type { QuestionEvaluation, SpreadsheetCellData } from "@/types";
  * situational judgment scenes are scored inline by the submit route itself —
  * their response rows already carry a score, so the `score IS NULL` read below
  * never hands them to a model.
+ *
+ * The finalize step runs even when AI is switched off or no provider is
+ * configured: nothing is sent to a model, but a paper whose every answer was
+ * marked on submit is finished, and that crossing is what the trail and a
+ * suite's second-test rule read.
  *
  * A pitch is graded from its transcript — the recording is sent to a speech
  * model once, stored on the response, and only then scored, so a retry never
@@ -82,14 +91,7 @@ type GradeOutcome =
   | { status: "UNSUPPORTED" };
 
 /** What an attempt's response rows add up to, as recomputed by {@link resyncAttemptTotals}. */
-export interface AttemptTotals {
-  total: number;
-  max: number;
-  responses: number;
-  /** How many of them still carry no score — what keeps the attempt open. */
-  unscored: number;
-  /** Every response carries a score — the only thing that makes an attempt GRADED. */
-  complete: boolean;
+export interface AttemptTotals extends ResponseTotals {
   error?: string;
 }
 
@@ -152,15 +154,24 @@ export async function gradeAttemptResponses(
   attemptId: string,
   options: { passes?: number } = {}
 ): Promise<{ graded: number; failed: number }> {
-  const { aiEnabled } = await getAiAutomationSettings();
-  if (!aiEnabled || !hasAiProvider()) return { graded: 0, failed: 0 };
-
   // A recruiter watching a button wait wants one try and an answer; the submit
   // route and the cron sweep get the full retry budget for free.
   const passes = Math.max(1, options.passes ?? GRADING_PASSES);
 
   const restClient = getServiceRestClient();
   const trail = await gradingTrail(restClient, attemptId);
+
+  const { aiEnabled } = await getAiAutomationSettings();
+  if (!aiEnabled || !hasAiProvider()) {
+    // No model may mark anything, but the engine is still the door that decides
+    // a paper is finished: every quiz, judgment and gate answer was marked by
+    // the submit route itself. Returning here without finalizing would leave a
+    // fully marked paper SUBMITTED forever on an AI-off deployment — and a
+    // suite's second-test rule, which fires on the crossing into GRADED, would
+    // never run. An unfinished paper is written back as SUBMITTED, unchanged.
+    await finalizeAttemptTotals(attemptId, trail);
+    return { graded: 0, failed: 0 };
+  }
 
   let graded = 0;
   let failed = 0;
@@ -547,30 +558,18 @@ export async function resyncAttemptTotals(
     .eq("attempt_id", attemptId);
 
   const responses = (rows ?? []) as { score: number | null; max_score: number }[];
-  const total = responses.reduce((sum, row) => sum + (row.score ?? 0), 0);
-  const max = responses.reduce((sum, row) => sum + (row.max_score ?? 0), 0);
-  const unscored = responses.filter((row) => row.score === null).length;
-  // Judged by the rows themselves, not by whether a grading pass errored: a
-  // recording parked for review keeps the attempt honestly SUBMITTED.
-  const complete = responses.length > 0 && unscored === 0;
+  const totals = attemptTotalsFrom(responses);
 
   const { error } = await restClient
     .from("candidate_attempts")
     .update({
-      status: complete ? "GRADED" : "SUBMITTED",
-      total_score: total,
-      max_score: max,
+      status: totals.complete ? "GRADED" : "SUBMITTED",
+      total_score: totals.total,
+      max_score: totals.max,
     })
     .eq("id", attemptId);
 
-  return {
-    total,
-    max,
-    responses: responses.length,
-    unscored,
-    complete,
-    error: error?.message,
-  };
+  return { ...totals, error: error?.message };
 }
 
 /** Recomputes attempt totals and records the crossing into GRADED, if this pass caused it. */
