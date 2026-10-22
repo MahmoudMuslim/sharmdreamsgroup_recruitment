@@ -500,25 +500,43 @@ function openingScopeWords(filter: JobReadFilter, company: string | null = null)
     : `openings marked ${filter}${at}`;
 }
 
-/** Everything `create_job` / `update_job` write, so both paths stay identical. */
-function jobDraft(args: ToolArgs): JobDraft {
-  const sector = str(args, "sector").toUpperCase();
-  if (!SECTORS.includes(sector as (typeof SECTORS)[number])) {
+/**
+ * Everything `create_job` / `update_job` write, so both paths stay identical.
+ *
+ * `fromPosition` is set only by `create_job`. It relaxes the fields a position
+ * supplies — title, company, department, sector, description — and carries the
+ * `position_id` the write inherits from, so a chat can open a role with just a
+ * position, a location and a type. `update_job` never passes it: an edit rewrites
+ * the whole record and never moves the link.
+ */
+function jobDraft(args: ToolArgs, opts: { fromPosition?: boolean } = {}): JobDraft {
+  const positionId = opts.fromPosition ? optionalStr(args, "position_id") : undefined;
+  // A field the position fills may be absent; every other path keeps the old
+  // requirement, so a chat that forgets the title on an edit is still refused here.
+  const text = (key: string) => (positionId ? optionalStr(args, key) ?? "" : str(args, key));
+
+  const sector = text("sector").toUpperCase();
+  if (sector && !SECTORS.includes(sector as (typeof SECTORS)[number])) {
     throw new ToolArgumentError(`"sector" must be one of: ${SECTORS.join(", ")}.`);
   }
   return {
-    title: str(args, "title"),
-    tenant_id: str(args, "tenant_id"),
-    department: str(args, "department"),
+    ...(positionId ? { position_id: positionId } : {}),
+    title: text("title"),
+    tenant_id: text("tenant_id"),
+    department: text("department"),
     sector,
+    // A position defines a post, not where it sits: the location is still the
+    // caller's to name.
     location: str(args, "location"),
-    employment_type: str(args, "employment_type").toUpperCase(),
-    description: str(args, "description"),
+    employment_type: (
+      positionId ? optionalStr(args, "employment_type") ?? "FULL_TIME" : str(args, "employment_type")
+    ).toUpperCase(),
+    description: text("description"),
     requirements: args.requirements === undefined ? [] : strArray(args, "requirements"),
     min_salary_usd: optionalStr(args, "min_salary_usd") ?? "",
     max_salary_usd: optionalStr(args, "max_salary_usd") ?? "",
     salary_currency: optionalStr(args, "salary_currency") ?? "USD",
-    status: str(args, "status").toUpperCase(),
+    status: (positionId ? optionalStr(args, "status") ?? "DRAFT" : str(args, "status")).toUpperCase(),
   };
 }
 
@@ -573,12 +591,13 @@ const MASTER_ENTITIES: MasterEntity[] = [
   "departments",
   "locations",
   "role_families",
+  "positions",
   "skills",
   "currencies",
 ];
 
 /**
- * One of the six vocabularies, or a refusal that names the six.
+ * One of the seven vocabularies, or a refusal that names the seven.
  *
  * The read, the save and the retire all address a list by the same word the console
  * uses in its own `?section=`, so one validator keeps a chat answer, a written row and

@@ -22,6 +22,12 @@ import {
   resolveJobFiling,
   type JobFilingFields,
 } from "@/modules/jobs/application/filingVocabularies";
+import {
+  POSITION_TEMPLATE_COLUMNS,
+  inheritedFrom,
+  supplied,
+  type PositionTemplate,
+} from "@/modules/jobs/domain/positionInheritance";
 
 export interface JobDraft {
   title: string;
@@ -37,6 +43,11 @@ export interface JobDraft {
   /** ISO 4217 code the two salary figures are denominated in. */
   salary_currency: string;
   status: string;
+  /**
+   * The position a new opening starts from. Only a create reads it, and only to
+   * inherit the copy below; an edit never moves an opening's position link.
+   */
+  position_id?: string;
 }
 
 export interface JobResult {
@@ -122,6 +133,53 @@ async function jobColumnsFrom(
   };
 }
 
+/**
+ * The position a create starts from, or the reason it cannot.
+ *
+ * The same refusal the Settings console prints when the table is missing: a retry
+ * would fail identically, so the answer names the migration instead of asking for
+ * one.
+ */
+async function positionTemplate(
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
+  id: string
+): Promise<{ position: PositionTemplate } | { error: string }> {
+  const { data, error } = await restClient
+    .from("positions")
+    .select(POSITION_TEMPLATE_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    // 42P01 is the missing table; PGRST205/204 is a schema cache that has not caught
+    // up with it. Both mean the same thing at this door.
+    if (
+      error.code === "42P01" ||
+      error.code === "PGRST205" ||
+      error.code === "PGRST204" ||
+      /does not exist|schema cache/i.test(error.message)
+    ) {
+      return {
+        error:
+          "The positions list has not been created on this database yet — db/migrations/026_positions.sql is authored but not applied, so nothing can start from a position until it is.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  if (!data) {
+    return { error: "That position no longer exists — reload the form and pick another." };
+  }
+
+  const position = data as unknown as PositionTemplate;
+  if (position.is_active === false) {
+    return {
+      error: `“${position.title}” is retired, so a new opening cannot start from it. Reactivate it in Settings → Organisation → Positions, or pick another.`,
+    };
+  }
+  return { position };
+}
+
 /** Creates a job opening. Requires the `jobs.manage` permission. */
 export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   await requireStaff("/jobs");
@@ -131,7 +189,46 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
 
   const restClient = await createServerRestClient();
 
-  const built = await jobColumnsFrom(draft, restClient);
+  // The position is read before validation because it supplies the copy the draft
+  // is allowed to leave out. The link is recorded only on create; an edit never
+  // moves it.
+  const positionId = supplied(draft.position_id) ? draft.position_id!.trim() : null;
+  let source = draft;
+  let position: PositionTemplate | null = null;
+  if (positionId) {
+    const read = await positionTemplate(restClient, positionId);
+    if ("error" in read) return { ok: false, error: read.error };
+    position = read.position;
+    // A position filed under one company is that company's post. Copying it onto
+    // another company's opening would be a role nobody defined, so the company an
+    // opening inherits has to be the one the position names — or the position has
+    // to be group-wide, which is what a null tenant means.
+    if (
+      position.tenant_id &&
+      supplied(draft.tenant_id) &&
+      draft.tenant_id.trim() !== position.tenant_id
+    ) {
+      return {
+        ok: false,
+        error: `“${position.title}” is filed under a different company, so an opening here cannot start from it. Pick that company, or a position filed under this one.`,
+      };
+    }
+    source = inheritedFrom(draft, position);
+  }
+
+  // The form fills the sector from the company when a position is picked; a chat
+  // that sends only the position does not have to know it, so it is read here when
+  // the position named a company.
+  if (!source.sector.trim() && source.tenant_id) {
+    const { data: company } = await restClient
+      .from("tenants_and_companies")
+      .select("sector")
+      .eq("id", source.tenant_id)
+      .maybeSingle();
+    if (typeof company?.sector === "string") source = { ...source, sector: company.sector };
+  }
+
+  const built = await jobColumnsFrom(source, restClient);
   if (!built.ok) return { ok: false, error: built.error };
   const { columns } = built;
 
@@ -153,6 +250,10 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     .from("job_openings")
     .insert({
       ...columns,
+      // Only a create carries the link, and only when a position was chosen: while
+      // 026 is unapplied the column does not exist, and sending `null` for it would
+      // fail an insert that has nothing to do with positions.
+      ...(positionId ? { position_id: positionId } : {}),
       created_by: createdBy,
       // Only a published opening gets a posted date.
       posted_at: columns.status === "PUBLISHED" ? new Date().toISOString() : null,
@@ -161,11 +262,29 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     .single();
 
   if (error) {
+    // The link was chosen and the column it writes is not there: the position read
+    // could not have succeeded on such a database, so this is the migration, said
+    // once more rather than as a raw schema-cache error.
+    if (
+      /position_id/.test(error.message) &&
+      (error.code === "42703" ||
+        error.code === "PGRST204" ||
+        /does not exist|schema cache/i.test(error.message))
+    ) {
+      return {
+        ok: false,
+        error:
+          "The opening could not be linked to its position: db/migrations/026_positions.sql is authored but not applied, so job_openings has no position_id column yet.",
+      };
+    }
     // 23503 is a foreign-key violation. Naming the column makes this far
     // easier to diagnose than a generic "could not be found".
     if (error.code === "23503") {
       if (error.message.includes("tenant_id")) {
         return { ok: false, error: "That company no longer exists — pick another." };
+      }
+      if (error.message.includes("position_id")) {
+        return { ok: false, error: "That position no longer exists — pick another." };
       }
       if (error.message.includes("created_by")) {
         return { ok: false, error: "Your staff profile is missing — ask an admin to fix it." };
@@ -196,6 +315,9 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       location: columns.location,
       employment_type: columns.employment_type,
       status: columns.status,
+      // Named so the trail says where the copy came from, not just that an
+      // opening appeared. Absent on a blank create, which starts from no position.
+      ...(position ? { position: position.title } : {}),
       salary:
         columns.min_salary_usd || columns.max_salary_usd
           ? `${printableValue(columns.min_salary_usd)}–${printableValue(columns.max_salary_usd)} ${columns.salary_currency}`

@@ -58,6 +58,12 @@ const ORGANISATION_SECTIONS: SettingsNavSection[] = [
     icon: "briefcase",
   },
   {
+    id: "positions",
+    label: "Positions",
+    hint: "The posts the group hires for, and the vacancy copy a new opening starts from.",
+    icon: "clipboard",
+  },
+  {
     id: "skills",
     label: "Skills",
     hint: "Shared skill vocabulary. Feeds AI screening, skill-gap analysis and reporting.",

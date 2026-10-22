@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
+  ClipboardCheck,
   GraduationCap,
   Loader2,
   MapPin,
@@ -22,7 +23,11 @@ import {
   updateMasterRecord,
 } from "@/modules/settings/application/master-data-actions";
 import { SECTORS, SECTOR_LABELS } from "@/modules/settings/domain/vocabularies";
-import { listTwins, twinNotice } from "@/modules/settings/domain/masterDataLists";
+import {
+  UNAPPLIED_MASTER_LIST,
+  listTwins,
+  twinNotice,
+} from "@/modules/settings/domain/masterDataLists";
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
 import { Badge, Button } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
@@ -34,6 +39,7 @@ import type {
   MasterData,
   MasterEntity,
   MasterPayload,
+  Position,
   RoleFamily,
   Skill,
 } from "@/modules/settings/domain/types";
@@ -206,6 +212,80 @@ const FIELDS: Record<MasterEntity, FieldDef[]> = {
     },
     { name: "description", label: "Description", kind: "textarea" },
   ],
+  positions: [
+    { name: "title", label: "Position title", kind: "text", required: true, group: "The post" },
+    {
+      name: "tenant_id",
+      label: "Company",
+      kind: "select",
+      choices: (d) => [
+        { value: "", label: "Group-wide (shared)" },
+        ...d.companies
+          .filter((c) => c.is_active && !c.is_group_profile)
+          .map((c) => ({ value: c.id, label: c.name })),
+      ],
+      hint: "Leave as group-wide unless the post exists in one company only.",
+    },
+    {
+      name: "department",
+      label: "Department",
+      kind: "select",
+      required: true,
+      choices: (d) => {
+        const live = d.departments.filter((x) => x.is_active);
+        return [
+          {
+            value: "",
+            label: live.length ? "Choose a department" : "No departments on the list yet",
+          },
+          ...live.map((x) => ({ value: x.name, label: x.name })),
+        ];
+      },
+      hint: "Stored by name, exactly as the list spells it — an opening files its department the same way.",
+    },
+    {
+      name: "grade",
+      label: "Grade",
+      kind: "text",
+      hint: "The internal band, e.g. G5 or Manager II. Openings do not carry it.",
+    },
+    {
+      name: "responsibilities",
+      label: "Responsibilities",
+      kind: "textarea",
+      max: 4000,
+      lines: 8,
+      group: "Copy a new opening starts from",
+      hint: "What the post does. A new opening inherits this word for word as its description.",
+    },
+    {
+      name: "requirements",
+      label: "Requirements",
+      kind: "textarea",
+      lines: 6,
+      hint: "One line per requirement — a new opening inherits them as its requirements list.",
+    },
+    {
+      name: "min_salary_usd",
+      label: "Salary from",
+      kind: "number",
+      group: "Salary band",
+      hint: "Leave both figures blank when the band is not fixed.",
+    },
+    { name: "max_salary_usd", label: "Salary to", kind: "number" },
+    {
+      name: "salary_currency",
+      label: "Currency",
+      kind: "select",
+      choices: (d) => {
+        const live = d.currencies.filter((c) => c.is_active);
+        return live.length
+          ? live.map((c) => ({ value: c.code, label: `${c.code} — ${c.label}` }))
+          : [{ value: "USD", label: "USD — US Dollar" }];
+      },
+      hint: "The column names keep their historical _usd suffix; this code is the currency actually stored.",
+    },
+  ],
   skills: [
     { name: "name", label: "Skill name", kind: "text", required: true },
     { name: "category", label: "Category", kind: "text", hint: "Technical, Soft, Commercial…" },
@@ -244,6 +324,7 @@ const ENTITY_META: {
   { entity: "departments", singular: "department", icon: Network },
   { entity: "locations", singular: "location", icon: MapPin },
   { entity: "role_families", singular: "role family", icon: BriefcaseBusiness },
+  { entity: "positions", singular: "position", icon: ClipboardCheck },
   { entity: "skills", singular: "skill", icon: GraduationCap },
   { entity: "currencies", singular: "currency", icon: CircleDollarSign },
 ];
@@ -267,6 +348,8 @@ function rowsFor(data: MasterData, entity: MasterEntity): MasterRow[] {
       return shapeRow(entity, data.locations);
     case "role_families":
       return shapeRow(entity, data.roleFamilies);
+    case "positions":
+      return shapeRow(entity, data.positions);
     case "skills":
       return shapeRow(entity, data.skills);
     case "currencies":
@@ -274,10 +357,11 @@ function rowsFor(data: MasterData, entity: MasterEntity): MasterRow[] {
   }
 }
 
-type MasterRow = (Company | Department | Location | RoleFamily | Skill | Currency) & {
+type MasterRow = (Company | Department | Location | RoleFamily | Position | Skill | Currency) & {
   id: string;
   name?: string | null;
   label?: string | null;
+  title?: string | null;
   description?: string | null;
   city?: string | null;
   country?: string | null;
@@ -326,6 +410,20 @@ function subline(row: MasterRow, data: MasterData): string | null {
       : null;
     return [family.key, dept].filter(Boolean).join(" · ") || null;
   }
+  if ("title" in row) {
+    const position = row as Position;
+    const money = (value: number) =>
+      `${position.salary_currency} ${value.toLocaleString()}`;
+    const band =
+      position.min_salary_usd != null && position.max_salary_usd != null
+        ? `${money(position.min_salary_usd)}–${money(position.max_salary_usd)}`
+        : position.min_salary_usd != null
+          ? `from ${money(position.min_salary_usd)}`
+          : position.max_salary_usd != null
+            ? `up to ${money(position.max_salary_usd)}`
+            : null;
+    return [position.department, position.grade, band].filter(Boolean).join(" · ") || null;
+  }
   if ("category" in row) {
     const skill = row as Skill;
     return skill.category ?? null;
@@ -335,7 +433,7 @@ function subline(row: MasterRow, data: MasterData): string | null {
 }
 
 function displayName(row: MasterRow): string {
-  return row.name ?? row.label ?? "—";
+  return row.title ?? row.name ?? row.label ?? "—";
 }
 
 /** The row whose profile is the whole group's — the one the careers header reads. */
@@ -575,6 +673,12 @@ export function MasterDataConsole({
   const rows = rowsFor(data, tab);
   const activeTab = meta;
 
+  // The positions table arrives with a migration the owner has not applied yet. A
+  // failed read is not an empty list, and offering an Add form would promise a save
+  // that cannot land, so this section says what is missing instead.
+  const unavailable = tab === "positions" && !data.positionsAvailable;
+  const missingMigration = UNAPPLIED_MASTER_LIST[tab];
+
   // Names the list holds twice, from the rows already loaded for this section. The
   // write door refuses a second copy, so anything here is a state the console has to
   // show rather than prevent — and an opening filed under one of these names means
@@ -605,6 +709,12 @@ export function MasterDataConsole({
       if (field.kind === "select" && field.name === "sector") defaults[field.name] = "HOSPITALITY";
       if (field.kind === "text" && field.name === "country") defaults[field.name] = "Egypt";
       if (field.kind === "text" && field.name === "timezone") defaults[field.name] = "Africa/Cairo";
+      // Positions default to the currency the migration's own column default names,
+      // unless that one is retired — the write door resolves against live rows only.
+      if (field.kind === "select" && field.name === "salary_currency") {
+        const live = data.currencies.filter((currency) => currency.is_active);
+        defaults[field.name] = (live.find((currency) => currency.code === "USD") ?? live[0])?.code ?? "USD";
+      }
     }
     setDraft(defaults);
   }
@@ -624,6 +734,12 @@ export function MasterDataConsole({
       // text box and write that back over the company's timeline on the next save.
       if (field.kind === "rows") {
         next[field.name] = Array.isArray(value) ? JSON.stringify(value) : "";
+        continue;
+      }
+      // Requirements are stored as text[] but edited one per line; `String([...])`
+      // would join them with commas and write a single run-on line back on save.
+      if (tab === "positions" && field.name === "requirements" && Array.isArray(value)) {
+        next[field.name] = value.join("\n");
         continue;
       }
       next[field.name] = value === null || value === undefined ? "" : String(value);
@@ -716,14 +832,14 @@ export function MasterDataConsole({
             <Icon className="h-[18px] w-[18px] text-brand-gold-dark" aria-hidden />
             {navSection.label}
             <span className="rounded-full bg-brand-sand px-2 py-0.5 text-[11px] font-bold text-brand-ink/55">
-              {rows.length}
+              {unavailable ? "—" : rows.length}
             </span>
           </p>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-brand-ink/50 lg:hidden">
             {navSection.hint}
           </p>
         </div>
-        {editable && (
+        {editable && !unavailable && (
           <Button onClick={openCreate} size="sm">
             <Plus className="h-3.5 w-3.5" aria-hidden />
             Add {activeTab.singular}
@@ -744,7 +860,21 @@ export function MasterDataConsole({
       )}
 
       {/* List */}
-      {rows.length === 0 ? (
+      {unavailable ? (
+        <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-8 text-center">
+          <p className="text-sm font-semibold text-amber-900">
+            {navSection.label} have not been created on this database yet.
+          </p>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-amber-900/80">
+            This is not an empty list.{" "}
+            <code className="rounded bg-amber-100 px-1 py-0.5 text-[12px]">
+              {missingMigration}
+            </code>{" "}
+            is authored but not applied, so nothing can be saved here and no opening can
+            start from a position until it is. Every other list still works.
+          </p>
+        </div>
+      ) : rows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-brand-line bg-brand-cream px-4 py-8 text-center text-sm text-brand-ink/50">
           No {navSection.label.toLowerCase()} yet.
           {editable ? " Use “Add” to create the first one." : ""}
@@ -828,11 +958,11 @@ export function MasterDataConsole({
               save();
             }}
             className={cn(
-              // A company now carries a profile, so its panel gets the width the
-              // prose and the timeline rows need; the short vocabularies keep the
-              // narrow drawer.
+              // A company now carries a profile, and a position carries the copy a
+              // vacancy inherits, so both get the width their prose needs; the short
+              // vocabularies keep the narrow drawer.
               "absolute inset-y-0 right-0 flex w-full flex-col border-l border-brand-line bg-white shadow-2xl",
-              tab === "companies" ? "max-w-2xl" : "max-w-md",
+              tab === "companies" || tab === "positions" ? "max-w-2xl" : "max-w-md",
               "panel-in"
             )}
           >
@@ -880,6 +1010,15 @@ export function MasterDataConsole({
                 const text = String(draft[field.name] ?? "");
                 const counted = text.trim().length;
                 const over = field.max !== undefined && counted > field.max;
+                const choices = field.kind === "select" ? (field.choices?.(data) ?? []) : [];
+                // The pickers offer live rows only, because the write door refuses
+                // anything else. A record already carrying a value the list has since
+                // retired still has to show it, or the form would read as cleared.
+                const kept = field.kind === "select" && text !== "" && !choices.some((choice) => choice.value === text);
+                const keptLabel =
+                  field.name === "tenant_id"
+                    ? (data.companies.find((company) => company.id === text)?.name ?? `${text.slice(0, 8)}…`)
+                    : text;
 
                 return (
                   <div key={field.name}>
@@ -906,11 +1045,14 @@ export function MasterDataConsole({
                         onChange={(e) => editField(field.name, e.target.value)}
                         className="w-full rounded-xl border border-brand-line bg-brand-cream px-3 py-2 text-sm focus:border-brand-gold focus:bg-white focus:outline-none"
                       >
-                        {(field.choices?.(data) ?? []).map((choice) => (
+                        {choices.map((choice) => (
                           <option key={choice.value} value={choice.value}>
                             {choice.label}
                           </option>
                         ))}
+                        {kept && (
+                          <option value={text}>{`${keptLabel} — retired or no longer on the list`}</option>
+                        )}
                       </select>
                     ) : field.kind === "rows" ? (
                       <RowsField

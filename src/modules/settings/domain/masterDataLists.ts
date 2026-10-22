@@ -1,8 +1,9 @@
 /**
  * The Settings master-data lists, in the shape both the console and the chat read.
  *
- * Six controlled vocabularies — companies, departments, locations, role families,
- * skills, currencies — back every picker in the portal. `/settings` shows them one
+ * Seven controlled vocabularies — companies, departments, locations, role
+ * families, positions, skills, currencies — back every picker in the portal.
+ * `/settings` shows them one
  * list at a time (`?section=`, the section named in the left dock), and it lists
  * every row including the retired ones, because a retired row is still pointed at
  * by the openings, candidates and reports written while it was in use, and the only
@@ -30,14 +31,15 @@
  * the server-side reads and the assistant registry can all import it.
  */
 
-import type { Company, Currency, Location, MasterEntity, Skill } from "./types";
+import type { Company, Currency, Location, MasterEntity, Position, Skill } from "./types";
 
-/** The six lists, in the order the settings dock shows them. */
+/** The seven lists, in the order the settings dock shows them. */
 export const MASTER_LIST_ORDER: readonly MasterEntity[] = [
   "companies",
   "departments",
   "locations",
   "role_families",
+  "positions",
   "skills",
   "currencies",
 ];
@@ -48,6 +50,7 @@ export const MASTER_LIST_WORDS: Record<MasterEntity, string> = {
   departments: "departments",
   locations: "locations",
   role_families: "role families",
+  positions: "positions",
   skills: "skills",
   currencies: "currencies",
 };
@@ -58,6 +61,7 @@ export type MasterRowLike = {
   name?: string | null;
   label?: string | null;
   key?: string | null;
+  title?: string | null;
   code?: string | null;
   is_active?: boolean | null;
 };
@@ -65,7 +69,7 @@ export type MasterRowLike = {
 /**
  * The list a parameter or a tool argument names, or `null` for none.
  *
- * A link builder interpolates this value into a URL, so anything the six lists do
+ * A link builder interpolates this value into a URL, so anything the seven lists do
  * not recognise has to read as "no list" rather than as a string that belongs in an
  * address — the same rule every other console on this page follows for its own
  * parameters.
@@ -85,6 +89,9 @@ export function masterListEntity(value: unknown): MasterEntity | null {
 export function masterRowName(entity: MasterEntity, row: MasterRowLike): string {
   if (entity === "currencies") {
     return `${String(row.code ?? "")} ${String(row.label ?? "")}`.trim() || "a currency";
+  }
+  if (entity === "positions") {
+    return String(row.title ?? "").trim() || "a position";
   }
   return String(row.label ?? row.name ?? row.key ?? "a record");
 }
@@ -250,6 +257,24 @@ export function projectMasterRow(entity: MasterEntity, row: MasterRowLike): Reco
         label: row.label ?? null,
         is_active,
       };
+    case "positions": {
+      const position = row as Position;
+      // The whole definition travels: a chat asked to open a role from a
+      // position has to be able to read the copy it would inherit.
+      return {
+        id: row.id,
+        tenant_id: position.tenant_id ?? null,
+        title: position.title ?? null,
+        department: position.department ?? null,
+        grade: position.grade ?? null,
+        responsibilities: position.responsibilities ?? null,
+        requirements: position.requirements ?? [],
+        min_salary_usd: position.min_salary_usd ?? null,
+        max_salary_usd: position.max_salary_usd ?? null,
+        salary_currency: position.salary_currency ?? null,
+        is_active,
+      };
+    }
     case "skills":
       return {
         id: row.id,
@@ -286,6 +311,7 @@ const BUNDLE_KEY: Record<MasterEntity, string> = {
   departments: "departments",
   locations: "locations",
   role_families: "roleFamilies",
+  positions: "positions",
   skills: "skills",
   currencies: "currencies",
 };
@@ -296,6 +322,7 @@ export const MASTER_ONE_WORDS: Record<MasterEntity, string> = {
   departments: "department",
   locations: "location",
   role_families: "role family",
+  positions: "position",
   skills: "skill",
   currencies: "currency",
 };
@@ -314,16 +341,33 @@ export const MASTER_ONE_WORDS: Record<MasterEntity, string> = {
  * what lets the model decide to ask for one rather than guess that nothing else
  * exists.
  */
+/**
+ * The one list whose table may not exist yet, and the file that creates it.
+ *
+ * Exported because the write door has to say the same thing as this read when the
+ * table is missing: "try again" would be a lie about a migration the owner has not
+ * applied.
+ */
+export const UNAPPLIED_MASTER_LIST: Partial<Record<MasterEntity, string>> = {
+  positions: "db/migrations/026_positions.sql",
+};
+
 export function masterListNote(input: {
   entity: MasterEntity;
   rows: MasterRowLike[];
   counts: Partial<Record<MasterEntity, number>>;
+  /** True when the table could not be read because it has not been created. */
+  unavailable?: boolean;
 }): string {
-  const { entity, rows, counts } = input;
+  const { entity, rows, counts, unavailable } = input;
   const words = MASTER_LIST_WORDS[entity];
   const retired = rows.filter((row) => row.is_active === false);
   const inUse = rows.length - retired.length;
   const rowWord = (value: number) => `${value.toLocaleString()} ${value === 1 ? "row" : "rows"}`;
+
+  if (unavailable && UNAPPLIED_MASTER_LIST[entity]) {
+    return `The ${words} list has not been created on this database yet — ${UNAPPLIED_MASTER_LIST[entity]} is authored but not applied. This is not an empty list: nothing can be saved here or inherited from here until the owner applies that file. Every other list still works.`;
+  }
 
   if (rows.length === 0) {
     return `The ${words} list is empty — nothing has been added there, so no record can name a ${MASTER_ONE_WORDS[entity]}. Add one with save_master_record before any opening or candidate uses it.`;
@@ -335,9 +379,10 @@ export function masterListNote(input: {
         retired.length === 1 ? "row is" : "rows are"
       } retired (${retired.map((row) => masterRowName(entity, row)).join(", ")}). This is the whole list, retired rows included.`;
 
+  // Empty rather than null: the string is interpolated straight into the note.
   const retiredClause =
     retired.length === 0
-      ? null
+      ? ""
       : ` A retired ${MASTER_ONE_WORDS[entity]} still resolves the records that already point at it, and the console lists it with a Retired badge — but the job and assessment pickers leave it out, so do not put a retired ${MASTER_ONE_WORDS[entity]} in a new opening. Bring one back with save_master_record (fields {\"is_active\": true}).`;
 
   const others = MASTER_LIST_ORDER.filter((each) => each !== entity && counts[each] !== undefined);
@@ -356,12 +401,17 @@ export function masterListNote(input: {
   return `${head}${retiredClause}${beside}${twins.length ? ` ${twinNotice(entity, twins)}` : ""}`;
 }
 
-/** Row-count-per-list, from the bundle the settings page loads. */
-export function masterListCounts(bundle: Record<string, unknown>): Record<MasterEntity, number> {
-  return Object.fromEntries(
-    MASTER_LIST_ORDER.map((entity) => [
-      entity,
-      ((bundle[BUNDLE_KEY[entity]] as MasterRowLike[] | undefined) ?? []).length,
-    ])
-  ) as Record<MasterEntity, number>;
+/**
+ * Row-count-per-list, from the bundle the settings page loads.
+ *
+ * A list whose table has not been created is left out rather than reported as
+ * zero, so a note naming the other lists never calls an unapplied table empty.
+ */
+export function masterListCounts(bundle: Record<string, unknown>): Partial<Record<MasterEntity, number>> {
+  const counts: Partial<Record<MasterEntity, number>> = {};
+  for (const entity of MASTER_LIST_ORDER) {
+    if (entity === "positions" && bundle.positionsAvailable === false) continue;
+    counts[entity] = ((bundle[BUNDLE_KEY[entity]] as MasterRowLike[] | undefined) ?? []).length;
+  }
+  return counts;
 }

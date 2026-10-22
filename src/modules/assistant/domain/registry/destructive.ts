@@ -132,7 +132,7 @@ export const destructive: readonly AssistantTool[] = [
     name: "delete_master_record",
     label: "Retiring a master-data record",
     description:
-      "Take one company, department, location, role family, skill or currency out of new selections. Nothing is deleted and nothing is refused: the row stays so the openings, candidates and reports already naming it keep resolving, and the settings console lists it with a Retired badge. Undo it with save_master_record (fields {\"is_active\": true}). The answer says how many hireable openings carry its name as written — a floor, because an opening that spells the name differently is not counted.",
+      "Take one company, department, location, role family, position, skill or currency out of new selections. Nothing is deleted and nothing is refused: the row stays so the openings, candidates and reports already naming it keep resolving, and the settings console lists it with a Retired badge. A retired position leaves the openings that started from it and the copy they inherited untouched. Undo it with save_master_record (fields {\"is_active\": true}). The answer says how many hireable openings carry its name as written — a floor, because an opening that spells the name differently is not counted; a position is counted exactly by the openings linked to it.",
     args: {
       entity: `string — one of ${MASTER_ENTITIES.join(", ")}`,
       id: "string — record id",

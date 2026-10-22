@@ -350,7 +350,7 @@ function credentialTrailView(result: unknown): AssistantLink {
  * The settings section holding one controlled vocabulary.
  *
  * The read names the list it answered from its own result and the writes name the
- * list in their arguments — but only an id one of the six lists actually owns belongs
+ * list in their arguments — but only an id one of the seven lists actually owns belongs
  * in an address, so anything else opens the area's dock rather than a `?section=` the
  * page would ignore. The label says which list is behind the door, because one list is
  * what the console shows at a time.

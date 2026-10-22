@@ -241,12 +241,50 @@ export interface Currency {
   sort_order: number;
 }
 
+/**
+ * A post a company or the group hires for, and the copy a new opening inherits.
+ *
+ * Not a requisition: it carries no location, employment type or status, because
+ * those belong to one intake. `department` is the department's own name, exactly
+ * as the list spells it, matching what a job opening stores.
+ */
+export interface Position {
+  id: string;
+  tenant_id: string | null;
+  title: string;
+  department: string;
+  grade: string | null;
+  responsibilities: string | null;
+  requirements: string[];
+  min_salary_usd: number | null;
+  max_salary_usd: number | null;
+  salary_currency: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+/** The columns a job form needs to inherit from a position, and nothing else. */
+export type PositionChoice = Pick<
+  Position,
+  | "id"
+  | "tenant_id"
+  | "title"
+  | "department"
+  | "grade"
+  | "responsibilities"
+  | "requirements"
+  | "min_salary_usd"
+  | "max_salary_usd"
+  | "salary_currency"
+>;
+
 /** The controlled vocabularies that can be added, edited and retired. */
 export type MasterEntity =
   | "companies"
   | "departments"
   | "locations"
   | "role_families"
+  | "positions"
   | "skills"
   | "currencies";
 
@@ -259,6 +297,13 @@ export interface MasterData {
   departments: Department[];
   locations: Location[];
   roleFamilies: RoleFamily[];
+  positions: Position[];
+  /**
+   * False when `db/migrations/026_positions.sql` has not been applied: the table
+   * could not be read, which is not the same as an empty list. The console says
+   * so instead of offering a form that would fail on save.
+   */
+  positionsAvailable: boolean;
   skills: Skill[];
   currencies: Currency[];
 }

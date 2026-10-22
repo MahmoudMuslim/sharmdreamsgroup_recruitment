@@ -37,24 +37,28 @@ export const writes: readonly AssistantTool[] = [
     name: "create_job",
     label: "Creating a job opening",
     description:
-      "Create a job opening. Read the vocabularies first — get_master_data answers one list per call, so ask it for companies, departments, locations and currencies — and file the role under a row that is in use. A company id, department name, location name or currency code the list does not hold is refused, and the refusal quotes the rows that are in use.",
+      "Create a job opening. Either point it at a position and let the definition supply the copy — send position_id, a location, and optionally the company, title, department or salary the intake overrides — or write the role out in full. Read the vocabularies first: get_master_data answers one list per call, so ask it for positions, companies, departments, locations and currencies, and file the role under a row that is in use. A company id, department name, location name or currency code the list does not hold is refused, and the refusal quotes the rows that are in use. A position filed under one company only seeds that company's openings. The positions table arrives with db/migrations/026_positions.sql; until the owner applies it, get_master_data reports the list as not created and a position_id is refused with that reason.",
     args: {
-      title: "string",
-      tenant_id: "string — company id from get_master_data (entity companies)",
+      position_id:
+        "string — optional id from get_master_data (entity positions). When sent, the position supplies title, company, department, description (its responsibilities), requirements and salary band, and any of those sent alongside replace the inherited value. The link is recorded on the opening.",
+      title: "string — required unless position_id supplies it",
+      tenant_id:
+        "string — company id from get_master_data (entity companies); required unless position_id supplies it",
       department:
-        "string — department name exactly as get_master_data (entity departments) lists it",
-      sector: `string — one of ${SECTORS.join(", ")}`,
+        "string — department name exactly as get_master_data (entity departments) lists it; required unless position_id supplies it",
+      sector: `string — one of ${SECTORS.join(", ")}; optional with position_id, where the company's sector is used`,
       location: "string — location name exactly as get_master_data (entity locations) lists it",
-      employment_type: "string — FULL_TIME, PART_TIME, CONTRACT or INTERNSHIP",
-      description: "string",
+      employment_type:
+        "string — FULL_TIME, PART_TIME, CONTRACT or INTERNSHIP; optional with position_id, defaults to FULL_TIME",
+      description: "string — required unless position_id supplies responsibilities",
       requirements: "string[] — optional list of requirement lines",
       min_salary_usd: "string — optional number",
       max_salary_usd: "string — optional number",
       salary_currency:
         "string — optional 3-letter code the currencies list holds in use, defaults to USD",
-      status: `string — one of ${JOB_STATUSES.join(", ")}`,
+      status: `string — one of ${JOB_STATUSES.join(", ")}; optional with position_id, defaults to DRAFT`,
     },
-    run: async (args) => report(await createJobOpening(jobDraft(args))),
+    run: async (args) => report(await createJobOpening(jobDraft(args, { fromPosition: true }))),
   },
   {
     name: "update_job",

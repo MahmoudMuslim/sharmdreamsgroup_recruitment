@@ -659,7 +659,7 @@ export const reads: readonly AssistantTool[] = [
     name: "get_master_data",
     label: "Reading a master-data list",
     description:
-      "One controlled vocabulary, whole — the companies, departments, locations, role families, skills or currencies the portal offers. Retired rows are included and marked is_active:false, exactly as the settings console lists them. A job stores its company by id and its department, location and currency by the text in these lists, so read each list you need before creating or editing a record, and use a row that is in use.",
+      "One controlled vocabulary, whole — the companies, departments, locations, role families, positions, skills or currencies the portal offers. Retired rows are included and marked is_active:false, exactly as the settings console lists them. A job stores its company by id and its department, location and currency by the text in these lists, so read each list you need before creating or editing a record, and use a row that is in use. A position carries the copy a new opening can inherit — title, department, responsibilities, requirements, salary band — and an opening's company must match the position's tenant_id unless that is null, which marks a group-wide post. The positions table arrives with db/migrations/026_positions.sql; until the owner applies it this call says the list has not been created rather than reporting it empty.",
     args: {
       entity: `string — one of ${MASTER_ENTITIES.join(", ")}, the list to read`,
     },
@@ -667,10 +667,16 @@ export const reads: readonly AssistantTool[] = [
       const entity = masterEntity(str(args, "entity"));
       const bundle = await getMasterData();
       const rows = projectMasterList(entity, bundle);
+      const unavailable = entity === "positions" && bundle.positionsAvailable === false;
       return {
         entity,
         rows,
-        master_data_note: masterListNote({ entity, rows, counts: masterListCounts(bundle) }),
+        master_data_note: masterListNote({
+          entity,
+          rows,
+          counts: masterListCounts(bundle),
+          unavailable,
+        }),
       };
     },
   },

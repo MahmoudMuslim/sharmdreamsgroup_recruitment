@@ -40,6 +40,7 @@ const MASTER_KEYS = [
   "departments",
   "locations",
   "role_families",
+  "positions",
   "skills",
   "currencies",
 ] as const;
@@ -47,7 +48,12 @@ const MASTER_KEYS = [
 function masterCounts(master: MasterData): Record<string, number> {
   const source = master as unknown as Record<string, unknown[] | undefined>;
   const out: Record<string, number> = {};
-  for (const key of MASTER_KEYS) out[`organisation:${key}`] = source[key]?.length ?? 0;
+  for (const key of MASTER_KEYS) {
+    // A table that was never created is not a list of zero: the dock would print a
+    // count beside a section that says it cannot be read at all.
+    if (key === "positions" && !master.positionsAvailable) continue;
+    out[`organisation:${key}`] = source[key]?.length ?? 0;
+  }
   return out;
 }
 

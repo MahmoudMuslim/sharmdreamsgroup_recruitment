@@ -24,12 +24,12 @@ export const masterData: readonly AssistantTool[] = [
     name: "save_master_record",
     label: "Saving a master-data record",
     description:
-      "Add or edit one entry in a controlled vocabulary — a company, department, location, role family, skill or currency. Jobs and prospects can only use values that exist here. A name the list already carries is refused however it is spelled: two rows that read alike are decided by the list's own order everywhere else in the portal, so edit the row you mean rather than adding a second copy. This is also the way to bring a retired row back into use: send fields {\"is_active\": true}, the switch the console's Reactivate button writes.",
+      "Add or edit one entry in a controlled vocabulary — a company, department, location, role family, position, skill or currency. Jobs and prospects can only use values that exist here. A name the list already carries is refused however it is spelled: two rows that read alike are decided by the list's own order everywhere else in the portal, so edit the row you mean rather than adding a second copy. This is also the way to bring a retired row back into use: send fields {\"is_active\": true}, the switch the console's Reactivate button writes. A position is written with a title and a department, plus optionally tenant_id (omit it for a group-wide post), grade, responsibilities, requirements (one line per entry, at most 30), min_salary_usd, max_salary_usd and salary_currency; a new opening can start from that copy. The positions table arrives with db/migrations/026_positions.sql — until the owner applies it, a write to that list says so rather than asking for a retry.",
     args: {
       entity: `string — one of ${MASTER_ENTITIES.join(", ")}`,
       id: "string — optional, the record being edited",
       fields:
-        'object — the columns to write, e.g. {"name":"Housekeeping"} or {"label":"US Dollar"} for a currency. Only the columns sent are written, so an edit never quietly re-activates a retired row; send {"is_active":true} when it should come back, or {"is_active":false} to retire it.',
+        'object — the columns to write, e.g. {"name":"Housekeeping"} or {"label":"US Dollar"} for a currency, or {"title":"Finance Manager","department":"Finance & Investment","responsibilities":"…"} for a position. Only the columns sent are written, so an edit never quietly re-activates a retired row; send {"is_active":true} when it should come back, or {"is_active":false} to retire it.',
     },
     run: async (args) => {
       const entity = masterEntity(str(args, "entity"));

@@ -188,6 +188,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
     use: [
       "New opening, then Edit, Publish, Pause or Close. Close is how you stop a role that already has applicants.",
+      "New opening can start from a position: the picker fills the title, company, department, description, requirements and salary band from the position's definition, and every field stays editable before you save.",
       "Open the applicants drawer to expand a row into their submission, open or download the CV, and move them through the stages without leaving the role.",
       "Full profile in Candidates hands the person over to the pipeline screen.",
       "Filter by status or company, search by title, department, location or company, and sort by newest, most applicants or title.",
@@ -196,6 +197,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Delete is refused once anyone has applied — the opening is closed instead so its records stay reachable.",
       "A closed opening cannot be filed onto: linking, importing, converting or recording someone under it is refused until it reopens.",
       "Departments and locations come from Settings → Organisation. A retired or misspelt value is refused on a new write, and the drift desk there names the openings already carrying one.",
+      "Starting from a position needs that list: db/migrations/026_positions.sql is authored but not applied on this database, so the form says the positions have not been created yet and offers a blank opening instead. Once applied, an opening's company has to match the position's company unless the position is group-wide.",
       "A card's count is live; the drawer lists the newest 200 applicants.",
       "The grid holds the newest 200 openings in the browser — its rails, its search box and its page count those, while the strip's figure is the whole scope. When the two differ, a line under the strip names what is not here.",
       "A rail, new search words or the assistant's link to one opening moves you to the page that holds it; anything else starts you back at the front.",
@@ -394,7 +396,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   "/settings": {
     purpose: "Every switch the portal obeys, who may do what, and the record of both.",
     shows: [
-      "Four areas in the dock: Platform (organisation, AI, assessment, notifications, security, and the settings change trail), Organisation (companies, departments, locations, role families, skills, currencies, and the filing drift desk), Access & comms (permissions, team, notification templates, languages) and Providers (API keys with their audit trail, and AI models with routing, catalogue and provider health).",
+      "Four areas in the dock: Platform (organisation, AI, assessment, notifications, security, and the settings change trail), Organisation (companies, departments, locations, role families, positions, skills, currencies, and the filing drift desk), Access & comms (permissions, team, notification templates, languages) and Providers (API keys with their audit trail, and AI models with routing, catalogue and provider health).",
     ],
     use: [
       "Pick a section, change the controls, Save changes. Each write is recorded with who made it.",
@@ -409,6 +411,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Writes and both trails need the Manage platform settings permission; role and permission grants need Manage roles (the same key the database checks); staff accounts need Manage users.",
       "A stored key always wins over the environment variable of the same name, and removing one falls back to the environment. A saved key is never displayed back to you.",
       "A second master-data row carrying the same words is refused, because a job opening stores only the name.",
+      "The Positions list arrives with db/migrations/026_positions.sql. Until the owner applies it, its section says the list has not been created — not that it is empty — and nothing can be saved there.",
       "A wording override that drops or invents a {placeholder}, or runs past 2000 characters, refuses the whole save rather than writing the half it likes.",
       "You cannot disable your own account, and the last active Super Admin cannot be locked out.",
       "A probe costs money: arriving on the provider tab runs nothing — only Test and the health checks send a request.",

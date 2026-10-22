@@ -17,6 +17,7 @@ import {
   filingGhostLabel,
   type FilingVocabularies,
 } from "@/modules/settings/domain/masterDataFiling";
+import type { PositionChoice } from "@/modules/settings/domain/types";
 
 export interface JobFormOptions {
   companies: { id: string; name: string; sector: string }[];
@@ -25,6 +26,10 @@ export interface JobFormOptions {
   currencies: { id: string; code: string; symbol: string; label: string }[];
   /** The same four lists with their retired rows, for labelling a legacy value. */
   filing: FilingVocabularies;
+  /** The posts a new opening may start from. Empty while 026 is unapplied. */
+  positions: PositionChoice[];
+  /** False when `positions` could not be read at all — the table does not exist yet. */
+  positionsAvailable: boolean;
 }
 
 /** The stored row an edit starts from — only the fields this form can write. */
@@ -60,6 +65,11 @@ const STATUSES = [
 
 /** Every field is a string because the salary pair and requirements are edited as text. */
 interface JobFormState {
+  /**
+   * The position a create starts from. Never prefilled on edit: the column may not
+   * exist yet, and an edit does not move an opening's position link.
+   */
+  position_id: string;
   title: string;
   tenant_id: string;
   department: string;
@@ -75,6 +85,7 @@ interface JobFormState {
 }
 
 const EMPTY: JobFormState = {
+  position_id: "",
   title: "",
   tenant_id: "",
   department: "",
@@ -104,6 +115,8 @@ function createDraft(options: JobFormOptions): JobFormState {
 
 function editDraft(job: JobForEdit): JobFormState {
   return {
+    // An edit keeps the link the opening already has; nothing here reads or moves it.
+    position_id: "",
     title: job.title,
     tenant_id: job.tenant_id,
     department: job.department,
@@ -192,6 +205,38 @@ export function JobFormDrawer({
     }),
   };
 
+  /**
+   * Fills the draft from a position.
+   *
+   * Every inheritable field is replaced — this is the "start from" action, and a
+   * second pick has to replace the first one's copy or the drawer would hold a mix
+   * of two positions. After that the fields are ordinary editable text, and the
+   * server keeps whatever the recruiter leaves in them.
+   */
+  function pickPosition(id: string) {
+    const position = options.positions.find((p) => p.id === id);
+    if (!position) {
+      setDraft((d) => ({ ...d, position_id: "" }));
+      return;
+    }
+    const company = options.companies.find((c) => c.id === position.tenant_id);
+    setDraft((d) => ({
+      ...d,
+      position_id: position.id,
+      title: position.title,
+      tenant_id: position.tenant_id ?? d.tenant_id,
+      department: position.department,
+      description: position.responsibilities ?? "",
+      requirements: (position.requirements ?? []).join("\n"),
+      min_salary_usd: position.min_salary_usd === null ? "" : String(position.min_salary_usd),
+      max_salary_usd: position.max_salary_usd === null ? "" : String(position.max_salary_usd),
+      salary_currency: position.salary_currency || "USD",
+      sector: company?.sector ?? d.sector,
+    }));
+    if (error) setError(null);
+    if (saved) setSaved(false);
+  }
+
   async function submit() {
     if (!draft.title.trim()) {
       setError("A job title is required.");
@@ -204,6 +249,10 @@ export function JobFormDrawer({
 
     const payload: JobDraft = {
       ...draft,
+      // The link belongs to a create alone. An edit leaves the opening's position
+      // where it is — and while 026 is unapplied, sending the column at all would
+      // fail the save.
+      position_id: job ? undefined : draft.position_id || undefined,
       requirements: draft.requirements
         .split("\n")
         .map((line) => line.trim())
@@ -257,6 +306,51 @@ export function JobFormDrawer({
       }
     >
       <div className="space-y-4">
+        {/* A create may start from a position — the same inheritance createJobOpening
+            performs on the server, so the form shows exactly what the write will do.
+            An edit keeps the link it already has and is never offered this. */}
+        {!job &&
+          (options.positionsAvailable === false ? (
+            <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-4">
+              <p className="text-sm font-semibold text-amber-900">
+                Positions have not been created on this database yet.
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-amber-900/80">
+                <code className="rounded bg-amber-100 px-1 py-0.5 text-[12px]">
+                  db/migrations/026_positions.sql
+                </code>{" "}
+                is authored but not applied, so there is no vacancy copy to start from. You
+                can still create an opening from scratch.
+              </p>
+            </div>
+          ) : options.positions.length === 0 ? (
+            <div className="rounded-xl border border-brand-line bg-brand-cream p-4 text-sm leading-relaxed text-brand-ink/70">
+              No positions are on the list yet. Add one in Settings → Organisation →
+              Positions, and a new opening can start from its copy.
+            </div>
+          ) : (
+            <div className="rounded-xl border border-brand-line bg-brand-cream p-4">
+              <Field
+                label="Start from a position"
+                htmlFor="job-position"
+                hint="Fills the title, company, department, description, requirements and salary band below. Everything stays editable."
+              >
+                <Select
+                  id="job-position"
+                  value={draft.position_id}
+                  onChange={(e) => pickPosition(e.target.value)}
+                >
+                  <option value="">No position — start from a blank opening</option>
+                  {options.positions.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title} — {p.department}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          ))}
+
         <Field label="Job title" htmlFor="job-title" required>
           <TextInput
             id="job-title"

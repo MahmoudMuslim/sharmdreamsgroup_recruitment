@@ -69,6 +69,10 @@ export default async function JobsPage() {
     // included — the picker only offers the live rows, so the drawer needs the
     // rest to label a legacy value it cannot offer.
     filing,
+    // The posts a new opening may start from. Read apart from the six master lists,
+    // so a database without 026 blanks only this picker and says why.
+    positions: master.positions,
+    positionsAvailable: master.positionsAvailable,
   };
   const jobs: JobRow[] = ((result.data ?? []) as unknown as Omit<JobRow, "positions_needed">[]).map(
     (row) => ({ ...row, positions_needed: headcount.neededById.get(row.id) ?? null })
