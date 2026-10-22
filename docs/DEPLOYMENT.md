@@ -78,7 +78,7 @@ worker directory.
 | `SMTP_HOST` / `SMTP_PORT` (587) / `SMTP_USER` / `SMTP_PASSWORD` / `EMAIL_FROM` | Email channel defaults; overridable in the encrypted store. |
 | `WHATSAPP_CRON_BATCH_SIZE` (50) / `GRADING_CRON_BATCH_SIZE` (10) | Sweep sizes. |
 
-> **`.env.example` drift:** the template's `WHATSAPP_TOKEN` is correct — it is the registry's `envVar`, which `resolveSecret("whatsapp")` honors as the env fallback (the earlier `WHATSAPP_CLOUD_API_TOKEN`/`omnichannelConfig.whatsapp.apiToken` read was dead: nothing consumed it, so it has been removed from `src/lib/config.server.ts`). Five entries that no module under `src` or `scripts` read have been deleted from the template: `WHATSAPP_WEBHOOK_URL` (it named `/api/webhooks/whatsapp`, **a route that does not exist** — notices go out on a cron poll, nothing is pushed in), `WHATSAPP_APP_SECRET`, and the three `ENABLE_*` feature flags. What still drifts: `APP_URL` is `:3000` while `npm run dev` actually listens on `:3001` (so the template's value is not the one a local link test will exercise), and the file omits `CRON_SECRET` plus the self-hosted identity/storage vars the app hard-requires — `AUTH_JWT_SECRET`, `AUTH_DB_URL`, `UPLOADS_ROOT` (plus `AUTH_TOKEN_ISSUER`/`AUTH_TOKEN_AUDIENCE`/`COOKIE_SECURE`) — so follow `docker/.env.example` for those, not this file. Its `NEXT_PUBLIC_SUPABASE_*` / `SUPABASE_*` block and `NEXT_PUBLIC_APP_URL` were deleted in spec §15 Task 9; `REST_BASE_URL` replaced the first of those. Treat the tables above as authoritative.
+> **`.env.example` drift:** the template is tracked (`.gitignore`'s `.env*` rule carries a `!.env.example` exception) and is the file `npm run dev` starts from, but it is not complete. The template's `WHATSAPP_TOKEN` is correct — it is the registry's `envVar`, which `resolveSecret("whatsapp")` honors as the env fallback (the earlier `WHATSAPP_CLOUD_API_TOKEN`/`omnichannelConfig.whatsapp.apiToken` read was dead: nothing consumed it, so it has been removed from `src/lib/config.server.ts`). Entries that no module under `src` or `scripts` reads have been deleted from it: `WHATSAPP_WEBHOOK_URL` (it named `/api/webhooks/whatsapp`, **a route that does not exist** — notices go out on a cron poll, nothing is pushed in), `WHATSAPP_APP_SECRET`, and the three `ENABLE_*` feature flags. What still drifts: the file omits `CRON_SECRET` plus the self-hosted identity/storage vars the app hard-requires — `AUTH_JWT_SECRET`, `AUTH_DB_URL`, `UPLOADS_ROOT` (plus `AUTH_TOKEN_ISSUER`/`AUTH_TOKEN_AUDIENCE`/`COOKIE_SECURE`) — so follow `docker/.env.example` for those, not this file. Its `APP_URL=http://localhost:3000` is the stack's published origin, and it is right for the container; a host-side `npm run dev` only lands there when nothing else holds the port — with the stack up, Next reports `Port 3000 is in use … using available port 3001 instead`, so a local link test runs on :3001 while this value says :3000. `docker-compose.yml` overwrites `APP_URL` for the container from `APP_URL_PUBLIC` anyway. Its `NEXT_PUBLIC_SUPABASE_*` / `SUPABASE_*` block and `NEXT_PUBLIC_APP_URL` were deleted in spec §15 Task 9; `REST_BASE_URL` replaced the first of those. Treat the tables above as authoritative.
 
 ---
 
@@ -87,9 +87,11 @@ worker directory.
 ```bash
 npm install
 
-# 1. Bring up the stack: Postgres on 127.0.0.1:54320, PostgREST behind the Caddy
-#    gateway on 127.0.0.1:54321.
+# 1. Both env files, then bring up the stack: Postgres on 127.0.0.1:54320,
+#    PostgREST behind the Caddy gateway on 127.0.0.1:54321.
 cp docker/.env.example docker/.env    # then fill in the secrets
+cp .env.example .env.local            # `app` reads it as `env_file: ../.env.local`,
+                                      # and Compose exits 1 when that file is absent
 npm run docker:up
 
 # 2. Apply the database and prove the identity/RLS shim answers like the app expects
@@ -101,14 +103,26 @@ node scripts/generate-encryption-key.mjs
 npm run db:seed-local
 
 # 4. Local dev (Turbopack) — needs REST_BASE_URL, AUTH_DB_URL, AUTH_JWT_SECRET,
-#    UPLOADS_ROOT and SETTINGS_ENCRYPTION_KEY in .env.local
-npm run dev                          # http://localhost:3001
+#    UPLOADS_ROOT, SETTINGS_ENCRYPTION_KEY and CRON_SECRET in .env.local
+npm run dev                          # asks for :3000; with the stack up, nginx has
+                                     # it, and Next shifts to :3001
 ```
 
 There is no other apply path: the scripts that addressed the hosted project
 through `.env.local` are deleted, so `npm run db:apply-local` — which reads the
 same `db/schema.sql` against the `db` container — is the only way this schema
 reaches a database.
+
+**On a cluster that already exists, apply order matters.** `schema.sql` is a
+fresh-cluster declaration — measured: zero `add column if not exists` in the file —
+so a column a live cluster predates is never added by it, and the later
+`comment on column` for that column aborts the run. Measured 2026-10-22 on this
+repo's own stack, which predates `031_job_headcount.sql`: the apply stopped with
+`42703 column "positions_needed" … does not exist`. The script sends the file as
+one simple-protocol query, so Postgres wraps it in a single implicit transaction —
+nothing landed, and `stack:prove` / `files:prove` still passed. On a live cluster
+run the ordered migration first (`npm run docker:psql`), then `db:apply-local` to
+prove the file describes the result; a fresh cluster needs only the second.
 
 > **Staff accounts come from the stack, not from a script.** The hosted
 > `scripts/create-staff.mjs` is retired: it wrote into the vendor's GoTrue

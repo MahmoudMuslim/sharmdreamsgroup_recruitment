@@ -27,6 +27,7 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 | [AI Integration](docs/AI_INTEGRATION.md) | Multi-provider gateway, model failover, capabilities, routing |
 | [Deployment](docs/DEPLOYMENT.md) | Docker Compose stack, environment variables, cron jobs |
 | [Testing](docs/TESTING.md) | Verification strategy and manual test flows |
+| [Research](docs/RESEARCH.md) | Point-in-time competitive & company capture (12 Oct 2026) — a snapshot, not a maintained doc |
 | [Contributing](CONTRIBUTING.md) | Developer guide, scripts, conventions |
 | [Changelog](CHANGELOG.md) | Release history |
 
@@ -50,7 +51,7 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 
 ### Analytics & Insights
 - Assessment completion (open/finish rates, median invite-to-open and time-on-test), score bands, sourcing reply and conversion rates, per-channel message delivery, interview outcomes — all computed by one pure module (`modules/analytics/domain/report.ts`) that the page and the CSV export share. It names what it cannot compute: there is **no per-stage duration, no stage conversion over time and no cohort funnel**, because a stage move overwrites `applications.stage` and only `HIRED` carries a timestamp.
-- Server-sent change watch (`/api/live`): the shell polls the fingerprints of 11 watched tables every 5 s, so an open page notices a write on its next poll — nothing is pushed from the write path.
+- Server-sent change watch (`/api/live`): one `text/event-stream` per open staff page (`src/app/api/live/route.ts:168`). Inside that stream the route re-reads the fingerprints of 11 watched tables every 5 s (`POLL_MS`, `route.ts:35`) and emits a change event only when one differs — a `: beat` comment line is all an idle stream sends, to stop a proxy closing it. Nothing is pushed from the write path itself.
 - CSV/Excel/PDF export (`/api/reports/export`, `/api/time/export`, `/api/activity/export`)
 
 ### Job & Candidate Management
@@ -59,7 +60,7 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 
 ### Assessment Engine
 - Templates per role family; question types: **Excel Model** (Handsontable + HyperFormula), **Video Pitch** (MediaRecorder → our own uploads volume), **Case Study** (word-count validated), **Multiple Choice**
-- Time limits (5–300 min), scheduled auto-grading (`/api/cron/grading`)
+- Time limits (5–480 min — the same bounds the authoring action enforces, `src/app/(admin)/assessments/suite-authoring-actions.ts:330`), scheduled auto-grading (`/api/cron/grading`)
 - Integrity monitor (tab-switch / copy-paste → `integrity_events`)
 - AI question authoring; the **Question Bank** (`/questions`, `modules/questions/`) is one CRUD surface over both stores — apply-form gate questions and suite questions — with tabs, rails, groups and a Kanban board
 
@@ -119,30 +120,44 @@ cd sharm_dreams_group
 npm install
 cp docker/.env.example docker/.env   # then fill in its secrets — required before
                                      # docker:up and db:apply-local both read it
+cp .env.example .env.local           # also required BEFORE docker:up: the `app`
+                                     # service reads it as `env_file` (see below)
+node scripts/generate-encryption-key.mjs   # AES-256-GCM key for credential storage
 npm run docker:up                # db + rest + gateway + app + nginx + cron
 npm run db:apply-local           # loads db/schema.sql into the stack's own cluster
 npm run db:seed-local            # the three staff fixtures the local login reads
 npm run stack:prove              # proves the three data doors end to end
-cp .env.example .env.local       # host-side `npm run dev` only — see the note below
-node scripts/generate-encryption-key.mjs   # AES-256-GCM key for credential storage
 ```
 
-> `.gitignore`'s `.env*` rule means the **root** template is not tracked, so a fresh
-> clone has no `.env.example` to copy; `docker/.env.example` is tracked and is the one
-> the stack needs. Create the root `.env.local` by hand (or copy an existing
-> developer's) and set the six required variables below. Full list and the known
-> template drift: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+> **Two env files, and neither one is optional.** `docker/.env` is gitignored and holds the
+> stack's own secrets; every compose command and `db:apply-local` / `db:seed-local` read it
+> through `--env-file docker/.env`. The root `.env.local` is not a dev-only extra —
+> `docker/docker-compose.yml` gives it to the `app` service as `env_file: ../.env.local`, so
+> **`npm run docker:up` refuses to start without it**. Measured 2026-10-22 with a throwaway
+> compose file: a missing `env_file` makes Compose print `env file … not found` and exit 1,
+> it does not warn and carry on.
+>
+> `.gitignore`'s `.env*` rule carries a `!.env.example` exception, so the root template *is*
+> tracked (it was not when this page last said otherwise). What it cannot do is supply all
+> six required variables: it carries `REST_BASE_URL` and `SETTINGS_ENCRYPTION_KEY`, while
+> `AUTH_DB_URL`, `AUTH_JWT_SECRET`, `UPLOADS_ROOT` and `CRON_SECRET` are injected into the
+> container by `docker-compose.yml` from `docker/.env`. A host-side `npm run dev` reads all
+> six from `.env.local`, so add the missing four there — `docker/.env.example` names them and
+> [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) lists the whole set.
 
-Required env: `REST_BASE_URL`, `AUTH_DB_URL`, `AUTH_JWT_SECRET`, `UPLOADS_ROOT`, `SETTINGS_ENCRYPTION_KEY`, and `CRON_SECRET` (the cron routes fail closed without it). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete, code-verified list — including which provider keys are optional fallbacks and the known `.env.example` drift.
+Required env: `REST_BASE_URL`, `AUTH_DB_URL`, `AUTH_JWT_SECRET`, `UPLOADS_ROOT`, `SETTINGS_ENCRYPTION_KEY`, and `CRON_SECRET`. The first five throw a named error when absent, so a misconfigured boot says which door is shut. `CRON_SECRET` is the exception — it is read as an optional (`src/lib/config.server.ts:113`), so the boot succeeds without it and the cron routes fail closed on every request instead. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the complete, code-verified list — including which provider keys are optional fallbacks.
 
 ```bash
-npm run dev          # dev server (Turbopack) → http://localhost:3001
+npm run dev          # dev server (Turbopack) asks for :3000 — nginx holds that port, so
+                     # Next shifts to the next free one (in practice :3001)
 npx --no-install next typegen && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json   # type check
 npm run build        # production build (prebuild: routes, themes, secret audit)
 ```
 
 ### Database
-`db/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `db/migrations/` (001–031, 026 never written) is the history the dump was made from, not a path anything applies. One migration runs the other way: `031_job_headcount.sql` is written and hand-carried into `schema.sql` but applied to no cluster, so `job_openings.positions_needed` is in the file of record and not in the running table — the hiring-demand read shows "not recorded" until the owner applies it. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
+`db/schema.sql` is the consolidated DDL — every table (42), the `auth.users` shim, the RLS policies (88) and the console's seed and reference rows (235 idempotent inserts — 9 companies, then 226 lookup rows in the `REFERENCE ROWS` section, which the file's own comment counts) — applied to the stack's own cluster with `npm run db:apply-local`. `npm run db:seed-local` adds the staff logins the identity spine needs, and `db/migrations/` (001–031, 026 never written — 30 files) is the history the dump was made from, not a path anything applies. One migration runs the other way: `031_job_headcount.sql` is written and hand-carried into `schema.sql` but applied to no cluster, so `job_openings.positions_needed` is in the file of record and not in the running table — the hiring-demand read shows "not recorded" until the owner applies it.
+
+**Order matters on a cluster that already exists, and this repo's own stack is one.** The file declares a new column inside its `create table if not exists`, so a cluster predating that column never receives it — and the later `comment on column` then aborts the apply. Measured 2026-10-22 here: the run stopped with `42703 column "positions_needed" … does not exist`. Because the apply sends the whole file as one simple-protocol query, Postgres wraps it in a single implicit transaction, so nothing landed and the identity/RLS proofs still passed — the refusal is loud, never partial. So on a live cluster run the ordered migration first (`npm run docker:psql`), then `npm run db:apply-local` to prove the file still describes the result; a fresh cluster needs only the second command. The file carries zero `add column if not exists` — it is a fresh-cluster declaration, not an upgrade path. Table reference: [docs/DATABASE.md](docs/DATABASE.md).
 
 ---
 

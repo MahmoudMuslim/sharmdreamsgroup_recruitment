@@ -27,20 +27,25 @@ This guide covers setup, layout, conventions, and the checks that must pass befo
 ```bash
 npm install
 
-# 1. The stack's own config, then the database containers
-cp docker/.env.example docker/.env    # fill in its secrets; tracked, and required
+# 1. Both env files first — `docker:up` cannot start without either
+cp docker/.env.example docker/.env    # fill in its secrets (this file is untracked)
+cp .env.example .env.local            # the `app` service reads it as `env_file`;
+                                      # Compose exits 1 when it is missing
+node scripts/generate-encryption-key.mjs   # prints the AES key line for .env.local
 npm run docker:up                     # db + rest + gateway + app + nginx + cron
 npm run db:apply-local                # load db/schema.sql into the db container
 npm run db:seed-local                 # staff fixtures the local login can use
 
-# 2. Your host-side .env.local (untracked — `.gitignore`'s `.env*` covers the root
-#    template too, so a fresh clone has no .env.example to copy; create the file and
-#    set REST_BASE_URL, AUTH_DB_URL, AUTH_JWT_SECRET, UPLOADS_ROOT, SETTINGS_ENCRYPTION_KEY, CRON_SECRET)
-node scripts/generate-encryption-key.mjs   # prints the AES key line to paste in
+# 2. Fill the four the template omits. `.env.example` is tracked and carries
+#    REST_BASE_URL and SETTINGS_ENCRYPTION_KEY; docker-compose.yml injects
+#    AUTH_DB_URL, AUTH_JWT_SECRET, UPLOADS_ROOT and CRON_SECRET into the
+#    container from docker/.env, but a host-side `next dev` reads all six
+#    from .env.local — add the missing four there.
 
 # 3. Prove the doors before you change anything
 npm run stack:prove                   # identity + RLS parity
-npm run dev                           # http://localhost:3001
+npm run dev                           # asks for :3000; nginx holds it, so Next
+                                      # shifts to the next free port (:3001)
 ```
 
 The whole set-up is Docker-first — `npm run db:apply-local` is the only way the schema reaches a database. Read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the env list and the template's known drift.
