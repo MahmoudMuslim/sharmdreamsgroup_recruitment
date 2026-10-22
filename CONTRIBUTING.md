@@ -92,6 +92,8 @@ npm run stack:prove    # identity + RLS parity against the local stack
 
 Enable RLS on every new table — the file carries an explicit `alter table … enable row level security` per table, and `rls_auto_enable()` arms any new one. Nothing compares a catalog against `schema.sql` any more: `stack:prove` checks the behaviour, which is the claim that matters.
 
+**Order matters on a cluster that already exists.** `db/schema.sql` declares a new column inside its `create table if not exists`, so a cluster that predates that column never gets it from the file — and the later `comment on column` then aborts the whole apply. Measured 2026-10-22 on this repo's own stack, which predates `031_job_headcount.sql`: the run stopped with `42703 column "positions_needed" … does not exist`. Because the apply sends the file as one simple-protocol query, Postgres wraps it in a single implicit transaction, so nothing landed and the proofs still read 8/8 and 20/20 — the refusal is loud, not partial. The rule follows: on a live cluster, run the ordered migration first with `npm run docker:psql`, then `npm run db:apply-local` to prove the file still describes the result. A fresh cluster needs only the second command.
+
 ### Theming
 
 Themes are CSS tokens in `src/app/globals.css` (`lib/theme.ts`). All four (Base/Liquid-glass × Light/Dark) must stay painted or `check-themes.mjs` fails. Opt a surface *out* of the glass frost with a dedicated class (see `.careers-chat-shell`) rather than editing the shared frost selector.
