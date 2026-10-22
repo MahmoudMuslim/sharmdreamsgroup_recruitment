@@ -17,6 +17,7 @@ import "server-only";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { dayKeyInZone, formatInZone, fromZoneInputValue } from "@/lib/timezone";
 import {
+  DEFAULT_SCOPE,
   isTimeScope,
   timeWindow,
   isTimeCategory,
@@ -48,7 +49,7 @@ export function ledgerCut(
   scopeNote: string;
 } {
   const window = timeWindow(raw.window).key;
-  const scope: TimeScope = isTimeScope(raw.scope) ? raw.scope : "mine";
+  const scope: TimeScope = isTimeScope(raw.scope) ? raw.scope : DEFAULT_SCOPE;
   const days = timeWindow(window).days;
 
   const firstDay = dayKeyInZone(
@@ -153,6 +154,16 @@ function explain(error: { message?: string } | null, fallback: string): string |
 
 export interface LedgerRead {
   entries: TimeEntry[];
+  /**
+   * Every span the window and scope hold, counted by the database.
+   *
+   * Separate from `entries` because the read is capped: a screen that listed
+   * only what it loaded would call 1,000 spans "the week" when the week holds
+   * three times that. `null` only if the transport lost the count header.
+   */
+  total: number | null;
+  /** How many of those spans this read actually carries, newest first. */
+  carried: number;
   error: string | null;
 }
 
@@ -176,7 +187,10 @@ export async function readLedger(options: {
 
   let listed = restClient
     .from("time_entries")
-    .select(EMBEDDED)
+    // `count: "exact"` is what lets the screen and a download say how much of
+    // the cut the 1,000-row ceiling left behind, instead of calling the loaded
+    // rows the whole window.
+    .select(EMBEDDED, { count: "exact" })
     .order("started_at", { ascending: false })
     .limit(MAX_ROWS);
   if (options.since) listed = listed.gte("started_at", options.since);
@@ -195,17 +209,25 @@ export async function readLedger(options: {
   const failure =
     explain(listResult.error, "The ledger could not be read") ??
     explain(runningResult.error, "The running timer could not be read");
-  if (failure) return { entries: [], error: failure };
+  if (failure) return { entries: [], total: null, carried: 0, error: failure };
 
+  const listedRows = asRows(listResult.data);
   const byId = new Map<string, TimeEntry>();
   for (const row of asRows(runningResult.data)) byId.set(row.id, toEntry(row));
-  for (const row of asRows(listResult.data)) byId.set(row.id, toEntry(row));
+  for (const row of listedRows) byId.set(row.id, toEntry(row));
 
   const entries = [...byId.values()].sort((a, b) =>
     a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0
   );
 
-  return { entries, error: null };
+  return {
+    entries,
+    // The transport reads the total from Content-Range; when it is absent the
+    // count is unknown rather than equal to what was loaded.
+    total: listResult.count,
+    carried: listedRows.length,
+    error: null,
+  };
 }
 
 /** One entry, for a write that has to describe what it changed. */

@@ -28,6 +28,7 @@ import {
   readLedger,
   stopEntry,
   updateEntry,
+  LEDGER_ROW_LIMIT,
   type LedgerWrite,
 } from "@/modules/timelog/application/ledger";
 
@@ -57,6 +58,15 @@ export interface LedgerOptions {
 
 export interface LedgerView {
   entries: TimeEntry[];
+  /**
+   * Every span the window and scope hold. The read stops at 1,000, so this is
+   * what the cut *is*; `entries` is only what the screen received of it.
+   */
+  total: number | null;
+  /** How many of the cut's spans this view carries, newest first. */
+  carried: number;
+  /** The ceiling on one read, so the screen can say when `total` is unknown. */
+  limit: number;
   window: TimeWindowKey;
   scope: TimeScope;
   /** Whose hours this cut is, in a sentence the screen and the header share. */
@@ -199,6 +209,9 @@ export async function getLedger(raw: {
     ok: true,
     view: {
       entries: read.entries,
+      total: read.total,
+      carried: read.carried,
+      limit: LEDGER_ROW_LIMIT,
       window: cut.window,
       scope: cut.scope,
       scopeNote: cut.scopeNote,

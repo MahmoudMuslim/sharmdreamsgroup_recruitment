@@ -177,12 +177,41 @@ export function timeWindow(key: unknown): (typeof TIME_WINDOWS)[number] {
   return TIME_WINDOWS.find((option) => option.key === key) ?? TIME_WINDOWS[1];
 }
 
+/**
+ * The cut `/time` opens on when the address bar names none.
+ *
+ * The same window `timeWindow` falls back to, so a bare `/time`, an unreadable
+ * `?window=` and the screen's own default cannot describe three different cuts.
+ */
+export const DEFAULT_WINDOW: TimeWindowKey = "7d";
+
 /** Whose hours: the caller's own, or everyone in their company. */
 export const TIME_SCOPES = ["mine", "team"] as const;
 export type TimeScope = (typeof TIME_SCOPES)[number];
 
+/** What `/time` shows before anyone chooses: the caller's own hours. */
+export const DEFAULT_SCOPE: TimeScope = "mine";
+
 export function isTimeScope(value: unknown): value is TimeScope {
   return typeof value === "string" && (TIME_SCOPES as readonly string[]).includes(value);
+}
+
+/**
+ * The address-bar parameters of a cut.
+ *
+ * The default cut is the bare route, so `/time` always means "my last seven
+ * days" and a link spells out only the window or scope that differs from it. The
+ * screen and the chat's click-through share this, so a link cannot describe a cut
+ * the screen would then write back differently. A value neither reader accepts
+ * is dropped rather than sent: the page coerces it to the default, and a
+ * parameter carrying the coerced value would look like a filter.
+ */
+export function timeCutParams(window: unknown, scope: unknown): URLSearchParams {
+  const params = new URLSearchParams();
+  const key = timeWindow(window).key;
+  if (key !== DEFAULT_WINDOW) params.set("window", key);
+  if (isTimeScope(scope) && scope !== DEFAULT_SCOPE) params.set("scope", scope);
+  return params;
 }
 
 /**

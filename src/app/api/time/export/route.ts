@@ -73,10 +73,20 @@ export async function GET(request: Request): Promise<Response> {
   // receives it, when the real answer is usually that the table does not exist.
   if (read.error) return json(read.error, 503);
 
+  /* The file carries exactly what the read carried, and says so with the
+   * database's own count rather than a guess made from the row ceiling. The
+   * running timer may be one of these rows while sitting outside the cut; that
+   * is why the note counts the cut and not the file's line count. */
   const limitations: string[] = [];
-  if (read.entries.length >= LEDGER_ROW_LIMIT) {
+  const cutTotal = read.total;
+  if (cutTotal !== null && cutTotal > read.carried) {
+    const leftOut = cutTotal - read.carried;
     limitations.push(
-      `A cut of the ledger is read newest-first up to ${LEDGER_ROW_LIMIT.toLocaleString()} spans, so a longer window may be trimmed. Narrow it to take the rest.`
+      `This cut holds ${cutTotal.toLocaleString()} spans and a file carries the newest ${read.carried.toLocaleString()}, so ${leftOut.toLocaleString()} are not in it. Narrow the window to take the rest.`
+    );
+  } else if (cutTotal === null && read.carried >= LEDGER_ROW_LIMIT) {
+    limitations.push(
+      `A file carries the newest ${read.carried.toLocaleString()} spans of the cut, and the database did not say how many the cut holds, so a longer window may be trimmed. Narrow it to take the rest.`
     );
   }
 

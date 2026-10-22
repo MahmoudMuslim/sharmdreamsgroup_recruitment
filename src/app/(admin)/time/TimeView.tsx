@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   CircleSlash,
   Clock3,
@@ -62,6 +63,7 @@ import {
   groupByDay,
   isRunning,
   subjectOf,
+  timeCutParams,
   timeWindow,
   totalSeconds,
   type DayGroup,
@@ -793,11 +795,53 @@ export function TimeView({
   const [busy, setBusy] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const params = useSearchParams();
+  const pathname = usePathname();
+
+  /*
+   * The cut in the address bar is the screen's own: the assistant's link carries
+   * the window and scope its answer read, and the page server-rendered that cut
+   * as `initial`. Arriving on this route again re-renders rather than remounts,
+   * so the last query taken from the address bar is tracked and re-applied here
+   * too. `advertise` writes the URL itself, and this Next build patches
+   * `replaceState` into the router, so that write also moves `useSearchParams` —
+   * which is why the written query is recorded: a seed this screen wrote must not
+   * rewind the cut it just read to the server's first one.
+   */
+  const seed = params.toString();
+  const [written, setWritten] = useState<string | null>(null);
+  const [lastSeed, setLastSeed] = useState(seed);
+  if (seed !== lastSeed) {
+    setLastSeed(seed);
+    if (seed !== written) {
+      setView(initial);
+      // The link named a cut, not a slice: a category or colleague picked before
+      // it need not exist in the new one.
+      setFocus(null);
+      setError(null);
+    }
+  }
+
   const nowMs = useLedgerNow(view.now);
   const live = useLive();
 
   const changedAt = live.lastChange?.at ?? null;
   const ledgerMoved = Boolean(changedAt && live.lastChange?.areas.includes("time"));
+
+  /**
+   * Puts the cut into the address bar.
+   *
+   * Written only after the database answered, so the link a reader copies
+   * describes rows that were actually read. The default cut is the bare route —
+   * `/time` means "my last seven days" — and only a different window or scope is
+   * spelled out, so the common link stays short and means the same thing later.
+   */
+  function advertise(nextWindow: TimeWindowKey, nextScope: TimeScope) {
+    const next = timeCutParams(nextWindow, nextScope).toString();
+    if (next === seed) return;
+    setWritten(next);
+    window.history.replaceState(null, "", next ? `${pathname}?${next}` : pathname);
+  }
 
   function load(nextWindow: TimeWindowKey, scope: TimeScope) {
     setError(null);
@@ -808,6 +852,7 @@ export function TimeView({
         return;
       }
       setView(result.view);
+      advertise(result.view.window, result.view.scope);
     });
   }
 
@@ -930,6 +975,17 @@ export function TimeView({
   const exportHref = (format: string) =>
     `/api/time/export?${exportQuery.toString()}&format=${format}`;
 
+  /* A file is built from the same capped read as this screen, so it cannot hold
+   * more spans than the screen does. The tooltip says so in the database's own
+   * numbers, because the download arriving shorter than the cut is exactly the
+   * surprise the note above the buttons exists to prevent. */
+  const fileCapNote =
+    view.total !== null && view.total > view.carried
+      ? ` It carries the newest ${view.carried.toLocaleString()} of the cut's ${view.total.toLocaleString()} spans.`
+      : view.total === null && view.carried >= view.limit
+        ? ` It carries the newest ${view.carried.toLocaleString()} spans, and the cut may hold more.`
+        : "";
+
   return (
     <div className="mt-6 space-y-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -970,7 +1026,7 @@ export function TimeView({
               key={format.key}
               href={exportHref(format.key)}
               className="inline-flex items-center gap-1.5 rounded-xl border border-brand-line bg-white px-2.5 py-2 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
-              title={`${format.label}: ${format.hint}. Covers ${view.scopeNote} A filter clicked on screen narrows the page, not the file.`}
+              title={`${format.label}: ${format.hint}. Covers ${view.scopeNote}${fileCapNote} A filter clicked on screen narrows the page, not the file.`}
             >
               <Download className="h-3.5 w-3.5" aria-hidden />
               {format.label}
@@ -986,10 +1042,31 @@ export function TimeView({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-line bg-brand-cream px-4 py-2.5">
+        {/*
+          The read stops at 1,000 spans, so counting the rows that loaded cannot
+          tell a reader whether they are looking at the whole week. The database
+          supplies an exact count of the cut; when the transport loses it, the
+          ceiling itself is what turns the loaded figure into a floor.
+        */}
         <p className="text-xs text-brand-ink/60" aria-live="polite">
           <span className="font-semibold text-brand-ink/75">{view.scopeNote}</span>
           <span aria-hidden> · </span>
-          {view.entries.length.toLocaleString()} entr{view.entries.length === 1 ? "y" : "ies"}
+          {view.entries.length.toLocaleString()} entr{view.entries.length === 1 ? "y" : "ies"} on screen
+          {view.entries.length > view.carried && (
+            <span className="text-brand-ink/40"> (one is the timer still running)</span>
+          )}
+          {view.total !== null && view.total > view.carried && (
+            <span className="text-brand-ink/40">
+              {" "}· the cut holds {view.total.toLocaleString()}, and the newest{" "}
+              {view.carried.toLocaleString()} are loaded — narrow the window for the rest
+            </span>
+          )}
+          {view.total === null && view.carried >= view.limit && (
+            <span className="text-brand-ink/40">
+              {" "}· the read stops at {view.limit.toLocaleString()} spans and the database did not
+              say how many this cut holds, so older ones may be missing
+            </span>
+          )}
           {focus && (
             <span className="text-brand-ink/40"> · {shown.length.toLocaleString()} after the filter</span>
           )}
