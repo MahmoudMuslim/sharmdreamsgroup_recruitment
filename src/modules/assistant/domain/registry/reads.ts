@@ -12,7 +12,9 @@ import {
   ANALYTICS_WINDOWS,
   ANSWER_ROWS,
   APPLICATION_SOURCES,
+  CATEGORY_LABEL,
   CHART_VIEWS,
+  DEFAULT_WINDOW,
   FILED_ENTITIES,
   JOB_STATUSES,
   MASTER_ENTITIES,
@@ -24,16 +26,22 @@ import {
   SETTINGS_TRAIL_GROUPS,
   SETTINGS_TRAIL_LIMIT,
   SETTINGS_TRAIL_SEARCH_SCAN,
+  TIME_LEDGER_ROWS,
+  TIME_SCOPES,
+  TIME_WINDOWS,
   ToolArgumentError,
   bool,
+  byCategory,
   candidateScopeNote,
   candidateSearchWords,
   chartForView,
   clip,
   companyNameById,
   describeActor,
+  elapsedSeconds,
   filedEntity,
   filterCandidates,
+  formatSpan,
   getAnalyticsReport,
   getApplicantSubmission,
   getCandidateList,
@@ -41,6 +49,7 @@ import {
   getDashboardAnalytics,
   getJobApplicants,
   getJobOpening,
+  getLedger,
   getMasterData,
   getModelCatalogue,
   getOutbox,
@@ -50,6 +59,8 @@ import {
   getTemplates,
   getTrail,
   isChartView,
+  isRunning,
+  ledgerReachNote,
   listJobOpenings,
   listModelRouting,
   listSettingsTrail,
@@ -84,8 +95,11 @@ import {
   settingSearchWords,
   settingsTrailNote,
   str,
+  subjectOf,
   suiteReadNote,
   suiteSearchWords,
+  timeWindow,
+  totalSeconds,
   TRAIL_PAGE_ROWS,
   TRAIL_WINDOWS,
   trailFind,
@@ -947,6 +961,84 @@ export const reads: readonly AssistantTool[] = [
           actor: clip(describeActor(row), 240),
           via: row.via,
           summary: row.summary,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_time_ledger",
+    label: "Reading the time ledger",
+    description:
+      "The Time Tracker console (/time), cut by cut: the spans people logged against their work — what was done, the category, the candidate or opening it was attached to, when it started, how long it ran, and whose hours they are. `window` and `scope` are the screen's own pills and its `?window=`/`?scope=` parameters, so this answer and the click-through describe the same cut. `scope: team` reads every colleague's hours and needs the same permission the screen does; a refusal (ledger_refused) is about that permission, not an empty ledger. The note opens with three different numbers — how many spans the cut holds, how many the capped read loaded, and how many this answer lists — so never call the listed rows the cut, never sum them as if they were the whole window, and quote the note's figures rather than counting the rows it sent. The screen loads at most 1,000 spans and narrowing the window is how older ones become reachable. A timer you left running is always included whatever the window, because it has no end to filter by — a colleague's running timer is only in the cut if it started inside it. This ledger holds only what a person logged by hand or with a timer: a stage move, an interview or a grade adds nothing to it. For changes to the hiring data use get_activity_trail, which reads a different table.",
+    args: {
+      window: `string — optional, one of ${TIME_WINDOWS.map((option) => option.key).join("|")} (the screen's ?window=): how far back the cut looks, default ${DEFAULT_WINDOW} — ${timeWindow(DEFAULT_WINDOW).label.toLowerCase()}`,
+      scope: `string — optional, one of ${TIME_SCOPES.join("|")} (the screen's ?scope=): whose hours, default mine — the caller's own; team reads every colleague's hours`,
+    },
+    run: async (args) => {
+      // Both vocabularies are lowercase, so `optionalWord` rather than
+      // `optionalChoice` — the latter upper-cases and would refuse both values.
+      const window = optionalWord(args, "window", TIME_WINDOWS.map((option) => option.key));
+      const scope = optionalWord(args, "scope", TIME_SCOPES);
+      const result = await getLedger({ window: window ?? undefined, scope: scope ?? undefined });
+
+      if (!result.ok || !result.view) {
+        // A refusal in its own words. An empty ledger would let the model tell a
+        // recruiter nothing has been logged, which is a sentence about permission.
+        return {
+          ledger_refused: true,
+          ledger_note: result.error ?? "The time ledger could not be read.",
+          ledger: [],
+        };
+      }
+
+      const view = result.view;
+      const nowMs = Date.parse(view.now);
+      const listed = view.entries.slice(0, TIME_LEDGER_ROWS);
+      const logged = totalSeconds(view.entries, nowMs);
+
+      return {
+        // First, because the result is clipped at a fixed length: a disclosure
+        // that sits behind the rows it describes is cut off along with them.
+        ledger_note: ledgerReachNote({
+          total: view.total,
+          carried: view.carried,
+          loaded: view.entries.length,
+          listed: listed.length,
+          limit: view.limit,
+          running: view.entries.filter((entry) => isRunning(entry)).length,
+          scopeNote: view.scopeNote,
+        }),
+        ledger_window: view.window,
+        ledger_scope: view.scope,
+        // The timezone is inside scopeNote ("on the Africa/Cairo clock"), the
+        // sentence the screen prints above the same rows.
+        ledger_total: view.total,
+        ledger_carried: view.carried,
+        ledger_limit: view.limit,
+        ledger_listed: listed.length,
+        // Over the loaded spans only; the note says so whenever the cut is
+        // larger than what the read carries.
+        ledger_logged_seconds: logged,
+        ledger_logged: formatSpan(logged),
+        ledger_categories: byCategory(view.entries, nowMs).map((slice) => ({
+          category: slice.key,
+          label: slice.label,
+          span: formatSpan(slice.seconds),
+          entries: slice.entries,
+        })),
+        ledger: listed.map((entry) => ({
+          id: entry.id,
+          started_at: entry.started_at,
+          ended_at: entry.ended_at,
+          span: formatSpan(elapsedSeconds(entry, nowMs)),
+          running: isRunning(entry),
+          category: CATEGORY_LABEL[entry.category],
+          task: entry.task,
+          // The note column is 500 characters in the table and is the widest
+          // free text a row carries, so it travels clipped and marked.
+          note: clip(entry.note, 200),
+          staff: clip(entry.staff_name, 80) ?? "A colleague",
+          subject: clip(subjectOf(entry), 160),
         })),
       };
     },

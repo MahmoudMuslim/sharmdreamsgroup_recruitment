@@ -22,6 +22,12 @@ import {
   type AppliedFilters,
 } from "@/modules/activity/domain/trailQuery";
 import { MASTER_LIST_WORDS, masterListEntity } from "@/modules/settings/domain/masterDataLists";
+import {
+  DEFAULT_SCOPE,
+  isTimeScope,
+  timeCutParams,
+  timeWindow,
+} from "@/modules/timelog/domain/ledger";
 import type { StaffLink } from "@/lib/auth/staffRoutes";
 import type { ToolArgs } from "./tools";
 
@@ -444,6 +450,34 @@ function activityTrailView(result: unknown): AssistantLink {
 }
 
 /**
+ * The Time Tracker, opened on the cut the answer read.
+ *
+ * `?window=` and `?scope=` are the screen's own pills, and `timeCutParams` is the
+ * same helper the screen writes its URL with — so the link collapses the default
+ * cut to bare `/time` and spells out only what differs, exactly as the screen
+ * would. The cut comes from the action's result, not from the model's arguments:
+ * the action coerces an unreadable value to the default, and a link carrying what
+ * the model typed could name a window the answer never read. A refusal names no
+ * cut, so it lands on the console itself rather than showing a filter that was
+ * refused.
+ */
+function timeLedgerView(result: unknown): AssistantLink {
+  const record =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as { ledger_window?: unknown; ledger_scope?: unknown; ledger_refused?: unknown })
+      : {};
+  if (record.ledger_refused) return { href: "/time", label: "Open the Time Tracker" };
+  const scope = isTimeScope(record.ledger_scope) ? record.ledger_scope : DEFAULT_SCOPE;
+  const params = timeCutParams(record.ledger_window, scope).toString();
+  return {
+    href: params ? `/time?${params}` : "/time",
+    label: `Open the Time Tracker on ${
+      scope === "team" ? "the team's hours" : "your hours"
+    } for ${timeWindow(record.ledger_window).label.toLowerCase()}`,
+  };
+}
+
+/**
  * The list a drift answer was about.
  *
  * A scoped read names its own list, so the click lands on the section that shows
@@ -645,6 +679,8 @@ export function linkForTool(
       return settingsTrailView(result);
     case "get_activity_trail":
       return activityTrailView(result);
+    case "get_time_ledger":
+      return timeLedgerView(result);
     case "message_candidates":
       return { href: "/candidates", label: "Open the candidate pipeline" };
     case "message_prospects":

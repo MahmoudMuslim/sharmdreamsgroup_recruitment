@@ -215,6 +215,51 @@ export function timeCutParams(window: unknown, scope: unknown): URLSearchParams 
 }
 
 /**
+ * The sentence the assistant's ledger answer opens with.
+ *
+ * Three numbers, never one: the cut's count, the rows the capped read loaded,
+ * and the rows the answer lists. A chat answer carries a handful of spans, the
+ * screen behind it carries up to a thousand, and the cut can hold more than
+ * that — so a reader who took either smaller figure for the week would be
+ * reading less than the ledger holds. `total: null` is the transport losing the
+ * count, not a cut of zero: the loaded rows are then a floor.
+ */
+export function ledgerReachNote(input: {
+  total: number | null;
+  carried: number;
+  loaded: number;
+  listed: number;
+  limit: number;
+  running: number;
+  scopeNote: string;
+}): string {
+  const { total, carried, loaded, listed, limit, running, scopeNote } = input;
+  const cut =
+    total === null
+      ? `The database did not return a count for this cut, so the ${carried.toLocaleString()} spans that loaded from it (the read stops at ${limit.toLocaleString()}) are a floor.`
+      : total === 0
+        ? "The cut holds no spans."
+        : total > carried
+          ? `The cut holds ${total.toLocaleString()} spans and this read loaded the newest ${carried.toLocaleString()} of them (its ceiling is ${limit.toLocaleString()}), so the older ones are reachable only by narrowing the window.`
+          : `The cut holds ${total.toLocaleString()} span${total === 1 ? "" : "s"}, all loaded.`;
+  const rows =
+    listed === 0
+      ? "Nothing is listed below."
+      : listed >= loaded
+        ? `All ${listed.toLocaleString()} loaded span${listed === 1 ? " is" : "s are"} listed below.`
+        : `The ${listed.toLocaleString()} newest spans are listed below; the screen shows the rest of the ${loaded.toLocaleString()} loaded.`;
+  const live =
+    running === 0
+      ? ""
+      : ` ${running === 1 ? "One span is a timer still running" : `${running} spans are timers still running`} — counted to now and included whatever the window.`;
+  const partial =
+    total !== null && total <= carried
+      ? ""
+      : " The time total and the category split cover only the loaded spans.";
+  return `${scopeNote} ${cut} ${rows}${live}${partial} This ledger records what people logged by hand or with a timer — a stage move or a grade adds nothing to it.`;
+}
+
+/**
  * The draft, checked against the same limits the table enforces.
  *
  * The database refuses a blank task, an unknown category or a span that runs

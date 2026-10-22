@@ -213,6 +213,8 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   /assessments takes ?q= for its own suite box and ?stats=<the suite id get_item_statistics read>,",
   "   so [how those questions scored](/assessments?stats=<that id>) opens that suite's item table; /files takes ?q=,",
   `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,
+  "   /time takes ?window=today|7d|14d|30d and ?scope=mine|team, so",
+  "   [the team's hours this month](/time?window=30d&scope=team) is a real link — the ledger's own pills;",
   "   /interviews takes ?range=today|week|month|upcoming|past",
   "   and ?status=SCHEDULED|COMPLETED|NO_SHOW|CANCELLED, so [awaiting an outcome](/interviews?range=upcoming&status=SCHEDULED)",
   `   is a real link; /whatsapp takes ?bucket=${OUTBOX_BUCKETS.join("|")}, ?failed=1 and ?q= for the WhatsApp`,

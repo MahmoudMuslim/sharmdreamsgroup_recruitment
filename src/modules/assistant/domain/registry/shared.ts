@@ -98,6 +98,20 @@ import {
 } from "@/modules/activity/domain/trail";
 import { TRAIL_PAGE_ROWS } from "@/modules/activity/domain/trailQuery";
 import {
+  CATEGORY_LABEL,
+  DEFAULT_WINDOW,
+  TIME_SCOPES,
+  TIME_WINDOWS,
+  byCategory,
+  elapsedSeconds,
+  formatSpan,
+  isRunning,
+  ledgerReachNote,
+  subjectOf,
+  timeWindow,
+  totalSeconds,
+} from "@/modules/timelog/domain/ledger";
+import {
   searchSuites,
   suiteReadNote,
   suiteSearchWords,
@@ -131,6 +145,7 @@ import {
   type PipelineStage,
   getTemplates,
   getTrail,
+  getLedger,
   assignTemplate,
   createJobOpening,
   deleteJobOpening,
@@ -412,6 +427,21 @@ const ITEM_STAT_ROWS = 8;
  * never over the listed ones, so a short window cannot shrink the claim.
  */
 const ACTIVITY_TRAIL_ROWS = 4;
+
+/**
+ * Spans one ledger answer lists.
+ *
+ * Four, not the trail's four for the trail's reason: a ledger row is the wordiest
+ * thing the chat lists, carrying both the task (the column's 160-character
+ * ceiling) and the note (clipped at 200) where a trail row carries one summary.
+ * A measured maximal answer — a capped 1,001-span read, every text at its
+ * ceiling — is 4,463 characters with four rows; a fifth takes it to 5,394 and a
+ * sixth past the 6,000-character budget, so four keeps real headroom for the
+ * note and the category split. The note states the cut's count, the loaded rows
+ * and the listed rows separately, so this cap cannot be read as the window. The
+ * screen behind the link holds the rest.
+ */
+const TIME_LEDGER_ROWS = 4;
 
 /**
  * The storage cap sitting behind a folder answer, said once for both listings.
@@ -742,7 +772,9 @@ export { ALL_SETTINGS };
 export { ANALYTICS_WINDOWS };
 export { APPLICATION_SOURCES };
 export { BUCKETS };
+export { CATEGORY_LABEL };
 export { CHART_VIEWS };
+export { DEFAULT_WINDOW };
 export { FILED_ENTITIES };
 export { GENERATED_FORMATS };
 export { GENERATED_FORMAT_LABEL };
@@ -765,6 +797,10 @@ export { SETTINGS_TRAIL_SEARCH_SCAN };
 export { TASK_CATEGORIES };
 export { TASK_OWNERS };
 export { TRAIL_PAGE_ROWS };
+export { TIME_LEDGER_ROWS };
+export { TIME_SCOPES };
+export { TIME_WINDOWS };
+export { timeWindow };
 export { TRAIL_WINDOWS };
 export { TRAIL_LIMIT };
 export { TRAIL_SEARCH_SCAN };
@@ -800,6 +836,13 @@ export { emailSearchWords };
 export { extendAttemptLink };
 export { fileSearchWords };
 export { filterCandidates };
+export { byCategory };
+export { elapsedSeconds };
+export { formatSpan };
+export { isRunning };
+export { ledgerReachNote };
+export { subjectOf };
+export { totalSeconds };
 export { folderReadNote };
 export { formatBytes };
 export { generateInterviewGuide };
@@ -828,6 +871,7 @@ export { getRowReport };
 export { getTemplateDetail };
 export { getTemplateItemStats };
 export { getTemplates };
+export { getLedger };
 export { getTrail };
 export { importProspects };
 export { isChartView };
