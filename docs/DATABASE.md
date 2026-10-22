@@ -126,7 +126,7 @@ Relationships below are described logically; the schema enforces most of them wi
 
 ## Files (formerly storage)
 
-There are no buckets and no object store. A file is **a row in `public.files`** (`bucket`, `path`, `mime`, `bytes`, `unique (bucket, path)`) plus **bytes under `$UPLOADS_ROOT/<bucket>/<path>`** on the `uploads` volume. `bucket` is one of four directory names (`src/lib/config.ts` → `supabaseConfig.buckets`); the `/files` console lists rows and walks prefixes, and `files_bucket_path_prefix_idx` (`bucket, path text_pattern_ops`) makes that prefix walk an index scan rather than a sequential one.
+There are no buckets and no object store. A file is **a row in `public.files`** (`bucket`, `path`, `mime`, `bytes`, `unique (bucket, path)`) plus **bytes under `$UPLOADS_ROOT/<bucket>/<path>`** on the `uploads` volume. `bucket` is one of four directory names (`src/lib/config.ts` → `storageConfig.buckets`); the `/files` console lists rows and walks prefixes, and `files_bucket_path_prefix_idx` (`bucket, path text_pattern_ops`) makes that prefix walk an index scan rather than a sequential one.
 
 | Bucket | Holds |
 |--------|-------|

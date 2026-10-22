@@ -60,9 +60,6 @@ PROMPT*.md
 # history-rewrite and installer leftovers that were both committed once
 /bfg*.jar
 
-# vercel
-.vercel
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -65,7 +65,7 @@ src/
 │   ├── files/                # paths · disk-store · signed-link · store
 │   ├── rest/                 # client · query-builder · auth-shim  (the transport)
 │   ├── data-api/             # anon · server · service  (the three clients; was
-│   │                         # lib/supabase/ until the legacy-name cleanup)
+│   │                         # the vendor-named folder until the legacy-name cleanup)
 │   └── *.ts                  # config · config.server · currency · i18n · live ·
 │                             # locale-pref · paging · public-url · rail · textSearch ·
 │                             # theme · timezone · utils · alert-ack
@@ -154,7 +154,7 @@ Every entry below is a real `page.tsx` under `src/app/(admin)/` and is listed in
 
 ## Data access (`src/lib/data-api` over `src/lib/rest`)
 
-The folder is `src/lib/data-api/`; it carried the vendor's name until the legacy-name cleanup renamed it. The three constructors kept theirs: **198 call sites across 67 files** name `createSupabaseServerClient()`, `getSupabaseServiceClient()` and `getSupabaseAnonClient()`, and none of them needs to know the transport is now our own PostgREST. Measured by counting each constructor's calls, not its definition: `createSupabaseServerClient()` 129, `getSupabaseServiceClient()` 62, `getSupabaseAnonClient()` 7. Underneath, `src/lib/rest/` is the transport.
+The folder is `src/lib/data-api/`, and its three factories no longer carry the vendor's name. The request/session factory is `createServerRestClient()`, the RLS-bypassing one `getServiceRestClient()`, the credential-free public one `getAnonRestClient()` — the last rename pass moved the symbols to these names while the folder had already been renamed. Measured by counting each factory's invocations, not its definition: `createServerRestClient()` 130 across 47 files, `getServiceRestClient()` 63 across 23, `getAnonRestClient()` 8 across 6 — **201 call sites across 70 files**, and none of them needs to know the transport is our own PostgREST. Underneath, `src/lib/rest/` is the transport.
 
 | File | Role |
 |------|------|

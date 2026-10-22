@@ -73,7 +73,7 @@ docs/               # the documentation set above
 - **Server components by default**; add `"use client"` only where interactivity requires it.
 - **Layering**: pages/route-handlers authorize and render; business logic lives in `src/modules/<domain>`; the database is reached through one of exactly three doors — the PostgREST client (`src/lib/data-api` over `REST_BASE_URL`), the `pg` pool for the `auth` schema (`src/lib/auth/db.ts`), or the uploads volume (`src/lib/files`).
 - **Validate at the boundary** with Zod before any DB write.
-- **Prefer the request's session bearer** (`createSupabaseServerClient`) so RLS enforces access. `getSupabaseServiceClient` mints a short-lived `service_role` bearer that **bypasses RLS** — use it only for a privileged write after re-checking the permission in code.
+- **Prefer the request's session bearer** (`createServerRestClient`) so RLS enforces access. `getServiceRestClient` mints a short-lived `service_role` bearer that **bypasses RLS** — use it only for a privileged write after re-checking the permission in code.
 - **Fail closed**: a missing secret or permission is an error, never a permissive default.
 - **`server-only`** guards any module that reads secrets — importing it from a client component must stay a build error.
 - Match the surrounding code's comment density and naming; the codebase explains *why* in comments — keep that habit.
