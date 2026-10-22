@@ -6,14 +6,17 @@
  * navigate), so a connection owned by the component would multiply. The store
  * is shared, the chrome only attaches to it, and the badge reads it through
  * `useSyncExternalStore` — the same shape `src/lib/rail.ts` uses for the fold.
+ * The connection is re-pointed when the page changes, because the server polls
+ * only the tables that page reads.
  *
  * What arrives here is only which areas of the portal moved and when. Nothing
  * about the rows themselves: a change makes the page re-run its own queries,
  * which are still scoped by the viewer's role.
  */
 
-export type LiveStatus = "connecting" | "live" | "paused" | "stalled";
+import { pathFeeds } from "@/modules/live/domain/watch";
 
+export type LiveStatus = "connecting" | "live" | "paused" | "stalled";
 export interface LiveSnapshot {
   status: LiveStatus;
   /** The server's own check interval, so the badge can quote the real number. */
@@ -81,7 +84,7 @@ export function clearActivePage(pathname: string): void {
  * `/files` and anything nested under it.
  */
 export function feedsPage(pages: readonly string[] | undefined, pathname: string): boolean {
-  return (pages ?? []).some((page) => pathname === page || pathname.startsWith(`${page}/`));
+  return pathFeeds(pages, pathname);
 }
 
 /** Which areas feed the page on screen — all the badge is allowed to promise. */
@@ -118,6 +121,15 @@ let source: EventSource | null = null;
 let retry: number | null = null;
 let attached = 0;
 let dropTimer: number | null = null;
+
+/**
+ * The page the open connection is scoped to, or null before the first attach.
+ *
+ * Sent to the server so it polls only the areas that feed that page. Kept at
+ * module level because the connection outlives a chrome mount and a retry has
+ * to reopen on the page the recruiter is actually looking at.
+ */
+let scopePath: string | null = null;
 
 /** Changes inside this window reload the page once, not once per area. */
 const MIN_RELOAD_GAP_MS = 1_000;
@@ -158,7 +170,9 @@ export function reloadLivePage(): void {
 function open(): void {
   if (source || typeof window === "undefined" || document.hidden) return;
 
-  const next = new EventSource("/api/live");
+  const next = new EventSource(
+    scopePath === null ? "/api/live" : `/api/live?path=${encodeURIComponent(scopePath)}`
+  );
   source = next;
 
   next.addEventListener("hello", (event) => {
@@ -217,19 +231,33 @@ function close(): void {
 }
 
 /**
- * Attaches the admin chrome to the channel, opening it on the first attach.
+ * Attaches the admin chrome to the channel, opening it on the first attach and
+ * re-pointing it when the page changes.
  *
- * The returned detach lets the connection survive a route change — the old
- * chrome unmounts a moment after the new one mounts — and close for good once
- * nothing is left to notify.
+ * A route change is a new scope, not a new tab: the old stream is watching the
+ * old page's tables, so it is closed and reopened with the new path. The
+ * returned detach lets the connection survive the brief overlap between two
+ * route chromes — the old one unmounts a moment after the new one mounts — and
+ * close for good once nothing is left to notify.
  */
-export function attachLive(): () => void {
+export function attachLive(pathname: string): () => void {
+  const previous = scopePath;
+  scopePath = pathname;
+
   attached += 1;
   if (dropTimer !== null) {
     window.clearTimeout(dropTimer);
     dropTimer = null;
   }
   if (!offVisibility) offVisibility = watchTabVisibility();
+
+  if (previous !== null && previous !== pathname) {
+    // Forget the change memory that belonged to the page we left: an area that
+    // moved there must not be announced here, and the new hello is about to
+    // tell this page what it actually watches.
+    close();
+    emit({ ...snapshot, status: "connecting", watched: {}, lastChange: null });
+  }
 
   if (document.hidden) emit({ ...snapshot, status: "paused" });
   else {

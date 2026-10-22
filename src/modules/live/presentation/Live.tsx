@@ -24,8 +24,9 @@ export function useLive(): LiveSnapshot {
  * Mounts the tab's live channel inside the admin chrome.
  *
  * Renders nothing and owns no data — it only tells the store which page is on
- * screen and how to reload it. Every admin page draws the chrome, so this
- * re-attaches on navigation while the connection underneath stays open.
+ * screen, how to reload it, and which page the server should scope its probe
+ * to. Every admin page draws the chrome, so this re-attaches on navigation and
+ * re-points the one connection instead of letting it poll the whole portal.
  */
 export function LiveChrome() {
   const router = useRouter();
@@ -36,7 +37,7 @@ export function LiveChrome() {
     return () => clearActivePage(pathname);
   }, [pathname, router]);
 
-  useEffect(attachLive, []);
+  useEffect(() => attachLive(pathname), [pathname]);
 
   return null;
 }
@@ -86,7 +87,6 @@ export function LiveBadge({ className }: { className?: string }) {
   /** A change in a table that does not feed this screen is not a change here. */
   const movedAreas = areasThatReached(watched, lastChange?.areas ?? [], pathname);
   const movedHere = lastChange && movedAreas.length > 0 ? lastChange : null;
-  const changedElsewhere = lastChange && movedAreas.length === 0 ? lastChange : null;
 
   const title = [
     status === "paused"
@@ -100,9 +100,7 @@ export function LiveBadge({ className }: { className?: string }) {
             : "No watched table feeds this page, so nothing reloads it when the hiring data moves.",
     movedHere
       ? `Last change here: ${movedAreas.join(", ")} at ${clock(movedHere.at)}.`
-      : changedElsewhere
-        ? `The portal last moved (${changedElsewhere.areas.join(", ")}) at ${clock(changedElsewhere.at)}, which does not feed this page.`
-        : "Nothing has moved since you opened this page.",
+      : "Nothing has moved in what feeds this page since you opened it.",
     "Click to reload now.",
   ].join(" ");
 

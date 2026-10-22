@@ -524,8 +524,8 @@ export function GuidePanel({ open }: { open: Panel }) {
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           The <span className="font-semibold">Live</span> chip in this bar is the
           portal&rsquo;s own pulse: one connection per tab, re-checking the
-          watched hiring tables every {seconds ?? "few"} seconds while the tab is
-          in the foreground.{" "}
+          hiring tables that feed this page every {seconds ?? "few"} seconds
+          while the tab is in the foreground.{" "}
           {feeds.length > 0 ? (
             <>
               This page reads{" "}
@@ -543,8 +543,10 @@ export function GuidePanel({ open }: { open: Panel }) {
               chip reports the channel, and your click is what reloads it.
             </>
           )}{" "}
-          A background tab stops checking and catches up the moment you come back
-          to it. Click the chip to reload now.
+          The channel probes only what this page reads, so a change on a screen
+          you are not on is not announced here. A background tab stops checking
+          and catches up the moment you come back to it. Click the chip to
+          reload now.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           A theme is a pair: a parent — <span className="font-semibold">Base</span>{" "}
