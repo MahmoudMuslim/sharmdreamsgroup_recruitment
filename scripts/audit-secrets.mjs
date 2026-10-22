@@ -231,7 +231,12 @@ const hostedScripts = walk("scripts").filter((f) => {
   return VENDOR_NAMES.some((n) => text.includes("process.env." + n) || text.includes("env." + n));
 });
 console.log("  hosted scripts that still read them: " + (hostedScripts.join(", ") || "none"));
-for (const label of [".env.local", join("docker", ".env")]) {
+/* Three files, not two. `next dev` loads `.env` before `.env.local` overrides it,
+ * so the root file is a real surface even though it is gitignored — and it is the
+ * one this census used to skip. Only names are printed, never values: here the
+ * vendor values in `.env` are short placeholders while `.env.local` holds the live
+ * ones, and a name is the thing left to clean either way. */
+for (const label of [".env", ".env.local", join("docker", ".env")]) {
   let names;
   try {
     names = readFileSync(label, "utf8")
