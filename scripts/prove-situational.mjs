@@ -609,7 +609,7 @@ check(
 
 sourceHas("the background grader leaves inline-scored scenes alone", "src/modules/assessment/application/gradeAttempt.ts", [
   "situational judgment scenes are scored inline by the submit route itself",
-  '.is("candidate_responses.score", null)',
+  '.is("score", null)',
 ]);
 
 sourceHas("the editor offers a judgment scene only when the enum has it", "src/app/(admin)/assessments/QuestionEditorDrawer.tsx", [
