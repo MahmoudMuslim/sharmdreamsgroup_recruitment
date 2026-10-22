@@ -6,6 +6,7 @@ import {
   type JobStatus,
 } from "@/modules/jobs/domain/hireable";
 import { HIRED_STAGE, IN_PIPELINE_STAGES } from "@/modules/jobs/domain/hiringDemand";
+import { getOpeningTermsByIds } from "@/modules/jobs/application/openingTermsRead";
 
 /**
  * Read queries the assistant needs that no screen action already exposes.
@@ -35,6 +36,12 @@ export interface AssistantJobRow {
   sector: string;
   location: string;
   employment_type: string;
+  /**
+   * JUNIOR, MID, SENIOR or LEAD — or null when none was recorded, which also
+   * covers every opening on a database where 033 has not been applied. The
+   * accompanying `termsNote` says which of the two it is.
+   */
+  experience_level: string | null;
   status: string;
   description: string | null;
   requirements: string[];
@@ -59,6 +66,10 @@ export interface AssistantJobRow {
   hired: number;
 }
 
+// No `experience_level`: db/migrations/033_opening_terms.sql is authored but not
+// applied, and naming the column here would fail every openings read — the list,
+// the count and `update_job`'s pre-read — on a database that has not run it.
+// The level is read by id in `getOpeningTermsByIds` and merged below.
 const JOB_SELECT =
   "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applicants:applications(count), pipeline:applications(count), hired:applications(count)";
 
@@ -90,7 +101,7 @@ function companyNameOf(row: RawJobRow): string | null {
   return typeof name === "string" && name !== "" ? name : null;
 }
 
-function toJob(row: RawJobRow): AssistantJobRow {
+function toJob(row: RawJobRow, experienceLevel: string | null = null): AssistantJobRow {
   return {
     id: row.id,
     title: row.title,
@@ -100,6 +111,7 @@ function toJob(row: RawJobRow): AssistantJobRow {
     sector: row.sector ?? "",
     location: row.location ?? "",
     employment_type: row.employment_type ?? "",
+    experience_level: experienceLevel,
     status: row.status ?? "DRAFT",
     description: row.description,
     requirements: Array.isArray(row.requirements) ? row.requirements : [],
@@ -137,6 +149,18 @@ export interface AssistantJobRead {
   companyName: string | null;
   /** True when a company id was passed and no company carries it. */
   unknownCompany: boolean;
+  /**
+   * Why no level could be read — 033 unapplied — or null when the column was
+   * readable. Without this every `experience_level: null` reads as "none was
+   * recorded", which is a different fact from "there is nowhere to record one".
+   */
+  termsNote: string | null;
+}
+
+/** One opening with the same schema honesty the list carries. */
+export interface AssistantJobDetail {
+  job: AssistantJobRow;
+  termsNote: string | null;
 }
 
 /**
@@ -173,7 +197,7 @@ export async function listJobOpenings(
   // mistake for "that company has nothing".
   const companyName = companyId ? await companyNameById(companyId) : null;
   if (companyId && !companyName) {
-    return { jobs: [], total: 0, companyName: null, unknownCompany: true };
+    return { jobs: [], total: 0, companyName: null, unknownCompany: true, termsNote: null };
   }
 
   const rowsQuery = restClient.from("job_openings").select(JOB_SELECT);
@@ -223,17 +247,27 @@ export async function listJobOpenings(
     console.error("[assistant] opening head count failed:", count.error.message);
   }
 
+  const rowData = (rows.data ?? []) as unknown as RawJobRow[];
+  // Asked for by the ids this read actually holds, so a company- or status-
+  // scoped list gets its own rows' levels rather than whichever openings happen
+  // to be newest. A missing column leaves every level null and says why.
+  const terms = await getOpeningTermsByIds(
+    restClient,
+    rowData.map((row) => row.id)
+  );
+
   return {
-    jobs: ((rows.data ?? []) as unknown as RawJobRow[]).map(toJob),
+    jobs: rowData.map((row) => toJob(row, terms.experienceById.get(row.id) ?? null)),
     // A failed head count leaves nothing truer than the rows in hand.
-    total: count.count ?? (rows.data ?? []).length,
+    total: count.count ?? rowData.length,
     companyName,
     unknownCompany: false,
+    termsNote: terms.note,
   };
 }
 
 /** One opening in full — what `update_job` needs before it changes a field. */
-export async function getJobOpening(jobId: string): Promise<AssistantJobRow | null> {
+export async function getJobOpening(jobId: string): Promise<AssistantJobDetail | null> {
   await requireStaff("/jobs");
   const restClient = await createServerRestClient();
 
@@ -253,5 +287,11 @@ export async function getJobOpening(jobId: string): Promise<AssistantJobRow | nu
     .maybeSingle();
 
   if (error) throw new Error(`That opening could not be read: ${error.message}`);
-  return data ? toJob(data as unknown as RawJobRow) : null;
+  if (!data) return null;
+
+  const terms = await getOpeningTermsByIds(restClient, [jobId]);
+  return {
+    job: toJob(data as unknown as RawJobRow, terms.experienceById.get(jobId) ?? null),
+    termsNote: terms.note,
+  };
 }

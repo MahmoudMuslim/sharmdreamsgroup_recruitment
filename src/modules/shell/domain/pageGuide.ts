@@ -189,6 +189,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     use: [
       "New opening, then Edit, Publish, Pause or Close. Close is how you stop a role that already has applicants.",
       "New opening can start from a position: the picker fills the title, company, department, description, requirements and salary band from the position's definition, and every field stays editable before you save.",
+      "Every opening states a job type; the drawer also offers a seniority level from Junior to Lead where the database holds the column, and both are printed on the card.",
       "Open the applicants drawer to expand a row into their submission, open or download the CV, and move them through the stages without leaving the role.",
       "Full profile in Candidates hands the person over to the pipeline screen.",
       "Filter by status or company, search by title, department, location or company, and sort by newest, most applicants or title.",
@@ -198,6 +199,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "A closed opening cannot be filed onto: linking, importing, converting or recording someone under it is refused until it reopens.",
       "Departments and locations come from Settings → Organisation. A retired or misspelt value is refused on a new write, and the drift desk there names the openings already carrying one.",
       "Starting from a position needs that list: db/migrations/026_positions.sql is authored but not applied on this database, so the form says the positions have not been created yet and offers a blank opening instead. Once applied, an opening's company has to match the position's company unless the position is group-wide.",
+      "Seniority levels and the Remote and Hybrid job types arrive with db/migrations/033_opening_terms.sql, which is authored but not applied on this database: until it is, the drawer offers the four job types the database already accepts, hides the level picker, and the grid says so above the cards. A level is never inferred — an opening nobody has levelled reads not recorded, never a middle tier.",
       "A card's count is live; the drawer lists the newest 200 applicants.",
       "The grid holds the newest 200 openings in the browser — its rails, its search box and its page count those, while the strip's figure is the whole scope. When the two differ, a line under the strip names what is not here.",
       "A rail, new search words or the assistant's link to one opening moves you to the page that holds it; anything else starts you back at the front.",

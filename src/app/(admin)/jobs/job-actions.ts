@@ -8,6 +8,13 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
 import { SECTORS, isSector } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
+import {
+  EMPLOYMENT_WRITE_REFUSAL,
+  EXPERIENCE_WRITE_REFUSAL,
+  isEmploymentType,
+  isMissingSchemaError,
+  readExperienceLevel,
+} from "@/modules/jobs/domain/openingTerms";
 import { MASTER_LIST_WORDS } from "@/modules/settings/domain/masterDataLists";
 import {
   FILED_ENTITIES,
@@ -36,6 +43,14 @@ export interface JobDraft {
   sector: string;
   location: string;
   employment_type: string;
+  /**
+   * The seniority the opening states, or null for none recorded.
+   *
+   * `undefined` means the caller did not offer the field at all. While 033 is
+   * unapplied the form sends nothing, and the action must write no column — a
+   * literal null would name a column the database does not have.
+   */
+  experience_level?: string | null;
   description: string;
   requirements: string[];
   min_salary_usd: string;
@@ -56,7 +71,6 @@ export interface JobResult {
   id?: string;
 }
 
-const EMPLOYMENT_TYPES = new Set(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERNSHIP"]);
 const STATUSES = new Set<string>(JOB_STATUSES);
 
 /**
@@ -92,11 +106,21 @@ async function jobColumnsFrom(
   if (!isSector(draft.sector)) {
     return { ok: false, error: `Sector must be one of: ${SECTORS.join(", ")}.` };
   }
-  if (!EMPLOYMENT_TYPES.has(draft.employment_type)) {
+  if (!isEmploymentType(draft.employment_type)) {
     return { ok: false, error: "Invalid employment type." };
   }
   if (!STATUSES.has(draft.status)) {
     return { ok: false, error: "Invalid status." };
+  }
+
+  // Three states, not two: a level, a deliberate blank that clears it, and
+  // "not offered". The last is what keeps an edit from clearing a stored level
+  // on a database where the form cannot show it.
+  let experienceLevel: string | null | undefined;
+  if (draft.experience_level !== undefined) {
+    const read = readExperienceLevel(draft.experience_level);
+    if (!read.ok) return { ok: false, error: read.error };
+    experienceLevel = read.level;
   }
 
   // The salary pair is only meaningful with its currency, so the code is checked
@@ -124,6 +148,7 @@ async function jobColumnsFrom(
       title,
       sector: draft.sector,
       employment_type: draft.employment_type,
+      ...(experienceLevel !== undefined ? { experience_level: experienceLevel } : {}),
       description,
       requirements: draft.requirements ?? [],
       min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
@@ -292,7 +317,10 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       return { ok: false, error: "A linked record no longer exists." };
     }
     if (error.code === "23514") {
-      return { ok: false, error: "The employment type or status is not valid." };
+      return { ok: false, error: describeWriteError(error) };
+    }
+    if (isMissingSchemaError(error) && /experience_level/i.test(error.message)) {
+      return { ok: false, error: EXPERIENCE_WRITE_REFUSAL };
     }
     return { ok: false, error: error.message };
   }
@@ -314,6 +342,9 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       department: columns.department,
       location: columns.location,
       employment_type: columns.employment_type,
+      ...(columns.experience_level !== undefined
+        ? { experience_level: columns.experience_level }
+        : {}),
       status: columns.status,
       // Named so the trail says where the copy came from, not just that an
       // opening appeared. Absent on a blank create, which starts from no position.
@@ -339,8 +370,11 @@ async function requireJobManager(): Promise<
   return { restClient: await createServerRestClient() };
 }
 
-/** Turns the two constraint errors this table can raise into recruiter language. */
+/** Turns the constraint and schema errors this table can raise into recruiter language. */
 function describeWriteError(error: { code?: string; message: string }): string {
+  if (isMissingSchemaError(error) && /experience_level/i.test(error.message)) {
+    return EXPERIENCE_WRITE_REFUSAL;
+  }
   if (error.code === "23503") {
     if (error.message.includes("tenant_id")) {
       return "That company no longer exists — pick another.";
@@ -348,6 +382,12 @@ function describeWriteError(error: { code?: string; message: string }): string {
     return "A linked record no longer exists.";
   }
   if (error.code === "23514") {
+    // The two constraints 033 touches are named, so a Remote type or a level the
+    // database has not been taught yet is told why rather than "not valid".
+    if (/employment_type_check/i.test(error.message)) return EMPLOYMENT_WRITE_REFUSAL;
+    if (/experience_level_check/i.test(error.message)) {
+      return "Experience level must be one of: JUNIOR, MID, SENIOR, LEAD.";
+    }
     return "The employment type or status is not valid.";
   }
   return error.message;
@@ -366,6 +406,7 @@ const EDITABLE_COLUMNS = [
   "sector",
   "location",
   "employment_type",
+  "experience_level",
   "description",
   "requirements",
   "min_salary_usd",
@@ -396,6 +437,23 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
 
+  // The level is read in its own query, for the same reason the grid reads it
+  // apart: naming it in the row select above would fail the whole edit while 033
+  // is unapplied. It is read only when the draft names the field — a form that
+  // cannot offer it sends nothing, and "not offered" must never become "cleared".
+  let storedLevel: string | null = null;
+  let levelWasRead = false;
+  if (draft.experience_level !== undefined) {
+    const { data: levelRow, error: levelError } = await restClient
+      .from("job_openings")
+      .select("id, experience_level")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (levelError) return { ok: false, error: describeWriteError(levelError) };
+    storedLevel = (levelRow?.experience_level as string | null) ?? null;
+    levelWasRead = true;
+  }
+
   const built = await jobColumnsFrom(draft, restClient, {
     tenant_id: existing.tenant_id,
     department: existing.department,
@@ -412,7 +470,10 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
   const { error } = await restClient.from("job_openings").update(columns).eq("id", jobId);
   if (error) return { ok: false, error: describeWriteError(error) };
 
-  const before = existing as unknown as Record<string, unknown>;
+  const before = {
+    ...(existing as unknown as Record<string, unknown>),
+    ...(levelWasRead ? { experience_level: storedLevel } : {}),
+  };
   const edits = changedFields(before, columns, EDITABLE_COLUMNS);
   const republished = built.columns.status === "PUBLISHED" && !existing.posted_at;
 

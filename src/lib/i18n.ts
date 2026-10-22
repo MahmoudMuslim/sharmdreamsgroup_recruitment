@@ -361,6 +361,12 @@ const en: Dictionary = {
   "enum.part_time": "Part time",
   "enum.contract": "Contract",
   "enum.internship": "Internship",
+  "enum.remote": "Remote",
+  "enum.hybrid": "Hybrid",
+  "enum.junior": "Junior",
+  "enum.mid": "Mid",
+  "enum.senior": "Senior",
+  "enum.lead": "Lead",
 };
 
 const ar: Dictionary = {
@@ -691,6 +697,12 @@ const ar: Dictionary = {
   "enum.part_time": "دوام جزئي",
   "enum.contract": "عقد",
   "enum.internship": "تدريب",
+  "enum.remote": "عن بُعد",
+  "enum.hybrid": "هجين",
+  "enum.junior": "مبتدئ",
+  "enum.mid": "متوسط",
+  "enum.senior": "خبير",
+  "enum.lead": "قيادي",
 };
 
 const ru: Dictionary = {
@@ -905,6 +917,12 @@ const ru: Dictionary = {
   "enum.part_time": "Частичная занятость",
   "enum.contract": "Контракт",
   "enum.internship": "Стажировка",
+  "enum.remote": "Удалённо",
+  "enum.hybrid": "Гибрид",
+  "enum.junior": "Младший",
+  "enum.mid": "Средний",
+  "enum.senior": "Старший",
+  "enum.lead": "Ведущий",
 };
 
 const de: Dictionary = {
@@ -1122,6 +1140,12 @@ const de: Dictionary = {
   "enum.part_time": "Teilzeit",
   "enum.contract": "Befristet",
   "enum.internship": "Praktikum",
+  "enum.remote": "Remote",
+  "enum.hybrid": "Hybrid",
+  "enum.junior": "Junior",
+  "enum.mid": "Mid-Level",
+  "enum.senior": "Senior",
+  "enum.lead": "Lead",
 };
 
 const dictionaries: Record<Locale, Dictionary> = { en, ar, ru, de };

@@ -62,6 +62,11 @@ import { SECTORS } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES, openingReadNote } from "@/modules/jobs/domain/hireable";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
 import {
+  EMPLOYMENT_TYPE_VALUES,
+  EXPERIENCE_LEVEL_VALUES,
+  isExperienceLevel,
+} from "@/modules/jobs/domain/openingTerms";
+import {
   APPLICATION_SOURCES,
   PIPELINE_STAGES,
   candidateScopeNote,
@@ -528,6 +533,28 @@ function jobDraft(args: ToolArgs, opts: { fromPosition?: boolean } = {}): JobDra
   if (sector && !SECTORS.includes(sector as (typeof SECTORS)[number])) {
     throw new ToolArgumentError(`"sector" must be one of: ${SECTORS.join(", ")}.`);
   }
+
+  // Three states, not two. An absent argument has to stay absent: while 033 is
+  // unapplied a chat has no level to send, and a null would name a column the
+  // database does not have and fail the whole write. `null` is the model asking
+  // to clear a recorded level; a word is the level itself.
+  const rawLevel = args.experience_level;
+  let experienceLevel: string | null | undefined;
+  if (rawLevel !== undefined) {
+    if (rawLevel === null || rawLevel === "") {
+      experienceLevel = null;
+    } else if (
+      typeof rawLevel === "string" &&
+      isExperienceLevel(rawLevel.trim().toUpperCase())
+    ) {
+      experienceLevel = rawLevel.trim().toUpperCase();
+    } else {
+      throw new ToolArgumentError(
+        `"experience_level" must be one of: ${EXPERIENCE_LEVEL_VALUES.join(", ")}, or null to clear it.`
+      );
+    }
+  }
+
   return {
     ...(positionId ? { position_id: positionId } : {}),
     title: text("title"),
@@ -540,6 +567,7 @@ function jobDraft(args: ToolArgs, opts: { fromPosition?: boolean } = {}): JobDra
     employment_type: (
       positionId ? optionalStr(args, "employment_type") ?? "FULL_TIME" : str(args, "employment_type")
     ).toUpperCase(),
+    ...(experienceLevel !== undefined ? { experience_level: experienceLevel } : {}),
     description: text("description"),
     requirements: args.requirements === undefined ? [] : strArray(args, "requirements"),
     min_salary_usd: optionalStr(args, "min_salary_usd") ?? "",
@@ -803,6 +831,8 @@ export { BUCKETS };
 export { CATEGORY_LABEL };
 export { CHART_VIEWS };
 export { DEFAULT_WINDOW };
+export { EMPLOYMENT_TYPE_VALUES };
+export { EXPERIENCE_LEVEL_VALUES };
 export { FILED_ENTITIES };
 export { GENERATED_FORMATS };
 export { GENERATED_FORMAT_LABEL };

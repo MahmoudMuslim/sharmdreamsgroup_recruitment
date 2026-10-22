@@ -3,6 +3,8 @@
 import type { AssistantTool, PipelineStage } from "./shared";
 import {
   AI_CAPABILITIES,
+  EMPLOYMENT_TYPE_VALUES,
+  EXPERIENCE_LEVEL_VALUES,
   JOB_STATUSES,
   PIPELINE_STAGES,
   PROSPECT_STAGES,
@@ -37,7 +39,7 @@ export const writes: readonly AssistantTool[] = [
     name: "create_job",
     label: "Creating a job opening",
     description:
-      "Create a job opening. Either point it at a position and let the definition supply the copy — send position_id, a location, and optionally the company, title, department or salary the intake overrides — or write the role out in full. Read the vocabularies first: get_master_data answers one list per call, so ask it for positions, companies, departments, locations and currencies, and file the role under a row that is in use. A company id, department name, location name or currency code the list does not hold is refused, and the refusal quotes the rows that are in use. A position filed under one company only seeds that company's openings. The positions table arrives with db/migrations/026_positions.sql; until the owner applies it, get_master_data reports the list as not created and a position_id is refused with that reason.",
+      "Create a job opening. Either point it at a position and let the definition supply the copy — send position_id, a location, and optionally the company, title, department or salary the intake overrides — or write the role out in full. Read the vocabularies first: get_master_data answers one list per call, so ask it for positions, companies, departments, locations and currencies, and file the role under a row that is in use. A company id, department name, location name or currency code the list does not hold is refused, and the refusal quotes the rows that are in use. A position filed under one company only seeds that company's openings. The positions table arrives with db/migrations/026_positions.sql; until the owner applies it, get_master_data reports the list as not created and a position_id is refused with that reason. Employment types are the six this portal offers, and seniority is optional: send experience_level only when the intake stated one. Levels and the Remote/Hybrid types arrive with db/migrations/033_opening_terms.sql, which is authored but not applied — a call naming either is refused with that reason while the old schema stands.",
     args: {
       position_id:
         "string — optional id from get_master_data (entity positions). When sent, the position supplies title, company, department, description (its responsibilities), requirements and salary band, and any of those sent alongside replace the inherited value. The link is recorded on the opening.",
@@ -48,8 +50,8 @@ export const writes: readonly AssistantTool[] = [
         "string — department name exactly as get_master_data (entity departments) lists it; required unless position_id supplies it",
       sector: `string — one of ${SECTORS.join(", ")}; optional with position_id, where the company's sector is used`,
       location: "string — location name exactly as get_master_data (entity locations) lists it",
-      employment_type:
-        "string — FULL_TIME, PART_TIME, CONTRACT or INTERNSHIP; optional with position_id, defaults to FULL_TIME",
+      employment_type: `string — one of ${EMPLOYMENT_TYPE_VALUES.join(", ")}; optional with position_id, defaults to FULL_TIME. REMOTE and HYBRID are refused until db/migrations/033_opening_terms.sql is applied.`,
+      experience_level: `string — optional, one of ${EXPERIENCE_LEVEL_VALUES.join(", ")}; omit it when the intake did not state one. Storing a level needs db/migrations/033_opening_terms.sql, and while the column is missing the write is refused with that reason rather than dropping the level silently.`,
       description: "string — required unless position_id supplies responsibilities",
       requirements: "string[] — optional list of requirement lines",
       min_salary_usd: "string — optional number",
@@ -64,7 +66,7 @@ export const writes: readonly AssistantTool[] = [
     name: "update_job",
     label: "Editing a job opening",
     description:
-      "Rewrite a job opening. Every field is written, so read the opening with get_job first and send back the full record with only the intended changes. A company, department, location or currency the master data does not offer is accepted while it matches what get_job reported for that opening — legacy rows stay editable — and refused as soon as it is new.",
+      "Rewrite a job opening. Every field is written, so read the opening with get_job first and send back the full record with only the intended changes. A company, department, location or currency the master data does not offer is accepted while it matches what get_job reported for that opening — legacy rows stay editable — and refused as soon as it is new. `experience_level` is the one tri-state field: send a level to set it, null to clear it, or omit it to leave a recorded level untouched. Omitting it is also what keeps every other field writable while db/migrations/033_opening_terms.sql is unapplied, because the database then has no column to write.",
     args: {
       job_id: "string — the opening's id",
       title: "string",
@@ -72,7 +74,8 @@ export const writes: readonly AssistantTool[] = [
       department: "string — department name, or what get_job reported for this opening",
       sector: "string",
       location: "string — location name, or what get_job reported for this opening",
-      employment_type: "string",
+      employment_type: `string — one of ${EMPLOYMENT_TYPE_VALUES.join(", ")}; REMOTE and HYBRID need db/migrations/033_opening_terms.sql`,
+      experience_level: `string or null — one of ${EXPERIENCE_LEVEL_VALUES.join(", ")} to set it, null to clear it, or omit it to leave what get_job reported. Setting or clearing needs db/migrations/033_opening_terms.sql; while the column is missing, omitting it is the only form that keeps the rest of the edit writable.`,
       description: "string",
       requirements: "string[]",
       min_salary_usd: "string — optional",

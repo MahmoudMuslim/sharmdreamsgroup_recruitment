@@ -15,6 +15,7 @@ import {
   FACETS,
   activeFacetCount,
   employmentLabel,
+  experienceLabel,
   facetOptions,
   filterJobs,
   isTicked,
@@ -101,6 +102,9 @@ function JobCard({ job }: { job: PublicJob }) {
     job.department,
     job.sector ? sectorLabel(job.sector, lang) : "",
     job.employment_type ? employmentLabel(job.employment_type, lang) : "",
+    // A level nobody recorded prints nothing: the card does not claim a middle
+    // tier for every opening that predates the column.
+    job.experience_level ? experienceLabel(job.experience_level, lang) : "",
   ].filter(Boolean);
 
   return (

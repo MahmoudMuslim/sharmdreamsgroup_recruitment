@@ -279,7 +279,7 @@ export const reads: readonly AssistantTool[] = [
     name: "list_jobs",
     label: "Reading job openings",
     description:
-      "Job openings newest first, with their status, company, department, location, salary band and applicant count split the way the openings grid splits it: `applicants` everyone live, `in_pipeline` who holds a stage still being worked, `hired` the hired ones. These three are populations at an instant — who sits where now — never a movement, conversion or rate, and no headcount target is claimed here. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
+      "Job openings newest first, with their status, company, department, location, employment type, seniority level, salary band and applicant count split the way the openings grid splits it: `applicants` everyone live, `in_pipeline` who holds a stage still being worked, `hired` the hired ones. These three are populations at an instant — who sits where now — never a movement, conversion or rate, and no headcount target is claimed here. `experience_level` is null when none was recorded; when the database has no such column yet, `schema_note` says so, and a null then means the level has nowhere to be stored rather than that a recruiter left it blank. Employment types include REMOTE and HYBRID once db/migrations/033_opening_terms.sql is applied; before that, writes naming them are refused. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
     args: {
       status: `string — optional, one of ${JOB_STATUSES.join(
         ", "
@@ -302,7 +302,8 @@ export const reads: readonly AssistantTool[] = [
       // the count is the set's size rather than the window's. Only the words are
       // applied here — through the grid's own predicate, so a role the chat finds
       // is a role the recruiter can find by typing the same letters.
-      const { jobs, total, companyName, unknownCompany } = await listJobOpenings(filter, company);
+      const { jobs, total, companyName, unknownCompany, termsNote } =
+        await listJobOpenings(filter, company);
       if (unknownCompany) {
         throw new ToolArgumentError(
           "No company carries that id. get_master_data (entity companies) lists the group's companies with their ids."
@@ -317,6 +318,9 @@ export const reads: readonly AssistantTool[] = [
           matched.length,
           query || null
         ),
+        // Only when the column itself is missing: otherwise silence means a
+        // recruiter left the level unrecorded, which is a normal state.
+        ...(termsNote ? { schema_note: termsNote } : {}),
         openings: matched.map((job) => ({
           id: job.id,
           title: job.title,
@@ -325,6 +329,7 @@ export const reads: readonly AssistantTool[] = [
           department: job.department,
           location: job.location,
           employment_type: job.employment_type,
+          experience_level: job.experience_level,
           sector: job.sector,
           salary: `${job.min_salary_usd ?? "?"}–${job.max_salary_usd ?? "?"} ${job.salary_currency ?? ""}`.trim(),
           applicants: job.applicants,
@@ -342,12 +347,16 @@ export const reads: readonly AssistantTool[] = [
     name: "get_job",
     label: "Reading one opening",
     description:
-      "One opening in full, including its description and requirement list and the same live / in-pipeline / hired counts the grid shows beside its card (populations at an instant, not a movement, and no headcount target). Read this before editing so unchanged fields are not lost.",
+      "One opening in full, including its description, requirement list, seniority level and the same live / in-pipeline / hired counts the grid shows beside its card (populations at an instant, not a movement, and no headcount target). `experience_level` is null when none was recorded; `schema_note` appears when the database has no level column yet. Read this before editing so unchanged fields are not lost.",
     args: { job_id: "string — the opening's id from list_jobs" },
     run: async (args) => {
-      const job = await getJobOpening(str(args, "job_id"));
-      if (!job) return { ok: false, error: "No opening has that id." };
-      return { ok: true, job };
+      const found = await getJobOpening(str(args, "job_id"));
+      if (!found) return { ok: false, error: "No opening has that id." };
+      return {
+        ok: true,
+        job: found.job,
+        ...(found.termsNote ? { schema_note: found.termsNote } : {}),
+      };
     },
   },
   {

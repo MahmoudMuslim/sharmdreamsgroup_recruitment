@@ -14,6 +14,11 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { createJobOpening, updateJobOpening, type JobDraft } from "./job-actions";
 import {
+  EMPLOYMENT_TYPES,
+  EXPERIENCE_LEVELS,
+  OPENING_TERMS_MIGRATION,
+} from "@/modules/jobs/domain/openingTerms";
+import {
   filingGhostLabel,
   type FilingVocabularies,
 } from "@/modules/settings/domain/masterDataFiling";
@@ -30,6 +35,13 @@ export interface JobFormOptions {
   positions: PositionChoice[];
   /** False when `positions` could not be read at all — the table does not exist yet. */
   positionsAvailable: boolean;
+  /**
+   * False while 033 is unapplied: `experience_level` is not a column and the
+   * employment check still holds four values. The form then offers the four it
+   * can store and no level at all, rather than a picker whose choice the
+   * database would refuse.
+   */
+  termsAvailable: boolean;
 }
 
 /** The stored row an edit starts from — only the fields this form can write. */
@@ -41,6 +53,8 @@ export interface JobForEdit {
   sector: string;
   location: string;
   employment_type: string;
+  /** Null while 033 is unapplied, and for an opening nobody gave a level. */
+  experience_level: string | null;
   description: string;
   requirements: string[] | null;
   min_salary_usd: number | null;
@@ -48,13 +62,6 @@ export interface JobForEdit {
   salary_currency: string;
   status: string;
 }
-
-const EMPLOYMENT_TYPES = [
-  { value: "FULL_TIME", label: "Full time" },
-  { value: "PART_TIME", label: "Part time" },
-  { value: "CONTRACT", label: "Contract" },
-  { value: "INTERNSHIP", label: "Internship" },
-];
 
 const STATUSES = [
   { value: "DRAFT", label: "Draft" },
@@ -76,6 +83,8 @@ interface JobFormState {
   sector: string;
   location: string;
   employment_type: string;
+  /** Blank means "not recorded", which is what the column stores as null. */
+  experience_level: string;
   description: string;
   requirements: string;
   min_salary_usd: string;
@@ -92,6 +101,7 @@ const EMPTY: JobFormState = {
   sector: "HOSPITALITY",
   location: "",
   employment_type: "FULL_TIME",
+  experience_level: "",
   description: "",
   requirements: "",
   min_salary_usd: "",
@@ -123,6 +133,7 @@ function editDraft(job: JobForEdit): JobFormState {
     sector: job.sector,
     location: job.location,
     employment_type: job.employment_type,
+    experience_level: job.experience_level ?? "",
     description: job.description,
     requirements: (job.requirements ?? []).join("\n"),
     min_salary_usd: job.min_salary_usd === null ? "" : String(job.min_salary_usd),
@@ -253,6 +264,10 @@ export function JobFormDrawer({
       // where it is — and while 026 is unapplied, sending the column at all would
       // fail the save.
       position_id: job ? undefined : draft.position_id || undefined,
+      // Undefined, not null, while 033 is unapplied: a literal null would name a
+      // column the database does not have, and the level is not the recruiter's
+      // to lose because a migration has not run.
+      experience_level: options.termsAvailable ? draft.experience_level || null : undefined,
       requirements: draft.requirements
         .split("\n")
         .map((line) => line.trim())
@@ -424,20 +439,61 @@ export function JobFormDrawer({
           </Field>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div
+          className={`grid grid-cols-1 gap-4 ${
+            options.termsAvailable ? "sm:grid-cols-3" : "sm:grid-cols-2"
+          }`}
+        >
           <Field label="Employment type" htmlFor="job-employment">
             <Select
               id="job-employment"
               value={draft.employment_type}
               onChange={(e) => set("employment_type")(e.target.value)}
             >
-              {EMPLOYMENT_TYPES.map((t) => (
+              {/* While 033 is unapplied the widened check does not exist, so the
+                  two types it adds are not offered — a picker whose choice the
+                  database would refuse is worse than one that says why. */}
+              {(options.termsAvailable
+                ? EMPLOYMENT_TYPES
+                : EMPLOYMENT_TYPES.filter(
+                    (type) => type.value !== "REMOTE" && type.value !== "HYBRID"
+                  )
+              ).map((t) => (
                 <option key={t.value} value={t.value}>
                   {t.label}
                 </option>
               ))}
+              {/* A row stored before the read failed still gets its own option, so
+                  the select cannot show a value the opening does not hold. */}
+              {!EMPLOYMENT_TYPES.some((t) => t.value === draft.employment_type) &&
+                draft.employment_type && (
+                  <option value={draft.employment_type}>
+                    {draft.employment_type.replace(/_/g, " ")}
+                  </option>
+                )}
             </Select>
           </Field>
+
+          {options.termsAvailable && (
+            <Field
+              label="Experience level"
+              htmlFor="job-experience"
+              hint="Optional. Blank means none was recorded."
+            >
+              <Select
+                id="job-experience"
+                value={draft.experience_level}
+                onChange={(e) => set("experience_level")(e.target.value)}
+              >
+                <option value="">Not recorded</option>
+                {EXPERIENCE_LEVELS.map((level) => (
+                  <option key={level.value} value={level.value}>
+                    {level.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
 
           <Field label="Status" htmlFor="job-status">
             <Select id="job-status" value={draft.status} onChange={(e) => set("status")(e.target.value)}>
@@ -449,6 +505,17 @@ export function JobFormDrawer({
             </Select>
           </Field>
         </div>
+
+        {!options.termsAvailable && (
+          <p className="text-[11px] leading-relaxed text-brand-ink/50">
+            Seniority levels and Remote/Hybrid job types arrive with{" "}
+            <code className="rounded bg-brand-sand px-1 py-0.5 text-[11px]">
+              {OPENING_TERMS_MIGRATION}
+            </code>
+            , which is authored but not applied. Until it is, this form offers the four
+            employment types the database already stores.
+          </p>
+        )}
 
         <Field label="Description" htmlFor="job-description" required>
           <TextArea

@@ -22,6 +22,10 @@ import {
 } from "@/modules/careers/gate-questions";
 import type { PublicJob } from "@/modules/careers/job-board";
 import {
+  isExperienceLevel,
+  isMissingSchemaError,
+} from "@/modules/jobs/domain/openingTerms";
+import {
   toPublicCompany,
   type PublicCompany,
 } from "@/modules/careers/company-profile";
@@ -37,6 +41,10 @@ import {
  * Nothing here may return another applicant's data.
  */
 
+// `experience_level` is deliberately absent: db/migrations/033_opening_terms.sql
+// is authored but not applied, and naming the column here would fail the whole
+// public board on every database that has not run it. It is read in its own
+// probe below, which degrades to "not recorded".
 const JOB_COLUMNS =
   "id, title, tenant_id, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, tenants_and_companies(name)";
 
@@ -61,7 +69,7 @@ function companyName(value: unknown): string | null {
   return null;
 }
 
-function toJob(row: Record<string, unknown>): PublicJob {
+function toJob(row: Record<string, unknown>, experienceLevel: string | null = null): PublicJob {
   const requirements = row.requirements;
   return {
     id: String(row.id),
@@ -70,6 +78,7 @@ function toJob(row: Record<string, unknown>): PublicJob {
     sector: String(row.sector ?? ""),
     location: String(row.location ?? ""),
     employment_type: String(row.employment_type ?? ""),
+    experience_level: experienceLevel,
     description: String(row.description ?? ""),
     // Seeded rows carry a JSON array, but a hand-edited row could hold a string,
     // so both shapes are accepted rather than rendering "[object Object]".
@@ -87,6 +96,43 @@ function toJob(row: Record<string, unknown>): PublicJob {
       typeof row.tenant_id === "string" && row.tenant_id ? row.tenant_id : null,
     company_name: companyName(row.tenants_and_companies),
   };
+}
+
+/**
+ * The seniority map for the openings a public read returned.
+ *
+ * Read apart from the board's own columns so an unapplied 033 costs only the
+ * tag: the row read still succeeds, every role keeps its card, and a missing
+ * column reads as "not recorded" rather than throwing the board away. Only
+ * stored codes the vocabulary recognises are carried — an unexpected value is
+ * silence, the same as a null.
+ */
+async function experienceLevels(
+  restClient: ReturnType<typeof getAnonRestClient>,
+  ids: string[]
+): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+
+  const { data, error } = await restClient
+    .from("job_openings")
+    .select("id, experience_level")
+    .in("id", ids);
+
+  if (error) {
+    // The missing column is the expected state until the owner applies 033, so
+    // it is not logged on every cache revalidation; anything else is.
+    if (!isMissingSchemaError(error)) {
+      console.error("[careers] seniority levels unreadable:", error.message);
+    }
+    return new Map();
+  }
+
+  const levels = new Map<string, string>();
+  for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const level = typeof row.experience_level === "string" ? row.experience_level : "";
+    if (isExperienceLevel(level)) levels.set(String(row.id), level);
+  }
+  return levels;
 }
 
 /**
@@ -116,7 +162,12 @@ export async function getPublicJobs(): Promise<PublicJob[]> {
     .order("posted_at", { ascending: false });
 
   if (error) throw new Error(`[getPublicJobs] ${error.message}`);
-  return ((data ?? []) as unknown as Record<string, unknown>[]).map(toJob);
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  const levels = await experienceLevels(
+    restClient,
+    rows.map((row) => String(row.id))
+  );
+  return rows.map((row) => toJob(row, levels.get(String(row.id)) ?? null));
 }
 
 /**
@@ -171,7 +222,9 @@ export async function getPublicJob(id: string): Promise<PublicJob | null> {
   // REST blip would then tell a candidate that a live opening does not exist.
   if (error) throw new Error(`[getPublicJob] ${error.message}`);
   if (!data) return null;
-  return toJob(data as unknown as Record<string, unknown>);
+  const row = data as unknown as Record<string, unknown>;
+  const levels = await experienceLevels(restClient, [id]);
+  return toJob(row, levels.get(id) ?? null);
 }
 
 /* -------------------------------------------------------------------------- */

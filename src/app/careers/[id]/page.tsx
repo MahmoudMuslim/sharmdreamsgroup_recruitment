@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ArrowLeft, ArrowRight, CheckCircle2, MapPin } from "lucide-react";
 import { getPublicCompanies, getPublicJob, getPublicJobs } from "../actions";
-import { enumKeyFor, employmentLabel, sectorLabel } from "@/modules/careers/job-board";
+import {
+  enumKeyFor,
+  employmentLabel,
+  experienceLabel,
+  sectorLabel,
+} from "@/modules/careers/job-board";
 import {
   companyAtAGlance,
   companyOfJob,
@@ -272,6 +277,16 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
                 <PublicText
                   k={enumKeyFor(job.employment_type)}
                   fallback={employmentLabel(job.employment_type)}
+                />
+              </span>
+            )}
+            {/* Printed only when a level was recorded — the role page has no
+                "not recorded" line, because a missing tag is not a claim. */}
+            {job.experience_level && (
+              <span>
+                <PublicText
+                  k={enumKeyFor(job.experience_level)}
+                  fallback={experienceLabel(job.experience_level)}
                 />
               </span>
             )}

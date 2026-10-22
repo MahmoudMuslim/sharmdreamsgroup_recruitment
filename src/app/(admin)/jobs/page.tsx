@@ -6,6 +6,7 @@ import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import { getFilingVocabularies } from "@/modules/jobs/application/filingVocabularies";
 import { getOpeningsHeadcount } from "@/modules/jobs/application/hiringDemand";
+import { getOpeningsTerms } from "@/modules/jobs/application/openingTermsRead";
 import { GRID_ROW_LIMIT } from "@/modules/jobs/domain/hireable";
 import { HIRED_STAGE, IN_PIPELINE_STAGES } from "@/modules/jobs/domain/hiringDemand";
 import { NewJobDrawer, type JobFormOptions } from "./JobFormDrawer";
@@ -25,7 +26,7 @@ export default async function JobsPage() {
   await requireStaff("/jobs");
   const restClient = await createServerRestClient();
 
-  const [result, headcount, canManage, canDecide, filing] = await Promise.all([
+  const [result, headcount, terms, canManage, canDecide, filing] = await Promise.all([
     restClient
       .from("job_openings")
       .select(
@@ -54,6 +55,9 @@ export default async function JobsPage() {
     // Read apart from the grid's own row read so an unapplied `positions_needed`
     // column costs only the target figure, never the whole page.
     getOpeningsHeadcount(restClient),
+    // The same separation for seniority: 033 is authored but not applied, and a
+    // missing column must cost the level, not the openings page.
+    getOpeningsTerms(restClient),
     hasPermissionForUser("jobs.manage"),
     hasPermissionForUser("candidates.write"),
     getFilingVocabularies(restClient).then((read) => read.vocabularies),
@@ -73,10 +77,18 @@ export default async function JobsPage() {
     // so a database without 026 blanks only this picker and says why.
     positions: master.positions,
     positionsAvailable: master.positionsAvailable,
+    // False while `experience_level` and the widened employment check are not on
+    // the database: the drawer then offers the four original types and no level.
+    termsAvailable: terms.available,
   };
-  const jobs: JobRow[] = ((result.data ?? []) as unknown as Omit<JobRow, "positions_needed">[]).map(
-    (row) => ({ ...row, positions_needed: headcount.neededById.get(row.id) ?? null })
-  );
+  const jobs: JobRow[] = ((result.data ?? []) as unknown as Omit<
+    JobRow,
+    "positions_needed" | "experience_level"
+  >[]).map((row) => ({
+    ...row,
+    positions_needed: headcount.neededById.get(row.id) ?? null,
+    experience_level: terms.experienceById.get(row.id) ?? null,
+  }));
 
   return (
     <PageTransition>
@@ -96,6 +108,7 @@ export default async function JobsPage() {
         // fresh database); the grid names that instead of calling every role
         // target-less.
         headcountUnavailable={headcount.unavailable}
+        termsNote={terms.note}
         options={options}
         canManage={canManage}
         canDecide={canDecide}

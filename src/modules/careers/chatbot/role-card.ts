@@ -13,7 +13,12 @@
  * and the page unable to disagree.
  */
 
-import { employmentLabel, sectorLabel, type PublicJob } from "@/modules/careers/job-board";
+import {
+  employmentLabel,
+  experienceLabel,
+  sectorLabel,
+  type PublicJob,
+} from "@/modules/careers/job-board";
 import type { PublicCompany } from "@/modules/careers/company-profile";
 import { formatSalaryRange } from "@/lib/currency";
 
@@ -82,6 +87,10 @@ function roleBlock(job: PublicJob, company: PublicCompany | null): string[] {
     ...line("Sector", sectorLabel(job.sector)),
     ...line("Location", job.location),
     ...line("Employment type", employmentLabel(job.employment_type)),
+    ...line(
+      "Experience level",
+      job.experience_level ? experienceLabel(job.experience_level) : null
+    ),
     salaryLine(job),
     ...(job.requirements.length
       ? [
@@ -113,8 +122,11 @@ function roster(jobs: PublicJob[], companies: PublicCompany[]): string[] {
       companyName ?? job.company_name ?? "the group",
       job.location,
       employmentLabel(job.employment_type),
+      job.experience_level ? experienceLabel(job.experience_level) : null,
       range || "salary not stated",
-    ].join(" | ");
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(" | ");
   });
 }
 

@@ -13,6 +13,10 @@ import {
   demandUnavailableNote,
   type HiringDemand,
 } from "@/modules/jobs/domain/hiringDemand";
+import {
+  EMPLOYMENT_LABELS,
+  experienceLabel,
+} from "@/modules/jobs/domain/openingTerms";
 import { Pagination } from "@/modules/analytics/presentation/Pagination";
 import { PAGE_PARAM, PAGE_ROWS, clampPage, pageFromParams, pageSlice, pageWindow } from "@/lib/paging";
 import { JobCardActions } from "./JobCardActions";
@@ -108,6 +112,7 @@ export function JobsBrowser({
   jobs,
   scopeTotal,
   headcountUnavailable,
+  termsNote,
   options,
   canManage,
   canDecide,
@@ -121,6 +126,12 @@ export function JobsBrowser({
   /** The `positions_needed` column could not be read at all (not applied yet), so
    * every card showing "no target set" is a read failure, not a recruiter's blank. */
   headcountUnavailable: boolean;
+  /**
+   * Why the seniority levels are missing, or null when the column was read.
+   * Named once above the grid so a card's silence is not read as "no level was
+   * recorded" when the database has nowhere to record one.
+   */
+  termsNote: string | null;
   options: JobFormOptions;
   canManage: boolean;
   /** `candidates.write` — who may move an applicant between stages from the drawer. */
@@ -353,6 +364,13 @@ export function JobsBrowser({
         <p className="text-[11px] leading-relaxed text-brand-ink/50">{demandUnavailableNote()}</p>
       )}
 
+      {/* The same rule for seniority: while 033 is unapplied there is no column to
+          hold a level, so no card can say "not recorded" about a value nobody could
+          have set. The grid says why once here. */}
+      {termsNote && (
+        <p className="text-[11px] leading-relaxed text-brand-ink/50">{termsNote}</p>
+      )}
+
       {/* Toolbar */}
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center gap-3">
@@ -495,8 +513,16 @@ export function JobsBrowser({
                 <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-brand-ink/55">
                   <span className="rounded-full bg-brand-sand px-2.5 py-1">{job.department}</span>
                   <span className="rounded-full bg-brand-sand px-2.5 py-1">
-                    {job.employment_type.replace(/_/g, " ")}
+                    {EMPLOYMENT_LABELS[job.employment_type] ??
+                      job.employment_type.replace(/_/g, " ")}
                   </span>
+                  {/* A level nobody recorded gets no chip: a "not recorded" pill on
+                      every pre-033 opening would be noise, not a fact. */}
+                  {job.experience_level && (
+                    <span className="rounded-full bg-brand-sand px-2.5 py-1">
+                      {experienceLabel(job.experience_level)}
+                    </span>
+                  )}
                   <span className="rounded-full bg-brand-sand px-2.5 py-1">
                     {job.sector.replace(/_/g, " ")}
                   </span>
