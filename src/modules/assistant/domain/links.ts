@@ -357,9 +357,8 @@ function masterListView(value: unknown): AssistantLink {
  * `?trail=`, `?page=` and `?find=` are all applied to the page's own read, so the
  * click lands on the rows the answer counted rather than on the newest rows of every
  * group. An unscoped read, and a refused one, both go to the section itself — the
- * trail is listed by this console and nothing else, so a settings answer must never
- * point at `/activity`, which is a different table on a page that reports its trail
- * as not yet created.
+ * trail is listed by this console and nothing else in the chat, so a settings answer must
+ * never point at `/activity`, which is a different table on a page the chat cannot read.
  */
 function settingsTrailView(result: unknown): AssistantLink {
   const record =

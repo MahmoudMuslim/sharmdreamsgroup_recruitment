@@ -558,13 +558,14 @@ export function GuidePanel({ open }: { open: Panel }) {
           flat paint.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
-          Two screens above read a table the database does not have yet:{" "}
-          <span className="font-semibold">Activity</span> waits on
+          Two screens sit outside the assistant&rsquo;s reach:{" "}
+          <span className="font-semibold">Activity</span> reads the table built by
           db/migrations/024_activity_log.sql and{" "}
-          <span className="font-semibold">Time Tracker</span> waits on
-          db/migrations/025_time_entries.sql. Each one says so on the page
-          until it is applied; every other screen here reads tables that are
-          already live.
+          <span className="font-semibold">Time Tracker</span> the one built by
+          db/migrations/025_time_entries.sql, and both are applied on this
+          database, so each page lists real rows. The chat simply has no tool for
+          either. On a database that has not applied one of those two files, its
+          page says the table has not been created yet and refuses its writes.
         </p>
         </div>
       </details>

@@ -569,8 +569,9 @@ export function AssistantChat({
                   the message outbox, the analytics report, the row-level reports, and the settings,
                   team, model-routing, API-keys and change-trail consoles — by calling the very
                   actions those pages call, so the permissions on your role apply here unchanged.
-                  Time Tracker and the hiring-data activity trail are the two screens I cannot read:
-                  neither table is on the database yet. The “What can the assistant do?” button
+                  Time Tracker and the hiring-data activity trail are the two screens I cannot
+                  read: their tables are on the database and both pages work, but no tool of
+                  mine reaches them. The “What can the assistant do?” button
                   above lists every one.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">

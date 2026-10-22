@@ -103,7 +103,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Cut the view by Today / 7 / 14 / 30 days and My hours / The company, click a bar in a breakdown to show only that slice, then export CSV, Excel or PDF.",
     ],
     edges: [
-      "The ledger table is not on the database yet. Until db/migrations/025_time_entries.sql is applied, this page reads its own empty state and every write is refused.",
+      "The ledger is on this database: db/migrations/025_time_entries.sql is applied, so the page reads and writes real rows. On a database that has not applied it, every write is refused and the page says the ledger has not been created yet.",
       "Everything here, including the read, needs the Track time permission.",
       "Only the person who logged a span can change it, and one timer runs at a time per person.",
       "The read is the newest 1,000 entries in the cut you picked.",
@@ -122,7 +122,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Export the filtered set as CSV, Excel or PDF.",
     ],
     edges: [
-      "The trail table is not on the database yet — db/migrations/024_activity_log.sql. Until it is applied the page says so and reads nothing.",
+      "The trail is on this database: db/migrations/024_activity_log.sql is applied, so the console lists real rows. On a database that has not applied it, the page says the trail has not been created yet and reads nothing.",
       "Needs the Manage platform settings permission.",
       "The screen draws the newest 120 matching rows and a download carries up to 2,000; narrow the window for the rest.",
       "Values under a secret, token, password, CV or answer key print as [withheld].",
@@ -382,7 +382,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Every read is capped, and the answer carries its own note saying what it left out; a long result is clipped.",
       "Never type a secret into this chat. The credential tool edits only non-secret fields, because your words are sent to the inference provider.",
       "Approvals live in the server's memory, so on a host that starts a fresh isolate per request the card answers that it is gone — and nothing changed.",
-      "The Time Tracker and the activity trail have no tools while their tables stay unapplied.",
+      "The Time Tracker and the hiring-data activity trail are the two screens with no tools here: both tables are live and both pages work, but the chat reads neither.",
       `Attachments are read, not stored: ${MAX_MATERIAL_CHARS.toLocaleString("en-GB")} characters of the file attached to your question reach the model and ${MAX_HISTORY_ATTACHMENT_CHARS.toLocaleString("en-GB")} of a file from an earlier turn, and the text the model is handed says how much of it was left out.`,
       "The 97-2003 Office files (.doc, .xls, .ppt) and pictures are refused, with the door that works named: Save As .docx, .xlsx or .pptx, or paste the words. A file that opens but holds no text, like a scanned page, is refused the same way.",
       `A built file is handed to your browser and nowhere else: it is not stored, so after a reload the card offers Build again and makes the file once more from the same rows. Its own size ceiling is ${formatBytes(MAX_FILE_BYTES)}.`,
