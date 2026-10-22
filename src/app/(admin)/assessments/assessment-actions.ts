@@ -10,11 +10,26 @@ import { notifyAssessmentInvite } from "@/modules/omnichannel/application/candid
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import { changePhrase, changedFields } from "@/modules/activity/domain/trail";
 import { recordActivity } from "@/modules/activity/application/record";
+import { readFollowUpAvailability } from "@/modules/assessment/application/followUpAvailability";
+import {
+  FOLLOW_UP_WRITE_REFUSAL,
+  followUpLoop,
+  readFollowUpRuleInput,
+  type FollowUpRule,
+  type FollowUpRuleInput,
+} from "@/modules/assessment/domain/followUp";
 
 export interface TemplateResult {
   ok: boolean;
   error?: string;
   id?: string;
+  /**
+   * The suite was saved but one part of the form was not, phrased for the
+   * recruiter. Today that is only a second-test rule on a database where
+   * migration 035 is unapplied: refusing the whole save over an optional
+   * feature would lose the name and description they just typed.
+   */
+  warning?: string;
 }
 
 export interface TemplatePayload {
@@ -28,6 +43,66 @@ export interface TemplatePayload {
   randomize_questions: boolean;
   randomize_options: boolean;
   block_copy_paste: boolean;
+  /**
+   * The second-test rule as the suite form holds it.
+   *
+   * Omitted means "leave the stored rule alone". That is the answer for every
+   * caller that does not show the field — the assistant's tool and the AI
+   * suite drafter both edit suites without one, and an undefined field must
+   * not silently clear a rule a recruiter wrote. The form always sends it,
+   * with blank strings to switch the rule off.
+   */
+  follow_up?: FollowUpRuleInput;
+}
+
+/**
+ * Whether a rule may point at `rule.templateId` from a suite in `tenantId`.
+ *
+ * Three refusals: the target must exist, it must belong to the same company
+ * (a candidate is never routed across companies by a rule), and the chain must
+ * not come back to this suite. The loop read is skipped for a suite that does
+ * not exist yet — a new row cannot already be part of a chain.
+ */
+async function checkFollowUpTarget(
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
+  rule: FollowUpRule,
+  sourceId: string | null,
+  tenantId: string
+): Promise<string | null> {
+  const { data: target } = await restClient
+    .from("assessment_templates")
+    .select("id, tenant_id, name")
+    .eq("id", rule.templateId)
+    .maybeSingle();
+
+  const row = target as { id: string; tenant_id: string; name: string } | null;
+  if (!row) return "The suite this rule names no longer exists.";
+  if (row.tenant_id !== tenantId) {
+    return "The second test must belong to the same company as this suite — a rule never sends a candidate to another company's test.";
+  }
+
+  if (sourceId) {
+    const { data: all } = await restClient
+      .from("assessment_templates")
+      .select("id, name, follow_up_template_id");
+    const rows = (all ?? []) as unknown as {
+      id: string;
+      name: string;
+      follow_up_template_id?: string | null;
+    }[];
+    const targetOf = new Map(
+      rows.map((entry) => [entry.id, entry.follow_up_template_id ?? null])
+    );
+    const loop = followUpLoop(sourceId, rule.templateId, targetOf);
+    if (loop) {
+      const names = new Map(rows.map((entry) => [entry.id, entry.name]));
+      return `That rule would send candidates in a loop: ${loop
+        .map((id) => names.get(id) ?? "a suite")
+        .join(" → ")}. A chain of second tests has to end somewhere.`;
+    }
+  }
+
+  return null;
 }
 
 /** Creates or updates an assessment suite. Requires `assessments.create`. */
@@ -67,13 +142,59 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
     block_copy_paste: payload.block_copy_paste,
   };
 
+  // A rule, no rule, or an untouched rule. The last is what an omitted field
+  // means: callers that do not show the control must not clear it by accident.
+  let rule: FollowUpRule | null = null;
+  let writeRule = false;
+  let warning: string | undefined;
+
+  if (payload.follow_up !== undefined) {
+    const parsed = readFollowUpRuleInput(payload.follow_up, payload.id);
+    if (!parsed.ok) return { ok: false, error: parsed.error };
+    rule = parsed.rule;
+
+    const availability = await readFollowUpAvailability(restClient);
+    if (parsed.rule && availability.rules && availability.routing) {
+      writeRule = true;
+    } else if (parsed.rule === null && availability.rules) {
+      // Clearing needs only the columns; a half-applied database may still hold
+      // a rule someone wants to switch off.
+      writeRule = true;
+    } else if (parsed.rule && !availability.rules) {
+      warning = FOLLOW_UP_WRITE_REFUSAL;
+    } else if (parsed.rule) {
+      warning = `The suite was saved, but its second-test rule was not: ${
+        availability.note ?? "this database cannot record a routed link yet."
+      }`;
+    }
+  }
+
   if (creating) {
     if (!payload.tenant_id) {
       return { ok: false, error: "Choose the company this suite belongs to." };
     }
+    if (writeRule && rule) {
+      const refusal = await checkFollowUpTarget(
+        restClient,
+        rule,
+        null,
+        payload.tenant_id as string
+      );
+      if (refusal) return { ok: false, error: refusal };
+    }
     const { data, error } = await restClient
       .from("assessment_templates")
-      .insert({ ...row, tenant_id: payload.tenant_id as string })
+      .insert(
+        writeRule
+          ? {
+              ...row,
+              tenant_id: payload.tenant_id as string,
+              follow_up_template_id: rule?.templateId ?? null,
+              follow_up_min_percent: rule?.minPercent ?? null,
+              follow_up_max_percent: rule?.maxPercent ?? null,
+            }
+          : { ...row, tenant_id: payload.tenant_id as string }
+      )
       .select("id")
       .single();
 
@@ -86,31 +207,62 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
       entityId: data?.id ?? null,
       summary: `Built the test suite “${name}” for ${minutes} minutes${
         row.block_copy_paste ? ", with copy-paste blocked" : ""
-      }`,
-      detail: { ...row, tenant_id: payload.tenant_id },
+      }${rule ? `, sending ${rule.minPercent}–${rule.maxPercent}% on to a second test` : ""}`,
+      detail: {
+        ...row,
+        tenant_id: payload.tenant_id,
+        ...(writeRule
+          ? {
+              follow_up_template_id: rule?.templateId ?? null,
+              follow_up_min_percent: rule?.minPercent ?? null,
+              follow_up_max_percent: rule?.maxPercent ?? null,
+            }
+          : {}),
+      },
     });
 
     revalidatePath("/assessments");
-    return { ok: true, id: data?.id };
+    return { ok: true, id: data?.id, warning };
   }
 
   const { data: previous } = await restClient
     .from("assessment_templates")
     .select(
-      "id, name, description, role_family, time_limit_minutes, randomize_questions, randomize_options, block_copy_paste, is_active"
+      `id, tenant_id, name, description, role_family, time_limit_minutes, randomize_questions, randomize_options, block_copy_paste, is_active${
+        writeRule ? ", follow_up_template_id, follow_up_min_percent, follow_up_max_percent" : ""
+      }`
     )
     .eq("id", payload.id as string)
     .maybeSingle();
   if (!previous) return { ok: false, error: "That suite no longer exists." };
 
+  if (writeRule && rule) {
+    const refusal = await checkFollowUpTarget(
+      restClient,
+      rule,
+      payload.id,
+      previous.tenant_id as string
+    );
+    if (refusal) return { ok: false, error: refusal };
+  }
+
+  const update = writeRule
+    ? {
+        ...row,
+        follow_up_template_id: rule?.templateId ?? null,
+        follow_up_min_percent: rule?.minPercent ?? null,
+        follow_up_max_percent: rule?.maxPercent ?? null,
+      }
+    : row;
+
   const { error } = await restClient
     .from("assessment_templates")
-    .update(row)
+    .update(update)
     .eq("id", payload.id as string);
 
   if (error) return { ok: false, error: error.message };
 
-  const edits = changedFields(previous as Record<string, unknown>, row);
+  const edits = changedFields(previous as Record<string, unknown>, update);
   await recordActivity({
     area: "assessments",
     action: "suite_edit",
@@ -121,7 +273,7 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
   });
 
   revalidatePath("/assessments");
-  return { ok: true, id: payload.id ?? undefined };
+  return { ok: true, id: payload.id ?? undefined, warning };
 }
 
 export interface TemplateStatusResult {

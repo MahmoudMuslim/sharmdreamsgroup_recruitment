@@ -23,7 +23,7 @@ export const authoring: readonly AssistantTool[] = [
     name: "save_assessment_suite",
     label: "Saving an assessment suite",
     description:
-      "Create an assessment suite, or rewrite one when suite_id is given. A suite is only useful once it has questions — add them with save_question, then assign the suite with assign_assessment.",
+      "Create an assessment suite, or rewrite one when suite_id is given. A suite is only useful once it has questions — add them with save_question, then assign the suite with assign_assessment. A suite can also carry a second-test rule: the suite to issue when a fully marked paper scores inside a percent band. Leave all three follow-up arguments out to keep the stored rule exactly as it is; an empty follow_up_suite_id with an empty band switches the rule off.",
     args: {
       suite_id: "string — optional, the suite being edited",
       tenant_id: "string — company id from get_master_data (entity companies), required when creating",
@@ -34,21 +34,48 @@ export const authoring: readonly AssistantTool[] = [
       randomize_questions: "boolean — optional, defaults to false",
       randomize_options: "boolean — optional, defaults to false",
       block_copy_paste: "boolean — optional, defaults to true",
+      follow_up_suite_id: "string — optional, the suite to issue as a second test; same company as this suite, never this suite itself",
+      follow_up_min_percent: "number — optional, bottom of the band, 0–100, inclusive",
+      follow_up_max_percent: "number — optional, top of the band, 0–100, inclusive",
     },
-    run: async (args) =>
-      report(
-        await saveTemplate({
-          id: optionalStr(args, "suite_id") ?? null,
-          tenant_id: str(args, "tenant_id"),
-          name: str(args, "name"),
-          description: optionalStr(args, "description") ?? "",
-          role_family: str(args, "role_family"),
-          time_limit_minutes: num(args, "time_limit_minutes"),
-          randomize_questions: bool(args, "randomize_questions", false),
-          randomize_options: bool(args, "randomize_options", false),
-          block_copy_paste: bool(args, "block_copy_paste", true),
-        })
-      ),
+    run: async (args) => {
+      // The rule is sent only when the caller named one of its three fields: a
+      // model rewriting a suite's name must not erase the second test by not
+      // mentioning it. The form treats a target with no band as half a rule, and
+      // the domain refuses it rather than inventing a band.
+      const namedRule =
+        args.follow_up_suite_id !== undefined ||
+        args.follow_up_min_percent !== undefined ||
+        args.follow_up_max_percent !== undefined;
+      const percentText = (value: unknown) =>
+        value === undefined || value === null ? "" : String(value);
+      const payload = {
+        id: optionalStr(args, "suite_id") ?? null,
+        tenant_id: str(args, "tenant_id"),
+        name: str(args, "name"),
+        description: optionalStr(args, "description") ?? "",
+        role_family: str(args, "role_family"),
+        time_limit_minutes: num(args, "time_limit_minutes"),
+        randomize_questions: bool(args, "randomize_questions", false),
+        randomize_options: bool(args, "randomize_options", false),
+        block_copy_paste: bool(args, "block_copy_paste", true),
+      };
+      return report(
+        await saveTemplate(
+          namedRule
+            ? {
+                ...payload,
+                follow_up: {
+                  templateId:
+                    typeof args.follow_up_suite_id === "string" ? args.follow_up_suite_id : "",
+                  minPercent: percentText(args.follow_up_min_percent),
+                  maxPercent: percentText(args.follow_up_max_percent),
+                },
+              }
+            : payload
+        )
+      );
+    },
   },
   {
     name: "set_assessment_suite_active",

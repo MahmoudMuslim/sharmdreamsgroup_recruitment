@@ -33,7 +33,14 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { saveTemplate, assignTemplate, deleteTemplate, setTemplateActive } from "./assessment-actions";
 import { searchSuites, suiteSearchWords } from "@/modules/assessment/domain/suiteSearch";
-import type { IssuedLinksRead, TemplateSummary } from "./actions";
+import { followUpBandText, readFollowUpRuleInput } from "@/modules/assessment/domain/followUp";
+import type {
+  FollowUpRulesRead,
+  FollowUpSuiteOption,
+  IssuedLinksRead,
+  SuiteFollowUp,
+  TemplateSummary,
+} from "./actions";
 import { IssuedLinksBoard } from "./IssuedLinksBoard";
 import { ItemStatsDrawer } from "./ItemStatsDrawer";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
@@ -61,6 +68,9 @@ const EMPTY = {
   randomize_questions: false,
   randomize_options: false,
   block_copy_paste: true,
+  follow_up_template_id: "",
+  follow_up_min_percent: "",
+  follow_up_max_percent: "",
 };
 
 interface TypeMeta {
@@ -113,12 +123,24 @@ export function TemplateEditor({
   options,
   template,
   defaultDurationMinutes,
+  followUp,
+  suites,
+  followUpEditable,
+  followUpNote,
   onClose,
 }: {
   options: TemplateOptions;
   template: TemplateSummary | null;
   /** `assessment.default_duration_minutes`, pre-filled on a new suite only. */
   defaultDurationMinutes: number;
+  /** The stored second-test rule, when this suite has one. */
+  followUp: SuiteFollowUp | null;
+  /** Every suite a rule could name, already scoped by the server to the caller. */
+  suites: FollowUpSuiteOption[];
+  /** Both halves of migration 035 are on the database. */
+  followUpEditable: boolean;
+  /** Why the rule cannot be edited, when it cannot. */
+  followUpNote: string | null;
   onClose: () => void;
 }) {
   type DraftState = typeof EMPTY;
@@ -128,6 +150,7 @@ const [draft, setDraft] = useState<DraftState>(() =>
       ? {
           ...EMPTY,
           id: template.id,
+          tenant_id: template.tenant_id,
           name: template.name,
           description: template.description ?? "",
           role_family: template.role_family,
@@ -135,6 +158,9 @@ const [draft, setDraft] = useState<DraftState>(() =>
           randomize_questions: template.randomize_questions,
           randomize_options: template.randomize_options,
           block_copy_paste: template.block_copy_paste,
+          follow_up_template_id: followUp?.target_id ?? "",
+          follow_up_min_percent: followUp ? String(followUp.min_percent) : "",
+          follow_up_max_percent: followUp ? String(followUp.max_percent) : "",
         }
       : {
           ...EMPTY,
@@ -145,14 +171,26 @@ const [draft, setDraft] = useState<DraftState>(() =>
   );
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   const isEdit = draft.id !== "";
+
+  // A rule may only name a suite in the same company, and never the suite it is
+  // written on. The server checks both again — this list keeps the picker from
+  // offering a choice that would be refused.
+  const followUpTargets = suites.filter(
+    (suite) => suite.tenant_id === draft.tenant_id && suite.id !== draft.id
+  );
+  const chosenTarget = followUpTargets.find(
+    (suite) => suite.id === draft.follow_up_template_id
+  );
 
   function set<K extends keyof typeof EMPTY>(field: K, value: (typeof EMPTY)[K]) {
     setDraft((d) => ({ ...d, [field]: value }));
     if (error) setError(null);
     if (saved) setSaved(false);
+    if (warning) setWarning(null);
   }
 
   async function submit() {
@@ -166,7 +204,21 @@ const [draft, setDraft] = useState<DraftState>(() =>
       return;
     }
 
+    const rule = readFollowUpRuleInput(
+      {
+        templateId: draft.follow_up_template_id,
+        minPercent: draft.follow_up_min_percent,
+        maxPercent: draft.follow_up_max_percent,
+      },
+      draft.id || null
+    );
+    if (!rule.ok) {
+      setError(rule.error);
+      return;
+    }
+
     setPending(true);
+    setWarning(null);
     try {
       const result = await saveTemplate({
         id: draft.id || null,
@@ -178,10 +230,17 @@ const [draft, setDraft] = useState<DraftState>(() =>
         randomize_questions: draft.randomize_questions,
         randomize_options: draft.randomize_options,
         block_copy_paste: draft.block_copy_paste,
+        follow_up: {
+          templateId: draft.follow_up_template_id,
+          minPercent: draft.follow_up_min_percent,
+          maxPercent: draft.follow_up_max_percent,
+        },
       });
       if (result.ok) {
         setSaved(true);
-        setTimeout(onClose, 700);
+        setWarning(result.warning ?? null);
+        // A warning is a sentence to read, not a toast to close through.
+        if (!result.warning) setTimeout(onClose, 700);
       } else {
         setError(result.error ?? "Could not save the suite.");
       }
@@ -300,6 +359,79 @@ const [draft, setDraft] = useState<DraftState>(() =>
           </p>
         </fieldset>
 
+        <fieldset className="rounded-xl border border-brand-line bg-brand-cream p-4">
+          <legend className="px-1 text-[11px] font-bold uppercase tracking-wider text-brand-ink/45">
+            Second test
+          </legend>
+          {followUpEditable ? (
+            <div className="space-y-3">
+              <Field
+                label="Send candidates on to"
+                htmlFor="tpl-follow-target"
+                hint="When a fully marked paper lands inside the band, this suite is issued automatically."
+              >
+                <Select
+                  id="tpl-follow-target"
+                  value={draft.follow_up_template_id}
+                  onChange={(e) => set("follow_up_template_id", e.target.value)}
+                >
+                  <option value="">No second test</option>
+                  {followUpTargets.map((suite) => (
+                    <option key={suite.id} value={suite.id}>
+                      {suite.name}
+                      {!suite.is_active ? " — paused" : ""}
+                      {suite.question_count === 0 ? " — no questions" : ""}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+
+              {draft.follow_up_template_id !== "" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="From (%)" htmlFor="tpl-follow-min">
+                    <TextInput
+                      id="tpl-follow-min"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={draft.follow_up_min_percent}
+                      onChange={(e) => set("follow_up_min_percent", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="To (%)" htmlFor="tpl-follow-max">
+                    <TextInput
+                      id="tpl-follow-max"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={draft.follow_up_max_percent}
+                      onChange={(e) => set("follow_up_max_percent", e.target.value)}
+                    />
+                  </Field>
+                </div>
+              )}
+
+              {chosenTarget && (!chosenTarget.is_active || chosenTarget.question_count === 0) && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+                  {!chosenTarget.is_active
+                    ? "That suite is paused, so no link is issued until it is resumed."
+                    : "That suite has no questions, so no link is issued until it has some."}
+                </p>
+              )}
+
+              <p className="text-[11px] leading-relaxed text-brand-ink/45">
+                Both ends of the band count. The link is issued once, as soon as every answer is
+                marked, and says it came from this suite.
+              </p>
+            </div>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-brand-ink/55">
+              {followUpNote ??
+                "Second-test routing is not available on this database yet."}
+            </p>
+          )}
+        </fieldset>
+
         {isEdit && (
           <p className="rounded-xl border border-brand-line px-4 py-3 text-xs leading-relaxed text-brand-ink/55">
             This panel changes suite settings only. Close it and use{" "}
@@ -308,7 +440,13 @@ const [draft, setDraft] = useState<DraftState>(() =>
           </p>
         )}
 
-        <FormMessage error={error} success={saved ? "Suite saved." : null} />
+        {/* A refused rule is a sentence to read, so it sits beside the save
+            confirmation rather than replacing it: the suite itself did save. */}
+        <FormMessage
+          error={error}
+          success={saved ? "Suite saved." : null}
+          notice={warning}
+        />
       </div>
     </Drawer>
   );
@@ -456,6 +594,7 @@ export function AssignDrawer({
 function TemplateCard({
   template,
   questions,
+  followUp,
   canEdit,
   onQuestions,
   onItemStats,
@@ -464,6 +603,8 @@ function TemplateCard({
 }: {
   template: TemplateSummary;
   questions: EditableQuestion[];
+  /** The second-test rule stored on this suite, already resolved to its target. */
+  followUp: SuiteFollowUp | null;
   canEdit: boolean;
   onQuestions: () => void;
   onItemStats: () => void;
@@ -608,6 +749,32 @@ function TemplateCard({
           <p className="text-[11px] text-brand-ink/45">{integrity.join(" · ")}</p>
         )}
 
+        {followUp && (
+          <p className="text-[11px] leading-relaxed text-brand-ink/55">
+            Second test:{" "}
+            <span className="font-semibold text-brand-ink/75">
+              {followUpBandText({
+                minPercent: followUp.min_percent,
+                maxPercent: followUp.max_percent,
+              })}
+            </span>{" "}
+            moves on to {followUp.target_name}.
+          </p>
+        )}
+
+        {followUp &&
+          (!followUp.target_exists ||
+            !followUp.target_active ||
+            followUp.target_questions === 0) && (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-900">
+              {!followUp.target_exists
+                ? "The second suite this rule names is not one this page can see, so no link is issued to it."
+                : !followUp.target_active
+                  ? "The second suite is paused, so no link is issued until it is resumed."
+                  : "The second suite has no questions, so no link is issued until it has some."}
+            </p>
+          )}
+
         {template.question_count === 0 && (
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900">
             This suite has no questions yet, so candidates would see an empty test.
@@ -730,6 +897,7 @@ export function AssessmentGrid({
   links,
   timeZone,
   situational,
+  followUps,
 }: {
   templates: TemplateSummary[];
   candidates: AssignableCandidate[];
@@ -743,7 +911,13 @@ export function AssessmentGrid({
   timeZone: string;
   /** Whether the database's enum accepts the situational judgment label yet. */
   situational: { situational: boolean; note: string | null };
+  /** Second-test rules, or the reason they cannot be read or routed. */
+  followUps: FollowUpRulesRead;
 }) {
+  // Both tables migration 035 adds have to be present for a rule to be worth
+  // writing: columns without the attempt link would save a rule nothing can
+  // ever act on, and the link without the columns has no rule to act on.
+  const followUpEditable = followUps.rules_available && followUps.routing_available;
   const router = useRouter();
   const params = useSearchParams();
   const [creating, setCreating] = useState(false);
@@ -968,6 +1142,7 @@ export function AssessmentGrid({
                 key={template.id}
                 template={template}
                 questions={questionsByTemplate[template.id] ?? []}
+                followUp={followUps.byTemplate[template.id] ?? null}
                 canEdit={canEdit}
                 onQuestions={() => setQuestionEditing(template)}
                 onItemStats={() => setStatViewing(template)}
@@ -986,6 +1161,10 @@ export function AssessmentGrid({
           options={options}
           template={null}
           defaultDurationMinutes={defaultDurationMinutes}
+          followUp={null}
+          suites={followUps.suites}
+          followUpEditable={followUpEditable}
+          followUpNote={followUps.note}
           onClose={() => setCreating(false)}
         />
       )}
@@ -994,6 +1173,10 @@ export function AssessmentGrid({
           options={options}
           template={editing}
           defaultDurationMinutes={defaultDurationMinutes}
+          followUp={followUps.byTemplate[editing.id] ?? null}
+          suites={followUps.suites}
+          followUpEditable={followUpEditable}
+          followUpNote={followUps.note}
           onClose={() => setEditing(null)}
         />
       )}

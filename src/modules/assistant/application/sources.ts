@@ -17,7 +17,7 @@ import {
   updateApplicationStage,
   type PipelineStage,
 } from "@/app/(admin)/candidates/candidate-actions";
-import { getTemplates } from "@/app/(admin)/assessments/actions";
+import { getFollowUpRules, getTemplates } from "@/app/(admin)/assessments/actions";
 import { assignTemplate } from "@/app/(admin)/assessments/assessment-actions";
 import {
   createJobOpening,
@@ -167,6 +167,7 @@ export { getCandidateTally };
 export { draftCandidateFeedback };
 export { screenApplication };
 export { updateApplicationStage };
+export { getFollowUpRules };
 export { getTemplates };
 export { assignTemplate };
 export { createJobOpening };

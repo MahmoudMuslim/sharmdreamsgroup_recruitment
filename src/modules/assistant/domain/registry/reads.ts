@@ -41,12 +41,14 @@ import {
   elapsedSeconds,
   filedEntity,
   filterCandidates,
+  followUpBandText,
   formatSpan,
   getAnalyticsReport,
   getApplicantSubmission,
   getCandidateList,
   getCandidateTally,
   getDashboardAnalytics,
+  getFollowUpRules,
   getJobApplicants,
   getJobOpening,
   getLedger,
@@ -459,16 +461,39 @@ export const reads: readonly AssistantTool[] = [
     name: "list_assessment_suites",
     label: "Reading assessment suites",
     description:
-      "Every assessment suite with its question count, total points, time limit, whether it is active, and how many attempts it has. This read carries the whole catalogue rather than a window, so `suites_note` can say outright that a suite missing from the list has not been created — quote it whenever a suite is reported missing.",
+      "Every assessment suite with its question count, total points, time limit, whether it is active, how many attempts it has, and the second-test rule it carries — the percent band whose completion issues another suite automatically. This read carries the whole catalogue rather than a window, so `suites_note` can say outright that a suite missing from the list has not been created — quote it whenever a suite is reported missing. When `second_test_note` is present, second-test routing cannot be read or will not fire on this database: quote it instead of reporting that a suite has no rule.",
     args: {
       query: `string — optional, the grid's own search box: ${suiteSearchWords()}, matched over every suite the catalogue holds`,
     },
     run: async (args) => {
       const query = optionalStr(args, "query")?.trim() ?? "";
-      const templates = await getTemplates();
+      const [templates, followUps] = await Promise.all([getTemplates(), getFollowUpRules()]);
       const matched = searchSuites(templates, query);
+      const ruleFor = (id: string) => {
+        const rule = followUps.byTemplate[id];
+        if (!rule) return null;
+        return {
+          band: followUpBandText({
+            minPercent: rule.min_percent,
+            maxPercent: rule.max_percent,
+          }),
+          target_id: rule.target_id,
+          target_name: rule.target_name,
+          target_exists: rule.target_exists,
+          target_active: rule.target_active,
+          target_questions: rule.target_questions,
+        };
+      };
       return {
         suites_note: suiteReadNote(templates.length, matched.length, query || null),
+        // "No rule" and "the rule columns are missing" are different answers, and
+        // only the note can tell the model which one it is looking at.
+        ...(followUps.rules_available && followUps.routing_available
+          ? {}
+          : {
+              second_test_note:
+                followUps.note ?? "Second-test rules are not available on this database.",
+            }),
         suites: matched.map((template) => ({
           id: template.id,
           name: template.name,
@@ -479,6 +504,7 @@ export const reads: readonly AssistantTool[] = [
           time_limit_minutes: template.time_limit_minutes,
           attempts: template.attempts,
           completed: template.completed,
+          second_test: ruleFor(template.id),
         })),
       };
     },

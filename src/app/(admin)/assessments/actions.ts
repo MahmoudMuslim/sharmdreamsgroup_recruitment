@@ -26,9 +26,13 @@ import {
 } from "@/modules/assessment/application/questionTypeAvailability";
 import { LINKS_LIMIT, type IssuedLink } from "@/modules/assessment/domain/issuedLinks";
 import type { EditableQuestion } from "./QuestionEditorDrawer";
+import { readFollowUpAvailability } from "@/modules/assessment/application/followUpAvailability";
+import { readFollowUpRule } from "@/modules/assessment/domain/followUp";
 
 export interface TemplateSummary {
   id: string;
+  /** Owning company, so a second-test picker can stay inside it. */
+  tenant_id: string;
   name: string;
   description: string;
   role_family: string;
@@ -52,7 +56,7 @@ export async function getTemplates(): Promise<TemplateSummary[]> {
   const { data, error } = await restClient
     .from("assessment_templates")
     .select(
-      "id, name, description, role_family, time_limit_minutes, is_active, randomize_questions, randomize_options, block_copy_paste, assessment_questions(points, question_type), candidate_attempts(id, status)"
+      "id, tenant_id, name, description, role_family, time_limit_minutes, is_active, randomize_questions, randomize_options, block_copy_paste, assessment_questions(points, question_type), candidate_attempts(id, status)"
     )
     .order("name");
 
@@ -68,6 +72,7 @@ export async function getTemplates(): Promise<TemplateSummary[]> {
     const attempts: { status: string }[] = row.candidate_attempts ?? [];
     return {
       id: row.id,
+      tenant_id: row.tenant_id,
       name: row.name,
       description: row.description ?? "",
       role_family: row.role_family ?? "GENERAL",
@@ -210,6 +215,138 @@ export async function getQuestionsForEditor(): Promise<
 export async function getQuestionTypeAvailability(): Promise<QuestionTypeAvailability> {
   await requireStaff("/assessments");
   return readQuestionTypeAvailability(await createServerRestClient());
+}
+
+/* -------------------------------------------------------------------------- */
+/* Second-test rules                                                          */
+/* -------------------------------------------------------------------------- */
+
+/** One suite's rule, resolved against the suite it names. */
+export interface SuiteFollowUp {
+  target_id: string;
+  target_name: string;
+  min_percent: number;
+  max_percent: number;
+  /**
+   * False when the target is not in the reader's suite list — deleted under a
+   * rule the database did not yet cascade, or owned by a company this reader
+   * cannot see. The router refuses such a target, so the card must not call it
+   * "paused", which would promise a resume would fix it.
+   */
+  target_exists: boolean;
+  /** The target is paused, so the router would skip it rather than issue it. */
+  target_active: boolean;
+  /** The target has no questions, so the router would skip it as an empty test. */
+  target_questions: number;
+}
+
+/** A suite a rule could name, with the two facts a picker should warn about. */
+export interface FollowUpSuiteOption {
+  id: string;
+  name: string;
+  tenant_id: string;
+  is_active: boolean;
+  question_count: number;
+}
+
+export interface FollowUpRulesRead {
+  /** The rule columns exist, so the editor may show them. */
+  rules_available: boolean;
+  /** The attempt link exists, so a saved rule can actually issue a link. */
+  routing_available: boolean;
+  /** Why the rule cannot be shown or will not route; null when it can do both. */
+  note: string | null;
+  /** Keyed by the suite that owns the rule. */
+  byTemplate: Record<string, SuiteFollowUp>;
+  /** Every suite, for the second-test picker. Empty when the columns are missing. */
+  suites: FollowUpSuiteOption[];
+}
+
+/**
+ * The second-test rules, read separately from the suite list.
+ *
+ * `getTemplates` must keep working while 035 is unapplied, and a select that
+ * names a missing column refuses the whole query — so this read probes first
+ * and answers "not on this database" instead of turning the builder page into
+ * a Postgres error. Once the columns exist, one read carries every rule and the
+ * target's own facts, so a card can say "paused, so nothing is issued" without
+ * a query per suite.
+ */
+export async function getFollowUpRules(): Promise<FollowUpRulesRead> {
+  await requireStaff("/assessments");
+  const restClient = await createServerRestClient();
+  const availability = await readFollowUpAvailability(restClient);
+
+  if (!availability.rules) {
+    return {
+      rules_available: false,
+      routing_available: availability.routing,
+      note: availability.note,
+      byTemplate: {},
+      suites: [],
+    };
+  }
+
+  const { data, error } = await restClient
+    .from("assessment_templates")
+    .select(
+      "id, tenant_id, name, is_active, follow_up_template_id, follow_up_min_percent, follow_up_max_percent, assessment_questions(id)"
+    )
+    .order("name");
+
+  if (error) {
+    return {
+      rules_available: true,
+      routing_available: availability.routing,
+      note: `Second-test rules could not be read: ${error.message}`,
+      byTemplate: {},
+      suites: [],
+    };
+  }
+
+  const rows = (data ?? []) as unknown as {
+    id: string;
+    tenant_id: string;
+    name: string;
+    is_active: boolean | null;
+    follow_up_template_id?: string | null;
+    follow_up_min_percent?: number | string | null;
+    follow_up_max_percent?: number | string | null;
+    assessment_questions?: { id?: string }[] | null;
+  }[];
+
+  const suites: FollowUpSuiteOption[] = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    tenant_id: row.tenant_id,
+    is_active: row.is_active !== false,
+    question_count: (row.assessment_questions ?? []).length,
+  }));
+  const byId = new Map(suites.map((suite) => [suite.id, suite]));
+
+  const byTemplate: Record<string, SuiteFollowUp> = {};
+  for (const row of rows) {
+    const rule = readFollowUpRule(row);
+    if (!rule) continue;
+    const target = byId.get(rule.templateId);
+    byTemplate[row.id] = {
+      target_id: rule.templateId,
+      target_name: target?.name ?? "a suite that is not visible",
+      min_percent: rule.minPercent,
+      max_percent: rule.maxPercent,
+      target_exists: target !== undefined,
+      target_active: target?.is_active ?? false,
+      target_questions: target?.question_count ?? 0,
+    };
+  }
+
+  return {
+    rules_available: true,
+    routing_available: availability.routing,
+    note: availability.note,
+    byTemplate,
+    suites,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

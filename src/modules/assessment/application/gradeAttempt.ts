@@ -11,6 +11,7 @@ import {
 } from "@/modules/activity/application/record";
 import type { ActivityEntry } from "@/modules/activity/domain/trail";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
+import { routeFollowUp } from "@/modules/assessment/application/routeFollowUp";
 import {
   evaluateCaseStudy,
   evaluateExcelModel,
@@ -596,5 +597,10 @@ async function finalizeAttemptTotals(
         status: "SUBMITTED → GRADED",
       },
     });
+
+    // A suite's second-test rule fires on the same crossing the trail records.
+    // The router answers rather than throws — a rule is not worth a failed
+    // grading pass — and does nothing while 035 is unapplied.
+    await routeFollowUp(attemptId);
   }
 }

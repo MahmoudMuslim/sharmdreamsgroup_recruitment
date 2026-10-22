@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { storageConfig } from "@/lib/config";
@@ -14,6 +15,7 @@ import {
   gradeAttemptResponses,
   resyncAttemptTotals,
 } from "@/modules/assessment/application/gradeAttempt";
+import { routeFollowUp } from "@/modules/assessment/application/routeFollowUp";
 import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
 import type { AttemptBenchmark } from "@/modules/assessment/domain/benchmark";
 
@@ -409,6 +411,19 @@ export async function scoreAttemptResponse(input: {
       unscored_left: totals.unscored,
     },
   });
+
+  // The hand-awarded last mark is the third door into GRADED, so a suite's
+  // second-test rule has to fire here too. Deferred: the recruiter's click is
+  // already answered, and sending a letter must not make the desk wait.
+  if (completedIt) {
+    after(async () => {
+      try {
+        await routeFollowUp(row.attempt_id);
+      } catch (error) {
+        console.error("Follow-up routing after a hand grade failed:", error);
+      }
+    });
+  }
 
   revalidatePath("/candidates");
 

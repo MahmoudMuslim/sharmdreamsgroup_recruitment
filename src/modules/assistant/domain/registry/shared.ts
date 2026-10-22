@@ -121,6 +121,7 @@ import {
   suiteReadNote,
   suiteSearchWords,
 } from "@/modules/assessment/domain/suiteSearch";
+import { followUpBandText } from "@/modules/assessment/domain/followUp";
 import { REPORTS } from "@/modules/analytics/domain/documents";
 import { ANALYTICS_WINDOWS } from "@/modules/analytics/domain/report";
 import {
@@ -148,6 +149,7 @@ import {
   screenApplication,
   updateApplicationStage,
   type PipelineStage,
+  getFollowUpRules,
   getTemplates,
   getTrail,
   getLedger,
@@ -839,6 +841,7 @@ export { ACTIVITY_SURFACES };
 export { ACTOR_KINDS };
 export { describeActor };
 export { AGENDA_CHAT_ROW_LIMIT };
+export { followUpBandText };
 export { AI_CAPABILITIES };
 export { ALL_SETTINGS };
 export { ANALYTICS_WINDOWS };
@@ -953,6 +956,7 @@ export { getQuestionsForEditor };
 export { getRowReport };
 export { getTemplateDetail };
 export { getTemplateItemStats };
+export { getFollowUpRules };
 export { getTemplates };
 export { getLedger };
 export { getTrail };
