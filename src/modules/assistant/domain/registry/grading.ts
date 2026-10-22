@@ -34,9 +34,9 @@ export const grading: readonly AssistantTool[] = [
   },
   {
     name: "retry_grading",
-    label: "Re-running the AI grading",
+    label: "Finishing or re-running grading",
     description:
-      "One more pass by the grading engine over an attempt's unscored answers — the same run the report's “Ask the AI again” button starts. It is the only way marks come back from the AI on an attempt that was already submitted, since nothing schedules the timed sweep. Marks it writes are the engine's own; the trail also records that this person asked. Refused when AI grading is off or no provider is configured, which get_attempt_grades reports in advance.",
+      "One more pass by the grading engine over an attempt's unscored answers — or the final check that closes a paper whose answers all carry a mark but whose status is still SUBMITTED. The same run the report's button starts: it is the only way marks come back from the AI on an attempt that was already submitted, since nothing schedules the timed sweep, and the only door that closes a paper left behind when a finalize did not land. Marks it writes are the engine's own; the trail also records that this person asked. A pass over unscored answers is refused when AI grading is off or no provider is configured, which get_attempt_grades reports in advance — closing a fully marked paper needs neither.",
     args: { attempt_id: "string — from get_candidate_dossier" },
     run: async (args) => report(await retryAttemptGrading(str(args, "attempt_id"))),
   },

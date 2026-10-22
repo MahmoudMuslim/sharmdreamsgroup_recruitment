@@ -442,6 +442,11 @@ export interface GradingRetryResult {
   /** What this run moved, so the report can say it out loud instead of reloading in silence. */
   scored?: number;
   still_unscored?: number;
+  /**
+   * A paper whose answers all carried a mark was moved from SUBMITTED to
+   * GRADED. False when the paper was already graded and nothing changed.
+   */
+  finalized?: boolean;
   /** So a chat answer can link back to the person whose answers it just graded. */
   application_id?: string | null;
 }
@@ -460,13 +465,20 @@ async function openAnswers(
 }
 
 /**
- * Ask the engine to try this attempt's open answers again.
+ * Ask the engine to try this attempt's open answers again — or to close a paper
+ * every answer of which already carries a mark.
  *
  * The retry path lived only in `/api/cron/grading`, and nothing schedules that
  * route — so an answer the AI failed to score at submit had no way of ever
  * getting a mark except from a person. One pass, deliberately: whoever asks is
  * watching a spinner or waiting on a reply, and the engine's three-pass budget
  * with its twenty-second waits is for callers nobody is waiting on.
+ *
+ * A paper can also sit SUBMITTED with nothing left to score: the AI-off grading
+ * path used to return before finalizing, and a finalize write can fail. The
+ * report beside this action says "only the status is behind" in that state, so
+ * the action has to be able to close the paper rather than answer that there is
+ * nothing to do.
  *
  * The marks the engine writes are recorded as the engine's own. This row is the
  * separate fact that a person asked for the run — from the report's button or
@@ -486,20 +498,82 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   const { data: found } = await restClient
     .from("candidate_attempts")
-    .select("id, applications ( id, full_name )")
+    .select("id, status, applications ( id, full_name )")
     .eq("id", attemptId)
     .maybeSingle();
 
   if (!found) return { ok: false, error: "That attempt is no longer on file." };
 
+  const applicationId = one(found.applications)?.id ?? null;
+  const candidateName = one(found.applications)?.full_name ?? "the candidate";
+
   const openBefore = await openAnswers(restClient, attemptId);
   if (openBefore === 0) {
-    // Nothing for the engine to do — saying so beats spending a provider call.
+    if (found.status === "GRADED") {
+      return {
+        ok: true,
+        scored: 0,
+        still_unscored: 0,
+        finalized: false,
+        application_id: applicationId,
+      };
+    }
+
+    if (found.status !== "SUBMITTED") {
+      return {
+        ok: false,
+        error: "This attempt is not submitted, so there is no grading run to make.",
+      };
+    }
+
+    const { count: stored } = await restClient
+      .from("candidate_responses")
+      .select("id", { count: "exact", head: true })
+      .eq("attempt_id", attemptId);
+
+    if ((stored ?? 0) === 0) {
+      return {
+        ok: false,
+        error: "This attempt stored no answers, so there is nothing to grade.",
+      };
+    }
+
+    // Nothing for a model, but the engine is still the door that decides the
+    // paper is finished — and that crossing is what the trail and a suite's
+    // second-test rule read.
+    await gradeAttemptResponses(attemptId, { passes: 1 });
+
+    const { data: after } = await restClient
+      .from("candidate_attempts")
+      .select("status")
+      .eq("id", attemptId)
+      .maybeSingle();
+
+    if (after?.status !== "GRADED") {
+      return {
+        ok: false,
+        error:
+          "Every answer carries a mark, but the record would not take the graded status. Try again.",
+      };
+    }
+
+    await recordActivity({
+      area: "assessments",
+      action: "grading_retried",
+      entity: "attempt",
+      entityId: attemptId,
+      summary: `Closed ${candidateName}'s test — every answer already carried a mark, so the engine moved the paper to graded`,
+      detail: { open_before: 0, scored: 0, open_after: 0, finalized: true },
+    });
+
+    revalidatePath("/candidates");
+
     return {
       ok: true,
       scored: 0,
       still_unscored: 0,
-      application_id: one(found.applications)?.id ?? null,
+      finalized: true,
+      application_id: applicationId,
     };
   }
 
@@ -517,7 +591,6 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   const openAfter = await openAnswers(restClient, attemptId);
   const scored = Math.max(0, openBefore - openAfter);
-  const candidateName = one(found.applications)?.full_name ?? "the candidate";
   const outcome =
     openAfter === 0
       ? `it scored all ${openBefore} and the test is now graded`
@@ -540,6 +613,6 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
     ok: true,
     scored,
     still_unscored: openAfter,
-    application_id: one(found.applications)?.id ?? null,
+    application_id: applicationId,
   };
 }

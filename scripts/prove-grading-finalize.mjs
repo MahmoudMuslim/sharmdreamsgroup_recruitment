@@ -13,10 +13,12 @@
  *      what it totals, now that the answer lives in a pure domain module;
  *   2. the engine's order — the AI switch no longer stands in front of the
  *      finalize step, and the AI-on path still grades before it finalizes;
- *   3. the doors — the submit route and the console's retry both reach the
+ *   3. the desk — the report's run and the assistant's tool reach the engine
+ *      when nothing is left to score, and only a submitted paper may be closed;
+ *   4. the doors — the submit route and the console's retry both reach the
  *      same function, so the fix is not stranded behind one entry point.
  *
- * (2) and (3) are text assertions, deliberately: the engine imports
+ * (2), (3) and (4) are text assertions, deliberately: the engine imports
  * `server-only` and writes through REST, so it cannot be imported by a plain
  * Node process. They catch the files being edited apart.
  */
@@ -165,7 +167,60 @@ check(
 );
 
 // ---------------------------------------------------------------------------
-// 3. Both doors reach the engine
+// 3. The desk that closes a paper every answer of which is marked
+// ---------------------------------------------------------------------------
+const integrityPanel = read("src/app/(admin)/candidates/IntegrityPanel.tsx");
+const gradingTool = read("src/modules/assistant/domain/registry/grading.ts");
+const gradingRead = read("src/modules/assistant/domain/registry/credentials.ts");
+
+check(
+  "the retry action no longer stops at 'nothing to do'",
+  !consoleActions.includes("Nothing for the engine to do")
+);
+
+const zeroOpenAt = consoleActions.indexOf("if (openBefore === 0) {");
+const aiSwitchAt = consoleActions.indexOf(
+  "const { aiEnabled } = await getAiAutomationSettings();",
+  zeroOpenAt
+);
+check(
+  "with nothing left to score the action still reaches the engine",
+  zeroOpenAt >= 0 &&
+    aiSwitchAt > zeroOpenAt &&
+    consoleActions
+      .slice(zeroOpenAt, aiSwitchAt)
+      .includes("await gradeAttemptResponses(attemptId, { passes: 1 });")
+);
+check(
+  "only a submitted paper may be closed",
+  zeroOpenAt >= 0 &&
+    consoleActions.slice(zeroOpenAt, aiSwitchAt).includes('if (found.status !== "SUBMITTED")')
+);
+check(
+  "the action reports whether the paper crossed",
+  consoleActions.includes("finalized: true,") &&
+    consoleActions.includes('if (after?.status !== "GRADED")')
+);
+check(
+  "the report shows Finish grading on a fully marked submitted paper",
+  integrityPanel.includes(': grades.status === "SUBMITTED"') &&
+    integrityPanel.includes('"Finish grading"')
+);
+check(
+  "the report says the paper crossed when it did",
+  integrityPanel.includes("the test is now graded.")
+);
+check(
+  "the assistant tool says it closes a fully marked paper",
+  gradingTool.includes("closes a paper whose answers all carry a mark")
+);
+check(
+  "the grading read tells the model the retry can close too",
+  gradingRead.includes("or to close a paper every answer of which already carries a mark")
+);
+
+// ---------------------------------------------------------------------------
+// 4. Both doors reach the engine
 // ---------------------------------------------------------------------------
 check(
   "the submit route defers grading rather than blocking the candidate",

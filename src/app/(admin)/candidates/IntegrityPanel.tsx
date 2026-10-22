@@ -158,7 +158,9 @@ export function IntegrityPanel({
       setRunNote({
         text:
           scored === 0 && left === 0
-            ? "Every answer already carried a mark."
+            ? result.finalized
+              ? "Every answer already carried a mark — the test is now graded."
+              : "Every answer already carried a mark."
             : scored === 0
               ? `The AI took another pass — all ${left} still open${finish}`
               : left === 0
@@ -313,11 +315,14 @@ export function IntegrityPanel({
                             {note.text}
                           </span>
                         )}
-                        {/* Only offered when the engine can actually run, so the
-                            button never promises a pass that would refuse. */}
+                        {/* Offered when the engine can make a run: a pass over
+                            open answers needs AI ready, while closing a paper
+                            whose answers all carry a mark needs only the grade
+                            permission. */}
                         {grades.can_retry &&
-                          grades.unscored > 0 &&
-                          grades.ai_grading === "READY" && (
+                          (grades.unscored > 0
+                            ? grades.ai_grading === "READY"
+                            : grades.status === "SUBMITTED") && (
                             <button
                               type="button"
                               disabled={retrying}
@@ -329,7 +334,11 @@ export function IntegrityPanel({
                               ) : (
                                 <RefreshCw className="h-3 w-3" aria-hidden />
                               )}
-                              {retrying ? "Grading…" : "Ask the AI again"}
+                              {retrying
+                                ? "Grading…"
+                                : grades.unscored > 0
+                                  ? "Ask the AI again"
+                                  : "Finish grading"}
                             </button>
                           )}
                         {runNote && (
