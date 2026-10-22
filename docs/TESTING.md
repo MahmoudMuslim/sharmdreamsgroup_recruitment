@@ -53,10 +53,10 @@ The two pure-Node proofs are the cheap ones and run in seconds; the three stack 
 
 ```bash
 npm run audit:secrets                # vendor names/values absent from the shipped surface
-node scripts/verify-schema.mjs       # HOSTED-ONLY — the vendor project's catalog vs schema.sql
+node scripts/verify-extracted-files.mjs  # the extracted candidate bytes are still whole on disk
 ```
 
-`audit-secrets.mjs` scans the deploy surface (`src`, `docker/`, the manifests) for the three shapes that count as a *read* of a vendor name, and the `.next` bundle for the vendor secret values; it prints no credential. Its verdict is split on purpose: the deploy-surface and SDK-import scans set the exit code — `0` when clean, `1` on any hit — so `prebuild` can fail a build, while the bundle scan is informational unless you name a bundle as `$1`, because the host's `.next/static` is a dev artifact and the bundle that ships lives in the image. A missing `.env.local` or `.next` prints a skip line rather than a pass. `verify-schema.mjs` is the last hosted doorway of its kind and is banner-marked for deletion — aim it at another database with `ZZ_DB_URL`, or use `npm run stack:prove`, which checks behaviour rather than catalog membership.
+`audit-secrets.mjs` scans the deploy surface (`src`, `docker/`, the manifests) for the three shapes that count as a *read* of a vendor name, and the `.next` bundle for the vendor secret values; it prints no credential. Its verdict is split on purpose: the deploy-surface and SDK-import scans set the exit code — `0` when clean, `1` on any hit — so `prebuild` can fail a build, while the bundle scan is informational unless you name a bundle as `$1`, because the host's `.next/static` is a dev artifact and the bundle that ships lives in the image. A missing `.env.local` or `.next` prints a skip line rather than a pass. The census printed before that verdict also walks `scripts/` and the three env files, and all four are now empty of vendor names; the census stays because a re-added key prints there instead of passing silently. `npm run stack:prove` is the database check — it asserts behaviour rather than catalog membership, which is why the hosted `verify-schema.mjs` comparison it used to complement is deleted.
 
 ---
 

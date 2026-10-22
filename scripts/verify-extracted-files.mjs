@@ -1,13 +1,14 @@
 /* scripts/verify-extracted-files.mjs
  *
- * Proves the extraction before anything vendor-facing is deleted: every object
- * in the manifest is re-opened, re-hashed and re-sized on disk, and the archive
- * header of the hosted dump is checked. Read-only.
+ * Proves the extracted copy is still whole: every object in the manifest is
+ * re-opened, re-hashed and re-sized on disk, and any `pg_dump` archive the owner
+ * puts down beside it is checked by its header rather than its size. Read-only.
  *
  *   node scripts/verify-extracted-files.mjs
  *
- * Exits non-zero on the first mismatch, because the one thing this port may not
- * do is delete the vendor and then discover a byte never came home.
+ * Exits non-zero on the first mismatch. This is the only remaining proof of the
+ * cut-over — the hosted doorway that made these bytes is deleted — so a
+ * mismatch here has no second source to re-extract from.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ let manifest;
 try {
   manifest = JSON.parse(read(manifestPath).toString("utf8"));
 } catch (error) {
-  console.error(`No manifest at ${manifestPath} — run scripts/extract-vendor-files.mjs first.`, error.message);
+  console.error(`No manifest at ${manifestPath} — the extracted copy under docker/data/vendor-files is not on this disk, and the hosted doorway that made it is gone.`, error.message);
   process.exit(1);
 }
 

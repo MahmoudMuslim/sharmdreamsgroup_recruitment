@@ -49,8 +49,10 @@ worker directory.
 > Supabase value into the client bundle. `npm run audit:secrets` asserts the first
 > of those and fails the build on it; the second is asserted against a bundle you
 > name on the command line, because the host's `.next/static` is a dev artifact.
-> They still appear in the four hosted-only scripts under `scripts/`, which are the
-> door the last dump came through and are deleted once the hosted project is closed.
+> The hosted doorways under `scripts/` that read them are deleted, and so are the
+> lines in the owner's `.env.local` — `audit-secrets.mjs` prints the census that
+> says both are empty, and the value-hunt entries for those names stay dormant in
+> that file until a key is put back.
 
 ### Optional — app
 
@@ -103,10 +105,10 @@ npm run db:seed-local
 npm run dev                          # http://localhost:3001
 ```
 
-`node scripts/apply-schema.mjs` and `verify-schema.mjs` still exist, but they
-address the hosted project through the `SUPABASE_*` values in `.env.local`; the
-local path is `npm run db:apply-local`, which reads the same
-`db/schema.sql` against the `db` container.
+There is no other apply path: the scripts that addressed the hosted project
+through `.env.local` are deleted, so `npm run db:apply-local` — which reads the
+same `db/schema.sql` against the `db` container — is the only way this schema
+reaches a database.
 
 > **Staff accounts come from the stack, not from a script.** The hosted
 > `scripts/create-staff.mjs` is retired: it wrote into the vendor's GoTrue

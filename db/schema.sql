@@ -1,23 +1,23 @@
 /*
  * Sharm Dreams Talent Cloud — schema of record.
- * AUTHORITATIVE: this file carries hand edits that `node scripts/dump-schema.mjs`
- * does not reproduce (the vault removal, the locked-down jobs/applicants
- * policies, and the storage statements Task 10 deleted — the dump tool still
- * emits them because it reads the hosted project, where `storage` is the
- * vendor's own schema). A re-dump must re-apply them, not silently restore them.
+ * AUTHORITATIVE: this file is the source, not a capture. It carries hand edits
+ * that a `pg_dump` would not reproduce (the vault removal, the locked-down
+ * jobs/applicants policies, and the storage statements Task 10 deleted), so a
+ * re-generated dump must re-apply them rather than silently restore them. The
+ * dump tool that produced this file read the hosted project, and it is deleted
+ * with that project; a `pg_dump` against the `db` container is the only
+ * generator left, and nothing has run one against this schema of record, so
+ * treat it as a starting point for a diff, never as an overwrite.
  *
- * Generated from the live project, so this file describes the database instead
- * of intending to: every statement is Postgres' own pg_get_* definer. The design
+ * It was generated from the live project, so it describes a database instead of
+ * intending to: every statement is Postgres' own pg_get_* definer. The design
  * reasoning behind any single object lives in db/migrations/001-*.sql.
  *
  * Three sections are authored rather than dumped: the two seed blocks, and the
  * `public.files` table with its eight policies at the very end, which is the
  * table that replaced the vendor's storage.objects (Plan 2 Tasks 2 and 10, spec
  * §15 — Task 10 deleted those policies and the `storage` grants from this file).
- * Both seed blocks are dumps of live rows in authored shape. Regenerate with:
- *
- *   node scripts/dump-schema.mjs > db/schema.sql
- *   node scripts/verify-schema.mjs db/schema.sql   # must report no gaps
+ * Both seed blocks are dumps of live rows in authored shape.
  *
  * Order is dependency-driven, because this file has to apply on an empty
  * database: extensions and enums, then every table, then uniqueness, then the
@@ -26,6 +26,9 @@
  * render anything. It applies on vanilla Postgres with only the `auth` schema
  * stood in (`docker/db/initdb/02-auth-users.sql`); the `storage` stand-in that
  * used to be required alongside it is gone, and nothing here references it.
+ *
+ *   npm run db:apply-local    # apply here, then report the object counts
+ *   npm run stack:prove       # behaviour against the running stack, not catalog membership
  */
 
 -- ============================================================================

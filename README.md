@@ -171,14 +171,12 @@ npm run files:serve         # bytes over HTTP against the running container
 node scripts/generate-encryption-key.mjs   # AES key (run once)
 npm run audit:secrets                       # build guard: fails on a vendor credential in the deploy surface
 
-# HOSTED-ONLY — doorways to the retired vendor project, deleted once it is closed
-node scripts/apply-schema.mjs              # apply the consolidated schema to the hosted DB
-node scripts/apply-migration.mjs <file>    # apply one migration to the hosted DB
-node scripts/dump-schema.mjs               # dump the hosted schema into schema.sql
-node scripts/verify-schema.mjs <file>      # compare the hosted catalog against schema.sql
+# The cut-over's last two files — local copies only, no network
+node scripts/load-vendor-files.mjs         # put docker/data/vendor-files bytes on the uploads volume + write public.files rows
+node scripts/verify-extracted-files.mjs    # re-hash and re-size every one of those bytes
 ```
 
-The first two read `SB_DB` (or `.env.local`'s `SUPABASE_DB_PASSWORD`); `verify-schema.mjs` can be aimed at any other database with `ZZ_DB_URL`. Local SQL changes go through `npm run docker:psql`, and the `db/migrations/` files are history, not the apply path.
+There is no hosted doorway left: the five scripts that addressed the retired vendor project are deleted with it, so `npm run db:apply-local` and `npm run docker:psql` are the only ways SQL reaches a database, and the `db/migrations/` files are history, not the apply path.
 
 ---
 

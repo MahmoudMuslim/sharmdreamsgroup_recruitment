@@ -2,17 +2,16 @@
  * Two audits, and they retire differently.
  *
  * 1. A secret VALUE must never reach the browser bundle or the source tree. The
- *    values are read from `.env.local`, so this half retires itself — once the
- *    vendor lines are deleted from there, they drop out of `SECRETS` and stop
- *    being scanned for.
+ *    values are read from `.env.local`, so this half retires itself: the vendor
+ *    lines are deleted from there, so they dropped out of `SECRETS` and are no
+ *    longer scanned for. The non-vendor values below are, and must stay so.
  * 2. A vendor NAME must never be *read* by the surface that builds and runs this
  *    app (spec §15's fourth claim). Three shapes count as a read, and only three:
  *    `process.env.<NAME>`, a quoted key `"<NAME>"` / `'<NAME>'`, and an assignment
  *    `<NAME> =` / `<NAME>:`. The bare word is not enough: a comment recording that
- *    a key is gone is the proof it is gone, and must not fail the gate. Docs,
- *    plans and the four retired hosted scripts are outside this surface on purpose
- *    — see the note it prints. The vendor-SDK import scan covers `src` and
- *    `scripts`, because §15 claim 1 is stated over both.
+ *    a key is gone is the proof it is gone, and must not fail the gate. Docs and
+ *    plans are outside this surface on purpose. The vendor-SDK import scan covers
+ *    `src` and `scripts`, because §15 claim 1 is stated over both.
  *
  *   node scripts/audit-secrets.mjs
  *   node scripts/audit-secrets.mjs .probe-static   # the bundle copied out of the image
@@ -61,9 +60,12 @@ const SECRETS = [
   ["WHATSAPP (any EAAQB token)", "EAAQB"],
   ["service-role JWT payload", servicePayload],
 /* This list is what to hunt by VALUE, so a name whose value is absent contributes
- * nothing to hunt: once STATUS §8.2 action 4 deletes the vendor lines, the bundle
- * scan stops covering those four. The standing gates for that case are the deploy-
- * surface NAME scan and the SDK-import scan below, not this list. */
+ * nothing to hunt. The three vendor entries are dormant by design — `.env.local`
+ * no longer holds those lines, so they filter out here and the bundle scan does
+ * not cover them. They stay in the source so that a re-added key is hunted again
+ * on the next build instead of silently unguarded. The standing gates for the
+ * names themselves are the deploy-surface NAME scan and the SDK-import scan
+ * below, not this list. */
 ].filter(([, v]) => v && v.length > 8);
 
 function walk(dir, skip = [], out = []) {
@@ -221,10 +223,12 @@ if (sdkImporters.length) {
   console.log("  clean  `src` + `scripts` import the vendor SDK in 0 files");
 }
 
-/* Honest remainder: the names live on in exactly four kinds of place, none of
- * them a leak — the first three are the owner's to delete after the hosted project
- * is closed, and the fourth is a decision the owner has to make. Values are never
- * printed; the variable names are, because the names are what is left to clean. */
+/* Honest remainder, and it is a census of absence rather than a to-do list: no
+ * script reads a vendor credential, no env file carries a vendor line, and no
+ * tracked copy of a vendored agent skill re-prescribes the SDK. Each of these
+ * three had a hit when this block was written, so the block stays to fail the
+ * build-facing report the day one comes back. Values are never printed; the
+ * variable names are, because a name is the thing that would have returned. */
 console.log("\n=== still present outside the deploy surface (owner action, not a leak) ===");
 const hostedScripts = walk("scripts").filter((f) => {
   const text = readFileSync(f, "utf8");
@@ -233,9 +237,8 @@ const hostedScripts = walk("scripts").filter((f) => {
 console.log("  hosted scripts that still read them: " + (hostedScripts.join(", ") || "none"));
 /* Three files, not two. `next dev` loads `.env` before `.env.local` overrides it,
  * so the root file is a real surface even though it is gitignored — and it is the
- * one this census used to skip. Only names are printed, never values: here the
- * vendor values in `.env` are short placeholders while `.env.local` holds the live
- * ones, and a name is the thing left to clean either way. */
+ * one this census used to skip. All three are vendor-free now; a name printed for
+ * any of them means a vendor line came back to the owner's own disk. */
 for (const label of [".env", ".env.local", join("docker", ".env")]) {
   let names;
   try {

@@ -1,10 +1,15 @@
 /* scripts/load-vendor-files.mjs
  *
- * The other half of the cut-over: `extract-vendor-files.mjs` brought the bytes
+ * The other half of the cut-over: the one-time extraction brought these bytes
  * home, this one puts them where `src/lib/files/disk-store.ts` looks for them
  * and writes the `public.files` row that makes each one listable, sized and
  * typed. Without the row a byte is invisible; without the byte a row is a link
  * that 404s. Both halves land together or a File Manager page lies.
+ *
+ * The extracting script is gone — it was a doorway to the retired vendor
+ * project, and every byte it could bring is already here. `docker/data/
+ * vendor-files/` and its `manifest.json` are gitignored, so this disk holds the
+ * only copy the repo can reach; nothing here can re-make them.
  *
  *   node scripts/load-vendor-files.mjs              # into $UPLOADS_ROOT
  *   node scripts/load-vendor-files.mjs --root .data/uploads
@@ -70,7 +75,7 @@ let manifest;
 try {
   manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
 } catch {
-  console.error(`No manifest at ${MANIFEST} — run scripts/extract-vendor-files.mjs first.`);
+  console.error(`No manifest at ${MANIFEST} — the extracted copy under docker/data/vendor-files is not on this disk, and the hosted doorway that made it is gone.`);
   process.exit(1);
 }
 

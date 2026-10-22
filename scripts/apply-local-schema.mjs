@@ -1,16 +1,17 @@
 /*
  * Applies db/schema.sql to the LOCAL self-hosted stack, then reports the
- * object counts. Replaces `ZZ_DB_URL=… node scripts/apply-schema.mjs` for local
- * work so nobody has to remember the escape hatch — or read the password.
+ * object counts. One command, so nobody has to remember a connection-string
+ * escape hatch — or read the password.
  *
  *   npm run docker:up && node scripts/apply-local-schema.mjs
  *
  * Reads docker/.env, never .env.local, and never connects to the vendor.
  *
  * This is also where the Supabase Storage stand-in gets retired. It belongs
- * here, not in schema.sql: `scripts/apply-schema.mjs` reads the same file and
- * still runs against the hosted project, where `storage` is the vendor's own
- * schema and a cascade drop would delete real buckets and objects.
+ * here, not in schema.sql: the schema file describes the state a cluster should
+ * end in, while dropping a stand-in is a one-time migration of a cluster that
+ * already has one, so it runs in the apply path, where it can say what it
+ * deleted.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";

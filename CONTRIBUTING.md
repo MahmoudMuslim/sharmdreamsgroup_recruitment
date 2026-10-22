@@ -43,7 +43,7 @@ npm run stack:prove                   # identity + RLS parity
 npm run dev                           # http://localhost:3001
 ```
 
-The whole set-up is Docker-first: `node scripts/apply-schema.mjs` is a **HOSTED-ONLY** doorway to the retired vendor project and is not how you get a local database. Read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the env list and the template's known drift.
+The whole set-up is Docker-first — `npm run db:apply-local` is the only way the schema reaches a database. Read [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the env list and the template's known drift.
 
 ---
 
@@ -90,7 +90,7 @@ Edit `db/schema.sql` **and** add an ordered migration in `db/migrations/0NN_*.sq
 npm run stack:prove    # identity + RLS parity against the local stack
 ```
 
-Enable RLS on every new table. `node scripts/verify-schema.mjs <file>` is marked **HOSTED-ONLY**: it reads `.env.local` and compares a catalog against `schema.sql`, so it only belongs to the local stack when deliberately aimed at it with `ZZ_DB_URL`.
+Enable RLS on every new table — the file carries an explicit `alter table … enable row level security` per table, and `rls_auto_enable()` arms any new one. Nothing compares a catalog against `schema.sql` any more: `stack:prove` checks the behaviour, which is the claim that matters.
 
 ### Theming
 
@@ -145,6 +145,6 @@ Then walk the relevant manual checks in [docs/TESTING.md](docs/TESTING.md) — i
 | `prove-local-stack.mjs` (identity/RLS parity), `prove-files-rls.mjs`, `prove-serving.mjs` | yes |
 | `prove-token-shape.mjs`, `prove-password-verify.mjs`, `prove-rest-builder.mjs` | the identity-spine foundation proofs — run with `node`, see each file's header for the flags; `prove-password-verify.mjs` needs `db` up |
 
-**Hosted cut-over and HOSTED-ONLY** — `extract-vendor-files.mjs` (needs `SUPABASE_SERVICE_ROLE_KEY`, which `.env.local` no longer holds) and `apply-migration.mjs` are marked or behave as **HOSTED-ONLY**: they reach the retired vendor project and are waiting on the owner to close that account and delete them. `apply-schema.mjs` and `dump-schema.mjs` join them; `verify-schema.mjs` is HOSTED-ONLY by default and useful locally only when aimed with `ZZ_DB_URL`. `verify-extracted-files.mjs` runs entirely against the copies already in `docker/data/vendor-files`, so it stays.
+**Nothing here reaches the retired vendor project.** The five hosted doorways (`apply-schema.mjs`, `apply-migration.mjs`, `dump-schema.mjs`, `verify-schema.mjs`, `extract-vendor-files.mjs`) are deleted, along with the vendor credential lines in the owner's `.env.local`, so the local stack is the only data plane these commands can address. The two files left from the cut-over — `load-vendor-files.mjs` and `verify-extracted-files.mjs` — work entirely against the copies already in `docker/data/vendor-files`; that directory is gitignored and is now the only place those bytes exist that the repo can reach.
 
 Questions? Open an issue. Thanks for contributing.
