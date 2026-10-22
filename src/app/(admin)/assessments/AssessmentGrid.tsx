@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  BarChart3,
   BookOpen,
   CheckCircle2,
   ClipboardCheck,
@@ -33,6 +34,7 @@ import { saveTemplate, assignTemplate, deleteTemplate, setTemplateActive } from 
 import { searchSuites, suiteSearchWords } from "@/modules/assessment/domain/suiteSearch";
 import type { IssuedLinksRead, TemplateSummary } from "./actions";
 import { IssuedLinksBoard } from "./IssuedLinksBoard";
+import { ItemStatsDrawer } from "./ItemStatsDrawer";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { SuiteAuthoringDrawer } from "./SuiteAuthoringDrawer";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
@@ -449,6 +451,7 @@ function TemplateCard({
   questions,
   canEdit,
   onQuestions,
+  onItemStats,
   onEdit,
   onAssign,
 }: {
@@ -456,6 +459,7 @@ function TemplateCard({
   questions: EditableQuestion[];
   canEdit: boolean;
   onQuestions: () => void;
+  onItemStats: () => void;
   onEdit: () => void;
   onAssign: () => void;
 }) {
@@ -627,6 +631,15 @@ function TemplateCard({
           </button>
           <button
             type="button"
+            onClick={onItemStats}
+            title="How each question scored, across every graded paper of this suite"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-cream px-2.5 py-1.5 text-xs font-semibold text-brand-ink/70 transition hover:bg-brand-sand"
+          >
+            <BarChart3 className="h-3.5 w-3.5" aria-hidden />
+            Statistics
+          </button>
+          <button
+            type="button"
             onClick={onEdit}
             className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold transition hover:bg-brand-sand"
           >
@@ -727,6 +740,7 @@ export function AssessmentGrid({
   const [editing, setEditing] = useState<TemplateSummary | null>(null);
   const [assigning, setAssigning] = useState<TemplateSummary | null>(null);
   const [questionEditing, setQuestionEditing] = useState<TemplateSummary | null>(null);
+  const [statViewing, setStatViewing] = useState<TemplateSummary | null>(null);
   const [draftingSuite, setDraftingSuite] = useState(false);
 
   // `?q=` seeds the box so an assistant answer that searched the suites lands on
@@ -931,6 +945,7 @@ export function AssessmentGrid({
                 questions={questionsByTemplate[template.id] ?? []}
                 canEdit={canEdit}
                 onQuestions={() => setQuestionEditing(template)}
+                onItemStats={() => setStatViewing(template)}
                 onEdit={() => setEditing(template)}
                 onAssign={() => setAssigning(template)}
               />
@@ -973,6 +988,13 @@ export function AssessmentGrid({
           questions={questionsByTemplate[questionEditing.id] ?? []}
           editable={canEdit}
           onChanged={router.refresh}
+        />
+      )}
+      {statViewing && (
+        <ItemStatsDrawer
+          templateId={statViewing.id}
+          templateName={statViewing.name}
+          onClose={() => setStatViewing(null)}
         />
       )}
       {draftingSuite && (

@@ -15,6 +15,10 @@ import {
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
 import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
+import {
+  readTemplateItemStats,
+  type TemplateItemStats,
+} from "@/modules/assessment/application/templateItemStats";
 import { LINKS_LIMIT, type IssuedLink } from "@/modules/assessment/domain/issuedLinks";
 import type { EditableQuestion } from "./QuestionEditorDrawer";
 
@@ -588,4 +592,76 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     dealt_from_order: dealt.length > 0,
     answers,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Item statistics                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One suite's item table, or the reason it is not on screen.
+ *
+ * Three honest answers, one shape: a withheld claim, a suite with nothing to
+ * measure, and a read that failed. All three print a sentence rather than an
+ * empty table, because an empty table reads as "these questions do fine".
+ */
+export type ItemStatsResult =
+  | { ok: true; stats: TemplateItemStats }
+  | {
+      ok: false;
+      reason: "masked" | "empty" | "failed";
+      error: string;
+    };
+
+/**
+ * Difficulty and discrimination for every question in one suite.
+ *
+ * Loaded when the drawer opens, not with the grid: the figures need every graded
+ * answer of every paper the suite produced, and fetching that for a dozen suites
+ * to draw a dozen cards is the read the page has no reason to make.
+ *
+ * Refused outright while `security.mask_scores_for_reviewers` withholds marks from
+ * this reviewer. Both figures are computed from other candidates' marks — a
+ * difficulty is the mean of their answers and the gap is their papers ranked
+ * against each other — so this is the setting's own subject matter, not a
+ * neighbour of it.
+ */
+export async function getTemplateItemStats(templateId: string): Promise<ItemStatsResult> {
+  await requireStaff("/assessments");
+  if (!ATTEMPT_ID.test(templateId ?? "")) {
+    return { ok: false, reason: "failed", error: "This suite could not be loaded. Please retry." };
+  }
+
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
+    scoresAreMaskedForCurrentUser(),
+  ]);
+
+  if (masked) {
+    return {
+      ok: false,
+      reason: "masked",
+      error:
+        "Test scores are withheld from your account by the score-masking setting, so per-question difficulty and discrimination are not shown either.",
+    };
+  }
+
+  try {
+    const stats = await readTemplateItemStats(restClient, templateId);
+    if (!stats) {
+      return {
+        ok: false,
+        reason: "empty",
+        error: "This suite has no questions, so there is nothing to measure yet.",
+      };
+    }
+    return { ok: true, stats };
+  } catch (cause) {
+    console.error("[assessments] item statistics failed:", (cause as Error).message);
+    return {
+      ok: false,
+      reason: "failed",
+      error: "The graded answers for this suite could not be read. Please retry.",
+    };
+  }
 }
