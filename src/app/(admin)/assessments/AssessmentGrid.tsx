@@ -740,7 +740,22 @@ export function AssessmentGrid({
   const [editing, setEditing] = useState<TemplateSummary | null>(null);
   const [assigning, setAssigning] = useState<TemplateSummary | null>(null);
   const [questionEditing, setQuestionEditing] = useState<TemplateSummary | null>(null);
-  const [statViewing, setStatViewing] = useState<TemplateSummary | null>(null);
+  // `?stats=` opens one suite's item table from the address bar, which is what
+  // lets an assistant answer about difficulty and discrimination link to the
+  // rows it counted. The id is matched against every suite the page holds, not
+  // the filtered view: a chat answer may name a suite this grid's own box is
+  // currently hiding, and a link that lands on nothing reads as a broken answer.
+  const statsTarget = (id: string | null) =>
+    id ? templates.find((template) => template.id === id) ?? null : null;
+  const [statViewing, setStatViewing] = useState<TemplateSummary | null>(() =>
+    statsTarget(params.get("stats")),
+  );
+  const incomingStats = params.get("stats");
+  const [lastAppliedStats, setLastAppliedStats] = useState(incomingStats);
+  if (incomingStats !== lastAppliedStats) {
+    setLastAppliedStats(incomingStats);
+    setStatViewing(statsTarget(incomingStats));
+  }
   const [draftingSuite, setDraftingSuite] = useState(false);
 
   // `?q=` seeds the box so an assistant answer that searched the suites lands on

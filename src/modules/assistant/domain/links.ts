@@ -662,8 +662,19 @@ export function linkForTool(
         label: "Open the assessment suites",
       };
     case "get_assessment_suite":
-      // One suite by id, and the grid opens no suite from the address bar.
+      // One suite's questions, read from the authoring drawer — and the grid
+      // opens no drawer of its own from the address bar, so this names the page.
       return { href: "/assessments", label: "Open the assessment suites" };
+    case "get_item_statistics": {
+      // The Statistics drawer opens from `?stats=`, so an answer about which
+      // question was hardest lands on the rows it counted rather than on a grid
+      // holding every suite. An id that will not survive `token()` gets the bare
+      // page: a link to a drawer that would open on nothing is worse than none.
+      const id = fromArgs(args, "template_id");
+      return id
+        ? { href: `/assessments${query([["stats", id]])}`, label: "Open the item statistics" }
+        : { href: "/assessments", label: "Open the assessment suites" };
+    }
     case "list_prospects":
       return {
         href: `/sourcing${query([

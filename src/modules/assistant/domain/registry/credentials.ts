@@ -8,6 +8,7 @@ import {
   DOSSIER_ALERT_ROWS,
   FOLDER_FILE_ROWS,
   GATE_JOB_ROWS,
+  ITEM_STAT_ROWS,
   PROVIDER_GROUPS,
   ROOT_FILE_ROWS,
   TRAIL_LIMIT,
@@ -33,6 +34,7 @@ import {
   getOnboardingData,
   getQuestionsForEditor,
   getTemplateDetail,
+  getTemplateItemStats,
   listCredentialAudit,
   listCredentials,
   listingCapNote,
@@ -489,6 +491,55 @@ export const credentials: readonly AssistantTool[] = [
           shuffle_options: question.shuffle_options,
           config: question.config,
         })),
+      };
+    },
+  },
+  {
+    name: "get_item_statistics",
+    label: "Reading a suite's per-question statistics",
+    description:
+      "How each question in one suite performed over the suite's graded papers, as the Statistics drawer on /assessments shows it: `difficulty_pct` is the share of available points candidates earned on that question, `top_pct` and `bottom_pct` are the same share for the strongest and weakest halves of the papers, and `discrimination_pct_points` is one minus the other — negative when the weakest papers out-earned the strongest. A null figure is not a withheld claim: it means the counts refused it, and that item's `note` says what was found. Nothing here calls a question hard, easy, good or bad — no target difficulty is stored anywhere in this portal, so quote the figures with the counts beside them. `summary` prints the drawer's four tiles, `items_note` says whether the rows are every question or only the first, and `coverage_note` says whether the read reached the whole suite. Read this for which question was hardest, which ones the weaker candidates beat the stronger on, and which items are worth re-reading. Refuses outright while scores are masked for this recruiter.",
+    args: { template_id: "string — suite id from list_assessment_suites" },
+    run: async (args) => {
+      const templateId = str(args, "template_id");
+      const result = await getTemplateItemStats(templateId);
+      if (!result.ok) return { ok: false, reason: result.reason, error: result.error };
+
+      const { stats } = result;
+      // Counted over every question in the suite, not over the windowed rows
+      // below, so a clipped answer still names the whole suite it was measured on.
+      const gaps = stats.items
+        .map((item) => item.discrimination_pct_points)
+        .filter((gap): gap is number => gap !== null);
+      const reversed = gaps.filter((gap) => gap < 0).length;
+      const items = stats.items.slice(0, ITEM_STAT_ROWS).map((item) => ({
+        question_id: item.question_id,
+        title: clip(item.title, 160),
+        answers: item.answers,
+        papers: item.papers,
+        difficulty_pct: item.difficulty_pct,
+        top_pct: item.top_pct,
+        bottom_pct: item.bottom_pct,
+        discrimination_pct_points: item.discrimination_pct_points,
+        note: item.note,
+      }));
+
+      return {
+        // Leads the result because these rows are the wordiest this registry
+        // hands back, and a cut reads to the model as a shorter list.
+        items_note: reachNote("questions in this suite", stats.items.length, items.length),
+        ok: true,
+        template_id: templateId,
+        summary: {
+          questions: stats.items.length,
+          graded_papers: stats.papers,
+          graded_answers: stats.answers.read,
+          reversed_items: reversed === 0 ? "none" : `${reversed} of ${stats.items.length}`,
+        },
+        coverage_note: stats.partial
+          ? `This suite holds ${stats.answers.on_file.toLocaleString()} graded answers and the read stopped at ${stats.answers.read.toLocaleString()}, so the figures cover the answers that were read, not the whole suite.`
+          : `Every graded answer was read: ${stats.answers.read.toLocaleString()} of ${stats.answers.on_file.toLocaleString()} the suite holds, over ${stats.papers.toLocaleString()} graded papers.`,
+        items,
       };
     },
   },

@@ -60,6 +60,7 @@ import { loadSettings, saveSettings } from "@/app/(admin)/settings/actions";
 import {
   getQuestionsForEditor,
   getTemplateDetail,
+  getTemplateItemStats,
 } from "@/app/(admin)/assessments/actions";
 import {
   deleteTemplate,
@@ -181,6 +182,7 @@ export { loadSettings };
 export { saveSettings };
 export { getQuestionsForEditor };
 export { getTemplateDetail };
+export { getTemplateItemStats };
 export { deleteTemplate };
 export { saveTemplate };
 export { setTemplateActive };

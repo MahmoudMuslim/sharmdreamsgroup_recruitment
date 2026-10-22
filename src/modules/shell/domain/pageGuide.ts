@@ -240,11 +240,12 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   "/assessments": {
     purpose: "The test library: suites, their questions, the links candidates sit, and the answers those links brought back.",
     shows: [
-      "Tiles for suites, questions, assigned links and average duration, a searchable grid of suite cards, and three drawers — the suite, its questions, and the desk that drafts a whole suite from an opening.",
+      "Tiles for suites, questions, assigned links and average duration, a searchable grid of suite cards, and four drawers — the suite, its questions, the statistics behind them, and the desk that drafts a whole suite from an opening.",
       "The drafting desk shows one reviewed suite shell beside its drafted questions, with the notes the review raised and the drafts it threw out.",
       "Below the suites, an Issued links board: one row per link a still-held candidate holds, with the suite, status, how many answers it carries, and the score when your role may see marks.",
       "A link's Answers or Paper button opens that candidate's whole paper — every question in the order they were dealt it, with the full typed answer, the changed spreadsheet cells, the pitch video and its transcript.",
       "A graded paper's drawer adds where it ranks among the graded papers of the same suite, naming that population, and gives the count rather than a rank when there are too few papers to rank against. The line is not shown at all while your role has marks withheld.",
+      "A suite's Statistics drawer measures the test rather than a person: four tiles for the questions, graded papers and graded answers it read and how many questions the weakest papers out-earned the strongest on, then one row per question with its difficulty and its strongest-versus-weakest gap beside the counts they came from.",
       "With blind marking on in Settings, a paper whose marks can still change is listed by its tracking code with a Blind badge instead of a name, and the drawer says why. The name returns on its own once the paper is graded.",
     ],
     use: [
@@ -253,6 +254,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Set the integrity options — shuffled question order, shuffled options, copy and paste blocked.",
       "Assign sends a per-candidate link. Pause stops new assignments while issued tests stay open; Resume reopens it.",
       "Search by the columns the box names, and filter by role family or status.",
+      "Statistics on a suite card opens that suite's item table, loaded when the drawer opens rather than with the grid. The same drawer opens from `?stats=` on the address bar — that is where the assistant's link to a suite's statistics lands.",
       "On the links board, the rails split it into Not started, Sitting now, Answered, Graded and Closed; the box searches candidate, suite and role.",
       "A link still being sat shows what the candidate has saved so far. Re-read pulls the answers in again — a candidate working the test does not push this page by itself.",
       "Draft with AI, at the foot of a suite's question list, writes drafts from a topic, the kinds you tick, a count, a level and a mark per question.",
@@ -277,6 +279,9 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "The board lists the newest 300 links and says how many more are on file. Assigned links on the tiles counts every link ever issued, including a filed-away candidate's, so the two figures can differ.",
       "Blind marking is off until you turn it on in Settings → Security, it holds for every staff reader with no per-role override, and a closed link is never blinded — only a paper whose marks can still change.",
       "With blind marking on, the links search matches a blinded row by its tracking code and not by its name, because the name was never sent to the page. Nothing anonymises the answers themselves — a typed answer or a video pitch still says and shows who sat it — and the candidate's record, with the assessment report that awards the marks, still names them: blind marking hides a name from a reviewer reading a pile of papers, not a candidate from the recruiter who hired them.",
+      "Statistics are about the test, not the person, and they stop at the counts. A question needs 5 graded answers before a difficulty figure is claimed for it, and the strongest-versus-weakest gap needs 2 answers on each side of the split — below that the row prints the count it found instead of a number, and never a blank. A negative gap flags the question, not the candidates who answered it well.",
+      "The figures cover at most 1,000 graded papers and 5,000 graded answers of a suite, and the drawer says so when a ceiling stopped the read rather than describing part of a suite as the whole of it. The pull is not a newest-first window, so a cut-off suite names the counts it reached, never a date range.",
+      "Both halves of the split or neither: a difficulty without its gap is printed, but a gap is never claimed off one half alone. And nothing is claimed at all while your role has marks withheld — an item's difficulty and its gap are both statements about other candidates' marks.",
       "Authoring needs Create assessments; sending links needs Assign assessments.",
     ],
   },

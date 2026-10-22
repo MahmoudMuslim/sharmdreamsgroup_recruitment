@@ -155,6 +155,7 @@ import {
   saveSettings,
   getQuestionsForEditor,
   getTemplateDetail,
+  getTemplateItemStats,
   deleteTemplate,
   saveTemplate,
   setTemplateActive,
@@ -370,6 +371,19 @@ const GATE_JOB_ROWS = 40;
  * cut reads to the model as a shorter list, not a broken one.
  */
 const MODEL_ROWS = 30;
+
+/**
+ * Questions one item-statistics answer lists.
+ *
+ * The smallest cap in this file, because an item row is the wordiest thing the
+ * registry hands back: a uuid, the question's title at its own 160-character
+ * ceiling, four figures and the longest note the statistics domain writes (267
+ * characters, measured). Eight of those beside the answer's own scope notes come
+ * to 5,106 characters against the 6,000 clip — ten would not fit, so the window
+ * is what keeps the answer whole. The suite's totals are tallied over every item,
+ * never over the listed ones, so a clipped window cannot shrink the claim.
+ */
+const ITEM_STAT_ROWS = 8;
 
 /**
  * The storage cap sitting behind a folder answer, said once for both listings.
@@ -669,7 +683,7 @@ export function questionAsReply(ask: AssistantQuestion): string {
     .join("\n")}`;
 }
 
-export { ANSWER_ROWS, DOSSIER_ALERT_ROWS, FOLDER_FILE_ROWS, GATE_JOB_ROWS, INTERVIEW_OUTCOMES, MASTER_ENTITIES, MAX_OPTIONS, MAX_OPTION_CHARS, MODEL_ROWS, QUESTION_TYPES, ROOT_FILE_ROWS, STAFF_ROLES, ToolArgumentError, UNPLANNED_HIRE_ROWS, UUID_SHAPE, bool, choiceDrafts, clip, filedEntity, flagField, gateOptions, isoDateTime, jobDraft, listingCapNote, masterEntity, num, objArray, openingScopeWords, optionalChoice, optionalId, optionalStr, questionDraftFrom, questionType, report, str, strArray, textField };
+export { ANSWER_ROWS, DOSSIER_ALERT_ROWS, FOLDER_FILE_ROWS, GATE_JOB_ROWS, INTERVIEW_OUTCOMES, ITEM_STAT_ROWS, MASTER_ENTITIES, MAX_OPTIONS, MAX_OPTION_CHARS, MODEL_ROWS, QUESTION_TYPES, ROOT_FILE_ROWS, STAFF_ROLES, ToolArgumentError, UNPLANNED_HIRE_ROWS, UUID_SHAPE, bool, choiceDrafts, clip, filedEntity, flagField, gateOptions, isoDateTime, jobDraft, listingCapNote, masterEntity, num, objArray, openingScopeWords, optionalChoice, optionalId, optionalStr, questionDraftFrom, questionType, report, str, strArray, textField };
 
 export { AGENDA_CHAT_ROW_LIMIT };
 export { AI_CAPABILITIES };
@@ -759,6 +773,7 @@ export { getProspectProfile };
 export { getQuestionsForEditor };
 export { getRowReport };
 export { getTemplateDetail };
+export { getTemplateItemStats };
 export { getTemplates };
 export { importProspects };
 export { isChartView };
