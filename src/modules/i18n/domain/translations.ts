@@ -51,7 +51,7 @@ export const MAX_TEXT_CHARS = 2_000;
 /**
  * Narrow a JSONB settings row into a flat key→wording map.
  *
- * The row is reachable from Supabase's own table editor, so anything that is not
+ * The row is hand-editable through the database, so anything that is not
  * a string is dropped rather than coerced: a number or a nested object would
  * reach `translate` and print `[object Object]` to a candidate. An empty string
  * is dropped too, because "no override" and "print nothing" have to stay

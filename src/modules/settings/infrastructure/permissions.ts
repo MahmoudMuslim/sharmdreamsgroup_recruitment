@@ -3,8 +3,8 @@ import "server-only";
 import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import type { RestClient } from "@/lib/rest/client";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { getSessionUser } from "@/lib/auth/session";
 import type { PermissionKey } from "@/modules/settings/domain/types";
 
@@ -25,8 +25,8 @@ export async function permissionsForCurrentUser(): Promise<Set<PermissionKey>> {
 }
 
 /** The grants for one role, read with whichever client the caller holds. */
-async function readGrants(supabase: RestClient, roleKey: string): Promise<Set<PermissionKey>> {
-  const { data, error } = await supabase
+async function readGrants(restClient: RestClient, roleKey: string): Promise<Set<PermissionKey>> {
+  const { data, error } = await restClient
     .from("role_permissions")
     .select("permission_key")
     .eq("role_key", roleKey)
@@ -65,7 +65,7 @@ async function cachedGrantsForRole(roleKey: string): Promise<Set<PermissionKey> 
   cacheLife("minutes");
   cacheTag("role-grants");
 
-  const { data, error } = await getSupabaseServiceClient()
+  const { data, error } = await getServiceRestClient()
     .from("role_permissions")
     .select("permission_key")
     .eq("role_key", roleKey)
@@ -83,8 +83,8 @@ const callerGrants = cache(async (): Promise<Set<PermissionKey>> => {
   const cached = await cachedGrantsForRole(roleKey);
   if (cached) return cached;
 
-  const supabase = await createSupabaseServerClient();
-  return readGrants(supabase, roleKey);
+  const restClient = await createServerRestClient();
+  return readGrants(restClient, roleKey);
 });
 
 /**

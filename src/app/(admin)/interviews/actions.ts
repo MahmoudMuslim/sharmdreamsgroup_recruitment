@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import {
   agendaWindow,
@@ -59,10 +59,10 @@ export async function getInterviewAgenda(
 ): Promise<AgendaInterview[]> {
   await requireStaff("/interviews");
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const agenda = agendaWindow(new Date(), input.pastDays, input.futureDays);
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("interview_schedules")
     .select(AGENDA_SELECT)
     .gte("scheduled_at", agenda.past)
@@ -120,16 +120,16 @@ export async function countInterviewsOutsideAgenda(): Promise<{
 }> {
   await requireStaff("/interviews");
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const { past, future } = agendaWindow();
 
   const [ahead, overdue] = await Promise.all([
-    supabase
+    restClient
       .from("interview_schedules")
       .select(`id, ${AGENDA_APPLICATION_EMBED}`, { count: "exact", head: true })
       .eq("status", PENDING_INTERVIEW_STATUS)
       .gt("scheduled_at", future),
-    supabase
+    restClient
       .from("interview_schedules")
       .select(`id, ${AGENDA_APPLICATION_EMBED}`, { count: "exact", head: true })
       .eq("status", PENDING_INTERVIEW_STATUS)

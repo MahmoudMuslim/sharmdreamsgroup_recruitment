@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasAiProvider } from "@/lib/config.server";
 import {
@@ -142,10 +142,10 @@ export async function searchPortal(term: string): Promise<PortalSearchResult> {
   if (query.length < 2) return empty;
 
   const like = `%${query}%`;
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [candidatesResult, jobsResult, prospectsResult] = await Promise.all([
-    supabase
+    restClient
       .from("applications")
       .select("id, full_name, email, tracking_code, stage, job_openings(title)")
       .is("archived_at", null)
@@ -154,13 +154,13 @@ export async function searchPortal(term: string): Promise<PortalSearchResult> {
       )
       .order("created_at", { ascending: false })
       .limit(HIT_LIMIT),
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title, department, status")
       .or(`title.ilike.${like},department.ilike.${like}`)
       .order("created_at", { ascending: false })
       .limit(HIT_LIMIT),
-    supabase
+    restClient
       .from("sourced_prospects")
       .select("id, full_name, email, company, stage")
       .or(`full_name.ilike.${like},email.ilike.${like},company.ilike.${like}`)
@@ -229,7 +229,7 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
   const actor = await staffActor();
   if ("error" in actor) return { ok: false, error: actor.error, alerts: [] };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   // One instant for the interview row and the page it links to: the agenda slices
   // the same window this count is measured against.
   const agenda = agendaWindow();
@@ -241,7 +241,7 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
       // on this row is the number on the New chip, not a recent slice of it. A
       // 7-day window here used to promise "waiting" while hiding every older
       // application still sitting in New — a stale lead is still a lead.
-      supabase
+      restClient
         .from("applications")
         .select("id", { count: "exact", head: true })
         .eq("stage", "NEW")
@@ -251,7 +251,7 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
       // rows the recruiter lands on. Counting `candidate_attempts` directly — the
       // old query — measured attempts on filed-away records too, and the page it
       // linked to was filtered by pipeline stage, which is a different set again.
-      supabase
+      restClient
         .from("applications")
         .select(`id, ${UNGRADED_ATTEMPT_EMBED}`, { count: "exact", head: true })
         .is("archived_at", null)
@@ -263,7 +263,7 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
       // was counted here and unshowable there. The `!inner` embed matches the one
       // requirement the agenda applies before it lists a row: a candidate this
       // recruiter can open.
-      supabase
+      restClient
         .from("interview_schedules")
         .select(`id, ${AGENDA_APPLICATION_EMBED}`, { count: "exact", head: true })
         .eq("status", PENDING_INTERVIEW_STATUS)
@@ -273,13 +273,13 @@ export async function getStaffAlerts(): Promise<StaffAlertsResult> {
       // slice: a message that never reached a candidate is still a message that
       // never reached them a month later. `?failed=1` reads this exact predicate
       // per channel, so the number here is the number of rows on screen.
-      supabase
+      restClient
         .from("communication_logs")
         .select("id", { count: "exact", head: true })
         .eq("direction", "OUTBOUND")
         .eq("delivered", false)
         .in("channel", [...DELIVERED_LOG_CHANNELS]),
-      supabase
+      restClient
         .from("scheduled_whatsapp_jobs")
         .select("id", { count: "exact", head: true })
         .eq("status", "FAILED" satisfies QueueStatus),
@@ -410,9 +410,9 @@ export async function getMyProfile(): Promise<MyProfileResult> {
   const actor = await staffActor();
   if ("error" in actor) return { ok: false, error: actor.error };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: profile, error } = await supabase
+  const { data: profile, error } = await restClient
     .from("user_profiles")
     .select("full_name, email, phone, role, locale, created_at, tenant_id")
     .eq("auth_user_id", actor.user.authUserId)
@@ -425,7 +425,7 @@ export async function getMyProfile(): Promise<MyProfileResult> {
   let company: string | null = null;
 
   if (tenantId) {
-    const { data: tenant } = await supabase
+    const { data: tenant } = await restClient
       .from("tenants_and_companies")
       .select("name")
       .eq("id", tenantId)

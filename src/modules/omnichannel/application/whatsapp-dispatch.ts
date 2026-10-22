@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { assessmentUrl } from "@/lib/public-url";
 import { formatInZone } from "@/lib/timezone";
 import { getSessionUser } from "@/lib/auth/session";
@@ -57,8 +57,8 @@ interface NotificationSettings {
  * seeded values: WhatsApp off until credentials are set up, stage alerts on.
  */
 async function getNotificationSettings(): Promise<NotificationSettings> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("app_settings")
     .select("key, value")
     .eq("scope", "GLOBAL")
@@ -76,8 +76,8 @@ async function getNotificationSettings(): Promise<NotificationSettings> {
 
 /** First active WHATSAPP row among `keys`, else the shipped default. */
 async function resolveTemplate(keys: string[]): Promise<{ body: string; key: string }> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("notification_templates")
     .select("key, body")
     .eq("channel", "WHATSAPP")
@@ -139,8 +139,8 @@ export async function enqueueStageChangeWhatsApp(
     return { queued: false };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, phone, job_openings(title), candidate_attempts(access_token)")
     .eq("id", applicationId)
@@ -171,7 +171,7 @@ export async function enqueueStageChangeWhatsApp(
 
   const text = renderTemplate(body, vars).trim();
 
-  const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
+  const { error } = await restClient.from("scheduled_whatsapp_jobs").insert({
     application_id: applicationId,
     recipient_phone: application.phone,
     payload: { text, template: key },
@@ -196,8 +196,8 @@ export async function enqueueAssessmentInvite(input: {
   const settings = await getNotificationSettings();
   if (!settings.whatsappEnabled) return { queued: false };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, phone, job_openings(title)")
     .eq("id", input.applicationId)
@@ -214,7 +214,7 @@ export async function enqueueAssessmentInvite(input: {
   const vars = await buildVars(application, job?.title ?? "the role", "assessment");
   vars.assessment_link = `Start it here: ${await assessmentUrl(input.accessToken)}`;
 
-  const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
+  const { error } = await restClient.from("scheduled_whatsapp_jobs").insert({
     application_id: input.applicationId,
     recipient_phone: application.phone,
     payload: { text: renderTemplate(body, vars).trim(), template: key },
@@ -273,8 +273,8 @@ export async function enqueueInterviewNotice(
   const settings = await getNotificationSettings();
   if (!settings.whatsappEnabled) return { queued: false };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, phone, job_openings(title)")
     .eq("id", input.applicationId)
@@ -307,7 +307,7 @@ export async function enqueueInterviewNotice(
 
   const text = renderTemplate(body, vars).trim();
 
-  const { error } = await supabase.from("scheduled_whatsapp_jobs").insert({
+  const { error } = await restClient.from("scheduled_whatsapp_jobs").insert({
     application_id: input.applicationId,
     recipient_phone: application.phone,
     payload: { text, template: key },
@@ -355,9 +355,9 @@ async function dispatchActor(): Promise<
  * until MAX_ATTEMPTS, then park as FAILED.
  */
 export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDispatchSummary> {
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("scheduled_whatsapp_jobs")
     .select("id, application_id, recipient_phone, payload, attempts")
     .eq("status", "PENDING")
@@ -372,7 +372,7 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
   for (const job of jobs) {
     const text = job.payload?.text?.trim();
     if (!text) {
-      await supabase
+      await restClient
         .from("scheduled_whatsapp_jobs")
         .update({ status: "FAILED", error_log: "Job payload has no text body" })
         .eq("id", job.id);
@@ -387,7 +387,7 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
 
     if (result.success) {
       summary.sent += 1;
-      await supabase
+      await restClient
         .from("scheduled_whatsapp_jobs")
         .update({ status: "SENT", sent_at: new Date().toISOString(), error_log: null })
         .eq("id", job.id);
@@ -396,7 +396,7 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
       const attempts = job.attempts + 1;
       const parked = attempts >= MAX_ATTEMPTS;
 
-      await supabase
+      await restClient
         .from("scheduled_whatsapp_jobs")
         .update({
           attempts,
@@ -411,7 +411,7 @@ export async function processDueWhatsAppJobs(limit: number): Promise<WhatsAppDis
     // outcome rather than one per attempt.
     const parked = !result.success && job.attempts + 1 >= MAX_ATTEMPTS;
     if (result.success || parked) {
-      await supabase.from("communication_logs").insert({
+      await restClient.from("communication_logs").insert({
         application_id: job.application_id,
         channel: "WHATSAPP",
         direction: "OUTBOUND",

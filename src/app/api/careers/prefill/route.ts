@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/data-api/anon";
+import { getAnonRestClient } from "@/lib/data-api/anon";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
   CV_MAX_BYTES,
@@ -75,11 +75,11 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: cvSizeError() }, { status: 413 });
   }
 
-  const supabase = getSupabaseAnonClient();
+  const restClient = getAnonRestClient();
 
   // Same guard the upload route makes: a draft or closed role has no form to
   // fill, so this endpoint is not a way to spend model calls for nothing.
-  const { data: job } = await supabase
+  const { data: job } = await restClient
     .from("job_openings")
     .select("id")
     .eq("id", jobId)

@@ -405,7 +405,7 @@ export const TRAIL_LIST = {
     "The trail begins on the day its table was created. Changes made before it are not here, and history cannot be rebuilt from the rows that exist.",
     "Values that must not be kept — CV text, message bodies, transcripts, credentials — are recorded as [withheld]. That a field changed is the record; its content is not.",
     "Only the writers that were wired to the trail leave a row. A change made through a screen that has not been wired yet appears nowhere, so an empty stretch can mean a change nobody recorded rather than one that did not happen.",
-    "This table is written by the portal, not by the database. A change made directly in Supabase — by hand or by a migration — is not recorded.",
+    "This table is written by the portal, not by the database. A change made directly in the database — by hand or by a migration — is not recorded.",
     "Nothing is deleted from the trail, and nothing expires. A row outlives the record it describes: an archived candidate's changes stay countable.",
   ],
 };

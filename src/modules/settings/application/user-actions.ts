@@ -2,8 +2,8 @@
 
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { getServiceRestClient } from "@/lib/data-api/service";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { canManageStaffUsers } from "@/modules/settings/infrastructure/permissions";
 import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
@@ -18,10 +18,10 @@ import type { AssignableStaffRole, StaffInvite } from "@/modules/settings/domain
  * Both halves of this handle are local now: the thirteen `auth.admin.*` calls
  * run on `authAdmin` (`src/lib/auth/admin-users.ts`), four parameterised `pg`
  * statements, because no HTTP route may reach `auth.users`; the row calls beside
- * them are the `RestClient` shape over `src/lib/rest`. Nothing on this object
+ * them are our own `RestClient` over `src/lib/rest`. Nothing on this object
  * is passed through to GoTrue any more.
  */
-type ServiceClient = ReturnType<typeof getSupabaseServiceClient>;
+type ServiceClient = ReturnType<typeof getServiceRestClient>;
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits } from "@/modules/activity/domain/trail";
 
@@ -46,13 +46,13 @@ function roleWord(role: string): string {
  * looked up in one pass and printed as the names the Team console shows.
  */
 async function companyNames(
-  supabase: ServiceClient,
+  restClient: ServiceClient,
   ids: (string | null)[]
 ): Promise<Map<string, string>> {
   const wanted = [...new Set(ids.filter((each): each is string => Boolean(each)))];
   if (wanted.length === 0) return new Map();
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("tenants_and_companies")
     .select("id, name")
     .in("id", wanted);
@@ -119,8 +119,8 @@ async function requireStaffManager(): Promise<Actor | null> {
   const session = await requireStaff("/settings");
   if (!(await canManageStaffUsers())) return null;
 
-  const supabase = getSupabaseServiceClient();
-  const { data: profile } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: profile } = await restClient
     .from("user_profiles")
     .select("id")
     .eq("auth_user_id", session.authUserId)
@@ -138,9 +138,9 @@ async function requireStaffManager(): Promise<Actor | null> {
  * protection pass, and would delete an account that was never deactivated.
  */
 async function bannedAuthIds(
-  supabase: ServiceClient
+  restClient: ServiceClient
 ): Promise<{ ids: Set<string>; error: string | null }> {
-  const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const { data, error } = await restClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (error) return { ids: new Set(), error: error.message };
   const now = Date.now();
   return {
@@ -161,15 +161,15 @@ async function bannedAuthIds(
  * refuse when the directory could not be read, because then the count is unknown.
  */
 async function activeSuperAdminIds(
-  supabase: ServiceClient
+  restClient: ServiceClient
 ): Promise<{ ids: Set<string>; error: string | null }> {
-  const { data: admins, error } = await supabase
+  const { data: admins, error } = await restClient
     .from("user_profiles")
     .select("id, auth_user_id")
     .eq("role", "SUPER_ADMIN");
   if (error) return { ids: new Set(), error: error.message };
 
-  const banned = await bannedAuthIds(supabase);
+  const banned = await bannedAuthIds(restClient);
   if (banned.error) return banned;
 
   return {
@@ -187,10 +187,10 @@ const ACCESS_UNKNOWN =
   "Who can still sign in could not be read, so this change is refused — try again.";
 
 async function auditStaffChange(
-  supabase: ServiceClient,
+  restClient: ServiceClient,
   entry: { key: string; previous: unknown; next: unknown; changedBy: string }
 ): Promise<void> {
-  await supabase.from("settings_audit_log").insert({
+  await restClient.from("settings_audit_log").insert({
     key: entry.key,
     previous_value: entry.previous ?? null,
     next_value: entry.next ?? null,
@@ -214,10 +214,10 @@ interface NewStaffAccount {
  * having no session at all.
  */
 async function createStaffAccount(
-  supabase: ServiceClient,
+  restClient: ServiceClient,
   account: NewStaffAccount
 ): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
-  const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+  const { data: authUser, error: authError } = await restClient.auth.admin.createUser({
     email: account.email,
     password: account.password,
     email_confirm: true,
@@ -227,7 +227,7 @@ async function createStaffAccount(
   if (authError) return { ok: false, error: authError.message };
   const userId = authUser.user.id;
 
-  const { error: profileError } = await supabase.from("user_profiles").insert({
+  const { error: profileError } = await restClient.from("user_profiles").insert({
     auth_user_id: userId,
     email: account.email,
     full_name: account.fullName,
@@ -236,7 +236,7 @@ async function createStaffAccount(
   });
 
   if (profileError) {
-    await supabase.auth.admin.deleteUser(userId);
+    await restClient.auth.admin.deleteUser(userId);
     if (profileError.code === "23505") {
       return { ok: false, error: "That email is already in use." };
     }
@@ -260,7 +260,7 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
     return { ok: false, error: "You need the Manage users permission." };
   }
 
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
   const email = payload.email.trim().toLowerCase();
   if (!email || !email.includes("@")) {
@@ -276,11 +276,11 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
 
   // `listUsers` is one page of GoTrue's pagination, so ask for a page big enough
   // to be the whole directory — otherwise a duplicate hides on page two.
-  const { data: existingAuth } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const { data: existingAuth } = await restClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (existingAuth?.users.some((u) => u.email?.toLowerCase() === email)) {
     return { ok: false, error: "A user with that email already exists." };
   }
-  const { data: existingProfile } = await supabase
+  const { data: existingProfile } = await restClient
     .from("user_profiles")
     .select("id")
     .eq("email", email)
@@ -291,7 +291,7 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
   // Only a *pending* invite blocks a new one — the database's unique index is
   // partial for exactly this reason, so an address whose earlier invite was
   // accepted or expired must stay invitable.
-  const { data: existingInvite } = await supabase
+  const { data: existingInvite } = await restClient
     .from("user_invites")
     .select("id, status")
     .eq("email", email)
@@ -307,14 +307,14 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
     // The service-role client carries no session, so the current user must come
     // from the cookie-backed client — otherwise invited_by is always null and the
     // audit trail of who invited whom is lost.
-    const sessionClient = await createSupabaseServerClient();
+    const sessionClient = await createServerRestClient();
     const { data: sessionData } = await sessionClient.auth.getUser();
 
     // `user_invites.invited_by` references user_profiles(id), NOT auth.users(id),
     // so the auth id must be resolved to the profile row.
     let invitedBy: string | null = null;
     if (sessionData.user) {
-      const { data: inviterProfile } = await supabase
+      const { data: inviterProfile } = await restClient
         .from("user_profiles")
         .select("id")
         .eq("auth_user_id", sessionData.user.id)
@@ -322,7 +322,7 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
       invitedBy = inviterProfile?.id ?? null;
     }
 
-    const { data: invite, error: inviteError } = await supabase
+    const { data: invite, error: inviteError } = await restClient
       .from("user_invites")
       .insert({
         email,
@@ -375,7 +375,7 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
   }
 
   const tempPassword = supplied || generateStaffPassword(minLength);
-  const created = await createStaffAccount(supabase, {
+  const created = await createStaffAccount(restClient, {
     email,
     fullName,
     role: payload.role,
@@ -445,15 +445,15 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
     return { invites: [], access: {}, accessError: null, invitesError: null };
   }
 
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
   const [inviteRead, profileRead] = await Promise.all([
-    supabase
+    restClient
       .from("user_invites")
       .select("id, email, full_name, role, company_id, status, expires_at, created_at")
       .eq("status", "PENDING")
       .order("created_at", { ascending: false }),
-    supabase
+    restClient
       .from("user_profiles")
       .select("id, auth_user_id")
       .in("role", STAFF_ROLE_KEYS),
@@ -466,7 +466,7 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
     const byAuthId = new Map(
       profileRead.data.map((p) => [p.auth_user_id as string, p.id as string])
     );
-    const { data: directory, error } = await supabase.auth.admin.listUsers({
+    const { data: directory, error } = await restClient.auth.admin.listUsers({
       page: 1,
       perPage: 1000,
     });
@@ -493,8 +493,8 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
   };
 }
 
-async function loadTargetProfile(supabase: ServiceClient, profileId: string) {
-  const { data } = await supabase
+async function loadTargetProfile(restClient: ServiceClient, profileId: string) {
+  const { data } = await restClient
     .from("user_profiles")
     .select("id, auth_user_id, full_name, email, role, tenant_id, phone")
     .eq("id", profileId)
@@ -515,7 +515,7 @@ async function loadTargetProfile(supabase: ServiceClient, profileId: string) {
 /**
  * Blocks or un-blocks sign-in without deleting anything.
  *
- * A ban stops new sign-ins; Supabase does not revoke sessions that already
+ * A ban stops new sign-ins; nothing here revokes sessions that already
  * exist, so a laptop left open keeps its session until it expires — the UI says
  * this rather than promising an instant kick. Answers, applications and interview
  * attribution all stay intact, which is why this is the offered path over delete.
@@ -527,8 +527,8 @@ export async function setStaffActive(
   const actor = await requireStaffManager();
   if (!actor) return { ok: false, error: "You need the Manage users permission." };
 
-  const supabase = getSupabaseServiceClient();
-  const target = await loadTargetProfile(supabase, profileId);
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
   if (!target) return { ok: false, error: "That team member no longer exists." };
 
   if (!active) {
@@ -536,7 +536,7 @@ export async function setStaffActive(
       return { ok: false, error: "You cannot disable your own account." };
     }
     if (target.role === "SUPER_ADMIN") {
-      const admins = await activeSuperAdminIds(supabase);
+      const admins = await activeSuperAdminIds(restClient);
       if (admins.error) return { ok: false, error: ACCESS_UNKNOWN };
       if (admins.ids.size <= 1) {
         return {
@@ -547,12 +547,12 @@ export async function setStaffActive(
     }
   }
 
-  const { error } = await supabase.auth.admin.updateUserById(target.auth_user_id, {
+  const { error } = await restClient.auth.admin.updateUserById(target.auth_user_id, {
     ban_duration: active ? "none" : PERMANENT_BAN,
   });
   if (error) return { ok: false, error: error.message };
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.access:${profileId}`,
     previous: { active: !active },
     next: { active, email: target.email },
@@ -584,7 +584,7 @@ export async function setStaffActive(
  * Mints a new password and returns it once.
  *
  * There is no self-service reset page in this app — no `/forgot-password` and no
- * invite-acceptance route — so a Supabase recovery link would be a dead URL. The
+ * invite-acceptance route — so an emailed recovery link would be a dead URL. The
  * generated password is therefore shown in the panel that asked for it, and the
  * caller shares it the same way they share any other credential. It is never
  * written to the audit log.
@@ -593,8 +593,8 @@ export async function resetStaffPassword(profileId: string): Promise<StaffAction
   const actor = await requireStaffManager();
   if (!actor) return { ok: false, error: "You need the Manage users permission." };
 
-  const supabase = getSupabaseServiceClient();
-  const target = await loadTargetProfile(supabase, profileId);
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
   if (!target) return { ok: false, error: "That team member no longer exists." };
 
   const minLength = await getNumberSetting(
@@ -603,12 +603,12 @@ export async function resetStaffPassword(profileId: string): Promise<StaffAction
   );
   const tempPassword = generateStaffPassword(minLength);
 
-  const { error } = await supabase.auth.admin.updateUserById(target.auth_user_id, {
+  const { error } = await restClient.auth.admin.updateUserById(target.auth_user_id, {
     password: tempPassword,
   });
   if (error) return { ok: false, error: error.message };
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.password:${profileId}`,
     previous: null,
     next: { reset_by: actor.profileId, min_length: minLength },
@@ -639,8 +639,8 @@ export async function updateStaffRole(
     return { ok: false, error: "That role cannot be assigned yet." };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const target = await loadTargetProfile(supabase, profileId);
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
   if (!target) return { ok: false, error: "That team member no longer exists." };
 
   if (target.role === role) return { ok: true };
@@ -648,14 +648,14 @@ export async function updateStaffRole(
   // Changing your own role is how an admin locks themselves out of the screen
   // that changes roles, so the last Super Admin is protected either way.
   if (target.role === "SUPER_ADMIN") {
-    const admins = await activeSuperAdminIds(supabase);
+    const admins = await activeSuperAdminIds(restClient);
     if (admins.error) return { ok: false, error: ACCESS_UNKNOWN };
     if (admins.ids.size <= 1) {
       return { ok: false, error: "This is the only active Super Admin account." };
     }
   }
 
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await restClient
     .from("user_profiles")
     .update({ role })
     .eq("id", profileId)
@@ -665,7 +665,7 @@ export async function updateStaffRole(
   // without this check a vanished row would still read as "saved".
   if (!updated?.length) return { ok: false, error: "That team member no longer exists." };
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.role:${profileId}`,
     previous: { role: target.role },
     next: { role },
@@ -693,12 +693,12 @@ export async function updateStaffCompany(
   const actor = await requireStaffManager();
   if (!actor) return { ok: false, error: "You need the Manage users permission." };
 
-  const supabase = getSupabaseServiceClient();
-  const target = await loadTargetProfile(supabase, profileId);
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
   if (!target) return { ok: false, error: "That team member no longer exists." };
   if (target.tenant_id === companyId) return { ok: true };
 
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await restClient
     .from("user_profiles")
     .update({ tenant_id: companyId })
     .eq("id", profileId)
@@ -706,14 +706,14 @@ export async function updateStaffCompany(
   if (error) return { ok: false, error: error.message };
   if (!updated?.length) return { ok: false, error: "That team member no longer exists." };
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.company:${profileId}`,
     previous: { tenant_id: target.tenant_id },
     next: { tenant_id: companyId },
     changedBy: actor.profileId,
   });
 
-  const names = await companyNames(supabase, [target.tenant_id, companyId]);
+  const names = await companyNames(restClient, [target.tenant_id, companyId]);
   const word = (id: string | null) =>
     id ? names.get(id) ?? "a company that is no longer listed" : "no company";
 
@@ -782,13 +782,13 @@ export async function updateStaffDetails(
     return { ok: false, error: "Phone numbers are kept to 32 characters." };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const target = await loadTargetProfile(supabase, profileId);
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
   if (!target) return { ok: false, error: "That team member no longer exists." };
 
   const emailChanged = target.email.toLowerCase() !== email;
   if (emailChanged) {
-    const { data: directory, error: directoryError } = await supabase.auth.admin.listUsers({
+    const { data: directory, error: directoryError } = await restClient.auth.admin.listUsers({
       page: 1,
       perPage: 1000,
     });
@@ -798,7 +798,7 @@ export async function updateStaffDetails(
     if (directory.users.some((u) => u.email?.toLowerCase() === email && u.id !== target.auth_user_id)) {
       return { ok: false, error: "Another account already signs in with that email." };
     }
-    const { data: clash } = await supabase
+    const { data: clash } = await restClient
       .from("user_profiles")
       .select("id")
       .eq("email", email)
@@ -814,7 +814,7 @@ export async function updateStaffDetails(
   );
   if (Object.keys(edits).length === 0) return { ok: true };
 
-  const { error: authError } = await supabase.auth.admin.updateUserById(target.auth_user_id, {
+  const { error: authError } = await restClient.auth.admin.updateUserById(target.auth_user_id, {
     ...(emailChanged ? { email, email_confirm: true } : {}),
     // The display name is copied into Auth metadata at creation; left behind it
     // is what any screen reading the auth record directly would print.
@@ -822,7 +822,7 @@ export async function updateStaffDetails(
   });
   if (authError) return { ok: false, error: authError.message };
 
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await restClient
     .from("user_profiles")
     .update(patch)
     .eq("id", profileId)
@@ -836,7 +836,7 @@ export async function updateStaffDetails(
     if (!emailChanged) return { ok: false, error: reason };
 
     // Auth moved but the profile did not, so undo the half-change.
-    const back = await supabase.auth.admin.updateUserById(target.auth_user_id, {
+    const back = await restClient.auth.admin.updateUserById(target.auth_user_id, {
       email: target.email,
       email_confirm: true,
     });
@@ -848,7 +848,7 @@ export async function updateStaffDetails(
     };
   }
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.details:${profileId}`,
     previous: {
       full_name: target.full_name,
@@ -887,22 +887,22 @@ export async function deleteStaffAccount(profileId: string): Promise<StaffAction
   const actor = await requireStaffManager();
   if (!actor) return { ok: false, error: "You need the Manage users permission." };
 
-  const supabase = getSupabaseServiceClient();
-  const target = await loadTargetProfile(supabase, profileId);
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
   if (!target) return { ok: false, error: "That team member no longer exists." };
 
   if (actor.profileId === profileId) {
     return { ok: false, error: "You cannot delete your own account." };
   }
   if (target.role === "SUPER_ADMIN") {
-    const admins = await activeSuperAdminIds(supabase);
+    const admins = await activeSuperAdminIds(restClient);
     if (admins.error) return { ok: false, error: ACCESS_UNKNOWN };
     if (admins.ids.has(profileId) && admins.ids.size <= 1) {
       return { ok: false, error: "This is the only active Super Admin account." };
     }
   }
 
-  const banned = await bannedAuthIds(supabase);
+  const banned = await bannedAuthIds(restClient);
   if (banned.error) return { ok: false, error: ACCESS_UNKNOWN };
   if (!banned.ids.has(target.auth_user_id)) {
     return {
@@ -911,10 +911,10 @@ export async function deleteStaffAccount(profileId: string): Promise<StaffAction
     };
   }
 
-  const { error } = await supabase.auth.admin.deleteUser(target.auth_user_id);
+  const { error } = await restClient.auth.admin.deleteUser(target.auth_user_id);
   if (error) return { ok: false, error: error.message };
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.deleted:${profileId}`,
     previous: { email: target.email, role: target.role, tenant_id: target.tenant_id },
     next: null,
@@ -973,8 +973,8 @@ export async function updateStaffInvite(
     return { ok: false, error: "That role cannot be assigned yet — see the note under Role." };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data: invite } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: invite } = await restClient
     .from("user_invites")
     .select("id, email, full_name, role, company_id, status")
     .eq("id", inviteId)
@@ -999,7 +999,7 @@ export async function updateStaffInvite(
   if (Object.keys(edits).length === 0) return { ok: true };
 
   if (email !== String(invite.email).toLowerCase()) {
-    const { data: directory, error: directoryError } = await supabase.auth.admin.listUsers({
+    const { data: directory, error: directoryError } = await restClient.auth.admin.listUsers({
       page: 1,
       perPage: 1000,
     });
@@ -1009,14 +1009,14 @@ export async function updateStaffInvite(
     if (directory.users.some((u) => u.email?.toLowerCase() === email)) {
       return { ok: false, error: "An account already signs in with that email." };
     }
-    const { data: clash } = await supabase
+    const { data: clash } = await restClient
       .from("user_profiles")
       .select("id")
       .eq("email", email)
       .maybeSingle();
     if (clash) return { ok: false, error: "A team record already uses that email." };
 
-    const { data: pendingClash } = await supabase
+    const { data: pendingClash } = await restClient
       .from("user_invites")
       .select("id")
       .eq("email", email)
@@ -1026,7 +1026,7 @@ export async function updateStaffInvite(
     if (pendingClash) return { ok: false, error: "That email already has another pending invite." };
   }
 
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await restClient
     .from("user_invites")
     .update(row)
     .eq("id", inviteId)
@@ -1043,7 +1043,7 @@ export async function updateStaffInvite(
     };
   }
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.invite:${inviteId}`,
     previous: {
       email: invite.email,
@@ -1080,8 +1080,8 @@ export async function provisionInvite(inviteId: string): Promise<StaffActionResu
   const actor = await requireStaffManager();
   if (!actor) return { ok: false, error: "You need the Manage users permission." };
 
-  const supabase = getSupabaseServiceClient();
-  const { data: invite } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: invite } = await restClient
     .from("user_invites")
     .select("id, email, full_name, role, company_id, status")
     .eq("id", inviteId)
@@ -1099,7 +1099,7 @@ export async function provisionInvite(inviteId: string): Promise<StaffActionResu
   }
 
   const email = (invite.email as string).toLowerCase();
-  const { data: existingAuth } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  const { data: existingAuth } = await restClient.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (existingAuth?.users.some((u) => u.email?.toLowerCase() === email)) {
     return { ok: false, error: "An account with that email already exists." };
   }
@@ -1109,7 +1109,7 @@ export async function provisionInvite(inviteId: string): Promise<StaffActionResu
     DEFAULT_PASSWORD_MIN_LENGTH
   );
   const tempPassword = generateStaffPassword(minLength);
-  const created = await createStaffAccount(supabase, {
+  const created = await createStaffAccount(restClient, {
     email,
     fullName: invite.full_name as string,
     role: invite.role as AssignableStaffRole,
@@ -1118,12 +1118,12 @@ export async function provisionInvite(inviteId: string): Promise<StaffActionResu
   });
   if (!created.ok) return { ok: false, error: created.error };
 
-  const { error: inviteError } = await supabase
+  const { error: inviteError } = await restClient
     .from("user_invites")
     .update({ status: "ACCEPTED", accepted_at: new Date().toISOString() })
     .eq("id", inviteId);
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.invite:${inviteId}`,
     previous: { status: "PENDING" },
     next: { status: inviteError ? "PENDING" : "ACCEPTED", email, user_id: created.userId },
@@ -1173,8 +1173,8 @@ export async function cancelInvite(inviteId: string): Promise<StaffActionResult>
   const actor = await requireStaffManager();
   if (!actor) return { ok: false, error: "You need the Manage users permission." };
 
-  const supabase = getSupabaseServiceClient();
-  const { data: removed, error } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: removed, error } = await restClient
     .from("user_invites")
     .delete()
     .eq("id", inviteId)
@@ -1184,7 +1184,7 @@ export async function cancelInvite(inviteId: string): Promise<StaffActionResult>
   if (error) return { ok: false, error: error.message };
   if (!removed?.length) return { ok: false, error: "That invite is no longer pending." };
 
-  await auditStaffChange(supabase, {
+  await auditStaffChange(restClient, {
     key: `staff.invite:${inviteId}`,
     previous: { status: "PENDING" },
     next: null,

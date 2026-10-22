@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
@@ -203,8 +203,8 @@ export async function getCandidateDossier(
   applicationId: string
 ): Promise<DossierResult> {
   await requireStaff("/candidates");
-  const [supabase, masked, zone, validityHours, canManageLinks, canWrite] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, zone, validityHours, canManageLinks, canWrite] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     getOrganisationTimeZone(),
     getNumberSetting("assessment.link_validity_hours", DEFAULT_LINK_VALIDITY_HOURS),
@@ -212,7 +212,7 @@ export async function getCandidateDossier(
     hasPermissionForUser("candidates.write"),
   ]);
 
-  const { data: row, error } = await supabase
+  const { data: row, error } = await restClient
     .from("applications")
     .select(
       "id, full_name, email, phone, tracking_code, source, created_at, cv_file_path, cv_text, gate_answers, job_openings(title, department, location)"
@@ -238,7 +238,7 @@ export async function getCandidateDossier(
     : { cv_url: null, cv_download_url: null };
 
   const [attempts, logs, queued, planResponse, siblings, attached] = await Promise.all([
-    supabase
+    restClient
       .from("candidate_attempts")
       .select(
         "id, access_token, status, total_score, max_score, time_limit_minutes, started_at, submitted_at, expires_at, created_at, assessment_templates(name)"
@@ -246,7 +246,7 @@ export async function getCandidateDossier(
       .eq("application_id", applicationId)
       .order("created_at", { ascending: false })
       .limit(10),
-    supabase
+    restClient
       .from("communication_logs")
       .select(
         "id, channel, direction, recipient, subject, body, delivered, error_message, read_at, created_at"
@@ -254,18 +254,18 @@ export async function getCandidateDossier(
       .eq("application_id", applicationId)
       .order("created_at", { ascending: false })
       .limit(40),
-    supabase
+    restClient
       .from("scheduled_whatsapp_jobs")
       .select("id, recipient_phone, payload, status, error_log, scheduled_for, sent_at, created_at")
       .eq("application_id", applicationId)
       .order("created_at", { ascending: false })
       .limit(20),
-    supabase
+    restClient
       .from("onboarding_plans")
       .select("progress, checklist, retention_risk_score, generated_by_ai, created_at")
       .eq("application_id", applicationId)
       .maybeSingle(),
-    supabase
+    restClient
       .from("applications")
       .select("id, tracking_code, stage, created_at, job_openings(title)")
       .eq("email", row.email)
@@ -273,7 +273,7 @@ export async function getCandidateDossier(
       .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(10),
-    supabase
+    restClient
       .from("application_attachments")
       .select("id, bucket, storage_path, file_name, mime_type, bytes, created_at, user_profiles(full_name)")
       .eq("application_id", applicationId)

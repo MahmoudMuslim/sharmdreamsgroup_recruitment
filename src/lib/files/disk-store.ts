@@ -35,7 +35,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getAuthPool } from "@/lib/auth/db";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { isStoredPath, resolveObjectPath } from "./paths";
 import { mintFileLink } from "./signed-link";
 import type { FileStore, FileStoreEntry } from "./store";
@@ -239,9 +239,9 @@ export function createDiskFileStore(): FileStore {
       // The session door, so the eight `files` policies decide what a browse
       // shows. `column: "name"` sorts by the key, which is what a folder listing
       // sorts by when the vendor did it.
-      const supabase = await createSupabaseServerClient();
+      const restClient = await createServerRestClient();
       const column = sortBy?.column === "created_at" ? "created_at" : sortBy?.column === "updated_at" ? "updated_at" : "path";
-      const { data, error } = await supabase
+      const { data, error } = await restClient
         .from("files")
         .select("path, mime, bytes, updated_at")
         .eq("bucket", bucket)

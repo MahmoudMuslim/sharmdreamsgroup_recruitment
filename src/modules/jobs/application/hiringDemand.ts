@@ -1,9 +1,9 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { GRID_ROW_LIMIT } from "@/modules/jobs/domain/hireable";
 
-type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /** What the headcount read came back with: a per-opening target, or the fact it could not be had. */
 export interface HeadcountRead {
@@ -29,8 +29,8 @@ export interface HeadcountRead {
  * matched back by id, not by position, so a row the two reads disagree about is
  * simply reported as "no target" rather than mismatched onto another opening.
  */
-export async function getOpeningsHeadcount(supabase: StaffClient): Promise<HeadcountRead> {
-  const { data, error } = await supabase
+export async function getOpeningsHeadcount(restClient: StaffClient): Promise<HeadcountRead> {
+  const { data, error } = await restClient
     .from("job_openings")
     .select("id, positions_needed")
     .order("created_at", { ascending: false })

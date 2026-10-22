@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { fromZoneInputValue } from "@/lib/timezone";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -136,16 +136,16 @@ function draftOf(
 
 /** The openings and candidates a span can be pointed at, as the caller sees them. */
 async function readOptions(): Promise<LedgerOptions> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [openings, candidates] = await Promise.all([
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title")
       .in("status", ["PUBLISHED", "PAUSED"])
       .order("posted_at", { ascending: false })
       .limit(60),
-    supabase
+    restClient
       .from("applications")
       .select("id, full_name, job_openings(title)")
       .is("archived_at", null)

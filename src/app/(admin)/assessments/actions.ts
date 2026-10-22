@@ -1,8 +1,8 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
-import { supabaseConfig } from "@/lib/config";
+import { storageConfig } from "@/lib/config";
 import { getFileStore } from "@/lib/files/store";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { blindMarkingEnabled } from "@/modules/settings/application/blindMarking";
@@ -38,9 +38,9 @@ export interface TemplateSummary {
 
 export async function getTemplates(): Promise<TemplateSummary[]> {
   await requireStaff("/assessments");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_templates")
     .select(
       "id, name, description, role_family, time_limit_minutes, is_active, randomize_questions, randomize_options, block_copy_paste, assessment_questions(points, question_type), candidate_attempts(id, status)"
@@ -88,9 +88,9 @@ export interface AssignableCandidate {
 
 export async function getAssignableCandidates(): Promise<AssignableCandidate[]> {
   await requireStaff("/assessments");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, stage, job_openings(title)")
     .not("stage", "in", "(REJECTED,HIRED)")
@@ -136,9 +136,9 @@ export interface TemplateDetail {
 /** Full question breakdown for a single suite. */
 export async function getTemplateDetail(templateId: string): Promise<TemplateDetail | null> {
   await requireStaff("/assessments");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_templates")
     .select("id, name, description, role_family, time_limit_minutes, is_active")
     .eq("id", templateId)
@@ -146,7 +146,7 @@ export async function getTemplateDetail(templateId: string): Promise<TemplateDet
 
   if (error || !data) return null;
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("id, question_type, title, points, position")
     .eq("template_id", templateId)
@@ -169,9 +169,9 @@ export async function getQuestionsForEditor(): Promise<
   Record<string, EditableQuestion[]>
 > {
   await requireStaff("/assessments");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_questions")
     .select(
       "id, template_id, question_type, title, prompt, instructions, config, points, position, time_limit_minutes, shuffle_options"
@@ -247,8 +247,8 @@ const LIVE_LINKS_FILTER = "applications.archived_at";
  * carries, so the board can say how many links are on file without a second
  * query the first could already answer.
  */
-function linksWindow(supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>) {
-  return supabase
+function linksWindow(restClient: Awaited<ReturnType<typeof createServerRestClient>>) {
+  return restClient
     .from("candidate_attempts")
     .select(
       `id, application_id, template_id, status, time_limit_minutes, created_at, started_at, expires_at, submitted_at, total_score, max_score, integrity_flags,
@@ -284,13 +284,13 @@ export interface IssuedLinksRead {
  */
 export async function getIssuedLinks(): Promise<IssuedLinksRead> {
   await requireStaff("/assessments");
-  const [supabase, masked, blind] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, blind] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     blindMarkingEnabled(),
   ]);
 
-  const { data, error, count } = await linksWindow(supabase).limit(LINKS_LIMIT);
+  const { data, error, count } = await linksWindow(restClient).limit(LINKS_LIMIT);
   if (error) throw error;
 
   const rows = ((data ?? []) as unknown as AttemptLinkJoin[]).map((row) => {
@@ -393,14 +393,14 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
   await requireStaff("/assessments");
   if (!ATTEMPT_ID.test(attemptId ?? "")) return null;
 
-  const [supabase, masked, blind] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, blind] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     blindMarkingEnabled(),
   ]);
   const files = await getFileStore();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_attempts")
     .select(
       `id, application_id, template_id, status, time_limit_minutes, started_at, expires_at, submitted_at, total_score, max_score, integrity_flags, question_order, option_order,
@@ -431,12 +431,12 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
   if (!attempt) return null;
 
   const [{ data: questionRows }, { data: responseRows }, benchmark] = await Promise.all([
-    supabase
+    restClient
       .from("assessment_questions")
       .select("id, title, prompt, instructions, question_type, config, points, position")
       .eq("template_id", attempt.template_id)
       .order("position"),
-    supabase
+    restClient
       .from("candidate_responses")
       .select(
         "question_id, answer_text, spreadsheet_state, video_path, video_duration_seconds, transcript, score, max_score, updated_at, ai_evaluation"
@@ -445,7 +445,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     // Not counted at all when this reviewer's marks are withheld: a percentile
     // is a claim about other candidates' marks, which is the thing the setting
     // exists to hide.
-    masked ? Promise.resolve(null) : readAttemptBenchmark(supabase, attempt),
+    masked ? Promise.resolve(null) : readAttemptBenchmark(restClient, attempt),
   ]);
 
   const questions = (questionRows ?? []) as unknown as QuestionRow[];
@@ -505,7 +505,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     let videoUrl: string | null = null;
     if (response?.video_path) {
       const { url } = await files.signedUrl({
-        bucket: supabaseConfig.buckets.candidateVideos,
+        bucket: storageConfig.buckets.candidateVideos,
         path: response.video_path,
         seconds: 60 * 60,
       });

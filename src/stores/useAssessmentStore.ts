@@ -93,7 +93,7 @@ interface AssessmentState {
   setChoiceAnswer: (questionId: string, label: string) => void;
   setRecordingVideo: (recording: boolean) => void;
   decrementTimer: () => void;
-  syncDraftToSupabase: () => Promise<void>;
+  syncDraft: () => Promise<void>;
   submitAttempt: () => Promise<void>;
 }
 
@@ -172,12 +172,12 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
     const { payload, currentQuestionIndex } = get();
     const max = (payload?.questions.length ?? 1) - 1;
     set({ currentQuestionIndex: Math.min(max, currentQuestionIndex + 1) });
-    void get().syncDraftToSupabase();
+    void get().syncDraft();
   },
 
   prevQuestion() {
     set({ currentQuestionIndex: Math.max(0, get().currentQuestionIndex - 1) });
-    void get().syncDraftToSupabase();
+    void get().syncDraft();
   },
 
   goToQuestion(index: number) {
@@ -236,7 +236,7 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
     }
   },
 
-  async syncDraftToSupabase() {
+  async syncDraft() {
     const state = get();
     const { attemptToken, payload, isSubmitting, submittedAt } = state;
     if (!attemptToken || !payload || isSubmitting || submittedAt) return;

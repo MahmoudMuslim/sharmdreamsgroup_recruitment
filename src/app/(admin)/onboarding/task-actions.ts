@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -59,8 +59,8 @@ async function editableTasks(
   }
   if (!planId) return { error: "Missing plan." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("onboarding_plans")
     .select("id, checklist, application_id, applications(full_name)")
     .eq("id", planId)
@@ -113,8 +113,8 @@ async function persist(
   tasks: ChecklistTask[],
   change?: TaskChange
 ): Promise<ChecklistResult> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("onboarding_plans")
     .update({ checklist: tasks, progress: progressOf(tasks) })
     .eq("id", plan.id)

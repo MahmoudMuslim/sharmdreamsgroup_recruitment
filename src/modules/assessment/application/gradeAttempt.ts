@@ -1,9 +1,9 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
-import { supabaseConfig } from "@/lib/config";
+import { storageConfig } from "@/lib/config";
 import {
   engineActivityActor,
   recordActivity,
@@ -114,10 +114,10 @@ interface GradingTrail {
 }
 
 async function gradingTrail(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  restClient: ReturnType<typeof getServiceRestClient>,
   attemptId: string
 ): Promise<GradingTrail> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("candidate_attempts")
     .select("status, applications ( full_name, job_openings ( title ) )")
     .eq("id", attemptId)
@@ -156,8 +156,8 @@ export async function gradeAttemptResponses(
   // route and the cron sweep get the full retry budget for free.
   const passes = Math.max(1, options.passes ?? GRADING_PASSES);
 
-  const supabase = getSupabaseServiceClient();
-  const trail = await gradingTrail(supabase, attemptId);
+  const restClient = getServiceRestClient();
+  const trail = await gradingTrail(restClient, attemptId);
 
   let graded = 0;
   let failed = 0;
@@ -166,7 +166,7 @@ export async function gradeAttemptResponses(
   // permanently half-graded — resubmission is blocked once SUBMITTED.
   for (let pass = 0; pass < passes; pass += 1) {
     if (pass > 0) await delay(PASS_DELAY_MS);
-    const result = await gradePendingResponses(supabase, attemptId, trail);
+    const result = await gradePendingResponses(restClient, attemptId, trail);
     graded += result.graded;
     failed = result.failed;
     if (failed === 0) break;
@@ -201,11 +201,11 @@ export async function regradeStuckAttempts(
   const { aiEnabled } = await getAiAutomationSettings();
   if (!aiEnabled || !hasAiProvider()) return { swept: 0, graded: 0, failed: 0 };
 
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
   // Inner join on null-score responses: only attempts with at least one
   // response the submit route left for AI grading.
-  const { data } = await supabase
+  const { data } = await restClient
     .from("candidate_attempts")
     .select("id, candidate_responses!inner(score)")
     .eq("status", "SUBMITTED")
@@ -244,11 +244,11 @@ export async function regradeStuckAttempts(
 
 /** Grades every not-yet-scored written/model response of the attempt. */
 async function gradePendingResponses(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  restClient: ReturnType<typeof getServiceRestClient>,
   attemptId: string,
   trail: GradingTrail
 ): Promise<{ graded: number; failed: number }> {
-  const { data: responses } = await supabase
+  const { data: responses } = await restClient
     .from("candidate_responses")
     .select("id, question_id, answer_text, spreadsheet_state, video_path, transcript, score, max_score")
     .eq("attempt_id", attemptId)
@@ -261,7 +261,7 @@ async function gradePendingResponses(
   if (gradeable.length === 0) return { graded: 0, failed: 0 };
 
   const questionIds = [...new Set(gradeable.map((row) => row.question_id))];
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("id, question_type, title, prompt, points, config")
     .in("id", questionIds);
@@ -275,11 +275,11 @@ async function gradePendingResponses(
     if (!question) continue;
 
     try {
-      const outcome = await gradeResponse(supabase, question, response, trail);
+      const outcome = await gradeResponse(restClient, question, response, trail);
       if (outcome.status === "UNSUPPORTED") continue;
 
       if (outcome.status === "MANUAL") {
-        await writeManualNote(supabase, response.id, outcome.reason, trail, question.title);
+        await writeManualNote(restClient, response.id, outcome.reason, trail, question.title);
         continue;
       }
 
@@ -291,7 +291,7 @@ async function gradePendingResponses(
         strengths: evaluation.strengths,
         improvements: evaluation.improvements,
       };
-      const { error } = await supabase
+      const { error } = await restClient
         .from("candidate_responses")
         .update({ score: awarded, ai_evaluation: payload })
         .eq("id", response.id);
@@ -320,14 +320,14 @@ async function gradePendingResponses(
     } catch (error) {
       if (error instanceof ManualReviewRequiredError) {
         // A blocker no retry can clear — hand the row to the reviewer.
-        await writeManualNote(supabase, response.id, error.message, trail, question.title);
+        await writeManualNote(restClient, response.id, error.message, trail, question.title);
         continue;
       }
       if (error instanceof TruncatedJsonResponseError) {
         // Explain the blank in the report rather than leaving it unremarked, but
         // still count it as failed: a later pass may reach a model with enough
         // output room to finish the verdict.
-        await writeManualNote(supabase, response.id, error.message, trail, question.title);
+        await writeManualNote(restClient, response.id, error.message, trail, question.title);
         failed += 1;
         console.error(
           `AI grading truncated for response ${response.id} (${question.title}): ${error.message}`
@@ -350,13 +350,13 @@ class ManualReviewRequiredError extends Error {}
  * assessment report so nobody has to guess why grading stopped there.
  */
 async function writeManualNote(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  restClient: ReturnType<typeof getServiceRestClient>,
   responseId: string,
   reason: string,
   trail: GradingTrail,
   questionTitle: string
 ): Promise<void> {
-  await supabase
+  await restClient
     .from("candidate_responses")
     .update({
       ai_evaluation: { score: null, rationale: reason, strengths: [], improvements: [] },
@@ -376,7 +376,7 @@ async function writeManualNote(
 
 /** Dispatches by question type; UNSUPPORTED means no AI path exists for it. */
 async function gradeResponse(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  restClient: ReturnType<typeof getServiceRestClient>,
   question: QuestionRow,
   response: ResponseRow,
   trail: GradingTrail
@@ -427,7 +427,7 @@ async function gradeResponse(
   }
 
   if (question.question_type === "VIDEO_PITCH" && response.video_path) {
-    const transcript = await ensureTranscript(supabase, response, trail);
+    const transcript = await ensureTranscript(restClient, response, trail);
     if (!transcript) {
       return {
         status: "MANUAL",
@@ -468,7 +468,7 @@ async function gradeResponse(
  * over the inline limit) surfaces as ManualReviewRequiredError.
  */
 async function ensureTranscript(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  restClient: ReturnType<typeof getServiceRestClient>,
   response: ResponseRow,
   trail: GradingTrail
 ): Promise<string> {
@@ -477,7 +477,7 @@ async function ensureTranscript(
 
   const files = await getFileStore();
   const { bytes, contentType, error: downloadError } = await files.download({
-    bucket: supabaseConfig.buckets.candidateVideos,
+    bucket: storageConfig.buckets.candidateVideos,
     path: response.video_path,
   });
 
@@ -499,7 +499,7 @@ async function ensureTranscript(
   }
 
   if (transcript) {
-    const { error } = await supabase
+    const { error } = await restClient
       .from("candidate_responses")
       .update({ transcript })
       .eq("id", response.id);
@@ -536,9 +536,9 @@ async function ensureTranscript(
 export async function resyncAttemptTotals(
   attemptId: string
 ): Promise<AttemptTotals> {
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data: rows } = await supabase
+  const { data: rows } = await restClient
     .from("candidate_responses")
     .select("score, max_score")
     .eq("attempt_id", attemptId);
@@ -551,7 +551,7 @@ export async function resyncAttemptTotals(
   // recording parked for review keeps the attempt honestly SUBMITTED.
   const complete = responses.length > 0 && unscored === 0;
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("candidate_attempts")
     .update({
       status: complete ? "GRADED" : "SUBMITTED",

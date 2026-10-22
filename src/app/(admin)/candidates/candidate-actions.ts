@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { publicBaseUrl } from "@/lib/public-url";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -75,9 +75,9 @@ export async function sendBulkWhatsApp(input: {
     return { ok: false, error: "The message cannot be empty." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("applications")
     .select("id, full_name, phone, stage, job_openings(title), candidate_attempts(access_token)")
     .in("id", ids)
@@ -145,7 +145,7 @@ export async function sendBulkWhatsApp(input: {
   // is what survives a refused send.
   const inAppEnabled = await getBoolSetting("notifications.in_app_enabled", true);
 
-  const { error: logError } = await supabase.from("communication_logs").insert(
+  const { error: logError } = await restClient.from("communication_logs").insert(
     outcome.results.flatMap((result) => {
       const copy = copies.get(result.to);
       const row = {
@@ -238,8 +238,8 @@ export async function sendBulkEmail(input: {
   if (!body) return { ok: false, error: "The message cannot be empty." };
   if (!subject) return { ok: false, error: "Email needs a subject line." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("applications")
     .select("id, full_name, email, stage, job_openings(title), candidate_attempts(access_token)")
     .in("id", ids)
@@ -314,7 +314,7 @@ export async function sendBulkEmail(input: {
   // is the copy the candidate keeps when the relay refuses the email.
   const inAppEnabled = await getBoolSetting("notifications.in_app_enabled", true);
 
-  const { error: logError } = await supabase.from("communication_logs").insert(
+  const { error: logError } = await restClient.from("communication_logs").insert(
     outcome.results.flatMap((result) => {
       const copy = copies.get(result.to.toLowerCase());
       const row = {
@@ -421,17 +421,17 @@ export async function updateApplicationStage(input: {
     };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // Read before writing: the trail records the move as `Applied → Interview`,
   // and the row only holds the destination afterwards.
-  const { data: before } = await supabase
+  const { data: before } = await restClient
     .from("applications")
     .select("stage, full_name")
     .eq("id", input.applicationId)
     .maybeSingle();
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("applications")
     .update({
       stage: input.stage,
@@ -641,16 +641,16 @@ export interface ManualOpeningsResult {
  */
 export async function listManualOpenings(): Promise<ManualOpeningsResult> {
   await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [rows, count] = await Promise.all([
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title, department, status")
       .in("status", [...HIREABLE_STATUSES])
       .order("created_at", { ascending: false })
       .limit(PICKER_LIMIT),
-    supabase
+    restClient
       .from("job_openings")
       .select("id", { count: "exact", head: true })
       .in("status", [...HIREABLE_STATUSES]),
@@ -690,7 +690,7 @@ export interface CreateCandidateResult {
   notice?: string | null;
 }
 
-type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /**
  * The other openings this address is already live in.
@@ -717,11 +717,11 @@ function embeddedTitle(job: unknown): string {
 }
 
 async function otherOpeningsOnFile(
-  supabase: StaffClient,
+  restClient: StaffClient,
   emailRaw: string,
   jobId: string
 ): Promise<string[]> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("applications")
     .select("job_id, job_openings(title)")
     .in("email", emailSpellings(emailRaw))
@@ -771,16 +771,16 @@ export async function createCandidate(input: {
   if (phone.length > 40) return { ok: false, error: "The phone number is too long." };
   if (!source) return { ok: false, error: "Pick where this applicant came from." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The opening is read through RLS before anything is written, so a recruiter can
   // only file someone under a role their own scope reaches — and a closed role is
   // refused here rather than merely left off the dropdown, because the assistant
   // records a candidate with no dropdown behind it at all.
-  const opening = await requireHireableOpening(supabase, input.jobId);
+  const opening = await requireHireableOpening(restClient, input.jobId);
   if (!opening.ok) return { ok: false, error: opening.error };
 
-  const { error } = await supabase.from("applications").insert({
+  const { error } = await restClient.from("applications").insert({
     job_id: input.jobId,
     full_name: fullName,
     email,
@@ -806,7 +806,7 @@ export async function createCandidate(input: {
   // Read back what landed: PostgREST reports a write an RLS policy refused as a
   // success with no rows, so an insert that nothing answered is reported as a
   // failure rather than as a candidate the list never shows.
-  const { data: created } = await supabase
+  const { data: created } = await restClient
     .from("applications")
     .select("id, full_name, email, tracking_code")
     .eq("job_id", input.jobId)
@@ -854,7 +854,7 @@ export async function createCandidate(input: {
   revalidatePath("/dashboard");
 
   const notice = alreadyOnFile({
-    openings: await otherOpeningsOnFile(supabase, input.email, input.jobId),
+    openings: await otherOpeningsOnFile(restClient, input.email, input.jobId),
     sameOpening: null,
   }).notice;
 
@@ -917,18 +917,18 @@ export async function updateCandidateContact(input: {
   if (email.length > 254) return { ok: false, error: "The email address is too long." };
   if (phone.length > 40) return { ok: false, error: "The phone number is too long." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The row as it stands, including the opening it sits in: the same address in
   // that opening is the duplicate the database refuses, and the same address in
   // any *other* opening is the profile this edit just joined.
-  const { data: contactBefore } = await supabase
+  const { data: contactBefore } = await restClient
     .from("applications")
     .select("full_name, email, phone, job_id, job_openings(title)")
     .eq("id", input.applicationId)
     .maybeSingle();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("applications")
     .update({
       full_name: fullName,
@@ -996,7 +996,7 @@ export async function updateCandidateContact(input: {
   const notice =
     previous.email !== null && previous.email !== current.email
       ? alreadyOnFile({
-          openings: rowJobId ? await otherOpeningsOnFile(supabase, input.email, rowJobId) : [],
+          openings: rowJobId ? await otherOpeningsOnFile(restClient, input.email, rowJobId) : [],
           sameOpening: null,
         }).notice
       : null;
@@ -1041,9 +1041,9 @@ export async function setCandidateArchive(input: {
     return { ok: false, error: "You need the Edit candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("id, archived_at, full_name")
     .eq("id", input.applicationId)
@@ -1053,12 +1053,12 @@ export async function setCandidateArchive(input: {
 
   if (input.archived && !application.archived_at) {
     const [{ count: openAttempts }, { count: bookedInterviews }] = await Promise.all([
-      supabase
+      restClient
         .from("candidate_attempts")
         .select("id", { count: "exact", head: true })
         .eq("application_id", input.applicationId)
         .in("status", ["NOT_STARTED", "IN_PROGRESS"]),
-      supabase
+      restClient
         .from("interview_schedules")
         .select("id", { count: "exact", head: true })
         .eq("application_id", input.applicationId)
@@ -1082,7 +1082,7 @@ export async function setCandidateArchive(input: {
   }
 
   const archivedAt = input.archived ? new Date().toISOString() : null;
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("applications")
     .update({ archived_at: archivedAt, updated_at: new Date().toISOString() })
     .eq("id", input.applicationId)

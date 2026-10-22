@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath, updateTag } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -43,10 +43,10 @@ import {
  * their profile row before either column can name them.
  */
 async function staffProfileId(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   authUserId: string
 ): Promise<string | null> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("user_profiles")
     .select("id")
     .eq("auth_user_id", authUserId)
@@ -100,9 +100,9 @@ export async function saveTranslations(
     return { ok: false, saved: 0, problems: [], error: "No recognised wording was supplied." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: existing, error: readError } = await supabase
+  const { data: existing, error: readError } = await restClient
     .from("app_settings")
     .select("id, key, value")
     .eq("scope", "GLOBAL")
@@ -129,7 +129,7 @@ export async function saveTranslations(
     return { ok: true, saved: 0, problems: [], error: undefined };
   }
 
-  const changedBy = await staffProfileId(supabase, user.authUserId);
+  const changedBy = await staffProfileId(restClient, user.authUserId);
 
   // Rebuild each touched language's whole map from the stored one, applying the
   // writes (an empty text removes the key so the shipped wording reads again).
@@ -146,7 +146,7 @@ export async function saveTranslations(
   }
 
   // Record the previous map before overwriting it, so the value is never lost.
-  const { error: auditError } = await supabase.from("settings_audit_log").insert(
+  const { error: auditError } = await restClient.from("settings_audit_log").insert(
     [...nextMaps.entries()].map(([locale, map]) => ({
       key: overridesKey(locale),
       previous_value: stored[locale] ?? null,
@@ -174,11 +174,11 @@ export async function saveTranslations(
   }
 
   if (updates.length > 0) {
-    const { error } = await supabase.from("app_settings").upsert(updates, { onConflict: "id" });
+    const { error } = await restClient.from("app_settings").upsert(updates, { onConflict: "id" });
     if (error) return { ok: false, saved: 0, problems: [], error: error.message };
   }
   if (inserts.length > 0) {
-    const { error } = await supabase.from("app_settings").insert(inserts);
+    const { error } = await restClient.from("app_settings").insert(inserts);
     if (error) return { ok: false, saved: 0, problems: [], error: error.message };
   }
 

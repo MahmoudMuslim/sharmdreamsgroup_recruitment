@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { after } from "next/server";
 import { gradeAttemptResponses } from "@/modules/assessment/application/gradeAttempt";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -18,8 +18,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const { token } = await params;
   const body = (await request.json().catch(() => ({}))) as SubmitBody;
 
-  const supabase = getSupabaseServiceClient();
-  const { data: attempt, error } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: attempt, error } = await restClient
     .from("candidate_attempts")
     .select(`id, status, template_id, application_id, ${APPLICATION_EMBED}`)
     .eq("access_token", token)
@@ -35,7 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     return NextResponse.json({ error: "Assessment has expired" }, { status: 409 });
   }
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("id, question_type, points, config")
     .eq("template_id", attempt.template_id);
@@ -128,7 +128,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   }
 
   if (responseRows.length > 0) {
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await restClient
       .from("candidate_responses")
       .upsert(responseRows, { onConflict: "attempt_id,question_id" });
     if (upsertError) {
@@ -137,7 +137,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   }
 
   const submittedAt = new Date().toISOString();
-  const { error: updateError } = await supabase
+  const { error: updateError } = await restClient
     .from("candidate_attempts")
     .update({
       status: "SUBMITTED",
@@ -152,7 +152,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   }
 
   // Advance the application pipeline to ASSESSMENT review.
-  await supabase
+  await restClient
     .from("applications")
     .update({ stage: "ASSESSMENT" })
     .eq("id", attempt.application_id);

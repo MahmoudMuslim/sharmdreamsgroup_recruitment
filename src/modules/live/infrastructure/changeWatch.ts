@@ -172,12 +172,12 @@ function toMark(code: string | undefined): LiveAreaMark {
 }
 
 export async function readLiveFingerprints(
-  supabase: RestClient
+  restClient: RestClient
 ): Promise<LiveFingerprints> {
   const entries = await Promise.all(
     LIVE_WATCH.map(async (watch): Promise<[string, LiveAreaMark]> => {
       try {
-        return [watch.area, await fingerprint(supabase, watch)];
+        return [watch.area, await fingerprint(restClient, watch)];
       } catch {
         // A request that never completed is not an answer about the table.
         return [watch.area, { state: "unknown" }];
@@ -221,9 +221,9 @@ export function diffLiveFingerprints(
   return moved;
 }
 
-async function fingerprint(supabase: RestClient, watch: LiveWatch): Promise<LiveAreaMark> {
+async function fingerprint(restClient: RestClient, watch: LiveWatch): Promise<LiveAreaMark> {
   if (watch.stamp) {
-    const { data, count, error } = await supabase
+    const { data, count, error } = await restClient
       .from(watch.table)
       // Newest first plus the total, in one request: a delete moves `count`, an
       // insert moves the newest stamp, so either one changes the fingerprint.
@@ -239,7 +239,7 @@ async function fingerprint(supabase: RestClient, watch: LiveWatch): Promise<Live
   }
 
   const columns = watch.columns ?? [];
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from(watch.table)
     .select(columns.join(","))
     .order(NEWEST_COLUMN, { ascending: false })

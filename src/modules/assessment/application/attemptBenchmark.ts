@@ -1,10 +1,10 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { benchmarkOf, type AttemptBenchmark } from "@/modules/assessment/domain/benchmark";
 
 /** The server client every read in this module is handed, rather than built twice. */
-type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type ServerClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /** What the console already knows about the paper being ranked. */
 export interface BenchmarkTarget {
@@ -35,7 +35,7 @@ export interface BenchmarkTarget {
  * other candidates' marks, and withholding those is the whole point of the setting.
  */
 export async function readAttemptBenchmark(
-  supabase: ServerClient,
+  restClient: ServerClient,
   attempt: BenchmarkTarget
 ): Promise<AttemptBenchmark | null> {
   if (attempt.status !== "GRADED") return null;
@@ -47,7 +47,7 @@ export async function readAttemptBenchmark(
   if (!maxScore) return null;
 
   const population = () =>
-    supabase
+    restClient
       .from("candidate_attempts")
       .select("id", { count: "exact", head: true })
       .eq("template_id", attempt.template_id)

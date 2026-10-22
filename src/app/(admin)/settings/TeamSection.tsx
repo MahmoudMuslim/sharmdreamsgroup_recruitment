@@ -135,7 +135,7 @@ export function TeamSection({
         {accessError && (
           <div className="mb-4">
             <Notice>
-              Supabase Auth could not be read, so no badge below can be trusted — a disabled
+              The sign-in directory could not be read, so no badge below can be trusted — a disabled
               account may be showing as Active. Editing details and company still works, but
               disabling an account, deleting one, and changing a Super Admin&rsquo;s role are
               refused until the directory answers again.

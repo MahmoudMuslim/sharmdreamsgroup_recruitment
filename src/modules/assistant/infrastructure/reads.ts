@@ -1,4 +1,4 @@
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import {
   HIREABLE_STATUSES,
@@ -149,8 +149,8 @@ export interface AssistantJobRead {
  * and a caller turns `null` into a refusal rather than an empty list.
  */
 export async function companyNameById(id: string): Promise<string | null> {
-  const supabase = await createSupabaseServerClient();
-  const one = await supabase
+  const restClient = await createServerRestClient();
+  const one = await restClient
     .from("tenants_and_companies")
     .select("name")
     .eq("id", id)
@@ -166,7 +166,7 @@ export async function listJobOpenings(
   companyId: string | null = null
 ): Promise<AssistantJobRead> {
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The company is named before its openings are counted, and an id no company
   // carries is reported rather than answered with an empty list a caller could
@@ -176,8 +176,8 @@ export async function listJobOpenings(
     return { jobs: [], total: 0, companyName: null, unknownCompany: true };
   }
 
-  const rowsQuery = supabase.from("job_openings").select(JOB_SELECT);
-  const countQuery = supabase.from("job_openings").select("id", { count: "exact", head: true });
+  const rowsQuery = restClient.from("job_openings").select(JOB_SELECT);
+  const countQuery = restClient.from("job_openings").select("id", { count: "exact", head: true });
   // `null` adds no status predicate at all. `.eq("status", null)` would send
   // `status=eq.null`, and Postgres rejects that for the enum with
   // `invalid input value for enum job_status: "null"` — probed on the live pool.
@@ -235,9 +235,9 @@ export async function listJobOpenings(
 /** One opening in full — what `update_job` needs before it changes a field. */
 export async function getJobOpening(jobId: string): Promise<AssistantJobRow | null> {
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select(JOB_SELECT)
     // The same three aliased embeds as the grid read, so `get_job` and

@@ -22,7 +22,7 @@ function optional(value: string | undefined, fallback = ""): string {
  * its policy check — and `candidateCvs` keeps the exact spelling the "Track your
  * application" copy and the extracted manifest use.
  */
-export const supabaseConfig = {
+export const storageConfig = {
   buckets: {
     candidateVideos: "candidate-videos",
     candidateAudio: "candidate-audio",

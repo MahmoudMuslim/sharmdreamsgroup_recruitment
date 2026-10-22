@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { FIT_BUCKETS, bucketBounds } from "@/modules/analytics/domain/fitBuckets";
@@ -90,8 +90,8 @@ function sum(values: number[]): number {
 }
 
 export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
 
@@ -100,13 +100,13 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   // board's ids are known (below) as a bounded `.in` read — the same shape the
   // drill-down already uses.
   const [applicationsResult, jobsResult] = await Promise.all([
-    supabase
+    restClient
       .from("applications")
       .select(
         "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_id, job_openings(id, title, department, status, closing_at)"
       )
       .is("archived_at", null),
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title, department, status, closing_at")
       .order("title"),
@@ -253,7 +253,7 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   const attemptsResult =
     boardRows.length === 0
       ? null
-      : await supabase
+      : await restClient
           .from("candidate_attempts")
           .select("application_id, total_score")
           .in("application_id", boardRows.map((app) => app.id));
@@ -478,12 +478,12 @@ export async function getDashboardDrilldown(
   scope: DashboardDrillScope
 ): Promise<DashboardDrillResult> {
   await requireStaff("/dashboard");
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
 
-  let query = supabase
+  let query = restClient
     .from("applications")
     .select(
       "id, full_name, email, tracking_code, stage, source, ai_match_score, created_at, hired_at, job_openings(title)",
@@ -577,7 +577,7 @@ export async function getDashboardDrilldown(
   const attemptsResult =
     ids.length === 0
       ? null
-      : await supabase
+      : await restClient
           .from("candidate_attempts")
           .select("application_id, total_score")
           .in("application_id", ids);

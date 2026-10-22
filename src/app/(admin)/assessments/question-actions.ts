@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { RestClient } from "@/lib/rest/client";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { hasAiProvider } from "@/lib/config.server";
@@ -146,10 +146,10 @@ function buildConfig(draft: QuestionDraft): QuestionConfig {
  * agree on what "next" means.
  */
 async function renumberSuite(
-  supabase: RestClient,
+  restClient: RestClient,
   templateId: string
 ): Promise<string | null> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_questions")
     .select("id, position")
     .eq("template_id", templateId)
@@ -163,7 +163,7 @@ async function renumberSuite(
 
   for (let i = 0; i < ordered.length; i += 1) {
     if ((ordered[i].position ?? 0) === i) continue;
-    const { error: updateError } = await supabase
+    const { error: updateError } = await restClient
       .from("assessment_questions")
       .update({ position: i })
       .eq("id", ordered[i].id);
@@ -211,10 +211,10 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     }
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // Confirm the template exists so a typo cannot create an orphan question.
-  const { data: template } = await supabase
+  const { data: template } = await restClient
     .from("assessment_templates")
     .select("id, name")
     .eq("id", draft.template_id)
@@ -238,14 +238,14 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
   };
 
   if (draft.id === null) {
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("assessment_questions")
       .insert(row)
       .select("id")
       .single();
     if (error) return { ok: false, error: error.message };
 
-    const renumberError = await renumberSuite(supabase, draft.template_id);
+    const renumberError = await renumberSuite(restClient, draft.template_id);
     if (renumberError) return { ok: false, error: renumberError };
 
     await recordActivity({
@@ -267,7 +267,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     return { ok: true, id: data?.id };
   }
 
-  const { data: previous } = await supabase
+  const { data: previous } = await restClient
     .from("assessment_questions")
     .select(
       "id, template_id, question_type, title, prompt, instructions, config, points, position, time_limit_minutes, shuffle_options"
@@ -277,7 +277,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
   if (!previous) return { ok: false, error: "That question no longer exists." };
 
   // Editing must not move a question to a different suite.
-  const { error } = await supabase
+  const { error } = await restClient
     .from("assessment_questions")
     .update(row)
     .eq("id", draft.id)
@@ -285,7 +285,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
 
   if (error) return { ok: false, error: error.message };
 
-  const renumberError = await renumberSuite(supabase, draft.template_id);
+  const renumberError = await renumberSuite(restClient, draft.template_id);
   if (renumberError) return { ok: false, error: renumberError };
 
   const edits = changedFields(previous as Record<string, unknown>, row);
@@ -312,12 +312,12 @@ export async function deleteQuestion(
   const denied = await requireAssessmentEditor();
   if (denied) return { ok: false, error: denied };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // A response means a candidate actually did the work. Deleting the question
   // would leave that response pointing at nothing and quietly drop it from
   // grading, so the delete is refused rather than performed and hidden.
-  const { data: responses } = await supabase
+  const { data: responses } = await restClient
     .from("candidate_responses")
     .select("id")
     .eq("question_id", questionId)
@@ -331,7 +331,7 @@ export async function deleteQuestion(
     };
   }
 
-  const { data: removed } = await supabase
+  const { data: removed } = await restClient
     .from("assessment_questions")
     .select("id, title, points, question_type")
     .eq("id", questionId)
@@ -339,7 +339,7 @@ export async function deleteQuestion(
     .maybeSingle();
   if (!removed) return { ok: false, error: "That question is no longer in this suite." };
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("assessment_questions")
     .delete()
     .eq("id", questionId)
@@ -380,9 +380,9 @@ export async function moveQuestion(
   const denied = await requireAssessmentEditor();
   if (denied) return { ok: false, error: denied };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: questions, error } = await supabase
+  const { data: questions, error } = await restClient
     .from("assessment_questions")
     .select("id, position, title")
     .eq("template_id", templateId)
@@ -413,19 +413,19 @@ export async function moveQuestion(
   const target = ordered[index];
   const neighbour = ordered[swapWith];
 
-  const { error: firstError } = await supabase
+  const { error: firstError } = await restClient
     .from("assessment_questions")
     .update({ position: swapWith })
     .eq("id", target.id);
   if (firstError) return { ok: false, error: firstError.message };
 
-  const { error: secondError } = await supabase
+  const { error: secondError } = await restClient
     .from("assessment_questions")
     .update({ position: index })
     .eq("id", neighbour.id);
   if (secondError) return { ok: false, error: secondError.message };
 
-  const renumberError = await renumberSuite(supabase, templateId);
+  const renumberError = await renumberSuite(restClient, templateId);
   if (renumberError) return { ok: false, error: renumberError };
 
   await recordActivity({
@@ -499,17 +499,17 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 }
 
 async function readSuiteForAuthoring(
-  supabase: RestClient,
+  restClient: RestClient,
   templateId: string
 ): Promise<SuiteAuthoringContext | null> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_templates")
     .select("id, name, description, role_family, time_limit_minutes")
     .eq("id", templateId)
     .maybeSingle();
   if (error || !data) return null;
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("title")
     .eq("template_id", templateId)
@@ -551,8 +551,8 @@ export async function draftQuestions(input: AuthoringInput): Promise<AuthoringRe
     notes: (input.notes ?? "").trim().slice(0, NOTES_CAP),
   };
 
-  const supabase = await createSupabaseServerClient();
-  const suite = await readSuiteForAuthoring(supabase, input.templateId);
+  const restClient = await createServerRestClient();
+  const suite = await readSuiteForAuthoring(restClient, input.templateId);
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
   let generated: Awaited<ReturnType<typeof generateAssessmentQuestions>>;
@@ -600,8 +600,8 @@ export async function addDraftedQuestions(
   const chosen = Array.isArray(drafts) ? drafts.slice(0, MAX_DRAFTS_PER_RUN) : [];
   if (chosen.length === 0) return { ok: false, error: "Nothing was chosen to add." };
 
-  const supabase = await createSupabaseServerClient();
-  const suite = await readSuiteForAuthoring(supabase, templateId);
+  const restClient = await createServerRestClient();
+  const suite = await readSuiteForAuthoring(restClient, templateId);
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
   let created = 0;

@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -96,7 +96,7 @@ export interface AiModelRow {
  */
 export async function listCredentials(): Promise<CredentialKeyView[]> {
   await requireStaff("/settings");
-  const admin = getSupabaseServiceClient();
+  const admin = getServiceRestClient();
 
   const { data } = await admin
     .from("provider_credentials")
@@ -248,8 +248,8 @@ export async function saveCredential(input: {
     }
   }
 
-  const admin = getSupabaseServiceClient();
-  const session = await createSupabaseServerClient();
+  const admin = getServiceRestClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
 
   const { data: profile } = sessionData.user
@@ -384,8 +384,8 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
   const definition = providerById(provider);
   if (!definition) return { ok: false, error: "Unknown provider." };
 
-  const admin = getSupabaseServiceClient();
-  const session = await createSupabaseServerClient();
+  const admin = getServiceRestClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
 
   const { data: profile } = sessionData.user
@@ -458,8 +458,8 @@ async function recordVerificationOutcome(
   status: "working" | "failed",
   message: string
 ): Promise<void> {
-  const admin = getSupabaseServiceClient();
-  const session = await createSupabaseServerClient();
+  const admin = getServiceRestClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
   const { data: profile } = sessionData.user
     ? await session
@@ -605,8 +605,8 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
 export async function listModelRouting(): Promise<AiModelRow[]> {
   await requireStaff("/settings");
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
+  const restClient = await createServerRestClient();
+  const { data } = await restClient
     .from("ai_model_config")
     .select("capability, primary_model, fallback_model, temperature, max_tokens, is_enabled, updated_at")
     .order("capability");
@@ -657,7 +657,7 @@ export async function saveModelRouting(input: {
     return { ok: false, error: "Max tokens must be between 64 and 32000." };
   }
 
-  const session = await createSupabaseServerClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
   const { data: profile } = sessionData.user
     ? await session
@@ -1369,7 +1369,7 @@ export async function listCredentialAudit(
 
   const provider = trailScope(scope.provider);
   const words = trailWords(scope.find);
-  const admin = getSupabaseServiceClient();
+  const admin = getServiceRestClient();
 
   /**
    * The scope predicate is repeated in each builder on purpose: every one of these

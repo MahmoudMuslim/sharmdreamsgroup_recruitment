@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { recordActivity } from "@/modules/activity/application/record";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -191,11 +191,11 @@ function buildChecklist(jobTitle: string | null): ChecklistItem[] {
  * better than inventing gaps.
  */
 async function deriveSkillGaps(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   applicationId: string,
   jobTitle: string | null
 ): Promise<SkillGap[]> {
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("job_id")
     .eq("id", applicationId)
@@ -203,7 +203,7 @@ async function deriveSkillGaps(
 
   if (!application?.job_id) return [];
 
-  const { data: job } = await supabase
+  const { data: job } = await restClient
     .from("job_openings")
     .select("title")
     .eq("id", application.job_id)
@@ -211,7 +211,7 @@ async function deriveSkillGaps(
 
   const familyKey = matchFamilyKey(job?.title ?? jobTitle ?? "");
 
-  const { data: family } = await supabase
+  const { data: family } = await restClient
     .from("role_families")
     .select("id")
     .eq("key", familyKey)
@@ -219,14 +219,14 @@ async function deriveSkillGaps(
 
   if (!family) return [];
 
-  const { data: required } = await supabase
+  const { data: required } = await restClient
     .from("role_family_skills")
     .select("skill_id, required_level, skills(name)")
     .eq("role_family_id", family.id);
 
   if (!required || required.length === 0) return [];
 
-  const { data: held } = await supabase
+  const { data: held } = await restClient
     .from("candidate_skills")
     .select("skill_id, proficiency")
     .eq("application_id", applicationId);
@@ -288,11 +288,11 @@ export async function generateOnboardingPlan(
 
   if (!applicationId) return { ok: false, error: "Missing application." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // `applications` has no tenant column — a hire belongs to a company through
   // its opening, so the embed is the only route to the plan's tenant.
-  const { data: application, error: lookupError } = await supabase
+  const { data: application, error: lookupError } = await restClient
     .from("applications")
     .select("id, full_name, job_id, job_openings(tenant_id, tenants_and_companies(id))")
     .eq("id", applicationId)
@@ -327,7 +327,7 @@ export async function generateOnboardingPlan(
     return { ok: false, error: "This hire is not linked to a company." };
   }
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("onboarding_plans")
     .select("id")
     .eq("application_id", applicationId)
@@ -338,9 +338,9 @@ export async function generateOnboardingPlan(
   }
 
   const checklist = buildChecklist(jobTitle);
-  const skillGaps = await deriveSkillGaps(supabase, applicationId, jobTitle);
+  const skillGaps = await deriveSkillGaps(restClient, applicationId, jobTitle);
 
-  const { data: plan, error } = await supabase
+  const { data: plan, error } = await restClient
     .from("onboarding_plans")
     .insert({
       application_id: applicationId,

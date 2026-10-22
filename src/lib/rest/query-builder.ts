@@ -115,7 +115,7 @@ export class QueryBuilder<R = Rows> {
    * class: the filter methods return `this`, but `single()` and `maybeSingle()`
    * re-type the row, so a `then` living only on the intersection `from()`
    * builds would be dropped by that retyping and
-   * `await supabase.from(x).select(y).single()` would stop answering a
+   * `await restClient.from(x).select(y).single()` would stop answering a
    * `Result`. `declare` (not initialise) keeps the field absent until the
    * client adds it, so a builder used outside a client is not awaitable.
    */

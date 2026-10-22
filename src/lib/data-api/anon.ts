@@ -3,9 +3,9 @@ import { createRestClient, type RestClient } from "@/lib/rest/client";
 let anonClient: RestClient | null = null;
 
 /**
- * Anonymous (anon-key) Supabase client for public, cacheable reads.
+ * Anonymous (anon-role) RestClient for public, cacheable reads.
  *
- * This is deliberately NOT `createSupabaseServerClient`. That one binds to the
+ * This is deliberately NOT `createServerRestClient`. That one binds to the
  * incoming request's cookies, which marks the caller as request-time under
  * `cacheComponents: true` — it cannot be prerendered or cached, so every
  * visitor to a public page would trigger a fresh server render and a DB round
@@ -47,7 +47,7 @@ let anonClient: RestClient | null = null;
  * Public reads cannot do that — an empty job list is a careers board that says
  * the group is not hiring, and a null job is a 404 on a live opening.
  */
-export function getSupabaseAnonClient(): RestClient {
+export function getAnonRestClient(): RestClient {
   const base = process.env.REST_BASE_URL;
   if (!base) {
     throw new Error("[data-api] REST_BASE_URL is not set — run the local stack (docker/docker-compose.yml).");

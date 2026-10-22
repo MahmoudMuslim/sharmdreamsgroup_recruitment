@@ -1,7 +1,7 @@
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
 import { getMasterOptions } from "@/modules/settings/application/master-data-actions";
 import { getFilingVocabularies } from "@/modules/jobs/application/filingVocabularies";
@@ -23,10 +23,10 @@ export const instant = false;
 export default async function JobsPage() {
   await connection();
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [result, headcount, canManage, canDecide, filing] = await Promise.all([
-    supabase
+    restClient
       .from("job_openings")
       .select(
         "id, title, tenant_id, department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applicants:applications(count), pipeline:applications(count), hired:applications(count)",
@@ -53,10 +53,10 @@ export default async function JobsPage() {
       .range(0, GRID_ROW_LIMIT - 1),
     // Read apart from the grid's own row read so an unapplied `positions_needed`
     // column costs only the target figure, never the whole page.
-    getOpeningsHeadcount(supabase),
+    getOpeningsHeadcount(restClient),
     hasPermissionForUser("jobs.manage"),
     hasPermissionForUser("candidates.write"),
-    getFilingVocabularies(supabase).then((read) => read.vocabularies),
+    getFilingVocabularies(restClient).then((read) => read.vocabularies),
   ]);
 
   const master = await getMasterOptions();

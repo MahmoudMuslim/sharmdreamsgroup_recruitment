@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cacheLife, cacheTag } from "next/cache";
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { isValidTimeZone } from "@/lib/timezone";
 
 /**
@@ -38,8 +38,8 @@ export async function readGlobalSettings(keys: string[]): Promise<Map<string, un
   if (keys.length === 0) return new Map();
 
   try {
-    const supabase = getSupabaseServiceClient();
-    const { data } = await supabase
+    const restClient = getServiceRestClient();
+    const { data } = await restClient
       .from("app_settings")
       .select("key, value")
       .eq("scope", "GLOBAL")

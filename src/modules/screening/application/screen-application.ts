@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { engineActivityActor, recordActivity } from "@/modules/activity/application/record";
@@ -159,8 +159,8 @@ async function applyScoreDisposition(input: {
       ? { word: "shortlist", at: advanceAt }
       : { word: "filter out", at: rejectBelow };
 
-  const supabase = getSupabaseServiceClient();
-  const { error } = await supabase
+  const restClient = getServiceRestClient();
+  const { error } = await restClient
     .from("applications")
     .update({
       stage: target,
@@ -238,8 +238,8 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
     return { ok: false, error: "AI features are switched off in Settings → Platform." };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, stage, full_name, cv_text, cv_file_path, job_openings(title, requirements)")
     .eq("id", applicationId)
@@ -281,7 +281,7 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
   }
 
   const score = Math.round(result.match_score);
-  const { error: updateError } = await supabase
+  const { error: updateError } = await restClient
     .from("applications")
     .update({
       ai_match_score: score,
@@ -369,8 +369,8 @@ export async function draftRejectionReasonForApplication(
     return { ok: false, error: "AI features are switched off in Settings → Platform." };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select(
       "id, stage, job_openings(title), ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, gate_answers, candidate_attempts(total_score, max_score)"
@@ -480,8 +480,8 @@ export async function generateFeedbackForApplication(
     return { ok: false, error: "No AI provider key is configured." };
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select(
       "id, stage, full_name, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, diversity_flags, job_openings(title), candidate_attempts(total_score, max_score)"
@@ -565,7 +565,7 @@ export async function generateFeedbackForApplication(
     .filter(Boolean)
     .join("\n\n");
 
-  const { error: updateError } = await supabase
+  const { error: updateError } = await restClient
     .from("applications")
     .update({ ai_feedback: text })
     .eq("id", applicationId);

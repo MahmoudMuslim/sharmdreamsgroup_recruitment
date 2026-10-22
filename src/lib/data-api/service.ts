@@ -17,7 +17,7 @@ import { authAdmin } from "@/lib/auth/admin-users";
  * `SUPABASE_SERVICE_ROLE_KEY` stopped being a requirement here — that key only
  * ever fed the GoTrue admin handle these thirteen call sites used.
  */
-export function getSupabaseServiceClient() {
+export function getServiceRestClient() {
   const base = process.env.REST_BASE_URL;
   if (!base) {
     throw new Error("[data-api] REST_BASE_URL is not set — run the local stack (docker/docker-compose.yml).");

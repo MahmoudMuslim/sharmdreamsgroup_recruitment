@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import type {
@@ -362,35 +362,35 @@ export async function getMasterData(): Promise<{
   currencies: Currency[];
 }> {
   await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [companies, departments, locations, roleFamilies, skills, currencies] =
     await Promise.all([
-      supabase
+      restClient
         .from("tenants_and_companies")
         .select(
           `id, name, legal_name, slug, sector, country, website, contact_email, contact_phone, address, city, logo_url, is_active, sort_order, tagline, description, history, careers_pitch, founded_year, ownership_type, employee_range, headquarters, milestones, benefits, cover_url, is_group_profile`
         )
         .order("sort_order"),
-      supabase
+      restClient
         .from("departments")
         .select("id, tenant_id, name, slug, description, head_profile_id, is_active, sort_order")
         .order("sort_order"),
-      supabase
+      restClient
         .from("locations")
         .select(
           "id, tenant_id, name, city, governorate, country, timezone, address, is_active, sort_order"
         )
         .order("sort_order"),
-      supabase
+      restClient
         .from("role_families")
         .select("id, key, label, description, department_id, is_active, sort_order")
         .order("sort_order"),
-      supabase
+      restClient
         .from("skills")
         .select("id, name, category, description, is_active, sort_order")
         .order("sort_order"),
-      supabase
+      restClient
         .from("currencies")
         .select("id, code, symbol, label, is_active, sort_order")
         .order("sort_order"),
@@ -428,7 +428,7 @@ export async function createMasterRecord(
     return { ok: false, error: "You need the Manage platform settings permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const name = clean(payload.name);
   const label = clean(payload.label);
@@ -571,12 +571,12 @@ export async function createMasterRecord(
   // a filing resolves to, which one the console names, and the "in use" figure each
   // row prints, since a department or location is counted by its name.
   const added = masterName(entity, row);
-  const list = await readListRows(supabase, entity);
+  const list = await readListRows(restClient, entity);
   if (!list) return { ok: false, error: LIST_UNREADABLE };
   const twin = findListTwin(entity, list, added);
   if (twin) return { ok: false, error: twinRefusal(entity, added, masterName(entity, twin)) };
 
-  const { data, error } = await supabase.from(MASTER_TABLE[entity]).insert(row).select("id").single();
+  const { data, error } = await restClient.from(MASTER_TABLE[entity]).insert(row).select("id").single();
 
   if (error) {
     // Unique-constraint collisions are the common case and deserve a clear message.
@@ -611,11 +611,11 @@ export async function createMasterRecord(
  * own cast. One helper, one cast, and the shape is whatever the table holds.
  */
 async function readMasterRow(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   entity: MasterEntity,
   id: string
 ): Promise<Record<string, unknown> | null> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from(MASTER_TABLE[entity])
     .select(DIFF_COLUMNS[entity] ?? READ_COLUMNS[entity])
     .eq("id", id)
@@ -635,10 +635,10 @@ async function readMasterRow(
  * refuse, silently.
  */
 async function readListRows(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   entity: MasterEntity
 ): Promise<MasterRowLike[] | null> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from(MASTER_TABLE[entity])
     .select(`id, ${READ_COLUMNS[entity]}`)
     .order("sort_order");
@@ -660,7 +660,7 @@ export async function updateMasterRecord(
     return { ok: false, error: "You need the Manage platform settings permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The flag names which row the careers page reads as the whole group's, and the
   // database lets exactly one row carry it. Moving it is a two-row change — unflag
@@ -718,7 +718,7 @@ export async function updateMasterRecord(
     row.slug = next;
   }
 
-  const before = await readMasterRow(supabase, entity, id);
+  const before = await readMasterRow(restClient, entity, id);
 
   if (!before) {
     return { ok: false, error: "That record is no longer in the list." };
@@ -731,13 +731,13 @@ export async function updateMasterRecord(
   // read alike — or reactivating one, which is how a recruiter gets out of that state —
   // is not adding a second copy, so refusing it would block the fix.
   if (foldRowKey(label) !== foldRowKey(masterName(entity, before))) {
-    const list = await readListRows(supabase, entity);
+    const list = await readListRows(restClient, entity);
     if (!list) return { ok: false, error: LIST_UNREADABLE };
     const twin = findListTwin(entity, list, label, id);
     if (twin) return { ok: false, error: twinRefusal(entity, label, masterName(entity, twin)) };
   }
 
-  const { error } = await supabase.from(MASTER_TABLE[entity]).update(row).eq("id", id);
+  const { error } = await restClient.from(MASTER_TABLE[entity]).update(row).eq("id", id);
 
   if (error) {
     if (error.code === "23505") {
@@ -855,16 +855,16 @@ export async function deleteMasterRecord(
     return { ok: false, error: "You need the Manage platform settings permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const before = await readMasterRow(supabase, entity, id);
+  const before = await readMasterRow(restClient, entity, id);
 
   if (!before) return { ok: false, error: "That record is no longer in the list." };
 
   // Nothing is hard-deleted: companies are referenced by every other
   // tenant-scoped table, and a retired department or location keeps existing
   // jobs and attempts resolvable.
-  const { error } = await supabase
+  const { error } = await restClient
     .from(MASTER_TABLE[entity])
     .update({ is_active: false })
     .eq("id", id);
@@ -875,7 +875,7 @@ export async function deleteMasterRecord(
   const wasActive = before.is_active !== false;
   let usage: string | null = null;
   if (wasActive) {
-    const count = await masterUsage(supabase, entity, id, before);
+    const count = await masterUsage(restClient, entity, id, before);
     usage = usageWords(count);
     await recordActivity({
       area: "master data",
@@ -917,14 +917,14 @@ export async function deleteMasterRecord(
  * report `null` — no count — rather than a zero that reads like a clean answer.
  */
 async function masterUsage(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   entity: MasterEntity,
   id: string,
   row: Record<string, unknown>
 ): Promise<number | null> {
   if (entity === "skills" || entity === "currencies" || entity === "role_families") return null;
 
-  let query = supabase.from("job_openings").select("id");
+  let query = restClient.from("job_openings").select("id");
   if (entity === "companies") {
     query = query.eq("tenant_id", id);
   } else {
@@ -967,24 +967,24 @@ export async function getMasterOptions(): Promise<{
   skills: { id: string; name: string; category: string | null }[];
   currencies: { id: string; code: string; symbol: string; label: string }[];
 }> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [companies, departments, locations, roleFamilies, skills, currencies] = await Promise.all([
     // `sector` is included so job creation can pre-fill it from the company.
     // The group's own row is left out: it exists to carry the careers profile the
     // public header prints, and a role filed under it would claim to sit inside
     // every company at once.
-    supabase
+    restClient
       .from("tenants_and_companies")
       .select("id, name, sector")
       .eq("is_active", true)
       .eq("is_group_profile", false)
       .order("sort_order"),
-    supabase.from("departments").select("id, name").eq("is_active", true).order("sort_order"),
-    supabase.from("locations").select("id, name, city").eq("is_active", true).order("sort_order"),
-    supabase.from("role_families").select("id, key, label").eq("is_active", true).order("sort_order"),
-    supabase.from("skills").select("id, name, category").eq("is_active", true).order("sort_order"),
-    supabase
+    restClient.from("departments").select("id, name").eq("is_active", true).order("sort_order"),
+    restClient.from("locations").select("id, name, city").eq("is_active", true).order("sort_order"),
+    restClient.from("role_families").select("id, key, label").eq("is_active", true).order("sort_order"),
+    restClient.from("skills").select("id, name, category").eq("is_active", true).order("sort_order"),
+    restClient
       .from("currencies")
       .select("id, code, symbol, label")
       .eq("is_active", true)

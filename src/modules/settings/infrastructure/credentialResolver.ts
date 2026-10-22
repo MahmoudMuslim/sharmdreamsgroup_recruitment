@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import { providerById } from "@/modules/settings/domain/providers";
 
@@ -36,7 +36,7 @@ export async function resolveCredentials(provider: string): Promise<CredentialEn
   if (!definition) return [];
 
   // Get all active credentials for this provider, ordered by priority
-  const { data } = await getSupabaseServiceClient()
+  const { data } = await getServiceRestClient()
     .from("provider_credentials")
     .select("priority, secret_encrypted, config, extra_secrets_encrypted, secret_hint")
     .eq("provider", provider)
@@ -102,7 +102,7 @@ export async function resolveSecret(provider: string): Promise<string | null> {
  * included here — callers that need one must use `resolveExtraSecret`.
  */
 export async function resolveConfig(provider: string): Promise<Record<string, string>> {
-  const { data } = await getSupabaseServiceClient()
+  const { data } = await getServiceRestClient()
     .from("provider_credentials")
     .select("config")
     .eq("provider", provider)
@@ -142,7 +142,7 @@ export async function resolveExtraSecret(
   provider: string,
   field: string
 ): Promise<string | null> {
-  const { data } = await getSupabaseServiceClient()
+  const { data } = await getServiceRestClient()
     .from("provider_credentials")
     .select("extra_secrets_encrypted, is_active")
     .eq("provider", provider)
@@ -169,7 +169,7 @@ export async function resolveExtraSecret(
 export async function resolveExtraSecretPresence(
   provider: string
 ): Promise<Record<string, boolean>> {
-  const { data } = await getSupabaseServiceClient()
+  const { data } = await getServiceRestClient()
     .from("provider_credentials")
     .select("extra_secrets_encrypted")
     .eq("provider", provider)
@@ -206,7 +206,7 @@ export async function resolveModelRouting(capability: string): Promise<ResolvedR
   };
 
   try {
-    const { data } = await getSupabaseServiceClient()
+    const { data } = await getServiceRestClient()
       .from("ai_model_config")
       .select("primary_model, fallback_model, temperature, max_tokens, is_enabled")
       .eq("capability", capability)

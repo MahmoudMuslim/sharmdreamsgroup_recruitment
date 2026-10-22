@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { buildPaper } from "@/modules/assessment/application/buildPaper";
 import { getAttemptSettings } from "@/modules/assessment/application/attemptSettings";
 import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
@@ -9,9 +9,9 @@ import { NextResponse } from "next/server";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data: attempt, error } = await supabase
+  const { data: attempt, error } = await restClient
     .from("candidate_attempts")
     .select("*, applications!inner(full_name, job_openings(title))")
     .eq("access_token", token)
@@ -28,7 +28,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   let closedBy: "test_time" | "invitation" | null = null;
 
   if (attempt.status === "IN_PROGRESS" && attempt.expires_at && new Date(attempt.expires_at) < new Date()) {
-    await supabase
+    await restClient
       .from("candidate_attempts")
       .update({ status: "EXPIRED" })
       .eq("id", attempt.id);
@@ -44,7 +44,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
       : await isLinkExpired(attempt.created_at);
 
     if (overdue) {
-      await supabase
+      await restClient
         .from("candidate_attempts")
         .update({ status: "EXPIRED" })
         .eq("id", attempt.id);
@@ -82,19 +82,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     );
   }
 
-  const { data: template } = await supabase
+  const { data: template } = await restClient
     .from("assessment_templates")
     .select("name")
     .eq("id", attempt.template_id)
     .single();
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("*")
     .eq("template_id", attempt.template_id)
     .order("position", { ascending: true });
 
-  const { data: responses } = await supabase
+  const { data: responses } = await restClient
     .from("candidate_responses")
     .select("*")
     .eq("attempt_id", attempt.id);

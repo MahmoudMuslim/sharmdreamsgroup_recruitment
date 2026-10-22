@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
-import { supabaseConfig } from "@/lib/config";
+import { storageConfig } from "@/lib/config";
 import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
@@ -89,9 +89,9 @@ export interface AttemptGrades {
  */
 export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGrades | null> {
   await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_attempts")
     .select("id")
     .eq("access_token", accessToken)
@@ -125,15 +125,15 @@ export async function getAttemptGrades(attemptId: string): Promise<AttemptGrades
  * benchmark does not, because it is a claim built out of everybody else's marks.
  */
 async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
-  const [supabase, masked, mayGrade, automation] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, mayGrade, automation] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     hasPermissionForUser("assessments.grade"),
     getAiAutomationSettings(),
   ]);
   const files = await getFileStore();
 
-  const { data: attempt } = await supabase
+  const { data: attempt } = await restClient
     .from("candidate_attempts")
     .select(
       "id, application_id, template_id, status, total_score, max_score, assessment_templates(name)"
@@ -144,7 +144,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
   if (!attempt) return null;
 
   const [{ data: responses }, benchmark] = await Promise.all([
-    supabase
+    restClient
       .from("candidate_responses")
       .select(
         "id, question_id, answer_text, video_path, transcript, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
@@ -153,7 +153,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
       .order("position", { referencedTable: "assessment_questions", ascending: true }),
     // Skipped, not just hidden, for a masked reviewer: the rank speaks about
     // other candidates' marks, so asking for it at all is the wrong read.
-    masked ? Promise.resolve(null) : readAttemptBenchmark(supabase, attempt),
+    masked ? Promise.resolve(null) : readAttemptBenchmark(restClient, attempt),
   ]);
 
   const grades: QuestionGrade[] = [];
@@ -186,7 +186,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     let videoUrl: string | null = null;
     if (row.video_path) {
       const { url } = await files.signedUrl({
-        bucket: supabaseConfig.buckets.candidateVideos,
+        bucket: storageConfig.buckets.candidateVideos,
         path: row.video_path,
         seconds: 60 * 60,
       });
@@ -313,9 +313,9 @@ export async function scoreAttemptResponse(input: {
   }
   const note = (input.note ?? "").trim().slice(0, 500);
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_responses")
     .select(
       "id, attempt_id, score, max_score, ai_evaluation, assessment_questions(title), candidate_attempts(status, applications(id, full_name))"
@@ -353,7 +353,7 @@ export async function scoreAttemptResponse(input: {
   const candidateName = one(attempt?.applications)?.full_name ?? "the candidate";
   const questionTitle = one(row.assessment_questions)?.title ?? "the question";
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("candidate_responses")
     .update({
       score: awarded,
@@ -433,10 +433,10 @@ export interface GradingRetryResult {
 
 /** How many of an attempt's answers carry no mark, as the caller's session sees them. */
 async function openAnswers(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   attemptId: string
 ): Promise<number> {
-  const { count } = await supabase
+  const { count } = await restClient
     .from("candidate_responses")
     .select("id", { count: "exact", head: true })
     .eq("attempt_id", attemptId)
@@ -467,9 +467,9 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
     };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_attempts")
     .select("id, applications ( id, full_name )")
     .eq("id", attemptId)
@@ -477,7 +477,7 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   if (!found) return { ok: false, error: "That attempt is no longer on file." };
 
-  const openBefore = await openAnswers(supabase, attemptId);
+  const openBefore = await openAnswers(restClient, attemptId);
   if (openBefore === 0) {
     // Nothing for the engine to do — saying so beats spending a provider call.
     return {
@@ -500,7 +500,7 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   await gradeAttemptResponses(attemptId, { passes: 1 });
 
-  const openAfter = await openAnswers(supabase, attemptId);
+  const openAfter = await openAnswers(restClient, attemptId);
   const scored = Math.max(0, openBefore - openAfter);
   const candidateName = one(found.applications)?.full_name ?? "the candidate";
   const outcome =

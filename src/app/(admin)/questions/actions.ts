@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { RestClient } from "@/lib/rest/client";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -97,18 +97,18 @@ export interface BankData {
 
 export async function getQuestionBankData(): Promise<BankData> {
   await requireStaff("/questions");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [canForm, canSuites, gateResult, suiteResult, templateResult, openingResult] =
     await Promise.all([
       hasPermissionForUser("jobs.manage"),
       hasPermissionForUser("assessments.create"),
-      supabase.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
-      supabase.from("assessment_questions").select(SUITE_COLUMNS).order("position"),
-      supabase.from("assessment_templates").select("id, name, is_active").order("name"),
+      restClient.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
+      restClient.from("assessment_questions").select(SUITE_COLUMNS).order("position"),
+      restClient.from("assessment_templates").select("id, name, is_active").order("name"),
       // Every opening, not only the published ones: a question outlives the role it was
       // written for, and the board has to name that role rather than print a uuid.
-      supabase.from("job_openings").select("id, title, status").order("title"),
+      restClient.from("job_openings").select("id, title, status").order("title"),
     ]);
 
   const places: BankPlaceRow[] = [
@@ -161,11 +161,11 @@ export interface GateConsoleData {
 }
 
 export async function getGateConsoleData(): Promise<GateConsoleData> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [questions, jobs] = await Promise.all([
-    supabase.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
-    supabase
+    restClient.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
+    restClient
       .from("job_openings")
       .select("id, title")
       .eq("status", "PUBLISHED")
@@ -224,7 +224,7 @@ export async function moveBankQuestionToPlace(
 
   const guard = await requireGateEditor();
   if ("error" in guard) return { ok: false, error: guard.error };
-  const { supabase } = guard;
+  const { restClient } = guard;
 
   if (!UUID_PATTERN.test(request.id)) return { ok: false, error: NOT_THERE };
 
@@ -233,7 +233,7 @@ export async function moveBankQuestionToPlace(
     return { ok: false, error: "Choose one of the open roles, or ask it for every role." };
   }
 
-  const current = await readGateRow(supabase, request.id);
+  const current = await readGateRow(restClient, request.id);
   if (!current) return { ok: false, error: NOT_THERE };
   if ((current.job_id ?? SHARED_SCOPE) === request.placeKey) return { ok: true };
 
@@ -243,19 +243,19 @@ export async function moveBankQuestionToPlace(
   // asked by nobody, so dragging one there would be a way to switch it off without
   // saying so.
   if (!toShared) {
-    const place = await readFormPlace(supabase, request.placeKey);
+    const place = await readFormPlace(restClient, request.placeKey);
     if (!place.ok) return { ok: false, error: place.error };
     target = `the “${place.label}” apply form`;
   }
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("application_gate_questions")
     .update({
       job_id: toShared ? null : request.placeKey,
       // It joins at the end of the group it is now asked in, so the role's own
       // order is untouched and the question the recruiter moved is the last thing
       // an applicant answers.
-      position: await nextGatePosition(supabase, toShared ? null : request.placeKey),
+      position: await nextGatePosition(restClient, toShared ? null : request.placeKey),
     })
     .eq("id", request.id);
   if (error) return { ok: false, error: describeWriteError(error) };
@@ -322,20 +322,20 @@ interface GateRow {
 
 /** Staff session + `jobs.manage`, or the message explaining which is missing. */
 async function requireGateEditor(): Promise<
-  { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>> } | { error: string }
+  { restClient: Awaited<ReturnType<typeof createServerRestClient>> } | { error: string }
 > {
   await requireStaff("/questions");
   if (!(await hasPermissionForUser("jobs.manage"))) {
     return { error: "You need the Manage jobs permission to edit these questions." };
   }
-  return { supabase: await createSupabaseServerClient() };
+  return { restClient: await createServerRestClient() };
 }
 
 async function readGateRow(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   questionId: string
 ): Promise<GateRow | null> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("application_gate_questions")
     .select("id, question, job_id, is_active, position")
     .eq("id", questionId)
@@ -355,10 +355,10 @@ function acceptedCount(options: unknown): number {
 
 /** The next free place in one scope group: after the last question asked there. */
 async function nextGatePosition(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   jobId: string | null
 ): Promise<number> {
-  const base = supabase
+  const base = restClient
     .from("application_gate_questions")
     .select("position")
     .order("position", { ascending: false })
@@ -439,7 +439,7 @@ function columnsFrom(
 export async function saveGateQuestion(draft: GateDraft): Promise<GateResult> {
   const guard = await requireGateEditor();
   if ("error" in guard) return { ok: false, error: guard.error };
-  const { supabase } = guard;
+  const { restClient } = guard;
 
   const built = columnsFrom(draft);
   if (!built.ok) return { ok: false, error: built.error };
@@ -448,10 +448,10 @@ export async function saveGateQuestion(draft: GateDraft): Promise<GateResult> {
   if (draft.id) {
     if (!UUID_PATTERN.test(draft.id)) return { ok: false, error: "That question no longer exists." };
 
-    const before = await readGateRow(supabase, draft.id);
+    const before = await readGateRow(restClient, draft.id);
     if (!before) return { ok: false, error: "That question no longer exists." };
 
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("application_gate_questions")
       .update(columns)
       .eq("id", draft.id)
@@ -484,11 +484,11 @@ export async function saveGateQuestion(draft: GateDraft): Promise<GateResult> {
   // A new question goes to the end of its own group, so adding one never
   // reshuffles the form a candidate is halfway through.
   const position = await nextGatePosition(
-    supabase,
+    restClient,
     draft.job_id && UUID_PATTERN.test(draft.job_id) ? draft.job_id : null
   );
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("application_gate_questions")
     .insert({ ...columns, position })
     .select("id")
@@ -525,11 +525,11 @@ export async function moveGateQuestion(
 ): Promise<GateResult> {
   const guard = await requireGateEditor();
   if ("error" in guard) return { ok: false, error: guard.error };
-  const { supabase } = guard;
+  const { restClient } = guard;
 
   if (!UUID_PATTERN.test(questionId)) return { ok: false, error: "That question no longer exists." };
 
-  const { data: currentRow } = await supabase
+  const { data: currentRow } = await restClient
     .from("application_gate_questions")
     .select("id, job_id, position, question")
     .eq("id", questionId)
@@ -545,7 +545,7 @@ export async function moveGateQuestion(
   };
 
   // The same group only: a role's question is never swapped with a shared one.
-  const base = supabase.from("application_gate_questions").select("id, position, question");
+  const base = restClient.from("application_gate_questions").select("id, position, question");
   const scope = current.job_id ? base.eq("job_id", current.job_id) : base.is("job_id", null);
 
   const { data: neighbourRows } =
@@ -566,7 +566,7 @@ export async function moveGateQuestion(
   ];
 
   for (const [id, position] of swaps) {
-    const { error } = await supabase
+    const { error } = await restClient
       .from("application_gate_questions")
       .update({ position })
       .eq("id", id);
@@ -606,10 +606,10 @@ export async function setGateQuestionActive(
 
   if (!UUID_PATTERN.test(questionId)) return { ok: false, error: "That question no longer exists." };
 
-  const row = await readGateRow(guard.supabase, questionId);
+  const row = await readGateRow(guard.restClient, questionId);
   if (!row) return { ok: false, error: "That question no longer exists." };
 
-  const { error } = await guard.supabase
+  const { error } = await guard.restClient
     .from("application_gate_questions")
     .update({ is_active: active })
     .eq("id", questionId);
@@ -636,10 +636,10 @@ export async function deleteGateQuestion(questionId: string): Promise<GateResult
 
   if (!UUID_PATTERN.test(questionId)) return { ok: false, error: "That question no longer exists." };
 
-  const row = await readGateRow(guard.supabase, questionId);
+  const row = await readGateRow(guard.restClient, questionId);
   if (!row) return { ok: false, error: "That question no longer exists." };
 
-  const { error } = await guard.supabase
+  const { error } = await guard.restClient
     .from("application_gate_questions")
     .delete()
     .eq("id", questionId);
@@ -741,14 +741,14 @@ export async function copyBankQuestion(request: BankCopyRequest): Promise<BankCo
 
   if (!UUID_PATTERN.test(request.id)) return { ok: false, error: NOT_THERE };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const toForm = request.target === "gate";
 
   const place: Place = toForm
     ? request.placeKey === SHARED_SCOPE
       ? { ok: true, label: "every published role" }
-      : await readFormPlace(supabase, request.placeKey)
-    : await readSuitePlace(supabase, request.placeKey);
+      : await readFormPlace(restClient, request.placeKey)
+    : await readSuitePlace(restClient, request.placeKey);
   if (!place.ok) return { ok: false, error: place.error };
 
   const formScope =
@@ -757,12 +757,12 @@ export async function copyBankQuestion(request: BankCopyRequest): Promise<BankCo
       : `the “${place.label}” apply form`;
 
   if (request.store === "gate") {
-    const source = await readGateSource(supabase, request.id);
+    const source = await readGateSource(restClient, request.id);
     if (!source.ok) return { ok: false, error: source.error };
 
     if (!toForm) {
       if (source.question.acceptedCount !== 1) return { ok: false, error: NO_SINGLE_RIGHT_OPTION };
-      return ontoSuiteFromForm(source.question, supabase, request.placeKey, place.label);
+      return ontoSuiteFromForm(source.question, restClient, request.placeKey, place.label);
     }
     if ((source.jobId ?? SHARED_SCOPE) === request.placeKey) {
       return { ok: false, error: ALREADY_THERE };
@@ -770,21 +770,21 @@ export async function copyBankQuestion(request: BankCopyRequest): Promise<BankCo
     return ontoForm(source.question, request.placeKey, formScope);
   }
 
-  const source = await readSuiteSource(supabase, request.id);
+  const source = await readSuiteSource(restClient, request.id);
   if (!source.ok) return { ok: false, error: source.error };
 
   if (toForm) return ontoFormFromQuiz(source.row, request.placeKey, formScope);
   if (source.row.template_id === request.placeKey) return { ok: false, error: ALREADY_THERE };
-  return ontoSuiteFromSuite(source.row, supabase, request.placeKey, place.label);
+  return ontoSuiteFromSuite(source.row, restClient, request.placeKey, place.label);
 }
 
 /** A role the copy can land on: it has to exist and be published, or nobody would be asked it. */
-async function readFormPlace(supabase: RestClient, jobId: string): Promise<Place> {
+async function readFormPlace(restClient: RestClient, jobId: string): Promise<Place> {
   if (!UUID_PATTERN.test(jobId)) {
     return { ok: false, error: "Choose one of the open roles, or ask it for every role." };
   }
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("job_openings")
     .select("id, title, status")
     .eq("id", jobId)
@@ -802,12 +802,12 @@ async function readFormPlace(supabase: RestClient, jobId: string): Promise<Place
 }
 
 /** A suite the copy can land in: it has to exist and not be paused, or no candidate could sit it. */
-async function readSuitePlace(supabase: RestClient, templateId: string): Promise<Place> {
+async function readSuitePlace(restClient: RestClient, templateId: string): Promise<Place> {
   if (!UUID_PATTERN.test(templateId)) {
     return { ok: false, error: "Choose the suite to copy it into." };
   }
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("assessment_templates")
     .select("id, name, is_active")
     .eq("id", templateId)
@@ -825,12 +825,12 @@ async function readSuitePlace(supabase: RestClient, templateId: string): Promise
 }
 
 async function readGateSource(
-  supabase: RestClient,
+  restClient: RestClient,
   id: string
 ): Promise<
   { ok: true; question: BankQuestion; jobId: string | null } | { ok: false; error: string }
 > {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("application_gate_questions")
     .select(GATE_COLUMNS)
     .eq("id", id)
@@ -863,10 +863,10 @@ interface SuiteSourceRow {
 }
 
 async function readSuiteSource(
-  supabase: RestClient,
+  restClient: RestClient,
   id: string
 ): Promise<{ ok: true; row: SuiteSourceRow } | { ok: false; error: string }> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("assessment_questions")
     .select(SUITE_COLUMNS)
     .eq("id", id)
@@ -876,8 +876,8 @@ async function readSuiteSource(
 }
 
 /** Where the next question of a suite lands: at the end, after whatever is there now. */
-async function nextPosition(supabase: RestClient, templateId: string): Promise<number> {
-  const { count } = await supabase
+async function nextPosition(restClient: RestClient, templateId: string): Promise<number> {
+  const { count } = await restClient
     .from("assessment_questions")
     .select("id", { count: "exact", head: true })
     .eq("template_id", templateId);
@@ -944,7 +944,7 @@ async function ontoForm(
 /** Apply form → suite: the one accepted answer becomes the one right option. */
 async function ontoSuiteFromForm(
   source: BankQuestion,
-  supabase: RestClient,
+  restClient: RestClient,
   templateId: string,
   suiteLabel: string
 ): Promise<BankCopyResult> {
@@ -956,7 +956,7 @@ async function ontoSuiteFromForm(
     prompt: source.text,
     instructions: source.guidance,
     points: COPIED_QUIZ_POINTS,
-    position: await nextPosition(supabase, templateId),
+    position: await nextPosition(restClient, templateId),
     options: source.answers.map((answer) => ({ text: answer.text, is_correct: answer.accepted })),
   };
 
@@ -969,7 +969,7 @@ async function ontoSuiteFromForm(
 /** Suite → suite: the same kind, marks, guidance and answer set, another suite. */
 async function ontoSuiteFromSuite(
   row: SuiteSourceRow,
-  supabase: RestClient,
+  restClient: RestClient,
   templateId: string,
   suiteLabel: string
 ): Promise<BankCopyResult> {
@@ -982,7 +982,7 @@ async function ontoSuiteFromSuite(
     prompt: row.prompt,
     instructions: row.instructions ?? "",
     points: row.points,
-    position: await nextPosition(supabase, templateId),
+    position: await nextPosition(restClient, templateId),
     time_limit_minutes: row.time_limit_minutes,
     shuffle_options: row.shuffle_options,
     options: choiceDrafts(row.config),

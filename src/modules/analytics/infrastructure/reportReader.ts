@@ -16,7 +16,7 @@
 
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import {
@@ -166,10 +166,10 @@ export type AnalyticsRowsRead =
  */
 export async function readAnalyticsRows(window: AnalyticsWindow): Promise<AnalyticsRowsRead> {
   const { context, cutoff } = await contextFor(window);
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const scoped = <T,>(table: string, columns: string, limit: number) => {
-    let query = supabase.from(table).select(columns);
+    let query = restClient.from(table).select(columns);
     if (cutoff) query = query.gte("created_at", cutoff);
     return read<T>(query.order("created_at", { ascending: false }).limit(limit), limit, table);
   };
@@ -346,9 +346,9 @@ export async function readRowReport(
   if (!definition) return refusal("That report does not exist.");
 
   const { context, cutoff } = await contextFor(window);
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const scoped = <T,>(columns: string, limit: number, table: string, order = "created_at") => {
-    let query = supabase.from(table).select(columns);
+    let query = restClient.from(table).select(columns);
     if (cutoff) query = query.gte(order, cutoff);
     return read<T>(query.order(order, { ascending: false }).limit(limit), limit, table);
   };
@@ -696,7 +696,7 @@ export async function buildCandidateExport(
     getOrganisationTimeZone(),
     scoresAreMaskedForCurrentUser(),
   ]);
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   /* The rail is quoted by name in the file's own "Covers" line, so it is looked
    * up before anything is read — and an id no company carries is refused rather
@@ -704,7 +704,7 @@ export async function buildCandidateExport(
    * in it. The same refusal the chat makes on the same id. */
   let companyName: string | null = null;
   if (filters.company) {
-    const one = await supabase
+    const one = await restClient
       .from("tenants_and_companies")
       .select("name")
       .eq("id", filters.company)
@@ -716,7 +716,7 @@ export async function buildCandidateExport(
     companyName = (one.data as { name: string }).name;
   }
 
-  let query = supabase
+  let query = restClient
     .from("applications")
     .select(CANDIDATE_EXPORT_SELECT(filters.ungraded, filters.company));
   if (filters.stage) query = query.eq("stage", filters.stage);

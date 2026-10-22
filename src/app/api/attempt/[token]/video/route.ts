@@ -1,7 +1,7 @@
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
-import { supabaseConfig } from "@/lib/config";
+import { storageConfig } from "@/lib/config";
 import { NextResponse } from "next/server";
 
 /** The one ceiling this route enforces, in two places: before the body is
@@ -31,8 +31,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     return NextResponse.json({ error: VIDEO_TOO_LARGE }, { status: 413 });
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data: attempt, error } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: attempt, error } = await restClient
     .from("candidate_attempts")
     .select("id, status")
     .eq("access_token", token)
@@ -50,7 +50,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 
   const files = await getFileStore();
   const { error: uploadError } = await files.upload({
-    bucket: supabaseConfig.buckets.candidateVideos,
+    bucket: storageConfig.buckets.candidateVideos,
     path,
     body: video,
     contentType: video.type || "video/webm",

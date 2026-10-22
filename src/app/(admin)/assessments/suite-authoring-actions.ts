@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import type { RestClient } from "@/lib/rest/client";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -98,15 +98,15 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
     return { openings: [], note: null, error: "You need the Create assessments permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const [rows, count] = await Promise.all([
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title, status")
       .in("status", [...HIREABLE_STATUSES])
       .order("created_at", { ascending: false })
       .limit(PICKER_LIMIT),
-    supabase
+    restClient
       .from("job_openings")
       .select("id", { count: "exact", head: true })
       .in("status", [...HIREABLE_STATUSES]),
@@ -132,10 +132,10 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
 
 /** The vacancy a draft is written for, in the words the recruiter filed. */
 async function readOpeningSeed(
-  supabase: RestClient,
+  restClient: RestClient,
   openingId: string
 ): Promise<OpeningSeed | string> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select("id, title, department, location, description, requirements, status")
     .eq("id", openingId)
@@ -220,11 +220,11 @@ export async function draftSuite(input: SuiteAuthoringInput): Promise<SuiteDraft
     };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   let opening: OpeningSeed | null = null;
   if (openingId) {
-    const seed = await readOpeningSeed(supabase, openingId);
+    const seed = await readOpeningSeed(restClient, openingId);
     if (typeof seed === "string") return { ok: false, error: seed };
     opening = seed;
   }
@@ -232,7 +232,7 @@ export async function draftSuite(input: SuiteAuthoringInput): Promise<SuiteDraft
   const [options, defaultDurationMinutes, suites] = await Promise.all([
     getMasterOptions(),
     getNumberSetting("assessment.default_duration_minutes", 60),
-    supabase.from("assessment_templates").select("name"),
+    restClient.from("assessment_templates").select("name"),
   ]);
 
   const brief: AuthoringBrief = {

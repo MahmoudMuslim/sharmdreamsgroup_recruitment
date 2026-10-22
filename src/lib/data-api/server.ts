@@ -10,7 +10,7 @@ import { createAuthShim } from "@/lib/rest/auth-shim";
  * supabase-js client did, which is why the port is a re-point rather than a
  * rewrite (spec §6).
  */
-export async function createSupabaseServerClient() {
+export async function createServerRestClient() {
   const jar = await cookies();
   const bearer = jar.get(SESSION_COOKIE)?.value ?? null;
   // The bearer is what decides the Postgres role `authenticator` switches into,

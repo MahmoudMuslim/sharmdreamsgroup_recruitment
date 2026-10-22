@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { assessmentUrl } from "@/lib/public-url";
 import { formatInZone } from "@/lib/timezone";
 import {
@@ -64,8 +64,8 @@ interface Candidate {
 }
 
 async function loadCandidate(applicationId: string): Promise<Candidate | null> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, email, job_openings(title)")
     .eq("id", applicationId)
@@ -93,7 +93,7 @@ async function startTestLink(accessToken: string): Promise<string> {
 
 /** Same link the WhatsApp path builds, so one template reads correctly on both. */
 async function assessmentLink(applicationId: string): Promise<string> {
-  const { data } = await getSupabaseServiceClient()
+  const { data } = await getServiceRestClient()
     .from("candidate_attempts")
     .select("access_token")
     .eq("application_id", applicationId)
@@ -115,8 +115,8 @@ async function assessmentLink(applicationId: string): Promise<string> {
 async function resolveEmailCopy(
   keys: string[]
 ): Promise<{ key: string; subject: string; body: string } | null> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("notification_templates")
     .select("key, subject, body")
     .eq("channel", "EMAIL")
@@ -219,7 +219,7 @@ async function record(input: {
   delivered: boolean;
   error?: string | null;
 }): Promise<void> {
-  await getSupabaseServiceClient().from("communication_logs").insert({
+  await getServiceRestClient().from("communication_logs").insert({
     application_id: input.applicationId,
     channel: input.channel,
     direction: "OUTBOUND",
@@ -517,8 +517,8 @@ export interface FeedbackLetterResult {
 export async function sendCandidateFeedbackLetter(
   applicationId: string
 ): Promise<FeedbackLetterResult> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, email, stage, ai_feedback, job_openings(title)")
     .eq("id", applicationId)

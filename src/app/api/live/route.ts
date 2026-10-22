@@ -18,7 +18,7 @@
  */
 
 import { getSessionUser, isStaff } from "@/lib/auth/session";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import {
   carryLastRead,
   diffLiveFingerprints,
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
 
   // Read the cookie jar once, here: the stream outlives the render pass, and
   // `cookies()` is only callable while answering the request.
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const encoder = new TextEncoder();
   let closed = false;
@@ -87,7 +87,7 @@ export async function GET(request: Request) {
         }
       };
 
-      let seen: LiveFingerprints = await readLiveFingerprints(supabase);
+      let seen: LiveFingerprints = await readLiveFingerprints(restClient);
 
       /**
        * The areas this session is refused.
@@ -120,7 +120,7 @@ export async function GET(request: Request) {
 
         // Nothing readable this tick is the database being unreachable, not a
         // permissions question — RLS hides rows, it does not hide a table.
-        const next = await readLiveFingerprints(supabase);
+        const next = await readLiveFingerprints(restClient);
         const nextUnread = unreadOf(next);
 
         if (LIVE_WATCH.every((w) => next[w.area].state !== "ok")) {

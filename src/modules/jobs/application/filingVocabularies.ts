@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { MASTER_LIST_WORDS, type MasterRowKey } from "@/modules/settings/domain/masterDataLists";
 import {
@@ -15,7 +15,7 @@ import {
   type FiledEntity,
 } from "@/modules/settings/domain/masterDataFiling";
 
-type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /**
  * The four vocabularies a job opening names, read live.
@@ -71,10 +71,10 @@ export interface FilingRead {
 }
 
 /** Every row of the four lists, in the order the console shows them. */
-export async function getFilingVocabularies(supabase: StaffClient): Promise<FilingRead> {
+export async function getFilingVocabularies(restClient: StaffClient): Promise<FilingRead> {
   const reads = await Promise.all(
     FILING_FIELDS.map(({ table, columns }) =>
-      supabase.from(table).select(columns).order("sort_order")
+      restClient.from(table).select(columns).order("sort_order")
     )
   );
 
@@ -102,11 +102,11 @@ export async function getFilingVocabularies(supabase: StaffClient): Promise<Fili
  * writing it unvalidated is how the drift started.
  */
 export async function resolveJobFiling(input: {
-  supabase: StaffClient;
+  restClient: StaffClient;
   submitted: JobFilingFields;
   stored?: Partial<JobFilingFields> | null;
 }): Promise<{ ok: true; filed: JobFilingFields } | { ok: false; error: string }> {
-  const { vocabularies, unreadable } = await getFilingVocabularies(input.supabase);
+  const { vocabularies, unreadable } = await getFilingVocabularies(input.restClient);
   if (unreadable.length > 0) {
     const lists = unreadable.map((entity) => MASTER_LIST_WORDS[entity]).join(", ");
     return {
@@ -179,12 +179,12 @@ const DRIFT_COLUMNS =
  * in the openings they can see, and nothing else.
  */
 export async function getFilingDrift(
-  supabase: StaffClient,
+  restClient: StaffClient,
   only?: FiledEntity
 ): Promise<{ drift: EntityDrift[]; openings: number; unreadable: FiledEntity[]; error: string | null }> {
   const [read, openings] = await Promise.all([
-    getFilingVocabularies(supabase),
-    supabase.from("job_openings").select(DRIFT_COLUMNS).order("created_at", { ascending: false }),
+    getFilingVocabularies(restClient),
+    restClient.from("job_openings").select(DRIFT_COLUMNS).order("created_at", { ascending: false }),
   ]);
 
   const rows = (openings.data ?? []) as unknown as (JobFilingFields & DriftOpening)[];
@@ -323,6 +323,6 @@ export function shapeDrift(read: {
  */
 export async function readFilingDrift(only?: FiledEntity) {
   await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
-  return shapeDrift(await getFilingDrift(supabase, only));
+  const restClient = await createServerRestClient();
+  return shapeDrift(await getFilingDrift(restClient, only));
 }

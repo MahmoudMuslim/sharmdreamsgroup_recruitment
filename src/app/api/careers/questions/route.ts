@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/data-api/anon";
+import { getAnonRestClient } from "@/lib/data-api/anon";
 import { parseGateRows, publicGateQuestions } from "@/modules/careers/gate-questions";
 
 /**
@@ -30,10 +30,10 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "Unknown role." }, { status: 400 });
   }
 
-  const supabase = getSupabaseAnonClient();
+  const restClient = getAnonRestClient();
 
   // Same re-check the CV upload makes: a draft or closed role has no form.
-  const { data: job } = await supabase
+  const { data: job } = await restClient
     .from("job_openings")
     .select("id")
     .eq("id", jobId)
@@ -46,7 +46,7 @@ export async function GET(request: Request): Promise<Response> {
 
   // Job-scoped questions plus the ones asked for every role. The id is a
   // validated UUID, so building the OR filter cannot inject a condition.
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("application_gate_questions")
     .select("id, job_id, question, help_text, options, position, is_active")
     .eq("is_active", true)

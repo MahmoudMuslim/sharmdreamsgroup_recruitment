@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { RestClient } from "@/lib/rest/client";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { getFileStore } from "@/lib/files/store";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -99,11 +99,11 @@ export async function readAttachmentAsCv(input: {
     return { ok: false, error: "Reading a CV into a record needs the Edit candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // Both halves are read through RLS first: the file has to belong to this
   // record, and the record has to be in this recruiter's pipeline.
-  const { data: file } = await supabase
+  const { data: file } = await restClient
     .from("application_attachments")
     .select("id, application_id, bucket, storage_path, file_name, mime_type")
     .eq("id", input.attachmentId)
@@ -113,7 +113,7 @@ export async function readAttachmentAsCv(input: {
     return { ok: false, error: "That file is no longer attached to this candidate." };
   }
 
-  return storeCvText(supabase, {
+  return storeCvText(restClient, {
     applicationId: input.applicationId,
     replace: input.replace,
     source: {
@@ -146,9 +146,9 @@ export async function readRecordCv(input: {
     return { ok: false, error: "Reading a CV into a record needs the Edit candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("cv_file_path")
     .eq("id", input.applicationId)
@@ -163,7 +163,7 @@ export async function readRecordCv(input: {
     return { ok: false, error: "No CV file is stored on this record — attach one first." };
   }
 
-  return storeCvText(supabase, {
+  return storeCvText(restClient, {
     applicationId: input.applicationId,
     replace: input.replace,
     source: {
@@ -190,14 +190,14 @@ interface CvReadSource {
  * download, parse, write, trail and revalidation. Two ways in, one set of rules.
  */
 async function storeCvText(
-  supabase: RestClient,
+  restClient: RestClient,
   input: {
     applicationId: string;
     replace?: boolean;
     source: CvReadSource;
   }
 ): Promise<CvReadResult> {
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("id, full_name, cv_text")
     .eq("id", input.applicationId)
@@ -261,7 +261,7 @@ async function storeCvText(
     };
   }
 
-  const { data: written, error: updateError } = await supabase
+  const { data: written, error: updateError } = await restClient
     .from("applications")
     .update({ cv_text: text, updated_at: new Date().toISOString() })
     .eq("id", input.applicationId)

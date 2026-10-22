@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -60,7 +60,7 @@ const STATUSES = new Set<string>(JOB_STATUSES);
  */
 async function jobColumnsFrom(
   draft: JobDraft,
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   stored?: Partial<JobFilingFields> | null
 ): Promise<{ ok: true; columns: Record<string, unknown> } | { ok: false; error: string }> {
   const title = draft.title.trim();
@@ -100,7 +100,7 @@ async function jobColumnsFrom(
   // level refuses "Finance" when the list holds "Finance & Investment", which is how
   // five of the live openings drifted; the assistant types these values straight in.
   const filed = await resolveJobFiling({
-    supabase,
+    restClient,
     submitted: { tenant_id: draft.tenant_id, department, location, salary_currency },
     stored,
   });
@@ -129,19 +129,19 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     return { ok: false, error: "You need the Manage jobs permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const built = await jobColumnsFrom(draft, supabase);
+  const built = await jobColumnsFrom(draft, restClient);
   if (!built.ok) return { ok: false, error: built.error };
   const { columns } = built;
 
   // `job_openings.created_by` references user_profiles(id), not auth.users(id),
   // so the authenticated user must be resolved to their profile row. Passing the
   // auth id directly violates the foreign key.
-  const { data: userData } = await supabase.auth.getUser();
+  const { data: userData } = await restClient.auth.getUser();
   let createdBy: string | null = null;
   if (userData.user) {
-    const { data: profile } = await supabase
+    const { data: profile } = await restClient
       .from("user_profiles")
       .select("id")
       .eq("auth_user_id", userData.user.id)
@@ -149,7 +149,7 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     createdBy = profile?.id ?? null;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .insert({
       ...columns,
@@ -208,13 +208,13 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
 
 /** Staff session + `jobs.manage`, or the message explaining which is missing. */
 async function requireJobManager(): Promise<
-  { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>> } | { error: string }
+  { restClient: Awaited<ReturnType<typeof createServerRestClient>> } | { error: string }
 > {
   await requireStaff("/jobs");
   if (!(await hasPermissionForUser("jobs.manage"))) {
     return { error: "You need the Manage jobs permission." };
   }
-  return { supabase: await createSupabaseServerClient() };
+  return { restClient: await createServerRestClient() };
 }
 
 /** Turns the two constraint errors this table can raise into recruiter language. */
@@ -263,9 +263,9 @@ const EDITABLE_COLUMNS = [
 export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<JobResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("job_openings")
     .select(
       "id, posted_at, title, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, status, tenant_id"
@@ -274,7 +274,7 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
 
-  const built = await jobColumnsFrom(draft, supabase, {
+  const built = await jobColumnsFrom(draft, restClient, {
     tenant_id: existing.tenant_id,
     department: existing.department,
     location: existing.location,
@@ -287,7 +287,7 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
     columns.posted_at = new Date().toISOString();
   }
 
-  const { error } = await supabase.from("job_openings").update(columns).eq("id", jobId);
+  const { error } = await restClient.from("job_openings").update(columns).eq("id", jobId);
   if (error) return { ok: false, error: describeWriteError(error) };
 
   const before = existing as unknown as Record<string, unknown>;
@@ -326,11 +326,11 @@ export async function setJobStatus(
 ): Promise<JobStatusResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
   if (!STATUSES.has(status)) return { ok: false, error: "Unknown status." };
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("job_openings")
     .select("id, title, status, posted_at")
     .eq("id", jobId)
@@ -343,7 +343,7 @@ export async function setJobStatus(
     patch.posted_at = new Date().toISOString();
   }
 
-  const { error } = await supabase.from("job_openings").update(patch).eq("id", jobId);
+  const { error } = await restClient.from("job_openings").update(patch).eq("id", jobId);
   if (error) return { ok: false, error: error.message };
 
   await recordActivity({
@@ -373,9 +373,9 @@ export async function setJobStatus(
 export async function deleteJobOpening(jobId: string): Promise<JobResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("job_openings")
     .select("id, title, department, location, status")
     .eq("id", jobId)
@@ -385,7 +385,7 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
   // Deliberately counted over filed candidates too: `applications.job_id`
   // cascades, so deleting an opening a filed applicant still points at would
   // erase the record the archive exists to keep.
-  const { count } = await supabase
+  const { count } = await restClient
     .from("applications")
     .select("id", { count: "exact", head: true })
     .eq("job_id", jobId);
@@ -397,7 +397,7 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
     };
   }
 
-  const { error } = await supabase.from("job_openings").delete().eq("id", jobId);
+  const { error } = await restClient.from("job_openings").delete().eq("id", jobId);
   if (error) return { ok: false, error: error.message };
 
   await recordActivity({
@@ -447,7 +447,7 @@ export interface RefileResult {
 export async function refileFiling(entity: string, from: string, to: string): Promise<RefileResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
   if (!isFiledEntity(entity)) {
     return {
@@ -458,7 +458,7 @@ export async function refileFiling(entity: string, from: string, to: string): Pr
 
   const { field, by } = filedColumn(entity);
   const source = String(from ?? "").trim();
-  const { vocabularies, unreadable } = await getFilingVocabularies(supabase);
+  const { vocabularies, unreadable } = await getFilingVocabularies(restClient);
   if (unreadable.includes(entity)) {
     return {
       ok: false,
@@ -478,7 +478,7 @@ export async function refileFiling(entity: string, from: string, to: string): Pr
   // Read and matched here rather than with `.eq()`, because the desk counted the
   // *trimmed* text and a stored value padded with a space would otherwise slip
   // past a match the recruiter was told had moved.
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select(`id, title, ${field}`)
     .order("created_at", { ascending: false });
@@ -498,7 +498,7 @@ export async function refileFiling(entity: string, from: string, to: string): Pr
     };
   }
 
-  const { error: written } = await supabase
+  const { error: written } = await restClient
     .from("job_openings")
     .update({ [field]: destination.name })
     .in("id", moving.map((row) => row.id));

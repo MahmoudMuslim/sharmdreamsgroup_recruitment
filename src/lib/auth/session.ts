@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { verifySessionToken } from "@/lib/auth/token";
 import { SESSION_COOKIE } from "@/lib/auth/cookies";
 import { loginSearch } from "@/lib/auth/login-target";
@@ -47,8 +47,8 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   const claims = await verifySessionToken(bearer);
   if (!claims || claims.role !== "authenticated") return null;
 
-  const supabase = await createSupabaseServerClient();
-  const { data: profile } = await supabase
+  const restClient = await createServerRestClient();
+  const { data: profile } = await restClient
     .from("user_profiles")
     .select("id, auth_user_id, full_name, email, role, tenant_id")
     .eq("auth_user_id", claims.sub)

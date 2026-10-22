@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { randomBytes } from "crypto";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { notifyAssessmentInvite } from "@/modules/omnichannel/application/candidate-notifications";
@@ -55,7 +55,7 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
     return { ok: false, error: "Duration must be between 5 and 480 minutes." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const row = {
     name,
@@ -71,7 +71,7 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
     if (!payload.tenant_id) {
       return { ok: false, error: "Choose the company this suite belongs to." };
     }
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("assessment_templates")
       .insert({ ...row, tenant_id: payload.tenant_id as string })
       .select("id")
@@ -94,7 +94,7 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
     return { ok: true, id: data?.id };
   }
 
-  const { data: previous } = await supabase
+  const { data: previous } = await restClient
     .from("assessment_templates")
     .select(
       "id, name, description, role_family, time_limit_minutes, randomize_questions, randomize_options, block_copy_paste, is_active"
@@ -103,7 +103,7 @@ export async function saveTemplate(payload: TemplatePayload): Promise<TemplateRe
     .maybeSingle();
   if (!previous) return { ok: false, error: "That suite no longer exists." };
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("assessment_templates")
     .update(row)
     .eq("id", payload.id as string);
@@ -145,16 +145,16 @@ export async function setTemplateActive(
     return { ok: false, error: "You need the Create assessments permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: suite } = await supabase
+  const { data: suite } = await restClient
     .from("assessment_templates")
     .select("id, name, is_active")
     .eq("id", templateId)
     .maybeSingle();
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("assessment_templates")
     .update({ is_active: active })
     .eq("id", templateId);
@@ -189,9 +189,9 @@ export async function deleteTemplate(templateId: string): Promise<TemplateStatus
     return { ok: false, error: "You need the Create assessments permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: issued } = await supabase
+  const { data: issued } = await restClient
     .from("candidate_attempts")
     .select("id")
     .eq("template_id", templateId)
@@ -205,19 +205,19 @@ export async function deleteTemplate(templateId: string): Promise<TemplateStatus
     };
   }
 
-  const { data: suite } = await supabase
+  const { data: suite } = await restClient
     .from("assessment_templates")
     .select("id, name, time_limit_minutes")
     .eq("id", templateId)
     .maybeSingle();
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
-  const { count: questions } = await supabase
+  const { count: questions } = await restClient
     .from("assessment_questions")
     .select("id", { count: "exact", head: true })
     .eq("template_id", templateId);
 
-  const { error } = await supabase.from("assessment_templates").delete().eq("id", templateId);
+  const { error } = await restClient.from("assessment_templates").delete().eq("id", templateId);
 
   if (error) return { ok: false, error: error.message };
 
@@ -272,9 +272,9 @@ export async function assignTemplate(input: {
     return { ok: false, error: "Time limit must be between 5 and 480 minutes." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: template } = await supabase
+  const { data: template } = await restClient
     .from("assessment_templates")
     .select("id, name, is_active")
     .eq("id", input.templateId)
@@ -289,7 +289,7 @@ export async function assignTemplate(input: {
   }
 
   // Skip anyone who already has a live attempt on this suite.
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("candidate_attempts")
     .select("application_id, status")
     .eq("template_id", input.templateId)
@@ -316,7 +316,7 @@ export async function assignTemplate(input: {
     };
   }
 
-  const { error } = await supabase.from("candidate_attempts").insert(rows);
+  const { error } = await restClient.from("candidate_attempts").insert(rows);
 
   if (error) {
     if (error.code === "23505") {

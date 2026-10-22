@@ -46,7 +46,7 @@ export function displayName(pathValue: string): string {
  * would let `..` be a bucket.
  *
  * Nothing here checks the value against the four known buckets. That list is
- * `supabaseConfig.buckets` and `BUCKETS` in the admin module, and this file is
+ * `storageConfig.buckets` and `BUCKETS` in the admin module, and this file is
  * deliberately kept free of both so that `scripts/prove-file-paths.mjs` can
  * import it in plain Node and so a byte-level path decision never depends on a
  * configuration module. It also would not help: since Plan 2 the bucket is a

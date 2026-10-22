@@ -149,7 +149,7 @@ export function createRestClient(config: RestClientConfig) {
     from(table: string) {
       const builder = new QueryBuilder();
       // Thenable, because every existing site writes
-      // `await supabase.from(x).select(y)` with no terminal call. Without this
+      // `await restClient.from(x).select(y)` with no terminal call. Without this
       // the port would mean editing 454 chains — the thing spec §1 forbids.
       return Object.assign(builder, {
         then<T1, T2>(

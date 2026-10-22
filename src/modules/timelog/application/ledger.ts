@@ -14,7 +14,7 @@ import "server-only";
  * an empty result is reported as the failure it is.
  */
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { dayKeyInZone, formatInZone, fromZoneInputValue } from "@/lib/timezone";
 import {
   isTimeScope,
@@ -172,9 +172,9 @@ export async function readLedger(options: {
   /** The caller's own profile, whose running row is never filtered away. */
   callerStaffId: string;
 }): Promise<LedgerRead> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  let listed = supabase
+  let listed = restClient
     .from("time_entries")
     .select(EMBEDDED)
     .order("started_at", { ascending: false })
@@ -182,7 +182,7 @@ export async function readLedger(options: {
   if (options.since) listed = listed.gte("started_at", options.since);
   if (options.staffId) listed = listed.eq("staff_id", options.staffId);
 
-  const running = supabase
+  const running = restClient
     .from("time_entries")
     .select(EMBEDDED)
     .is("ended_at", null)
@@ -210,8 +210,8 @@ export async function readLedger(options: {
 
 /** One entry, for a write that has to describe what it changed. */
 export async function readEntry(id: string): Promise<TimeEntry | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("time_entries")
     .select(EMBEDDED)
     .eq("id", id)
@@ -247,7 +247,7 @@ export interface NewEntry {
  * so the start is the database's instant, like the end is.
  */
 export async function insertEntry(entry: NewEntry): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const row = {
     staff_id: entry.staffId,
@@ -261,7 +261,7 @@ export async function insertEntry(entry: NewEntry): Promise<LedgerWrite> {
     ...(entry.startedAt ? { started_at: entry.startedAt } : {}),
   };
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("time_entries")
     .insert(row)
     .select(EMBEDDED);
@@ -281,7 +281,7 @@ export async function updateEntry(
   id: string,
   patch: Partial<Omit<NewEntry, "staffId" | "companyId">>
 ): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const body: Record<string, unknown> = {};
   if (patch.category !== undefined) body.category = patch.category;
@@ -294,7 +294,7 @@ export async function updateEntry(
 
   if (Object.keys(body).length === 0) return { ok: true };
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("time_entries")
     .update(body)
     .eq("id", id)
@@ -319,8 +319,8 @@ export async function updateEntry(
  * applies.
  */
 export async function stopEntry(id: string): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("stop_time_entry", { entry_id: id });
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient.rpc("stop_time_entry", { entry_id: id });
 
   const refusal = explain(error, "That timer could not be stopped");
   if (refusal) return { ok: false, error: refusal };
@@ -339,8 +339,8 @@ export async function stopEntry(id: string): Promise<LedgerWrite> {
  * outlives them.
  */
 export async function deleteEntry(id: string): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("time_entries")
     .delete()
     .eq("id", id)

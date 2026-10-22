@@ -26,7 +26,7 @@
 
 import { requireStaff } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/timezone";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import type { SoftSkillReport } from "@/types";
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
 import { attachmentRule } from "@/modules/careers/attachment-rules";
@@ -352,8 +352,8 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
     return { ok: false, reason: "invalid_id" };
   }
 
-  const [supabase, masked, timeZone, validityHours, canWrite] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, timeZone, validityHours, canWrite] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     getOrganisationTimeZone(),
     getNumberSetting("assessment.link_validity_hours", DEFAULT_LINK_VALIDITY_HOURS),
@@ -362,7 +362,7 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
 
   // The row the link named. Read through the caller's own session, so Row Level
   // Security decides whether this recruiter may see this person at all.
-  const { data: anchor, error: anchorError } = await supabase
+  const { data: anchor, error: anchorError } = await restClient
     .from("applications")
     .select("id, email")
     .eq("id", applicationId)
@@ -377,7 +377,7 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
   const email = asText(anchor.email);
   if (!email) return { ok: false, reason: "not_found" };
 
-  const { data: rowSet, count: rowCount, error: rowsError } = await supabase
+  const { data: rowSet, count: rowCount, error: rowsError } = await restClient
     .from("applications")
     .select(
       "*, job_openings(title, department, location, tenants_and_companies(name)), candidate_skills(skill_id, skills(name))",
@@ -404,7 +404,7 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
   }
 
   const [attempts, interviews, logs, queued, plans, files, changes] = await Promise.all([
-    supabase
+    restClient
       .from("candidate_attempts")
       .select(
         "id, application_id, access_token, status, total_score, max_score, time_limit_minutes, started_at, submitted_at, expires_at, created_at, integrity_flags, integrity_score, assessment_templates(name)"
@@ -412,13 +412,13 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
       .in("application_id", ids)
       .order("created_at", { ascending: false })
       .limit(ATTEMPT_LIMIT),
-    supabase
+    restClient
       .from("interview_schedules")
       .select(INTERVIEW_SELECT)
       .in("application_id", ids)
       .order("scheduled_at", { ascending: true })
       .limit(ATTEMPT_LIMIT),
-    supabase
+    restClient
       .from("communication_logs")
       .select(
         "id, application_id, channel, direction, recipient, subject, body, delivered, error_message, read_at, created_at"
@@ -426,24 +426,24 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
       .in("application_id", ids)
       .order("created_at", { ascending: false })
       .limit(MESSAGE_LIMIT),
-    supabase
+    restClient
       .from("scheduled_whatsapp_jobs")
       .select("id, application_id, recipient_phone, payload, status, error_log, scheduled_for, sent_at, created_at")
       .in("application_id", ids)
       .order("created_at", { ascending: false })
       .limit(MESSAGE_LIMIT),
-    supabase
+    restClient
       .from("onboarding_plans")
       .select("application_id, progress, checklist, retention_risk_score, generated_by_ai, created_at")
       .in("application_id", ids)
       .limit(10),
-    supabase
+    restClient
       .from("application_attachments")
       .select("id, application_id, bucket, storage_path, file_name, mime_type, bytes, created_at, user_profiles(full_name)")
       .in("application_id", ids)
       .order("created_at", { ascending: false })
       .limit(FILE_LIMIT),
-    supabase
+    restClient
       .from("activity_log")
       .select("id, created_at, area, summary, actor_kind, actor_label, actor_name, entity_id")
       .eq("entity", TRAIL_ENTITY)

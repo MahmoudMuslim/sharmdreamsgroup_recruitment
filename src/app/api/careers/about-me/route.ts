@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/data-api/anon";
+import { getAnonRestClient } from "@/lib/data-api/anon";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { describeAboutFailure, writeAboutMe } from "@/modules/careers/about-me";
 import {
@@ -92,7 +92,7 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const { data: job } = await getSupabaseAnonClient()
+  const { data: job } = await getAnonRestClient()
     .from("job_openings")
     .select("id")
     .eq("id", jobId)

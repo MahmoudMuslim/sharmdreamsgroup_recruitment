@@ -1,6 +1,6 @@
 "use server";
 
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { currentActivityContext, recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext } from "@/modules/assessment/application/runner-trail";
 
@@ -34,9 +34,9 @@ export async function buildPaper(accessToken: string): Promise<{
   questionOrder: string[];
   optionOrder: Record<string, string[]>;
 } | null> {
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data: attempt } = await supabase
+  const { data: attempt } = await restClient
     .from("candidate_attempts")
     .select(`id, access_token, question_order, option_order, template_id, ${APPLICATION_EMBED}`)
     .eq("access_token", accessToken)
@@ -51,13 +51,13 @@ export async function buildPaper(accessToken: string): Promise<{
     };
   }
 
-  const { data: template } = await supabase
+  const { data: template } = await restClient
     .from("assessment_templates")
     .select("randomize_questions, randomize_options")
     .eq("id", attempt.template_id)
     .maybeSingle();
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("id, position, shuffle_options, config")
     .eq("template_id", attempt.template_id)
@@ -86,7 +86,7 @@ export async function buildPaper(accessToken: string): Promise<{
     }
   }
 
-  await supabase
+  await restClient
     .from("candidate_attempts")
     .update({ question_order: ordered, option_order: optionOrder })
     .eq("id", attempt.id);

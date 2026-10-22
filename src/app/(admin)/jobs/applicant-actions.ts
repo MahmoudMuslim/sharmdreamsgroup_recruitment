@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
@@ -66,12 +66,12 @@ function attemptTemplate(attempt: Record<string, unknown> | null): string | null
 
 export async function getJobApplicants(jobId: string): Promise<ApplicantsResult> {
   await requireStaff("/jobs");
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("applications")
     .select(
       "id, full_name, email, phone, tracking_code, stage, source, created_at, cv_file_path, ai_match_score, candidate_attempts(access_token, status, total_score, max_score, assessment_templates(name))"
@@ -127,9 +127,9 @@ export async function getApplicantSubmission(
   applicationId: string
 ): Promise<SubmissionResult> {
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: row, error } = await supabase
+  const { data: row, error } = await restClient
     .from("applications")
     .select("id, cv_file_path, cv_text, ai_screening_summary")
     .eq("id", applicationId)

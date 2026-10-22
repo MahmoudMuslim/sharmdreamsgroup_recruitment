@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { getFileStore } from "@/lib/files/store";
 import { displayName, isStoredPath } from "@/lib/files/paths";
@@ -21,7 +21,7 @@ import {
   type ViewResult,
 } from "./file-browser-types";
 
-type Supabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type ServerClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /**
  * The bucket totals walk every folder, so the walk is bounded: a bucket with a
@@ -68,10 +68,10 @@ export async function getFileBrowserData(
   }
 
   const target = folderFromParams(bucket, prefix);
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const [buckets, view] = await Promise.all([
-    describeBuckets(supabase),
-    readFolder(supabase, target.bucket, target.prefix),
+    describeBuckets(restClient),
+    readFolder(restClient, target.bucket, target.prefix),
   ]);
 
   return { buckets, view };
@@ -88,8 +88,8 @@ export async function openFolder(bucketKey: string, prefix: string): Promise<Vie
     return { ok: false, error: "That folder path is not a valid storage prefix." };
   }
 
-  const supabase = await createSupabaseServerClient();
-  return readFolder(supabase, bucket.key, prefix);
+  const restClient = await createServerRestClient();
+  return readFolder(restClient, bucket.key, prefix);
 }
 
 /**
@@ -118,13 +118,13 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
 
   if (!isStoredPath(path)) return { ok: false, error: "That is not a valid storage key." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const files = await getFileStore();
 
   // Read the object's size and type before removing it: the audit entry is
   // worthless if the only copy of that detail was the file itself.
   const before = await objectMetadata(bucket.key, path);
-  const owner = await fileOwner(supabase, bucket.key, path);
+  const owner = await fileOwner(restClient, bucket.key, path);
 
   const { error } = await files.remove({ bucket: bucket.key, paths: [path] });
   if (error) {
@@ -133,8 +133,8 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
   }
 
   const note = [
-    await recordDeletion(supabase, user.authUserId, bucket.key, path, before),
-    await unlinkReference(supabase, bucket.key, path),
+    await recordDeletion(restClient, user.authUserId, bucket.key, path, before),
+    await unlinkReference(restClient, bucket.key, path),
   ]
     .filter(Boolean)
     .join(" ");
@@ -165,7 +165,7 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
   };
 }
 
-async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string): Promise<ViewResult> {
+async function readFolder(restClient: ServerClient, bucket: BucketKey, prefix: string): Promise<ViewResult> {
   if (!(await hasPermissionForUser("candidates.read"))) {
     return { ok: false, error: READ_DENIED };
   }
@@ -173,7 +173,7 @@ async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string)
   const info = bucketInfo(bucket);
   if (!info) return { ok: false, error: "That is not a bucket this portal stores files in." };
 
-  const listed = await listObjects(supabase, bucket, prefix);
+  const listed = await listObjects(restClient, bucket, prefix);
   if (!listed.ok) {
     return { ok: false, error: `The files could not be listed: ${listed.error}` };
   }
@@ -201,7 +201,7 @@ async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string)
     });
   }
 
-  const owners = await ownersFor(supabase, bucket, [...rows.keys()]);
+  const owners = await ownersFor(restClient, bucket, [...rows.keys()]);
 
   const files: StoredFile[] = [...rows.values()]
     .map((file) => ({ ...file, owner: owners.map.get(file.path) ?? null }))
@@ -224,11 +224,11 @@ async function readFolder(supabase: Supabase, bucket: BucketKey, prefix: string)
 }
 
 /** Totals for the bucket rail, from a bounded walk of each bucket's tree. */
-async function describeBuckets(supabase: Supabase): Promise<BucketStat[]> {
+async function describeBuckets(restClient: ServerClient): Promise<BucketStat[]> {
   return Promise.all(
     BUCKETS.map(async (bucket) => {
       const budget = { calls: 0, exhausted: false };
-      const totals = await walk(supabase, bucket.key, "", budget);
+      const totals = await walk(restClient, bucket.key, "", budget);
       return {
         key: bucket.key,
         label: bucket.label,
@@ -241,7 +241,7 @@ async function describeBuckets(supabase: Supabase): Promise<BucketStat[]> {
 }
 
 async function walk(
-  supabase: Supabase,
+  restClient: ServerClient,
   bucket: BucketKey,
   prefix: string,
   budget: { calls: number; exhausted: boolean },
@@ -253,7 +253,7 @@ async function walk(
   }
 
   budget.calls += 1;
-  const listed = await listObjects(supabase, bucket, prefix, WALK_LIST_LIMIT);
+  const listed = await listObjects(restClient, bucket, prefix, WALK_LIST_LIMIT);
   if (!listed.ok) return { files: 0, bytes: 0 };
   if (listed.entries.length >= WALK_LIST_LIMIT) budget.exhausted = true;
 
@@ -275,7 +275,7 @@ async function walk(
   }
 
   for (const child of children) {
-    const inner = await walk(supabase, bucket, child, budget, depth + 1);
+    const inner = await walk(restClient, bucket, child, budget, depth + 1);
     files += inner.files;
     bytes += inner.bytes;
   }
@@ -293,7 +293,7 @@ async function walk(
  * unlinked.
  */
 async function ownersFor(
-  supabase: Supabase,
+  restClient: ServerClient,
   bucket: BucketKey,
   paths: string[]
 ): Promise<{ map: Map<string, FileOwner>; loaded: boolean }> {
@@ -301,7 +301,7 @@ async function ownersFor(
   if (paths.length === 0) return { map, loaded: true };
 
   if (bucket === "candidate-cvs") {
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("applications")
       .select("full_name, stage, cv_file_path, job_openings(title)")
       .not("cv_file_path", "is", "null")
@@ -330,7 +330,7 @@ async function ownersFor(
   }
 
   if (bucket === "candidate-videos") {
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("candidate_responses")
       .select("video_path, candidate_attempts(applications(full_name, stage))")
       .not("video_path", "is", "null")
@@ -367,7 +367,7 @@ async function ownersFor(
   }
 
   // Staff resumes and voice notes: one row per object, on the candidate it was added to.
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("application_attachments")
     .select("storage_path, applications(full_name, stage)")
     .eq("bucket", bucket)
@@ -409,12 +409,12 @@ async function ownersFor(
  * first and against the one path rather than the whole bucket.
  */
 async function fileOwner(
-  supabase: Supabase,
+  restClient: ServerClient,
   bucket: BucketKey,
   path: string
 ): Promise<{ name: string; applicationId: string } | null> {
   if (bucket === "candidate-cvs") {
-    const { data } = await supabase
+    const { data } = await restClient
       .from("applications")
       .select("id, full_name")
       .eq("cv_file_path", path)
@@ -427,7 +427,7 @@ async function fileOwner(
   }
 
   if (bucket === "candidate-videos") {
-    const { data } = await supabase
+    const { data } = await restClient
       .from("candidate_responses")
       .select("candidate_attempts(applications(id, full_name))")
       .eq("video_path", path)
@@ -449,7 +449,7 @@ async function fileOwner(
       : null;
   }
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("application_attachments")
     .select("application_id, applications(full_name)")
     .eq("storage_path", path)
@@ -473,19 +473,19 @@ async function fileOwner(
  * the record had been kept.
  */
 async function recordDeletion(
-  supabase: Supabase,
+  restClient: ServerClient,
   authUserId: string,
   bucket: BucketKey,
   path: string,
   before: { bytes: number | null; mimeType: string | null }
 ): Promise<string | null> {
-  const { data: profile } = await supabase
+  const { data: profile } = await restClient
     .from("user_profiles")
     .select("id")
     .eq("auth_user_id", authUserId)
     .maybeSingle();
 
-  const { error } = await supabase.from("settings_audit_log").insert({
+  const { error } = await restClient.from("settings_audit_log").insert({
     key: `storage.file:${bucket}/${path}`,
     previous_value: { bucket, path, bytes: before.bytes, mime_type: before.mimeType },
     next_value: null,
@@ -510,18 +510,18 @@ async function recordDeletion(
  * attachment row that existed only to name it.
  */
 async function unlinkReference(
-  supabase: Supabase,
+  restClient: ServerClient,
   bucket: BucketKey,
   path: string
 ): Promise<string | null> {
   if (bucket === "resumes" || bucket === "candidate-audio") {
-    const { count } = await supabase
+    const { count } = await restClient
       .from("application_attachments")
       .select("id", { count: "exact", head: true })
       .eq("storage_path", path);
     if (!count) return null;
 
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("application_attachments")
       .delete()
       .eq("storage_path", path)
@@ -542,13 +542,13 @@ async function unlinkReference(
         : null;
   if (!target) return null;
 
-  const { count } = await supabase
+  const { count } = await restClient
     .from(target.table)
     .select("id", { count: "exact", head: true })
     .eq(target.column, path);
   if (!count) return null;
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from(target.table)
     .update({ [target.column]: null })
     .eq(target.column, path)

@@ -62,7 +62,7 @@ export function SpreadsheetRunner({ question }: SpreadsheetRunnerProps) {
   const hotRef = useRef<HotTableRef>(null);
   const savedCells = useAssessmentStore((state) => state.spreadsheetDataMap[question.id]);
   const updateSpreadsheetData = useAssessmentStore((state) => state.updateSpreadsheetData);
-  const syncDraft = useAssessmentStore((state) => state.syncDraftToSupabase);
+  const syncDraft = useAssessmentStore((state) => state.syncDraft);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Latches once the draft has been pushed into the grid, per mounted table. */
   const restoredRef = useRef(false);

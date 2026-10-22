@@ -1,4 +1,4 @@
-import { getSupabaseAnonClient } from "@/lib/data-api/anon";
+import { getAnonRestClient } from "@/lib/data-api/anon";
 import { getFileStore } from "@/lib/files/store";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
@@ -65,11 +65,11 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: cvSizeError() }, { status: 413 });
   }
 
-  const supabase = getSupabaseAnonClient();
+  const restClient = getAnonRestClient();
 
   // Only open roles accept applications, so an upload for a draft or closed
   // role is rejected here rather than after the file is already stored.
-  const { data: job } = await supabase
+  const { data: job } = await restClient
     .from("job_openings")
     .select("id")
     .eq("id", jobId)

@@ -2,8 +2,8 @@
 
 import { revalidatePath, cacheLife } from "next/cache";
 import { after } from "next/server";
-import { getSupabaseAnonClient } from "@/lib/data-api/anon";
-import { getSupabaseServiceClient } from "@/lib/data-api/service";
+import { getAnonRestClient } from "@/lib/data-api/anon";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { extractCvText, type ExtractedCv as _ExtractedCv } from "@/modules/screening/infrastructure/cvParser";
@@ -108,8 +108,8 @@ export async function getPublicJobs(): Promise<PublicJob[]> {
   "use cache";
   cacheLife("minutes");
 
-  const supabase = getSupabaseAnonClient();
-  const { data, error } = await supabase
+  const restClient = getAnonRestClient();
+  const { data, error } = await restClient
     .from("job_openings")
     .select(JOB_COLUMNS)
     .eq("status", "PUBLISHED")
@@ -135,8 +135,8 @@ export async function getPublicCompanies(): Promise<PublicCompany[]> {
   "use cache";
   cacheLife("minutes");
 
-  const supabase = getSupabaseAnonClient();
-  const { data, error } = await supabase
+  const restClient = getAnonRestClient();
+  const { data, error } = await restClient
     .from("tenants_and_companies")
     .select(COMPANY_COLUMNS)
     .eq("is_active", true)
@@ -159,8 +159,8 @@ export async function getPublicJob(id: string): Promise<PublicJob | null> {
   "use cache";
   cacheLife("minutes");
 
-  const supabase = getSupabaseAnonClient();
-  const { data, error } = await supabase
+  const restClient = getAnonRestClient();
+  const { data, error } = await restClient
     .from("job_openings")
     .select(JOB_COLUMNS)
     .eq("id", id)
@@ -228,7 +228,7 @@ async function activeGateQuestions(
     return { error: "This role is no longer accepting applications." };
   }
 
-  const { data, error } = await getSupabaseServiceClient()
+  const { data, error } = await getServiceRestClient()
     .from("application_gate_questions")
     .select("id, job_id, question, help_text, options, position, is_active")
     .eq("is_active", true)
@@ -272,11 +272,11 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
     };
   }
 
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
   // Re-checked server-side: a role could have been closed between the page
   // rendering and the form being submitted.
-  const { data: job } = await supabase
+  const { data: job } = await restClient
     .from("job_openings")
     .select("id, title, tenant_id")
     .eq("id", input.jobId)
@@ -367,7 +367,7 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
     }
   }
 
-  const { data: created, error } = await supabase
+  const { data: created, error } = await restClient
     .from("applications")
     .insert({
       job_id: input.jobId,

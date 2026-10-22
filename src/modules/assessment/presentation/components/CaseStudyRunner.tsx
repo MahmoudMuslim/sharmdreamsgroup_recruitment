@@ -12,7 +12,7 @@ interface CaseStudyRunnerProps {
 export function CaseStudyRunner({ question }: CaseStudyRunnerProps) {
   const answer = useAssessmentStore((state) => state.caseStudyAnswersMap[question.id] ?? "");
   const setAnswer = useAssessmentStore((state) => state.setCaseStudyAnswer);
-  const syncDraft = useAssessmentStore((state) => state.syncDraftToSupabase);
+  const syncDraft = useAssessmentStore((state) => state.syncDraft);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const minWords = question.config.min_words ?? 200;

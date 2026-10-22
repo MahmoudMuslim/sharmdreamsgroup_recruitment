@@ -76,7 +76,7 @@ export function AssessmentRunner() {
   const nextQuestion = useAssessmentStore((s) => s.nextQuestion);
   const prevQuestion = useAssessmentStore((s) => s.prevQuestion);
   const decrementTimer = useAssessmentStore((s) => s.decrementTimer);
-  const syncDraft = useAssessmentStore((s) => s.syncDraftToSupabase);
+  const syncDraft = useAssessmentStore((s) => s.syncDraft);
   const submitAttempt = useAssessmentStore((s) => s.submitAttempt);
 
   const isLoading = useAssessmentStore((s) => s.isLoading);

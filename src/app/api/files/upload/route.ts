@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { getFileStore } from "@/lib/files/store";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
@@ -95,12 +95,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const files = await getFileStore();
 
   // The parent record is read through RLS first, so a recruiter cannot attach a
   // file to a candidate sitting in another tenant's pipeline.
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("id, full_name")
     .eq("id", applicationId)
@@ -133,13 +133,13 @@ export async function POST(request: NextRequest) {
 
   // The uploader is named from their own profile row, so the candidate record can
   // say who added a file months after they left the company.
-  const { data: profile } = await supabase
+  const { data: profile } = await restClient
     .from("user_profiles")
     .select("id")
     .eq("auth_user_id", user.authUserId)
     .maybeSingle();
 
-  const { data: attachment, error: insertError } = await supabase
+  const { data: attachment, error: insertError } = await restClient
     .from("application_attachments")
     .insert({
       application_id: applicationId,

@@ -2,7 +2,7 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -41,10 +41,10 @@ const MIN_MINUTES = 15;
 const MAX_MINUTES = 240;
 
 async function interviewsFor(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   applicationId: string
 ): Promise<InterviewRecord[]> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from("interview_schedules")
     .select(INTERVIEW_SELECT)
     .eq("application_id", applicationId)
@@ -55,13 +55,13 @@ async function interviewsFor(
 
 /** Staff session + write permission, or a message explaining which is missing. */
 async function requireWriteAccess(): Promise<
-  { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>> } | { error: string }
+  { restClient: Awaited<ReturnType<typeof createServerRestClient>> } | { error: string }
 > {
   await requireStaff("/candidates");
   if (!(await hasPermissionForUser("candidates.write"))) {
     return { error: "You need the Edit candidates permission." };
   }
-  return { supabase: await createSupabaseServerClient() };
+  return { restClient: await createServerRestClient() };
 }
 
 /**
@@ -144,12 +144,12 @@ export async function scheduleInterview(input: {
 }): Promise<InterviewMutation> {
   const access = await requireWriteAccess();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
   const slot = readSlot(input);
   if ("error" in slot) return { ok: false, error: slot.error };
 
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("id, stage, full_name")
     .eq("id", input.applicationId)
@@ -162,7 +162,7 @@ export async function scheduleInterview(input: {
 
   const interviewerId = input.interviewerProfileId?.trim() || null;
   if (interviewerId) {
-    const { data: interviewer } = await supabase
+    const { data: interviewer } = await restClient
       .from("user_profiles")
       .select("id")
       .eq("id", interviewerId)
@@ -171,7 +171,7 @@ export async function scheduleInterview(input: {
     if (!interviewer) return { ok: false, error: "That interviewer is not a staff member." };
   }
 
-  const { data: booked, error: insertError } = await supabase
+  const { data: booked, error: insertError } = await restClient
     .from("interview_schedules")
     .insert({
       application_id: input.applicationId,
@@ -215,7 +215,7 @@ export async function scheduleInterview(input: {
   revalidatePath("/interviews");
   return {
     ok: true,
-    interviews: await interviewsFor(supabase, input.applicationId),
+    interviews: await interviewsFor(restClient, input.applicationId),
     notified: channels.whatsapp === "queued",
     channels,
   };
@@ -237,12 +237,12 @@ export async function rescheduleInterview(input: {
 }): Promise<InterviewMutation> {
   const access = await requireWriteAccess();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
   const slot = readSlot(input);
   if ("error" in slot) return { ok: false, error: slot.error };
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("interview_schedules")
     .select(
       "id, application_id, status, scheduled_at, duration_minutes, meeting_link, interviewer_profile_id, applications(full_name)"
@@ -265,7 +265,7 @@ export async function rescheduleInterview(input: {
   const changingInterviewer = input.interviewerProfileId !== undefined;
   const interviewerId = input.interviewerProfileId?.trim() || null;
   if (changingInterviewer && interviewerId) {
-    const { data: interviewer } = await supabase
+    const { data: interviewer } = await restClient
       .from("user_profiles")
       .select("id")
       .eq("id", interviewerId)
@@ -281,7 +281,7 @@ export async function rescheduleInterview(input: {
   };
   if (changingInterviewer) patch.interviewer_profile_id = interviewerId;
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("interview_schedules")
     .update(patch)
     .eq("id", input.interviewId);
@@ -322,7 +322,7 @@ export async function rescheduleInterview(input: {
   revalidatePath("/interviews");
   return {
     ok: true,
-    interviews: await interviewsFor(supabase, owner.applicationId),
+    interviews: await interviewsFor(restClient, owner.applicationId),
     notified: channels.whatsapp === "queued",
     channels,
   };
@@ -340,9 +340,9 @@ export async function setInterviewStatus(input: {
 }): Promise<InterviewMutation> {
   const access = await requireWriteAccess();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("interview_schedules")
     .select(
       "id, application_id, scheduled_at, duration_minutes, meeting_link, status, applications(full_name)"
@@ -354,14 +354,14 @@ export async function setInterviewStatus(input: {
   if (existing.status === input.status) {
     return {
       ok: true,
-      interviews: await interviewsFor(supabase, existing.application_id),
+      interviews: await interviewsFor(restClient, existing.application_id),
     };
   }
   if (existing.status === "CANCELLED") {
     return { ok: false, error: "This interview was already cancelled — book a new slot instead." };
   }
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("interview_schedules")
     .update({ status: input.status })
     .eq("id", input.interviewId);
@@ -406,7 +406,7 @@ export async function setInterviewStatus(input: {
   revalidatePath("/interviews");
   return {
     ok: true,
-    interviews: await interviewsFor(supabase, existing.application_id),
+    interviews: await interviewsFor(restClient, existing.application_id),
     notified,
     channels,
   };
@@ -415,9 +415,9 @@ export async function setInterviewStatus(input: {
 /** Who can sit on the panel — staff in the recruiter's company, or all staff. */
 export async function listInterviewers(): Promise<InterviewerOption[]> {
   const user = await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  let query = supabase
+  let query = restClient
     .from("user_profiles")
     .select("id, full_name, role")
     .in("role", [...STAFF_ROLES])
@@ -477,8 +477,8 @@ export async function generateInterviewGuide(input: {
   }
   if (!hasAiProvider()) return { ok: false, error: "No AI provider key is configured." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
+  const restClient = await createServerRestClient();
+  const { data } = await restClient
     .from("applications")
     .select(
       "id, cv_text, ai_match_score, ai_screening_summary, ai_strengths, ai_gaps, ai_soft_skills, diversity_flags, job_openings(title, requirements)"
@@ -524,7 +524,7 @@ export async function generateInterviewGuide(input: {
   };
 
   // The candidate's own latest attempt, so a weak answer becomes a question.
-  const { data: attempt } = await supabase
+  const { data: attempt } = await restClient
     .from("candidate_attempts")
     .select("id")
     .eq("application_id", input.applicationId)
@@ -533,7 +533,7 @@ export async function generateInterviewGuide(input: {
     .maybeSingle();
 
   const { data: rows } = attempt
-    ? await supabase
+    ? await restClient
         .from("candidate_responses")
         .select("answer_text, score, max_score, assessment_questions(title)")
         .eq("attempt_id", attempt.id)

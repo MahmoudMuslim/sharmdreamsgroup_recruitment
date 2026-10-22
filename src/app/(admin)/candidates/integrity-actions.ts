@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/data-api/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 
@@ -44,12 +44,12 @@ export async function getAttemptIntegrity(
   accessToken: string
 ): Promise<AttemptIntegrity | null> {
   await requireStaff("/candidates");
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
 
-  const { data: attempt } = await supabase
+  const { data: attempt } = await restClient
     .from("candidate_attempts")
     .select(
       "id, access_token, status, total_score, max_score, integrity_score, integrity_flags, applications(full_name, job_openings(title))"
@@ -64,7 +64,7 @@ export async function getAttemptIntegrity(
     : attempt.applications;
   const job = application?.job_openings as { title?: string } | null;
 
-  const { data: events } = await supabase
+  const { data: events } = await restClient
     .from("integrity_events")
     .select(
       "id, event_type, severity, detail, device_label, occurred_at, assessment_questions(title)"
