@@ -7,8 +7,8 @@
  * reader was the assistant, which answered with a window of its own choosing —
  * the recruiter was shown a number of changes no screen could reproduce, and the
  * link offered `/activity`, a page built on a different table — the hiring-data
- * trail, which the chat has no tool for. So this module gives the read one scope
- * vocabulary, one page size, one search window and one disclosure, shared by the
+ * trail, whose own tool answers a different question. So this module gives the
+ * read one scope vocabulary, one page size, one search window and one disclosure,
  * console section and the chat tool exactly as the keys console's credential trail
  * does.
  *

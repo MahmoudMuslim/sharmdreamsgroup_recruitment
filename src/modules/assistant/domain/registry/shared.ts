@@ -89,6 +89,15 @@ import {
 import { writeAssistantFile } from "@/modules/assistant/infrastructure/fileWriter";
 import { reachNote } from "@/modules/assistant/domain/reach-note";
 import {
+  ACTIVITY_AREAS,
+  ACTIVITY_ENTITIES,
+  ACTIVITY_SURFACES,
+  ACTOR_KINDS,
+  TRAIL_WINDOWS,
+  describeActor,
+} from "@/modules/activity/domain/trail";
+import { TRAIL_PAGE_ROWS } from "@/modules/activity/domain/trailQuery";
+import {
   searchSuites,
   suiteReadNote,
   suiteSearchWords,
@@ -121,6 +130,7 @@ import {
   updateApplicationStage,
   type PipelineStage,
   getTemplates,
+  getTrail,
   assignTemplate,
   createJobOpening,
   deleteJobOpening,
@@ -386,6 +396,24 @@ const MODEL_ROWS = 30;
 const ITEM_STAT_ROWS = 8;
 
 /**
+ * Rows one change-trail answer lists.
+ *
+ * The second-smallest cap here, because a trail row is the second-wordiest thing
+ * the registry hands back after an item statistic: the `summary` column's own
+ * ceiling is 400 characters, `actor_label` 160, `entity_id` 64, and the actor
+ * line is clipped at 240 so a joined account name cannot widen it without bound.
+ * A fabricated row built from those ceilings and the longest words the
+ * vocabulary holds serialises to 932 characters; four of them beside this
+ * answer's own scope, page and reach notes measure 4,971 against the 6,000 clip.
+ * Five would fit only at 5,904 — 96 characters is not a bound once a summary
+ * quotes anything — and six overflow, which would make the envelope drop a row
+ * after the note had promised it. The page behind the read is the console's own
+ * 40 rows, and `total`, `pages` and the tally are counted over the whole cut,
+ * never over the listed ones, so a short window cannot shrink the claim.
+ */
+const ACTIVITY_TRAIL_ROWS = 4;
+
+/**
  * The storage cap sitting behind a folder answer, said once for both listings.
  *
  * `folderReadNote` can only describe the rows the tool was handed; this is the
@@ -413,6 +441,24 @@ function optionalChoice(args: ToolArgs, key: string, words: readonly string[]): 
     throw new ToolArgumentError(`"${key}" must be one of: ${words.join(", ")}.`);
   }
   return upper;
+}
+
+/**
+ * The same refusal for a vocabulary spelled in lowercase, sometimes with spaces.
+ *
+ * `optionalChoice` upper-cases, which would refuse every value of a set stored
+ * the way the trail stores its areas and surfaces (`"career site"`). The string
+ * is handed back exactly as the vocabulary spells it, because that is what the
+ * database filter compares against — a "career-site" guess would match nothing.
+ */
+function optionalWord(args: ToolArgs, key: string, words: readonly string[]): string | null {
+  const value = optionalStr(args, key);
+  if (value === undefined) return null;
+  const lower = value.toLowerCase();
+  if (!words.includes(lower)) {
+    throw new ToolArgumentError(`"${key}" must be one of: ${words.join(", ")}.`);
+  }
+  return lower;
 }
 
 /** The set an openings read counted, in the words its scope note quotes back. */
@@ -683,8 +729,13 @@ export function questionAsReply(ask: AssistantQuestion): string {
     .join("\n")}`;
 }
 
-export { ANSWER_ROWS, DOSSIER_ALERT_ROWS, FOLDER_FILE_ROWS, GATE_JOB_ROWS, INTERVIEW_OUTCOMES, ITEM_STAT_ROWS, MASTER_ENTITIES, MAX_OPTIONS, MAX_OPTION_CHARS, MODEL_ROWS, QUESTION_TYPES, ROOT_FILE_ROWS, STAFF_ROLES, ToolArgumentError, UNPLANNED_HIRE_ROWS, UUID_SHAPE, bool, choiceDrafts, clip, filedEntity, flagField, gateOptions, isoDateTime, jobDraft, listingCapNote, masterEntity, num, objArray, openingScopeWords, optionalChoice, optionalId, optionalStr, questionDraftFrom, questionType, report, str, strArray, textField };
+export { ANSWER_ROWS, ACTIVITY_TRAIL_ROWS, DOSSIER_ALERT_ROWS, FOLDER_FILE_ROWS, GATE_JOB_ROWS, INTERVIEW_OUTCOMES, ITEM_STAT_ROWS, MASTER_ENTITIES, MAX_OPTIONS, MAX_OPTION_CHARS, MODEL_ROWS, QUESTION_TYPES, ROOT_FILE_ROWS, STAFF_ROLES, ToolArgumentError, UNPLANNED_HIRE_ROWS, UUID_SHAPE, bool, choiceDrafts, clip, filedEntity, flagField, gateOptions, isoDateTime, jobDraft, listingCapNote, masterEntity, num, objArray, openingScopeWords, optionalChoice, optionalId, optionalStr, optionalWord, questionDraftFrom, questionType, report, str, strArray, textField };
 
+export { ACTIVITY_AREAS };
+export { ACTIVITY_ENTITIES };
+export { ACTIVITY_SURFACES };
+export { ACTOR_KINDS };
+export { describeActor };
 export { AGENDA_CHAT_ROW_LIMIT };
 export { AI_CAPABILITIES };
 export { ALL_SETTINGS };
@@ -713,6 +764,8 @@ export { SETTINGS_TRAIL_LIMIT };
 export { SETTINGS_TRAIL_SEARCH_SCAN };
 export { TASK_CATEGORIES };
 export { TASK_OWNERS };
+export { TRAIL_PAGE_ROWS };
+export { TRAIL_WINDOWS };
 export { TRAIL_LIMIT };
 export { TRAIL_SEARCH_SCAN };
 export { agendaReadNote };
@@ -775,6 +828,7 @@ export { getRowReport };
 export { getTemplateDetail };
 export { getTemplateItemStats };
 export { getTemplates };
+export { getTrail };
 export { importProspects };
 export { isChartView };
 export { isFiledEntity };

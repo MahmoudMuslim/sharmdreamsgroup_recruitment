@@ -558,14 +558,15 @@ export function GuidePanel({ open }: { open: Panel }) {
           flat paint.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
-          Two screens sit outside the assistant&rsquo;s reach:{" "}
-          <span className="font-semibold">Activity</span> reads the table built by
-          db/migrations/024_activity_log.sql and{" "}
-          <span className="font-semibold">Time Tracker</span> the one built by
-          db/migrations/025_time_entries.sql, and both are applied on this
-          database, so each page lists real rows. The chat simply has no tool for
-          either. On a database that has not applied one of those two files, its
-          page says the table has not been created yet and refuses its writes.
+          The <span className="font-semibold">Activity</span> console and{" "}
+          <span className="font-semibold">Time Tracker</span> both read tables that
+          are applied on this database — db/migrations/024_activity_log.sql and
+          db/migrations/025_time_entries.sql — so each page lists real rows. The
+          chat reads Activity through get_activity_trail;{" "}
+          <span className="font-semibold">Time Tracker</span> is the one screen it
+          has no tool for. On a database that has not applied one of those two
+          files, its page says the table has not been created yet and refuses its
+          writes.
         </p>
         </div>
       </details>

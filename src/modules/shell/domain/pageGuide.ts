@@ -382,7 +382,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Every read is capped, and the answer carries its own note saying what it left out; a long result is clipped.",
       "Never type a secret into this chat. The credential tool edits only non-secret fields, because your words are sent to the inference provider.",
       "Approvals live in the server's memory, so on a host that starts a fresh isolate per request the card answers that it is gone — and nothing changed.",
-      "The Time Tracker and the hiring-data activity trail are the two screens with no tools here: both tables are live and both pages work, but the chat reads neither.",
+      "The Time Tracker is the one screen with no tool here: its table is live and the page works, but the chat does not read it. The hiring-data activity trail does have one — get_activity_trail reads the same cut the /activity console shows, and its answers link back to that cut.",
       `Attachments are read, not stored: ${MAX_MATERIAL_CHARS.toLocaleString("en-GB")} characters of the file attached to your question reach the model and ${MAX_HISTORY_ATTACHMENT_CHARS.toLocaleString("en-GB")} of a file from an earlier turn, and the text the model is handed says how much of it was left out.`,
       "The 97-2003 Office files (.doc, .xls, .ppt) and pictures are refused, with the door that works named: Save As .docx, .xlsx or .pptx, or paste the words. A file that opens but holds no text, like a scanned page, is refused the same way.",
       `A built file is handed to your browser and nowhere else: it is not stored, so after a reload the card offers Build again and makes the file once more from the same rows. Its own size ceiling is ${formatBytes(MAX_FILE_BYTES)}.`,

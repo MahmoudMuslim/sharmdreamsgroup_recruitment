@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ChevronDown,
   ChevronRight,
@@ -250,6 +251,28 @@ export function ActivityView({
   const [open, setOpen] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // The cut in the address bar is the screen's own: the assistant's link carries
+  // the filters its answer read, and the page server-rendered that cut as
+  // `initial`. Arriving on this route again re-renders rather than remounts, so
+  // the last query taken from the address bar is tracked and re-applied here
+  // too. `pull` writes the URL itself, and this Next build patches
+  // `replaceState` into the router, so that write also moves `useSearchParams` —
+  // which is why the written query is recorded: a seed this screen wrote must
+  // not rewind the rows it just loaded to the server's first cut.
+  const params = useSearchParams();
+  const seed = params.toString();
+  const [written, setWritten] = useState<string | null>(null);
+  const [lastSeed, setLastSeed] = useState(seed);
+  if (seed !== lastSeed) {
+    setLastSeed(seed);
+    if (seed !== written) {
+      setView(initial);
+      setForm(formOf(initial.filters));
+      setOpen(null);
+      setError(null);
+    }
+  }
+
   function pull(patch: Partial<FormState>, page = 1) {
     const merged: FormState = { ...form, ...patch };
     setForm(merged);
@@ -281,7 +304,9 @@ export function ActivityView({
       // instead of replaying every chip the reader clicked.
       const params = queryToParams(result.view.filters);
       if (result.view.page > 1) params.set("page", String(result.view.page));
-      window.history.replaceState(null, "", `?${params.toString()}`);
+      const next = params.toString();
+      setWritten(next);
+      window.history.replaceState(null, "", `?${next}`);
     });
   }
 

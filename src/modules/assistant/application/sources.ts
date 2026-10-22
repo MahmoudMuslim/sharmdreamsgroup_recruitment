@@ -143,7 +143,9 @@ import {
   updateWhatsAppJob,
 } from "@/app/(admin)/whatsapp/actions";
 import { TASK_CATEGORIES, TASK_OWNERS } from "@/app/(admin)/onboarding/checklist";
+import { getTrail } from "@/app/(admin)/activity/actions";
 
+export { getTrail };
 export { getDashboardAnalytics };
 export { getCandidateList };
 export { getCandidateTally };

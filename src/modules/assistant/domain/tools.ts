@@ -352,6 +352,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "get_filing_drift",
   "list_model_routing",
   "get_audit_log",
+  "get_activity_trail",
   "list_credentials",
   "get_credential_audit",
   "get_candidate_dossier",

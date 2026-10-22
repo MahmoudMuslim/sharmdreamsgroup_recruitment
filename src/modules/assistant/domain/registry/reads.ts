@@ -2,6 +2,11 @@
 
 import type { AssistantTool, JobReadFilter, OutboxBucket, ProspectStage } from "./shared";
 import {
+  ACTIVITY_AREAS,
+  ACTIVITY_ENTITIES,
+  ACTIVITY_SURFACES,
+  ACTIVITY_TRAIL_ROWS,
+  ACTOR_KINDS,
   AI_CAPABILITIES,
   ALL_SETTINGS,
   ANALYTICS_WINDOWS,
@@ -26,6 +31,7 @@ import {
   chartForView,
   clip,
   companyNameById,
+  describeActor,
   filedEntity,
   filterCandidates,
   getAnalyticsReport,
@@ -42,6 +48,7 @@ import {
   getProspectProfile,
   getRowReport,
   getTemplates,
+  getTrail,
   isChartView,
   listJobOpenings,
   listModelRouting,
@@ -59,11 +66,13 @@ import {
   optionalChoice,
   optionalId,
   optionalStr,
+  optionalWord,
   outboxScopeNote,
   poolScopeNote,
   projectMasterList,
   prospectSearchWords,
   queueSearchWords,
+  reachNote,
   readFilingDrift,
   searchModels,
   searchOpenings,
@@ -77,6 +86,8 @@ import {
   str,
   suiteReadNote,
   suiteSearchWords,
+  TRAIL_PAGE_ROWS,
+  TRAIL_WINDOWS,
   trailFind,
   trailGroup,
   trailPage,
@@ -841,6 +852,101 @@ export const reads: readonly AssistantTool[] = [
           to: entry.to,
           actor: entry.actor,
           at: entry.createdAt,
+        })),
+      };
+    },
+  },
+  {
+    name: "get_activity_trail",
+    label: "Reading the change trail",
+    description:
+      "The Activity console (/activity), row for row: every change the portal recorded against the hiring data or the platform, newest first — a recruiter moving a candidate, the screening engine scoring an applicant, a candidate submitting a test, the scheduler closing an expired link, a setting or team account saved. Each row says who or what made the change, when, through which screen (`via`), which record it touched, and what moved. This is the whole portal, not one console: for the Platform → Change trail of settings and credentials use get_audit_log, which reads a different table. `window`, `area`, `actor_kind`, `surface`, `entity` and `query` are the screen's own filters, so an answer and the click-through describe the same rows; `page` walks the cut newest-first exactly as the console's pager does. The note opens with how many changes the cut holds and how many of them this answer lists — a page is 40 rows and an answer only a handful — so never call the listed rows the whole cut, and quote the total and page from the note rather than counting the rows it sent. `trail_tally` is the all-time split by who made a change over the entire table: it is not the cut, so do not present it as one. A refusal (trail_refused) is about the reader's permission, not an empty trail. Named fields a change moved are not in this answer; the console shows them on each row and get_audit_log carries them for settings.",
+    args: {
+      window: `string — optional, one of ${TRAIL_WINDOWS.map((option) => option.key).join("|")} (the console's ?window=): how far back the read looks, default ${TRAIL_WINDOWS[2].key} — ${TRAIL_WINDOWS[2].label.toLowerCase()}`,
+      area: `string — optional, one of ${ACTIVITY_AREAS.join("|")}: which part of the portal the change touched`,
+      actor_kind: `string — optional, one of ${ACTOR_KINDS.join("|")}: who made the change, not who it was about — the console's actor pills`,
+      surface: `string — optional, one of ${ACTIVITY_SURFACES.join("|")}: the door the change arrived through (the console's ?surface=)`,
+      entity: `string — optional, one of ${ACTIVITY_ENTITIES.join("|")}: the kind of record a row points at`,
+      entity_id: "string — optional, the uuid of one record, exactly as another read returned it: with `entity`, answers \"the history of this application\"",
+      query: "string — optional, the console's search box: matched against the stored summary and the actor label",
+      page: `number — optional, 1-based, ${TRAIL_PAGE_ROWS} rows a page: 1 is the newest, 2 the rows before them, and the note says which page it read`,
+    },
+    run: async (args) => {
+      const window = optionalWord(args, "window", TRAIL_WINDOWS.map((option) => option.key));
+      const actorKind = optionalChoice(args, "actor_kind", ACTOR_KINDS);
+      const surface = optionalWord(args, "surface", ACTIVITY_SURFACES);
+      const area = optionalWord(args, "area", ACTIVITY_AREAS);
+      const entity = optionalWord(args, "entity", ACTIVITY_ENTITIES);
+      const entityId = optionalId(args, "entity_id");
+      const query = optionalStr(args, "query");
+      if (entityId !== null && entity === null) {
+        throw new ToolArgumentError(
+          "\"entity_id\" narrows one record, so it needs \"entity\" to say what kind of record it is — the same words this tool lists."
+        );
+      }
+      const askedPage = args.page;
+      if (askedPage !== undefined && askedPage !== null && askedPage !== "") {
+        const parsed = typeof askedPage === "number" ? askedPage : Number(String(askedPage).trim());
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          throw new ToolArgumentError(
+            `"page" must be a whole number from 1 — 1 is the newest ${TRAIL_PAGE_ROWS} rows of the cut, 2 the rows before them.`
+          );
+        }
+      }
+
+      const result = await getTrail({
+        area: area ?? undefined,
+        actorKind: actorKind ?? undefined,
+        surface: surface ?? undefined,
+        entity: entity ?? undefined,
+        entityId: entityId ?? undefined,
+        query: query === undefined ? undefined : query,
+        window: window ?? undefined,
+        page: askedPage === undefined || askedPage === null || askedPage === "" ? undefined : askedPage,
+      });
+
+      if (!result.ok || !result.view) {
+        // A refusal in its own words. An empty list would let the model report
+        // "nothing has changed", which is a sentence about permissions.
+        return {
+          trail_refused: true,
+          trail_note: result.error ?? "The change trail could not be read.",
+          trail: [],
+        };
+      }
+
+      const view = result.view;
+      const listed = view.rows.slice(0, ACTIVITY_TRAIL_ROWS);
+      return {
+        // First, because the result is clipped at a fixed length: a caveat that
+        // sits behind the rows it describes is cut off along with them.
+        trail_note: `${reachNote("changes in this cut", view.total, listed.length)} Cut: ${view.scope}. ${
+          view.pages > 1
+            ? `This read page ${view.page} of ${view.pages} — ${view.size} rows a page, newest first — and the console opens the same page of the same cut.`
+            : "That cut fits on one page."
+        } trail_tally is all-time over the whole trail, not this cut.`,
+        trail_scope: view.scope,
+        trail_total: view.total,
+        trail_page: view.page,
+        trail_pages: view.pages,
+        trail_size: view.size,
+        trail_tally: view.tally,
+        // The cut as the server accepted it, so the link builder rebuilds the
+        // read rather than trusting the arguments the model typed.
+        trail_filters: view.filters,
+        trail: listed.map((row) => ({
+          at: row.created_at,
+          area: row.area,
+          action: row.action,
+          entity: row.entity,
+          entity_id: row.entity_id,
+          who: row.actor_kind,
+          // The label is column-capped at 160, but the name a row joins in is
+          // not: clip the composed line so one long account name cannot push a
+          // row past this answer's budget.
+          actor: clip(describeActor(row), 240),
+          via: row.via,
+          summary: row.summary,
         })),
       };
     },

@@ -17,6 +17,10 @@ import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
 import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import { trailProvider, trailScope } from "@/modules/settings/domain/credentialTrail";
 import { trailGroup, trailGroupById } from "@/modules/settings/domain/settingsTrail";
+import {
+  queryToParams,
+  type AppliedFilters,
+} from "@/modules/activity/domain/trailQuery";
 import { MASTER_LIST_WORDS, masterListEntity } from "@/modules/settings/domain/masterDataLists";
 import type { StaffLink } from "@/lib/auth/staffRoutes";
 import type { ToolArgs } from "./tools";
@@ -198,6 +202,12 @@ const SETTINGS_TRAIL_CONSOLE: AssistantLink = {
   label: "Open the change trail",
 };
 
+/** The hiring-data trail console, when the answer read no narrower cut. */
+const ACTIVITY_TRAIL: AssistantLink = {
+  href: "/activity",
+  label: "Open the activity trail",
+};
+
 /**
  * The setting keys a settings answer or write is about.
  *
@@ -357,8 +367,9 @@ function masterListView(value: unknown): AssistantLink {
  * `?trail=`, `?page=` and `?find=` are all applied to the page's own read, so the
  * click lands on the rows the answer counted rather than on the newest rows of every
  * group. An unscoped read, and a refused one, both go to the section itself — the
- * trail is listed by this console and nothing else in the chat, so a settings answer must
- * never point at `/activity`, which is a different table on a page the chat cannot read.
+ * settings trail is a different table from the hiring-data trail at `/activity`,
+ * which `get_activity_trail` answers for, so a settings answer must never point
+ * there: the two consoles list different rows.
  */
 function settingsTrailView(result: unknown): AssistantLink {
   const record =
@@ -393,6 +404,41 @@ function settingsTrailView(result: unknown): AssistantLink {
       ["page", page === null ? null : String(page)],
       ["find", find],
     ])}`,
+    label: `Open ${subject}${page === null ? "" : `, page ${page}`}`,
+  };
+}
+
+/**
+ * The Activity console, opened on the cut the answer read.
+ *
+ * Every filter is a query parameter the page's own read applies and `?page=` is
+ * its pager, so the click lands on the rows the answer counted rather than on
+ * the newest rows of the whole trail. The cut comes from the server's applied
+ * filters, not from the model's arguments: `resolveTrailQuery` drops a value it
+ * does not accept, and a link carrying the dropped value would look filtered
+ * while the page held everything. The page the answer read is the one to carry,
+ * because a request past the end is answered with the last page.
+ */
+function activityTrailView(result: unknown): AssistantLink {
+  const record =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as { trail_filters?: unknown; trail_page?: unknown })
+      : {};
+  const filters = record.trail_filters as AppliedFilters | undefined;
+  if (!filters || typeof filters !== "object") return ACTIVITY_TRAIL;
+
+  const params = queryToParams(filters);
+  const page =
+    typeof record.trail_page === "number" && record.trail_page > 1 ? record.trail_page : null;
+  if (page !== null) params.set("page", String(page));
+
+  // The console's opening cut is the last 30 days, so a link that says only that
+  // lands on the page the plain URL would; carrying it would imply a filter.
+  const search = params.toString();
+  const href: StaffLink = search === "window=30d" ? "/activity" : `/activity?${search}`;
+  const subject = filters.query ? `the changes matching “${filters.query}”` : "the activity trail";
+  return {
+    href,
     label: `Open ${subject}${page === null ? "" : `, page ${page}`}`,
   };
 }
@@ -597,6 +643,8 @@ export function linkForTool(
       return filingDriftView(args, result);
     case "get_audit_log":
       return settingsTrailView(result);
+    case "get_activity_trail":
+      return activityTrailView(result);
     case "message_candidates":
       return { href: "/candidates", label: "Open the candidate pipeline" };
     case "message_prospects":
