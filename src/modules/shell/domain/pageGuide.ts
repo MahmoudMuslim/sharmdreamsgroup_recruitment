@@ -290,21 +290,27 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   },
 
   "/interviews": {
-    purpose: "The panel calendar: who is being seen, when, by whom, and what came of it.",
+    purpose:
+      "The panel calendar: who is being seen, when, by whom, which round it is, and what came of it.",
     shows: [
-      "Cards grouped by day with the time, status, candidate, role, duration and interviewer, and a line saying how many are still awaiting an outcome in the range on screen.",
+      "Cards grouped by day with the time, status, candidate, role, round, duration and interviewer, and a line saying how many are still awaiting an outcome in the range on screen.",
+      "Each panel that has happened carries its scorecards: who wrote one, their four marks, the panel average and the written feedback — or a line saying it has not been scored yet.",
     ],
     use: [
       "Cut the view by Today / Next 7 days / Next 30 days / Next 90 days / Last 30 days, and by status: All, Awaiting outcome, Completed, No-show, Cancelled.",
-      "Move reschedules — date and time typed in the organisation's timezone, duration, interviewer, meeting link — and tells the candidate the slot changed.",
+      "Move reschedules — date and time typed in the organisation's timezone, duration, interviewer, round, meeting link — and tells the candidate the slot changed.",
+      "Add a scorecard rates the panel from 1 to 5 on Technical, Communication, Problem solving and Culture, with optional notes. Every interviewer's row is kept separately, and the button reopens only your own.",
       "Record Completed, No-show or Cancelled. Only a move messages the candidate; an outcome never does.",
       "Join opens the meeting link and the candidate's name opens their record.",
     ],
     edges: [
+      "Rounds and scorecards arrive with db/migrations/032_interview_scorecards.sql. Until that file is applied the page says so, the round pickers are hidden and no scorecard can be saved; the calendar itself keeps working.",
+      "Only a panel whose slot has passed, or one marked Completed, offers the scorecard desk. A cancelled panel and a no-show have nothing to score.",
+      "Any staff member can write their own scorecard without Edit candidates — the judgement of the person who sat the panel is the record — while every staff reader can see all of them. The candidate never does.",
       "The agenda reads 30 days back and 90 days forward. Panels booked past either edge are counted and named, not listed.",
       "A slot that has passed cannot be moved — record what happened, or book a new panel from the candidate.",
       "Panels are scheduled from a candidate's profile, and the interview guide is drafted there, not here.",
-      "Reading needs only a staff session; moving or recording needs Edit candidates.",
+      "Reading needs only a staff session; moving a panel or recording an outcome needs Edit candidates.",
     ],
   },
 

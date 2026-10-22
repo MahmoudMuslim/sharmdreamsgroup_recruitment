@@ -18,6 +18,12 @@ import {
   type MessagingReport,
 } from "@/modules/omnichannel/application/candidate-notifications";
 import { INTERVIEW_SELECT, toInterviewRecord, type InterviewRecord } from "./interviews-model";
+import {
+  INTERVIEW_ROUNDS,
+  ROUND_WRITE_REFUSAL,
+  isInterviewRound,
+  isMissingSchemaError,
+} from "@/modules/interviews/domain/interviewScorecard";
 
 export type { InterviewRecord } from "./interviews-model";
 
@@ -141,6 +147,12 @@ export async function scheduleInterview(input: {
   durationMinutes: number;
   meetingLink?: string | null;
   interviewerProfileId?: string | null;
+  /**
+   * Which round this panel is. Optional because migration 032 is authored and
+   * not applied: without it the insert leaves the column out entirely rather
+   * than naming a column the database does not have.
+   */
+  round?: string | null;
 }): Promise<InterviewMutation> {
   const access = await requireWriteAccess();
   if ("error" in access) return { ok: false, error: access.error };
@@ -148,6 +160,11 @@ export async function scheduleInterview(input: {
 
   const slot = readSlot(input);
   if ("error" in slot) return { ok: false, error: slot.error };
+
+  const roundId = input.round?.trim() || null;
+  if (roundId && !isInterviewRound(roundId)) {
+    return { ok: false, error: `The round must be one of: ${INTERVIEW_ROUNDS.join(", ")}.` };
+  }
 
   const { data: application } = await restClient
     .from("applications")
@@ -181,11 +198,18 @@ export async function scheduleInterview(input: {
       meeting_link: slot.link,
       calendar_provider: "MANUAL",
       status: "SCHEDULED",
+      // Only named when the caller named one: the column arrives with 032.
+      ...(roundId ? { round: roundId } : {}),
     })
     .select("id")
     .maybeSingle();
 
-  if (insertError) return { ok: false, error: insertError.message };
+  if (insertError) {
+    if (roundId && isMissingSchemaError(insertError)) {
+      return { ok: false, error: ROUND_WRITE_REFUSAL };
+    }
+    return { ok: false, error: insertError.message };
+  }
 
   await recordActivity({
     area: "interviews",
@@ -198,6 +222,7 @@ export async function scheduleInterview(input: {
       scheduled_at: slot.iso,
       duration_minutes: slot.duration,
       interviewer_profile_id: interviewerId,
+      round: roundId,
     },
   });
 
@@ -226,7 +251,9 @@ export async function scheduleInterview(input: {
  *
  * `interviewerProfileId` is only written when the caller names one: an omitted
  * field means "same panel, new time", while an explicit null or empty string
- * clears the assignment.
+ * clears the assignment. `round` follows the same rule for the same reason — an
+ * agenda that moves a slot without touching its round must not erase it — and an
+ * explicit null clears the round rather than guessing one.
  */
 export async function rescheduleInterview(input: {
   interviewId: string;
@@ -234,6 +261,7 @@ export async function rescheduleInterview(input: {
   durationMinutes: number;
   meetingLink?: string | null;
   interviewerProfileId?: string | null;
+  round?: string | null;
 }): Promise<InterviewMutation> {
   const access = await requireWriteAccess();
   if ("error" in access) return { ok: false, error: access.error };
@@ -241,6 +269,12 @@ export async function rescheduleInterview(input: {
 
   const slot = readSlot(input);
   if ("error" in slot) return { ok: false, error: slot.error };
+
+  const changingRound = input.round !== undefined;
+  const nextRound = input.round?.trim() || null;
+  if (changingRound && nextRound && !isInterviewRound(nextRound)) {
+    return { ok: false, error: `The round must be one of: ${INTERVIEW_ROUNDS.join(", ")}.` };
+  }
 
   const { data: existing } = await restClient
     .from("interview_schedules")
@@ -280,13 +314,19 @@ export async function rescheduleInterview(input: {
     meeting_link: slot.link,
   };
   if (changingInterviewer) patch.interviewer_profile_id = interviewerId;
+  if (changingRound) patch.round = nextRound;
 
   const { error } = await restClient
     .from("interview_schedules")
     .update(patch)
     .eq("id", input.interviewId);
 
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    if (changingRound && isMissingSchemaError(error)) {
+      return { ok: false, error: ROUND_WRITE_REFUSAL };
+    }
+    return { ok: false, error: error.message };
+  }
 
   const assigned = changingInterviewer ? interviewerId : (existing.interviewer_profile_id ?? null);
 
@@ -304,6 +344,7 @@ export async function rescheduleInterview(input: {
       duration_minutes: slot.duration,
       previous_interviewer_profile_id: existing.interviewer_profile_id ?? null,
       interviewer_profile_id: assigned,
+      ...(changingRound ? { round: nextRound } : {}),
       meeting_link_changed: (existing.meeting_link ?? "") !== (slot.link ?? ""),
     },
   });

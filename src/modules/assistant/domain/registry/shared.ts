@@ -227,6 +227,15 @@ import {
   AGENDA_CHAT_ROW_LIMIT,
   agendaReadNote,
   agendaWindowDays,
+  getInterviewRoundSupport,
+  getInterviewScorecardLayer,
+  saveInterviewScorecard,
+  INTERVIEW_ROUNDS,
+  INTERVIEW_ROUND_LABELS,
+  panelAverage,
+  roundLabel,
+  scorecardAverage,
+  scorecardsFor,
   getOnboardingData,
   generateOnboardingPlan,
   deleteTask,
@@ -877,6 +886,15 @@ export { getEmailOutbox };
 export { getFileBrowserData };
 export { getGateConsoleData };
 export { getInterviewAgenda };
+export { getInterviewRoundSupport };
+export { getInterviewScorecardLayer };
+export { saveInterviewScorecard };
+export { INTERVIEW_ROUNDS };
+export { INTERVIEW_ROUND_LABELS };
+export { panelAverage };
+export { roundLabel };
+export { scorecardAverage };
+export { scorecardsFor };
 export { getJobApplicants };
 export { getJobOpening };
 export { getMasterData };

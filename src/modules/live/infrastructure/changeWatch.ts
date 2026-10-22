@@ -65,6 +65,16 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     paths: ["/interviews", "/candidates", "/dashboard"],
   },
   {
+    // A separate row per interviewer, so a colleague's scorecard is a different
+    // table from the panel itself. `round` is deliberately not added to the watch
+    // above: a missing column refuses a whole hashed area, and that would take
+    // the agenda's live reload down with it while 032 is unapplied.
+    area: "interview scorecards",
+    table: "interview_scorecards",
+    stamp: "updated_at",
+    paths: ["/interviews"],
+  },
+  {
     area: "openings",
     table: "job_openings",
     columns: ["id", "title", "status", "closing_at", "department"],

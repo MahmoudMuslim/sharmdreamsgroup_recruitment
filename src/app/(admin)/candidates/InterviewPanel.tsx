@@ -19,6 +19,14 @@ import {
   type InterviewMutation,
   type InterviewRecord,
 } from "./interview-actions";
+import {
+  INTERVIEW_ROUND_LABELS,
+  INTERVIEW_ROUNDS,
+} from "@/modules/interviews/domain/interviewScorecard";
+import {
+  getInterviewRoundSupport,
+  type RoundSupport,
+} from "@/app/(admin)/interviews/scorecard-actions";
 
 function statusTone(status: string) {
   if (status === "COMPLETED") return "success" as const;
@@ -93,6 +101,8 @@ export function InterviewPanel({
 
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("45");
+  const [round, setRound] = useState("");
+  const [roundSupport, setRoundSupport] = useState<RoundSupport | null>(null);
   const [interviewerId, setInterviewerId] = useState("");
   const [meetingLink, setMeetingLink] = useState("");
 
@@ -102,6 +112,24 @@ export function InterviewPanel({
       setInterviewers(await listInterviewers());
     } catch {
       setError("Could not load the interviewer list.");
+    }
+  }
+
+  /**
+   * Asks, once, whether this database has the round column.
+   *
+   * Probed on first open rather than in the page render — the booking form is a
+   * secondary surface, and a round the database cannot hold must not be sent as
+   * part of a booking that would otherwise succeed. A probe that fails for any
+   * other reason hides the select and books without a round, which is what the
+   * portal did before 032 existed.
+   */
+  async function loadRoundSupport() {
+    if (roundSupport) return;
+    try {
+      setRoundSupport(await getInterviewRoundSupport());
+    } catch {
+      setRoundSupport({ available: false, note: null });
     }
   }
 
@@ -116,15 +144,21 @@ export function InterviewPanel({
       // Left stale, the select still held whoever was picked for the last panel
       // opened, so moving one interview reassigned another.
       setInterviewerId(existing.interviewer_profile_id ?? "");
+      // A move never carries a round: the agenda owns that field, and an omitted
+      // round leaves the panel's existing one exactly where it was.
+      setRound("");
     } else {
       setEditingId(null);
       setWhen("");
       setDuration("45");
       setMeetingLink("");
       setInterviewerId("");
+      // The first panel on a role is usually the screening one.
+      setRound("SCREENING");
     }
     setShowForm(true);
     void loadInterviewers();
+    void loadRoundSupport();
   }
 
   function applyResult(result: InterviewMutation, message: string) {
@@ -157,7 +191,13 @@ export function InterviewPanel({
     try {
       const result = editingId
         ? await rescheduleInterview({ interviewId: editingId, ...payload })
-        : await scheduleInterview({ applicationId, ...payload });
+        : await scheduleInterview({
+            applicationId,
+            ...payload,
+            // Only sent once the probe says the column exists: a booking must not
+            // fail on a field the database has never heard of.
+            ...(roundSupport?.available ? { round: round || null } : {}),
+          });
 
       if (!result.ok) {
         setError(result.error ?? "Could not save the interview.");
@@ -335,6 +375,27 @@ export function InterviewPanel({
                       ))}
                     </Select>
                   </Field>
+                  {!editingId && roundSupport?.available && (
+                    <Field
+                      label="Round"
+                      htmlFor="interview-round"
+                      className="sm:col-span-2"
+                      hint="Which stage of the process this panel is. A move keeps the round it already has."
+                    >
+                      <Select
+                        id="interview-round"
+                        value={round}
+                        onChange={(event) => setRound(event.target.value)}
+                      >
+                        <option value="">No round</option>
+                        {INTERVIEW_ROUNDS.map((id) => (
+                          <option key={id} value={id}>
+                            {INTERVIEW_ROUND_LABELS[id]}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
                   <Field label="Interviewer" htmlFor="interview-interviewer" className="sm:col-span-2">
                     <Select
                       id="interview-interviewer"
@@ -364,6 +425,12 @@ export function InterviewPanel({
                     />
                   </Field>
                 </div>
+
+                {!editingId && roundSupport && !roundSupport.available && roundSupport.note && (
+                  <p className="mt-3 text-[11px] leading-relaxed text-brand-ink/45">
+                    {roundSupport.note}
+                  </p>
+                )}
 
                 <FormMessage error={error} success={notice} />
 

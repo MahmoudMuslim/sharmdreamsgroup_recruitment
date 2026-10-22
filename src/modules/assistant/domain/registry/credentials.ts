@@ -31,6 +31,7 @@ import {
   getFileBrowserData,
   getGateConsoleData,
   getInterviewAgenda,
+  getInterviewScorecardLayer,
   getOnboardingData,
   getQuestionsForEditor,
   getTemplateDetail,
@@ -43,9 +44,12 @@ import {
   num,
   openFolder,
   optionalStr,
+  panelAverage,
   providerById,
   reachNote,
+  roundLabel,
   saveCredential,
+  scorecardsFor,
   searchEmails,
   searchFiles,
   str,
@@ -595,7 +599,7 @@ export const credentials: readonly AssistantTool[] = [
     name: "list_interviews",
     label: "Reading the interview agenda",
     description:
-      "Interviews booked around today with candidate, role, interviewer, time, length, meeting link and status (SCHEDULED, COMPLETED, NO_SHOW, CANCELLED). Gives the interview ids that reschedule and outcome tools need. Read `agenda_note` before saying \"all\" or counting these rows: it names the window asked for, whether that window is wider than the agenda page can list, and whether the list was cut.",
+      "Interviews booked around today with candidate, role, interviewer, round, time, length, meeting link and status (SCHEDULED, COMPLETED, NO_SHOW, CANCELLED), plus how many scorecards each panel holds and their average. Gives the interview ids that reschedule, outcome and scorecard tools need. Read `agenda_note` before saying \"all\" or counting these rows: it names the window asked for, whether that window is wider than the agenda page can list, and whether the list was cut. `schema_note`, when present, says rounds and scorecards are not on this database yet — the round and scorecard fields are then absent from every row, which is not the same as none being recorded.",
     args: {
       past_days:
         "number — optional, how many days back to include, defaults to the agenda's own 30",
@@ -608,22 +612,34 @@ export const credentials: readonly AssistantTool[] = [
         futureDays: args.future_days === undefined ? undefined : num(args, "future_days"),
       });
       const rows = await getInterviewAgenda(days);
-      const shown = rows.slice(0, AGENDA_CHAT_ROW_LIMIT).map((row) => ({
-        id: row.id,
-        application_id: row.application_id,
-        candidate: row.candidate_name,
-        tracking_code: row.tracking_code,
-        job_title: row.job_title,
-        interviewer: row.interviewer_name,
-        scheduled_at: row.scheduled_at,
-        duration_minutes: row.duration_minutes,
-        meeting_link: row.meeting_link,
-        status: row.status,
-      }));
+      const listed = rows.slice(0, AGENDA_CHAT_ROW_LIMIT);
+      const layer = await getInterviewScorecardLayer(listed.map((row) => row.id));
+      const shown = listed.map((row) => {
+        const cards = scorecardsFor(layer, row.id);
+        return {
+          id: row.id,
+          application_id: row.application_id,
+          candidate: row.candidate_name,
+          tracking_code: row.tracking_code,
+          job_title: row.job_title,
+          interviewer: row.interviewer_name,
+          scheduled_at: row.scheduled_at,
+          duration_minutes: row.duration_minutes,
+          meeting_link: row.meeting_link,
+          status: row.status,
+          // Left out while 032 is unapplied, never set to null: a null round
+          // reads as "none was recorded", which is a different claim.
+          ...(layer.roundsAvailable ? { round: roundLabel(layer.rounds[row.id]) } : {}),
+          ...(layer.scorecardsAvailable
+            ? { scorecards: cards.length, panel_average: panelAverage(cards) }
+            : {}),
+        };
+      });
       return {
         // First key on purpose: the result handed to the model is clipped, so a
         // note that sat behind eighty panels could be cut off along with them.
         agenda_note: agendaReadNote({ ...days, total: rows.length, shown: shown.length }),
+        ...(layer.note ? { schema_note: layer.note } : {}),
         interviews: shown,
       };
     },

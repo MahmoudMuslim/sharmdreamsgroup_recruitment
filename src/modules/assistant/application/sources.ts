@@ -123,6 +123,19 @@ import {
   agendaReadNote,
   agendaWindowDays,
 } from "@/app/(admin)/interviews/agenda-model";
+import {
+  getInterviewRoundSupport,
+  getInterviewScorecardLayer,
+  saveInterviewScorecard,
+} from "@/app/(admin)/interviews/scorecard-actions";
+import {
+  INTERVIEW_ROUND_LABELS,
+  INTERVIEW_ROUNDS,
+  panelAverage,
+  roundLabel,
+  scorecardAverage,
+  scorecardsFor,
+} from "@/modules/interviews/domain/interviewScorecard";
 import { getOnboardingData } from "@/app/(admin)/onboarding/actions";
 import { generateOnboardingPlan } from "@/app/(admin)/onboarding/onboarding-actions";
 import { deleteTask, saveTask, setTaskCompleted } from "@/app/(admin)/onboarding/task-actions";
@@ -232,6 +245,15 @@ export { getInterviewAgenda };
 export { AGENDA_CHAT_ROW_LIMIT };
 export { agendaReadNote };
 export { agendaWindowDays };
+export { getInterviewRoundSupport };
+export { getInterviewScorecardLayer };
+export { saveInterviewScorecard };
+export { INTERVIEW_ROUNDS };
+export { INTERVIEW_ROUND_LABELS };
+export { panelAverage };
+export { roundLabel };
+export { scorecardAverage };
+export { scorecardsFor };
 export { getOnboardingData };
 export { generateOnboardingPlan };
 export { deleteTask };

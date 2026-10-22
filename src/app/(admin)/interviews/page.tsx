@@ -6,6 +6,7 @@ import {
   isInterviewStatus,
 } from "./agenda-model";
 import { countInterviewsOutsideAgenda, getInterviewAgenda } from "./actions";
+import { getInterviewScorecardLayer } from "./scorecard-actions";
 import { InterviewAgenda } from "./InterviewAgenda";
 import { listInterviewers } from "@/app/(admin)/candidates/interview-actions";
 import { requireStaff } from "@/lib/auth/session";
@@ -44,13 +45,17 @@ export default async function InterviewsPage({
   // the range rails measure from the same "now" the window was cut with.
   const readAt = new Date().toISOString();
 
-  const [, interviews, timeZone, canWrite, outsideAgenda] = await Promise.all([
+  const [user, interviews, timeZone, canWrite, outsideAgenda] = await Promise.all([
     requireStaff("/interviews"),
     getInterviewAgenda(),
     getOrganisationTimeZone(),
     hasPermissionForUser("candidates.write"),
     countInterviewsOutsideAgenda(),
   ]);
+  // Rounds and scorecards are read beside the agenda, not with it: one missing
+  // `round` column would fail the whole schedule select while 032 is unapplied.
+  // The layer carries its own note for that case and names the migration.
+  const scorecardLayer = await getInterviewScorecardLayer(interviews.map((row) => row.id));
   // Read in the render rather than on first click, so opening an editor never
   // stalls on a round-trip for the panel roster.
   const interviewers = canWrite ? await listInterviewers() : [];
@@ -76,6 +81,8 @@ export default async function InterviewsPage({
         initialStatus={status}
         outsideAgenda={outsideAgenda}
         readAt={readAt}
+        viewerId={user.profileId}
+        scorecardLayer={scorecardLayer}
       />
 
       <Card className="mt-6 flex items-start gap-4 p-5">
@@ -87,9 +94,15 @@ export default async function InterviewsPage({
           <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
             The first invitation is sent from a candidate&apos;s profile, because booking needs the
             application, the stage and the notice together. Everything after that happens here:
-            move a panel to a new slot, change who interviews, or record the outcome — completed,
-            no-show, cancelled — without leaving the calendar. A move is messaged to the candidate
-            over every channel that is switched on; an outcome stays internal.
+            move a panel to a new slot, change who interviews and which round it is, or record the
+            outcome — completed, no-show, cancelled — without leaving the calendar. A move is
+            messaged to the candidate over every channel that is switched on; an outcome stays
+            internal.
+          </p>
+          <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/60">
+            After the conversation, each interviewer adds their own scorecard: four marks from 1 to
+            5 and, if they want, a written note. Scorecards are kept per person — the next
+            interviewer can read what the last one thought — and the candidate never sees them.
           </p>
         </div>
       </Card>

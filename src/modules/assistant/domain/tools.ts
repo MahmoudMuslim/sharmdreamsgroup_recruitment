@@ -361,6 +361,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "get_item_statistics",
   "get_attempt_grades",
   "list_interviews",
+  "read_interview_scorecards",
   "list_onboarding_plans",
   "list_files",
   "list_gate_questions",
