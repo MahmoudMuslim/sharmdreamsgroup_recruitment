@@ -604,12 +604,19 @@ function flagField(record: Record<string, unknown>, key: string): boolean {
   return value === true || value === "true";
 }
 
-/** `[{ text, is_correct }, …]` as the question editor expects it. */
+/** `[{ text, is_correct? , score? }, …]` as the question editor expects it. */
 function choiceDrafts(args: ToolArgs): ChoiceDraft[] {
   return objArray(args, "options").map((option) => ({
     text: textField(option, "text"),
     is_correct: flagField(option, "is_correct"),
+    score: scoreField(option),
   }));
+}
+
+/** A judgment response's 0–100 percentage, or null when the caller sent none. */
+function scoreField(record: Record<string, unknown>): number | null {
+  const value = record.score;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** `[{ label, passes }, …]` as the viability gate expects it. */
@@ -620,7 +627,13 @@ function gateOptions(args: ToolArgs): GateOption[] {
   }));
 }
 
-const QUESTION_TYPES: QuestionType[] = ["MULTIPLE_CHOICE", "CASE_STUDY", "EXCEL_MODEL", "VIDEO_PITCH"];
+const QUESTION_TYPES: QuestionType[] = [
+  "MULTIPLE_CHOICE",
+  "SITUATIONAL_JUDGMENT",
+  "CASE_STUDY",
+  "EXCEL_MODEL",
+  "VIDEO_PITCH",
+];
 const STAFF_ROLES: AssignableStaffRole[] = ["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"];
 const INTERVIEW_OUTCOMES = ["COMPLETED", "NO_SHOW", "CANCELLED"] as const;
 const MASTER_ENTITIES: MasterEntity[] = [
@@ -685,10 +698,13 @@ function questionType(value: string): QuestionType {  const upper = value.toUppe
  */
 function questionDraftFrom(args: ToolArgs): QuestionDraft {
   const type = questionType(str(args, "question_type"));
-  const options = type === "MULTIPLE_CHOICE" ? choiceDrafts(args) : [];
-  if (type === "MULTIPLE_CHOICE" && !args.options) {
+  const picksOptions = type === "MULTIPLE_CHOICE" || type === "SITUATIONAL_JUDGMENT";
+  const options = picksOptions ? choiceDrafts(args) : [];
+  if (picksOptions && !args.options) {
     throw new ToolArgumentError(
-      '"options" is required for a MULTIPLE_CHOICE question: [{"text","is_correct"}, …].'
+      type === "SITUATIONAL_JUDGMENT"
+        ? '"options" is required for a SITUATIONAL_JUDGMENT question: [{"text","score"}, …], at least two with different scores.'
+        : '"options" is required for a MULTIPLE_CHOICE question: [{"text","is_correct"}, …].'
     );
   }
 

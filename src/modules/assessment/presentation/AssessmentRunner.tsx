@@ -21,6 +21,7 @@ import { SdgMark } from "@/modules/analytics/presentation/BrandLogo";
 import { VideoPitchRecorder } from "@/modules/assessment/presentation/components/VideoPitchRecorder";
 import { CaseStudyRunner } from "@/modules/assessment/presentation/components/CaseStudyRunner";
 import { QuizRunner } from "@/modules/assessment/presentation/components/QuizRunner";
+import { SituationalRunner } from "@/modules/assessment/presentation/components/SituationalRunner";
 import {
   useAssessmentStore,
   type AttemptQuestionClient,
@@ -157,6 +158,9 @@ export function AssessmentRunner() {
           flags[index] = (caseStudies[id] ?? "").trim().length > 0;
           break;
         case "MULTIPLE_CHOICE":
+        case "SITUATIONAL_JUDGMENT":
+          // Both store the pick in `choice_answers_map`; a judgment scene is
+          // answered the moment one response is selected, like a quiz.
           flags[index] = Boolean(choices[id]);
           break;
       }
@@ -378,6 +382,9 @@ export function AssessmentRunner() {
             )}
             {currentQuestion.question_type === "MULTIPLE_CHOICE" && (
               <QuizRunner question={currentQuestion} />
+            )}
+            {currentQuestion.question_type === "SITUATIONAL_JUDGMENT" && (
+              <SituationalRunner question={currentQuestion} />
             )}
           </div>
 

@@ -213,7 +213,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     shows: [
       "Two tabs over one set: the no-points questions a candidate answers on the apply form, and the marked ones inside an assessment suite. Nothing else is here — interview questions are never stored, and a CV screening prompt is not asked of a candidate.",
       "A toolbar: a search over the question, its guidance, its answers and the role or suite it belongs to; rails by the kind of answer and by whether anything asks it now; a Where picker listing only the places that actually hold a question; and a group-by control — by place, surface, kind, live state, or one list. Beside it, List and Board.",
-      "Each row carries its surface, its kind, its marks when it has them, and whether anything asks it right now; then the wording, the guidance, and every answer with what that answer does — keeps them in the running or rules them out, right answer or wrong.",
+      "Each row carries its surface, its kind, its marks when it has them, and whether anything asks it right now; then the wording, the guidance, and every answer with what that answer does — keeps them in the running or rules them out, right answer or wrong, or for a judgment scene the percentage it earns.",
       "The board is one tab's places: a column per open role, or per switched-on suite, with a shared-scoped column beside the roles. Its cards are the same questions, shown small.",
       "The count beside every tab, rail and place is the whole bank, not what the current view left standing, so a chip never promises rows the list below cannot show.",
     ],
@@ -223,7 +223,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Move up / down sets the order applicants see the form questions. The arrows are held while the list is filtered or grouped another way, because a move swaps a question with the one the form asks next in its own scope, which that view may be hiding.",
       "On the apply-form tab, dropping a card into another column moves it — the same row, now asked by that role. Use it here does the same for one row from the list, and offers only destinations that will accept the question.",
       "On the suite tab, a drop copies. A test question cannot change which paper it belongs to, because every link already issued re-reads its suite live, so the board writes a new row in the destination suite and leaves the original where it was.",
-      "Use it here also crosses between the two stores where the answer set allows it: a form question turns into a quiz question only when exactly one of its answers is accepted, because that is the answer the quiz marks correct — and it arrives worth 10 marks. A quiz question turns into a form question when it has one right option, which becomes the answer that keeps an application in the running.",
+      "Use it here also crosses between the two stores where the answer set allows it: a form question turns into a quiz question only when exactly one of its answers is accepted, because that is the answer the quiz marks correct — and it arrives worth 10 marks. A quiz question turns into a form question when it has one right option, which becomes the answer that keeps an application in the running. A judgment scene copies into another suite with its percentages, but never onto a form: its answers are a scale, not a pass/fail key.",
       "Where a destination is missing, the row or the column says why: the account cannot write there, the place is no longer on file, the kind has no answer to gate with, or nothing else is open to receive it.",
       "Group by the live state, or light the Nothing asks it now rail, to find the wording worth keeping but asked by nobody: a switched-off form question, a role no longer published, a paused suite.",
     ],
@@ -255,7 +255,8 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
     use: [
       "New template names the suite, its role family, duration and company; Add question builds it.",
-      "Four question types: Multiple choice with one correct option, Case study, Spreadsheet model and Video pitch, each with its own fields.",
+      "Five question types: Multiple choice with one correct option, Situational judgment (a workplace scene whose responses each earn a 0–100 percentage, with no single right one), Case study, Spreadsheet model and Video pitch, each with its own fields.",
+      "Situational judgment arrives with db/migrations/034_situational_judgment.sql, which is authored but not applied on this database: until it is, the type picker hides the fifth type and names that file, and every other type works normally.",
       "Set the integrity options — shuffled question order, shuffled options, copy and paste blocked.",
       "Assign sends a per-candidate link. Pause stops new assignments while issued tests stay open; Resume reopens it.",
       "Search by the columns the box names, and filter by role family or status.",

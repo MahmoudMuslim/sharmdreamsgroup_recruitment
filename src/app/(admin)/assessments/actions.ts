@@ -14,11 +14,16 @@ import {
   type AttemptAnswer,
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
+import { readJudgmentScore } from "@/modules/assessment/domain/situational";
 import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
 import {
   readTemplateItemStats,
   type TemplateItemStats,
 } from "@/modules/assessment/application/templateItemStats";
+import {
+  readQuestionTypeAvailability,
+  type QuestionTypeAvailability,
+} from "@/modules/assessment/application/questionTypeAvailability";
 import { LINKS_LIMIT, type IssuedLink } from "@/modules/assessment/domain/issuedLinks";
 import type { EditableQuestion } from "./QuestionEditorDrawer";
 
@@ -193,6 +198,20 @@ export async function getQuestionsForEditor(): Promise<
   return grouped;
 }
 
+/**
+ * Whether this database's `question_type` enum knows the situational judgment
+ * label yet.
+ *
+ * The builder page asks once per render and hands the answer to the question
+ * editor, which hides the type from both the type picker and the AI draft
+ * checklist while migration 034 is unapplied. Offering a type the enum would
+ * refuse turns a save into a 22P02 message about Postgres internals.
+ */
+export async function getQuestionTypeAvailability(): Promise<QuestionTypeAvailability> {
+  await requireStaff("/assessments");
+  return readQuestionTypeAvailability(await createServerRestClient());
+}
+
 /* -------------------------------------------------------------------------- */
 /* Issued links                                                               */
 /* -------------------------------------------------------------------------- */
@@ -350,7 +369,7 @@ interface QuestionRow {
   instructions: string | null;
   question_type: string;
   config: {
-    options?: { label?: string; text?: string; is_correct?: boolean }[];
+    options?: { label?: string; text?: string; is_correct?: boolean; score?: number }[];
     expected_outputs?: { cell?: string; description?: string; formula_hint?: string }[];
     initial_sheet?: { data?: (string | number | null)[][] };
     context?: string;
@@ -482,6 +501,8 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
       text: option.text ?? "",
       correct: option.is_correct === true,
       chosen: false,
+      // Only a judgment scene carries one; a quiz option's key is `correct`.
+      score: readJudgmentScore(option.score),
     }));
     // Options were shuffled for this candidate; the stored handles are not what
     // they saw, so the paper's own order is applied before the answer is marked.
@@ -495,7 +516,10 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
           )
         : options;
     const chosenLabel =
-      question.question_type === "MULTIPLE_CHOICE" ? (response?.answer_text ?? null) : null;
+      question.question_type === "MULTIPLE_CHOICE" ||
+      question.question_type === "SITUATIONAL_JUDGMENT"
+        ? (response?.answer_text ?? null)
+        : null;
     for (const option of arranged) {
       if (chosenLabel !== null && option.label === chosenLabel) option.chosen = true;
     }
@@ -524,12 +548,22 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
       question_type: question.question_type,
       points: Number(question.points ?? 0),
       answered: Boolean(response),
-      // A quiz pick is expressed through `options` and `chosen_text` below, so the
-      // stored handle is not repeated here as if it were something a person typed.
-      answer_text: question.question_type === "MULTIPLE_CHOICE" ? null : typed || null,
+      // A picked option or judgment response is expressed through `options` and
+      // `chosen_text` below, so the stored handle is not repeated here as if it
+      // were something a person typed.
+      answer_text:
+        question.question_type === "MULTIPLE_CHOICE" ||
+        question.question_type === "SITUATIONAL_JUDGMENT"
+          ? null
+          : typed || null,
       options: arranged,
       chosen_text: arranged.find((option) => option.chosen)?.text ?? null,
-      correct_text: arranged.find((option) => option.correct)?.text ?? null,
+      // A judgment scene has no right option to name — every response is scored
+      // on a scale — so only a quiz points at a key here.
+      correct_text:
+        question.question_type === "MULTIPLE_CHOICE"
+          ? (arranged.find((option) => option.correct)?.text ?? null)
+          : null,
       cells,
       expected: (config.expected_outputs ?? []).map((output) => ({
         ref: output.cell ?? "",

@@ -71,6 +71,7 @@ export const TYPE_LABELS: Record<QuestionType, string> = {
   CASE_STUDY: "Case study",
   EXCEL_MODEL: "Spreadsheet model",
   VIDEO_PITCH: "Video pitch",
+  SITUATIONAL_JUDGMENT: "Situational judgment",
 };
 
 export const TYPE_HINTS: Record<QuestionType, string> = {
@@ -79,6 +80,8 @@ export const TYPE_HINTS: Record<QuestionType, string> = {
   EXCEL_MODEL:
     "Candidate builds and uploads a spreadsheet. The workbook definition is kept as-is.",
   VIDEO_PITCH: "Candidate records a short video answer.",
+  SITUATIONAL_JUDGMENT:
+    "A workplace scene with plausible responses. Each response earns a percentage; no single one is correct.",
 };
 
 interface Draft {
@@ -135,6 +138,7 @@ function toDraft(question: EditableQuestion | null): Draft {
     options: (config.options ?? []).map((option) => ({
       text: option.text,
       is_correct: option.is_correct,
+      score: option.score ?? null,
     })),
     context: config.context ?? "",
     min_words: config.min_words ? String(config.min_words) : "",
@@ -161,6 +165,8 @@ export function QuestionEditorDrawer({
   editable,
   onChanged,
   openAtId,
+  situationalAvailable = true,
+  situationalNote = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -186,6 +192,10 @@ export function QuestionEditorDrawer({
    * draft the recruiter has already typed into.
    */
   openAtId?: string;
+  /** Whether `public.question_type` carries SITUATIONAL_JUDGMENT yet (034). */
+  situationalAvailable?: boolean;
+  /** Why it does not, shown where the type would otherwise be offered. */
+  situationalNote?: string | null;
 }) {
   const [editing, setEditing] = useState<Draft | null>(() => {
     if (!openAtId) return null;
@@ -409,11 +419,13 @@ export function QuestionEditorDrawer({
                 patch({ question_type: e.target.value as QuestionType })
               }
             >
-              {(Object.keys(TYPE_LABELS) as QuestionType[]).map((type) => (
-                <option key={type} value={type}>
-                  {TYPE_LABELS[type]}
-                </option>
-              ))}
+              {(Object.keys(TYPE_LABELS) as QuestionType[])
+                .filter((type) => type !== "SITUATIONAL_JUDGMENT" || situationalAvailable)
+                .map((type) => (
+                  <option key={type} value={type}>
+                    {TYPE_LABELS[type]}
+                  </option>
+                ))}
             </Select>
           </Field>
 
@@ -562,6 +574,96 @@ export function QuestionEditorDrawer({
             </fieldset>
           )}
 
+          {editing.question_type === "SITUATIONAL_JUDGMENT" && (
+            <fieldset className="rounded-xl border border-brand-line bg-brand-cream p-4">
+              <legend className="px-1 text-xs font-bold">Responses and effectiveness</legend>
+              <p className="mb-3 text-[11px] leading-relaxed text-brand-ink/45">
+                Write the responses a candidate could plausibly give. Score each from 0
+                (makes things worse) to 100 (the response to coach). At least two scores
+                must differ — no single response is the correct one, and a pick earns its
+                share of the question&rsquo;s points.
+              </p>
+
+              <ul className="space-y-2">
+                {editing.options.map((option, index) => (
+                  <li key={index} className="flex items-center gap-2">
+                    <span className="w-4 shrink-0 text-[11px] font-bold text-brand-ink/45">
+                      {index + 1}
+                    </span>
+                    <TextInput
+                      value={option.text}
+                      onChange={(e) =>
+                        patch({
+                          options: editing.options.map((o, i) =>
+                            i === index ? { ...o, text: e.target.value } : o
+                          ),
+                        })
+                      }
+                      placeholder={`Response ${index + 1}`}
+                      aria-label={`Response ${index + 1} text`}
+                    />
+                    <TextInput
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={option.score ?? ""}
+                      onChange={(e) =>
+                        patch({
+                          options: editing.options.map((o, i) =>
+                            i === index
+                              ? {
+                                  ...o,
+                                  score:
+                                    e.target.value === "" ? null : Number(e.target.value),
+                                }
+                              : o
+                          ),
+                        })
+                      }
+                      placeholder="0–100"
+                      aria-label={`Effectiveness of response ${index + 1}`}
+                      className="w-24 shrink-0"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({ options: editing.options.filter((_, i) => i !== index) })
+                      }
+                      disabled={editing.options.length <= 2}
+                      aria-label={`Remove response ${index + 1}`}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand-line text-brand-ink/50 transition hover:bg-rose-50 hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <X className="h-4 w-4" aria-hidden />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <button
+                type="button"
+                onClick={() =>
+                  patch({
+                    options: [...editing.options, { text: "", is_correct: false, score: null }],
+                  })
+                }
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden />
+                Add response
+              </button>
+
+              <label className="mt-4 flex items-start gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={editing.shuffle_options}
+                  onChange={(e) => patch({ shuffle_options: e.target.checked })}
+                  className="mt-0.5 h-4 w-4 rounded border-brand-line"
+                />
+                <span>Shuffle these responses per candidate</span>
+              </label>
+            </fieldset>
+          )}
+
           {editing.question_type === "CASE_STUDY" && (
             <div className="grid grid-cols-1 gap-4">
               <Field
@@ -681,20 +783,22 @@ export function QuestionEditorDrawer({
           <fieldset className="rounded-xl border border-brand-line bg-brand-cream p-4">
             <legend className="px-1 text-xs font-bold">Question types to draft</legend>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {(Object.keys(TYPE_LABELS) as QuestionType[]).map((type) => (
-                <label key={type} className="flex items-start gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={types.includes(type)}
-                    onChange={() => toggleType(type)}
-                    className="mt-0.5 h-4 w-4 rounded border-brand-line"
-                  />
-                  <span>
-                    <span className="font-semibold">{TYPE_LABELS[type]}</span>
-                    <span className="block text-brand-ink/50">{TYPE_HINTS[type]}</span>
-                  </span>
-                </label>
-              ))}
+              {(Object.keys(TYPE_LABELS) as QuestionType[])
+                .filter((type) => type !== "SITUATIONAL_JUDGMENT" || situationalAvailable)
+                .map((type) => (
+                  <label key={type} className="flex items-start gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={types.includes(type)}
+                      onChange={() => toggleType(type)}
+                      className="mt-0.5 h-4 w-4 rounded border-brand-line"
+                    />
+                    <span>
+                      <span className="font-semibold">{TYPE_LABELS[type]}</span>
+                      <span className="block text-brand-ink/50">{TYPE_HINTS[type]}</span>
+                    </span>
+                  </label>
+                ))}
             </div>
           </fieldset>
 
@@ -868,6 +972,12 @@ export function QuestionEditorDrawer({
         </p>
       )}
 
+      {!situationalAvailable && situationalNote && (
+        <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-900">
+          {situationalNote}
+        </p>
+      )}
+
       {sorted.length === 0 ? (
         <p className="rounded-xl border border-dashed border-brand-line bg-brand-cream px-4 py-8 text-center text-sm text-brand-ink/50">
           This suite has no questions yet.
@@ -965,6 +1075,19 @@ export function DraftCard({
   pending?: boolean;
   onAdd?: () => void;
 }) {
+  // The best-rated response, so the recruiter sees the key the model chose
+  // without having to compare six percentages themselves.
+  const bestJudgment =
+    draft.question_type === "SITUATIONAL_JUDGMENT"
+      ? draft.options.reduce<number | null>(
+          (top, option) =>
+            option.score === null || option.score === undefined
+              ? top
+              : Math.max(top ?? 0, option.score),
+          null
+        )
+      : null;
+
   return (
     <article className="rounded-xl border border-brand-line bg-white p-4">
       <div className="flex items-start justify-between gap-3">
@@ -1010,6 +1133,45 @@ export function DraftCard({
             </li>
           ))}
         </ul>
+      )}
+
+      {draft.question_type === "SITUATIONAL_JUDGMENT" && (
+        <div className="mt-3 space-y-1.5">
+          {draft.options.map((option) => {
+            const isBest = bestJudgment !== null && option.score === bestJudgment;
+            return (
+              <div key={option.text} className="flex items-start justify-between gap-2 text-xs">
+                <span
+                  className={cn(
+                    "flex min-w-0 items-start gap-2",
+                    isBest ? "font-semibold" : "text-brand-ink/70"
+                  )}
+                >
+                  {isBest ? (
+                    <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+                  ) : (
+                    <span className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
+                  {option.text}
+                </span>
+                {option.score !== null && option.score !== undefined && (
+                  <span
+                    className={cn(
+                      "shrink-0 tabular-nums",
+                      isBest ? "font-semibold text-emerald-700" : "text-brand-ink/45"
+                    )}
+                  >
+                    {option.score}%
+                  </span>
+                )}
+              </div>
+            );
+          })}
+          <p className="pt-1 text-[11px] leading-relaxed text-brand-ink/45">
+            Percentages are the model&apos;s effectiveness ratings, shown here only. The candidate
+            reads the responses and is never shown a score.
+          </p>
+        </div>
       )}
 
       {draft.question_type === "VIDEO_PITCH" && (

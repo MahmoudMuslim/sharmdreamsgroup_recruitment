@@ -66,7 +66,7 @@ export const authoring: readonly AssistantTool[] = [
     name: "save_question",
     label: "Saving a question",
     description:
-      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost.",
+      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct.",
     args: {
       id: "string — optional, the question being edited",
       template_id: "string — suite id",
@@ -79,7 +79,7 @@ export const authoring: readonly AssistantTool[] = [
       time_limit_minutes: "number — optional, per question",
       shuffle_options: "boolean — optional",
       options:
-        "object[] — for MULTIPLE_CHOICE: [{\"text\":\"answer\",\"is_correct\":true}, …], at least two",
+        "object[] — MULTIPLE_CHOICE: [{\"text\":\"answer\",\"is_correct\":true}, …], at least two; SITUATIONAL_JUDGMENT: [{\"text\":\"response\",\"score\":0-100}, …], at least two with different scores and no is_correct",
       context: "string — optional, the case study brief",
       min_words: "number — optional, case study minimum",
       min_duration_seconds: "number — optional, video pitch minimum",

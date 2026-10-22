@@ -4,7 +4,8 @@ import { gradeAttemptResponses } from "@/modules/assessment/application/gradeAtt
 import { recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import { NextResponse } from "next/server";
-import type { SpreadsheetCellData } from "@/types";
+import { judgeChoice } from "@/modules/assessment/domain/situational";
+import type { QuestionConfig, SpreadsheetCellData } from "@/types";
 
 interface SubmitBody {
   spreadsheet_data_map?: Record<string, Record<string, SpreadsheetCellData>>;
@@ -45,7 +46,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   let totalScore = 0;
   let maxScore = 0;
 
-  // Multiple-choice questions are auto-graded server-side.
+  // Quizzes have one key; judgment scenes carry a percentage per response and
+  // are marked against it below. Both types are auto-graded server-side, so
+  // their scores are final before the background grader sees the attempt.
   const choiceQuestions = (questions ?? []).filter((q) => q.question_type === "MULTIPLE_CHOICE");
   const correctByQuestion = new Map<string, string | null>();
   for (const question of choiceQuestions) {
@@ -87,6 +90,38 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   for (const [questionId, label] of Object.entries(body.choice_answers_map ?? {})) {
     const question = questionById.get(questionId);
     if (!question || handled.has(questionId)) continue;
+
+    if (question.question_type === "SITUATIONAL_JUDGMENT") {
+      // The pick earns the response's own percentage of the question's marks,
+      // rounded once. A stored row that carries no usable score yields 0 and a
+      // rationale that says so, rather than silently crediting the question.
+      const verdict = judgeChoice(
+        question.points,
+        question.config as QuestionConfig,
+        label
+      );
+      totalScore += verdict.score;
+      maxScore += question.points;
+      responseRows.push({
+        attempt_id: attempt.id,
+        question_id: questionId,
+        answer_text: label,
+        score: verdict.score,
+        max_score: question.points,
+        ai_evaluation: {
+          score: verdict.score,
+          rationale: verdict.rationale,
+          strengths: verdict.strengths,
+          improvements: verdict.improvements,
+        },
+        updated_at: new Date().toISOString(),
+      });
+      handled.add(questionId);
+      continue;
+    }
+
+    if (question.question_type !== "MULTIPLE_CHOICE") continue;
+
     const correct = correctByQuestion.get(questionId);
     const score = correct !== null && correct === label ? question.points : 0;
     totalScore += score;

@@ -26,7 +26,12 @@ export type ApplicationStage =
 
 export type ApplicationSource = "LINKEDIN" | "WHATSAPP" | "JOB_BOARD" | "CAREER_SITE" | "REFERRAL" | "ATS_IMPORT";
 
-export type QuestionType = "EXCEL_MODEL" | "VIDEO_PITCH" | "CASE_STUDY" | "MULTIPLE_CHOICE";
+export type QuestionType =
+  | "EXCEL_MODEL"
+  | "VIDEO_PITCH"
+  | "CASE_STUDY"
+  | "MULTIPLE_CHOICE"
+  | "SITUATIONAL_JUDGMENT";
 
 export type AttemptStatus = "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "GRADED" | "EXPIRED";
 
@@ -152,6 +157,15 @@ export interface MultipleChoiceOption {
   label: string;
   text: string;
   is_correct: boolean;
+  /**
+   * SITUATIONAL_JUDGMENT only: how effective this response is, 0–100.
+   *
+   * A judgment scene has no single correct option — every response earns a
+   * share of the question's marks — so the quiz's `is_correct` is left false and
+   * this percentage is what the submit route scores. Older quiz rows have no
+   * score, and the sanitizer strips both before a candidate sees the options.
+   */
+  score?: number;
 }
 
 export interface SpreadsheetCellData {
@@ -168,7 +182,7 @@ export interface QuestionConfig {
   /** CASE_STUDY */
   context?: string;
   min_words?: number;
-  /** MULTIPLE_CHOICE */
+  /** MULTIPLE_CHOICE, SITUATIONAL_JUDGMENT */
   options?: MultipleChoiceOption[];
 }
 

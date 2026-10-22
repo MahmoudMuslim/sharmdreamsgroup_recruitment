@@ -25,8 +25,10 @@ import type { QuestionEvaluation, SpreadsheetCellData } from "@/types";
 
 /**
  * Post-submission AI grading for the response types the submit route leaves
- * unscored: case-study essays, spreadsheet models and video pitches. Multiple
- * choice is graded inline by the submit route itself.
+ * unscored: case-study essays, spreadsheet models and video pitches. Quizzes and
+ * situational judgment scenes are scored inline by the submit route itself —
+ * their response rows already carry a score, so the `score IS NULL` read below
+ * never hands them to a model.
  *
  * A pitch is graded from its transcript — the recording is sent to a speech
  * model once, stored on the response, and only then scored, so a retry never

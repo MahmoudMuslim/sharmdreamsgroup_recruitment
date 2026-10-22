@@ -679,6 +679,8 @@ export function BankBoard({ data }: { data: BankData }) {
           templateName={placeLabel(data.places, suiteEditor.templateId, "suite")}
           questions={suiteRowsByTemplate.get(suiteEditor.templateId) ?? []}
           editable={data.can.suites}
+          situationalAvailable={data.situational.situational}
+          situationalNote={data.situational.note}
           onChanged={() => router.refresh()}
           openAtId={suiteEditor.openAtId ?? undefined}
         />

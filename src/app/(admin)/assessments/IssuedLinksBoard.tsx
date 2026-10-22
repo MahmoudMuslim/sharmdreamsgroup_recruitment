@@ -11,6 +11,7 @@ import {
   Loader2,
   Play,
   RefreshCw,
+  Scale,
   Search,
   Send,
   Table2,
@@ -49,6 +50,7 @@ const TYPE_META: Record<string, { word: string; icon: LucideIcon }> = {
   CASE_STUDY: { word: "Case study", icon: FileText },
   EXCEL_MODEL: { word: "Spreadsheet model", icon: Table2 },
   VIDEO_PITCH: { word: "Video pitch", icon: Video },
+  SITUATIONAL_JUDGMENT: { word: "Judgment scene", icon: Scale },
 };
 
 function statusTone(status: string): "neutral" | "gold" | "success" | "danger" | "info" {
@@ -514,6 +516,16 @@ function AnswerCard({
   const meta = TYPE_META[answer.question_type];
   const Icon = meta?.icon ?? FileText;
 
+  // A judgment scene is ranked by effectiveness, not decided by one key, so the
+  // desk marks its strongest response rather than a "correct" one.
+  const bestJudgment =
+    answer.question_type === "SITUATIONAL_JUDGMENT"
+      ? answer.options.reduce<number | null>(
+          (top, option) => (option.score === null ? top : Math.max(top ?? 0, option.score)),
+          null
+        )
+      : null;
+
   return (
     <li
       className={cn(
@@ -624,6 +636,77 @@ function AnswerCard({
         {answer.question_type === "MULTIPLE_CHOICE" && answer.options.length === 0 && (
           <p className="mt-2 text-xs text-brand-ink/55">
             This quiz question holds no options, so the runner could not mark it either.
+          </p>
+        )}
+
+        {answer.question_type === "SITUATIONAL_JUDGMENT" && answer.options.length > 0 && (
+          <div className="mt-2 space-y-2">
+            <ul className="space-y-1.5">
+              {answer.options.map((option) => {
+                const isBest = bestJudgment !== null && option.score === bestJudgment;
+                return (
+                  <li
+                    key={option.label}
+                    className={cn(
+                      "flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+                      option.chosen && isBest && "border-emerald-300 bg-emerald-50",
+                      option.chosen && !isBest && "border-amber-300 bg-amber-50",
+                      !option.chosen && isBest && "border-brand-line bg-brand-cream",
+                      !option.chosen && !isBest && "border-brand-line bg-white"
+                    )}
+                  >
+                    <span className="mt-0.5 shrink-0">
+                      {option.chosen ? (
+                        <CircleDot
+                          className={cn(
+                            "h-4 w-4",
+                            isBest ? "text-emerald-700" : "text-amber-700"
+                          )}
+                          aria-hidden
+                        />
+                      ) : isBest ? (
+                        <Check className="h-4 w-4 text-emerald-700" aria-hidden />
+                      ) : (
+                        <span className="block h-4 w-4" aria-hidden />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-start justify-between gap-2">
+                        <span className="block leading-snug">{option.text}</span>
+                        <span
+                          className={cn(
+                            "shrink-0 tabular-nums text-[11px] font-semibold",
+                            isBest ? "text-emerald-700" : "text-brand-ink/45"
+                          )}
+                        >
+                          {option.score === null ? "not scored" : `${option.score}%`}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+                        {option.chosen && isBest
+                          ? "Their pick — the strongest response"
+                          : option.chosen
+                            ? "Their pick"
+                            : isBest
+                              ? "Most effective response, unpicked"
+                              : "Not chosen"}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-[11px] leading-relaxed text-brand-ink/45">
+              No response is simply right or wrong: each earns its percentage of the marks, and
+              the strongest response is marked.
+            </p>
+          </div>
+        )}
+
+        {answer.question_type === "SITUATIONAL_JUDGMENT" && answer.options.length === 0 && (
+          <p className="mt-2 text-xs text-brand-ink/55">
+            This judgment scene holds no responses, so there was nothing for the candidate to
+            pick.
           </p>
         )}
 

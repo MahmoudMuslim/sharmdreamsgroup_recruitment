@@ -5,7 +5,12 @@ import type { SpreadsheetCellData } from "@/types";
 
 export interface AttemptQuestionClient {
   id: string;
-  question_type: "EXCEL_MODEL" | "VIDEO_PITCH" | "CASE_STUDY" | "MULTIPLE_CHOICE";
+  question_type:
+    | "EXCEL_MODEL"
+    | "VIDEO_PITCH"
+    | "CASE_STUDY"
+    | "MULTIPLE_CHOICE"
+    | "SITUATIONAL_JUDGMENT";
   title: string;
   prompt: string;
   config: {

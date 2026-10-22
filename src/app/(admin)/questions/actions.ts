@@ -22,6 +22,11 @@ import {
   type SuiteQuestionRow,
 } from "@/modules/questions/bank";
 import {
+  readQuestionTypeAvailability,
+  type QuestionTypeAvailability,
+} from "@/modules/assessment/application/questionTypeAvailability";
+import { readJudgmentScore } from "@/modules/assessment/domain/situational";
+import {
   deleteQuestion,
   saveQuestion,
   type ChoiceDraft,
@@ -72,6 +77,9 @@ const NO_SINGLE_RIGHT_OPTION =
 const NOT_A_CHOICE_QUESTION =
   "This asks for a written answer, a spreadsheet or a video. The apply form gates an application by which option was picked, so there is no answer here to mark as ruling someone out.";
 
+const JUDGMENT_IS_SCORED =
+  "A situational judgment scene is scored by how effective each response is, not by one right answer. The apply form only asks which answers rule an applicant out, so there is no pass/fail key to copy.";
+
 const QUIZ_WITHOUT_ONE_RIGHT_ANSWER =
   "This quiz's answers do not leave exactly one to accept, so the apply form could not score it.";
 
@@ -93,23 +101,35 @@ export interface BankData {
   places: BankPlaceRow[];
   /** Whether the recruiter may write in each store, so the board offers real writes only. */
   can: { form: boolean; suites: boolean };
+  /** Whether this database's enum knows the situational judgment type yet. */
+  situational: QuestionTypeAvailability;
 }
 
 export async function getQuestionBankData(): Promise<BankData> {
   await requireStaff("/questions");
   const restClient = await createServerRestClient();
 
-  const [canForm, canSuites, gateResult, suiteResult, templateResult, openingResult] =
-    await Promise.all([
-      hasPermissionForUser("jobs.manage"),
-      hasPermissionForUser("assessments.create"),
-      restClient.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
-      restClient.from("assessment_questions").select(SUITE_COLUMNS).order("position"),
-      restClient.from("assessment_templates").select("id, name, is_active").order("name"),
-      // Every opening, not only the published ones: a question outlives the role it was
-      // written for, and the board has to name that role rather than print a uuid.
-      restClient.from("job_openings").select("id, title, status").order("title"),
-    ]);
+  const [
+    canForm,
+    canSuites,
+    gateResult,
+    suiteResult,
+    templateResult,
+    openingResult,
+    situational,
+  ] = await Promise.all([
+    hasPermissionForUser("jobs.manage"),
+    hasPermissionForUser("assessments.create"),
+    restClient.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
+    restClient.from("assessment_questions").select(SUITE_COLUMNS).order("position"),
+    restClient.from("assessment_templates").select("id, name, is_active").order("name"),
+    // Every opening, not only the published ones: a question outlives the role it was
+    // written for, and the board has to name that role rather than print a uuid.
+    restClient.from("job_openings").select("id, title, status").order("title"),
+    // Asked beside the rows, not through them: while migration 034 is unapplied
+    // the enum refuses the label and the board must hide the type it cannot save.
+    readQuestionTypeAvailability(restClient),
+  ]);
 
   const places: BankPlaceRow[] = [
     { key: bankPlaceKey("gate", SHARED_SCOPE), label: "Every published role", isOpen: true },
@@ -146,6 +166,7 @@ export async function getQuestionBankData(): Promise<BankData> {
     })[]).map((row) => ({ ...row, config: row.config ?? {} })),
     places,
     can: { form: canForm, suites: canSuites },
+    situational,
   };
 }
 
@@ -884,11 +905,19 @@ async function nextPosition(restClient: RestClient, templateId: string): Promise
   return count ?? 0;
 }
 
-/** A quiz's answer set, in the suite editor's own draft shape. */
+/**
+ * A suite question's answer set, in the suite editor's own draft shape.
+ *
+ * The percentage travels with the wording: a judgment scene copied into another
+ * suite keeps the ranking the author gave it, and a malformed stored score is left
+ * null for `saveQuestion` to refuse with the editor's own sentence rather than
+ * silently copying it as 0.
+ */
 function choiceDrafts(config: QuestionConfig | null): ChoiceDraft[] {
   return (config?.options ?? []).map((option) => ({
     text: option.text,
     is_correct: option.is_correct,
+    score: readJudgmentScore(option.score),
   }));
 }
 
@@ -1007,6 +1036,9 @@ async function ontoFormFromQuiz(
   placeKey: string,
   scopeWords: string
 ): Promise<BankCopyResult> {
+  if (row.question_type === "SITUATIONAL_JUDGMENT") {
+    return { ok: false, error: JUDGMENT_IS_SCORED };
+  }
   if (row.question_type !== "MULTIPLE_CHOICE") {
     return { ok: false, error: NOT_A_CHOICE_QUESTION };
   }

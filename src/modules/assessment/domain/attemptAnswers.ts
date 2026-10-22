@@ -20,6 +20,13 @@ export interface AnswerOption {
   text: string;
   correct: boolean;
   chosen: boolean;
+  /**
+   * A situational judgment response's effectiveness, 0–100.
+   *
+   * Null on quizzes, where the key is `correct`; carried here so the review desk
+   * can rank a judgment scene without re-reading the question row.
+   */
+  score: number | null;
 }
 
 /** A cell the candidate left in a spreadsheet model. */
@@ -153,17 +160,22 @@ export function answersScopeNote(answers: AttemptAnswers): string {
 /**
  * One line saying what this question asked for and what came back.
  *
- * Written per type because the four types store their answers in four different
+ * Written per type because the five types store their answers in different
  * columns, and a desk that only showed `answer_text` would report a video pitch
  * or a spreadsheet model as blank.
  */
 export function answerStateWord(answer: AttemptAnswer): string {
   if (!answer.answered) {
-    return answer.question_type === "MULTIPLE_CHOICE" ? "No option picked" : "Left blank";
+    return answer.question_type === "MULTIPLE_CHOICE" ||
+      answer.question_type === "SITUATIONAL_JUDGMENT"
+      ? "No option picked"
+      : "Left blank";
   }
   switch (answer.question_type) {
     case "MULTIPLE_CHOICE":
       return answer.chosen_text ? "An option was picked" : "An answer was recorded";
+    case "SITUATIONAL_JUDGMENT":
+      return answer.chosen_text ? "A response was picked" : "An answer was recorded";
     case "EXCEL_MODEL":
       return answer.cells.length === 0
         ? "The sheet was handed back unchanged"

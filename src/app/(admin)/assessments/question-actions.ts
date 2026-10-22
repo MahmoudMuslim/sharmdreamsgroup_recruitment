@@ -23,6 +23,13 @@ import {
   type Difficulty,
   type GeneratedQuestion,
 } from "@/modules/assessment/domain/aiAuthoring";
+import {
+  SITUATIONAL_WRITE_REFUSAL,
+  isMissingQuestionTypeError,
+  judgmentStoredOptions,
+  readJudgmentDraft,
+  type JudgmentDraft,
+} from "@/modules/assessment/domain/situational";
 import type { QuestionConfig, QuestionType } from "@/types";
 
 /**
@@ -51,11 +58,19 @@ const QUESTION_TYPES: QuestionType[] = [
   "CASE_STUDY",
   "EXCEL_MODEL",
   "VIDEO_PITCH",
+  "SITUATIONAL_JUDGMENT",
 ];
 
 export interface ChoiceDraft {
   text: string;
   is_correct: boolean;
+  /**
+   * SITUATIONAL_JUDGMENT only: how effective the response is, 0–100.
+   *
+   * Ignored for a quiz, where `is_correct` is the whole answer key. A scene
+   * carries no correct option at all — its ranking lives in these percentages.
+   */
+  score?: number | null;
 }
 
 export interface QuestionDraft {
@@ -69,7 +84,7 @@ export interface QuestionDraft {
   position: number;
   time_limit_minutes: number | null;
   shuffle_options: boolean;
-  /** MULTIPLE_CHOICE only. */
+  /** MULTIPLE_CHOICE and SITUATIONAL_JUDGMENT. */
   options: ChoiceDraft[];
   /** CASE_STUDY only. */
   context: string;
@@ -90,8 +105,26 @@ async function requireAssessmentEditor(): Promise<string | null> {
   return "You need the Create assessments permission.";
 }
 
-/** Builds the type-specific config, preserving anything this form cannot edit. */
-function buildConfig(draft: QuestionDraft): QuestionConfig {
+/**
+ * The sentence a refused question write is shown.
+ *
+ * Postgres reports a missing enum label as 22P02 with nothing the author can
+ * act on, so a write naming SITUATIONAL_JUDGMENT while 034 is unapplied is
+ * answered with the migration that would make it work. Every other error is the
+ * database's own message, unchanged.
+ */
+function questionWriteError(error: { code?: string | null; message: string }): string {
+  return isMissingQuestionTypeError(error) ? SITUATIONAL_WRITE_REFUSAL : error.message;
+}
+
+/**
+ * Builds the type-specific config, preserving anything this form cannot edit.
+ *
+ * `judgment` carries the responses a scene already had validated, because
+ * `buildConfig` cannot return a refusal — `saveQuestion` reads them first and
+ * only calls this once they are markable.
+ */
+function buildConfig(draft: QuestionDraft, judgment: JudgmentDraft[] = []): QuestionConfig {
   switch (draft.question_type) {
     case "MULTIPLE_CHOICE": {
       const options = draft.options
@@ -104,6 +137,10 @@ function buildConfig(draft: QuestionDraft): QuestionConfig {
           is_correct: option.is_correct,
         }));
       return { ...(draft.preserve_config ?? {}), options };
+    }
+
+    case "SITUATIONAL_JUDGMENT": {
+      return { ...(draft.preserve_config ?? {}), options: judgmentStoredOptions(judgment) };
     }
 
     case "CASE_STUDY": {
@@ -211,6 +248,15 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     }
   }
 
+  let judgment: JudgmentDraft[] = [];
+  if (draft.question_type === "SITUATIONAL_JUDGMENT") {
+    const read = readJudgmentDraft(
+      draft.options.map((option) => ({ text: option.text, score: option.score ?? null }))
+    );
+    if (!read.ok) return { ok: false, error: read.error };
+    judgment = read.options;
+  }
+
   const restClient = await createServerRestClient();
 
   // Confirm the template exists so a typo cannot create an orphan question.
@@ -229,12 +275,17 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     title,
     prompt,
     instructions: draft.instructions.trim() || null,
-    config: buildConfig(draft) as Record<string, unknown>,
+    config: buildConfig(draft, judgment) as Record<string, unknown>,
     points,
     position: draft.position,
     time_limit_minutes:
       Number.isFinite(limit) && limit > 0 && limit <= 480 ? Math.round(limit) : null,
-    shuffle_options: draft.question_type === "MULTIPLE_CHOICE" ? draft.shuffle_options : false,
+    // A scene's responses are as order-sensitive as a quiz's — the most
+    // effective one must not always sit in the same slot.
+    shuffle_options:
+      draft.question_type === "MULTIPLE_CHOICE" || draft.question_type === "SITUATIONAL_JUDGMENT"
+        ? draft.shuffle_options
+        : false,
   };
 
   if (draft.id === null) {
@@ -243,7 +294,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
       .insert(row)
       .select("id")
       .single();
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: questionWriteError(error) };
 
     const renumberError = await renumberSuite(restClient, draft.template_id);
     if (renumberError) return { ok: false, error: renumberError };
@@ -283,7 +334,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     .eq("id", draft.id)
     .eq("template_id", draft.template_id);
 
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: questionWriteError(error) };
 
   const renumberError = await renumberSuite(restClient, draft.template_id);
   if (renumberError) return { ok: false, error: renumberError };

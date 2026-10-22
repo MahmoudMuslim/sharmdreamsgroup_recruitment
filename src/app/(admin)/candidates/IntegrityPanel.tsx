@@ -31,6 +31,7 @@ const QUESTION_TYPE_LABELS: Record<string, string> = {
   VIDEO_PITCH: "Video pitch",
   CASE_STUDY: "Case study",
   MULTIPLE_CHOICE: "Multiple choice",
+  SITUATIONAL_JUDGMENT: "Situational judgment",
 };
 
 function severityTone(severity: string) {

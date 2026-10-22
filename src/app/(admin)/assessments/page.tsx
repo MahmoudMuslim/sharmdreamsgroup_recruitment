@@ -1,4 +1,10 @@
-import { getTemplates, getAssignableCandidates, getQuestionsForEditor, getIssuedLinks } from "./actions";
+import {
+  getTemplates,
+  getAssignableCandidates,
+  getQuestionsForEditor,
+  getIssuedLinks,
+  getQuestionTypeAvailability,
+} from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
@@ -17,16 +23,18 @@ export const metadata = {
 export const instant = false;
 
 async function loadTemplates() {
-  const [templates, candidates, options, questionsByTemplate, links, timeZone] = await Promise.all([
-    getTemplates(),
-    getAssignableCandidates(),
-    getMasterOptions(),
-    getQuestionsForEditor(),
-    getIssuedLinks(),
-    getOrganisationTimeZone(),
-  ]);
+  const [templates, candidates, options, questionsByTemplate, links, timeZone, situational] =
+    await Promise.all([
+      getTemplates(),
+      getAssignableCandidates(),
+      getMasterOptions(),
+      getQuestionsForEditor(),
+      getIssuedLinks(),
+      getOrganisationTimeZone(),
+      getQuestionTypeAvailability(),
+    ]);
 
-  return { templates, candidates, options, questionsByTemplate, links, timeZone };
+  return { templates, candidates, options, questionsByTemplate, links, timeZone, situational };
 }
 
 export default async function AssessmentsBuilderPage() {
@@ -38,7 +46,7 @@ export default async function AssessmentsBuilderPage() {
   // here only produced a static shell whose hole the client had to re-fetch —
   // and on a hard load that fetch never landed, leaving the skeleton up
   // forever and every button unclickable.
-  const { templates, candidates, options, questionsByTemplate, links, timeZone } =
+  const { templates, candidates, options, questionsByTemplate, links, timeZone, situational } =
     await loadTemplates();
   const canEdit = await hasPermissionForUser("assessments.create");
   const defaultDurationMinutes = await getNumberSetting(
@@ -69,6 +77,7 @@ export default async function AssessmentsBuilderPage() {
         canEdit={canEdit}
         links={links}
         timeZone={timeZone}
+        situational={situational}
       />
     </PageTransition>
   );

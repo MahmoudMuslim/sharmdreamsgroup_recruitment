@@ -13,6 +13,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Scale,
   Search,
   Send,
   Sparkles,
@@ -93,6 +94,12 @@ const TYPE_META: Record<string, TypeMeta> = {
     plural: "Quizzes",
     icon: CheckCircle2,
     chip: "bg-amber-500/15 text-amber-700",
+  },
+  SITUATIONAL_JUDGMENT: {
+    singular: "Judgment scene",
+    plural: "Judgment scenes",
+    icon: Scale,
+    chip: "bg-violet-500/12 text-violet-700",
   },
 };
 
@@ -722,6 +729,7 @@ export function AssessmentGrid({
   canEdit,
   links,
   timeZone,
+  situational,
 }: {
   templates: TemplateSummary[];
   candidates: AssignableCandidate[];
@@ -733,6 +741,8 @@ export function AssessmentGrid({
   links: IssuedLinksRead;
   /** `organisation.timezone` — the clock a link's deadline runs on for the group. */
   timeZone: string;
+  /** Whether the database's enum accepts the situational judgment label yet. */
+  situational: { situational: boolean; note: string | null };
 }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -1002,6 +1012,8 @@ export function AssessmentGrid({
           templateName={questionEditing.name}
           questions={questionsByTemplate[questionEditing.id] ?? []}
           editable={canEdit}
+          situationalAvailable={situational.situational}
+          situationalNote={situational.note}
           onChanged={router.refresh}
         />
       )}
