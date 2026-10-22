@@ -180,15 +180,15 @@ if (requestBad) process.exit(1);
 console.log(`PASS ${requestCases.length} resolved requests (verb + Prefer + body)`);
 
 /* ------------------------------------------------------------------ *
- * Half three: a wrapped projection.
+ * Half three: a wrapped or padded projection.
  *
- * PostgREST 16.5's select grammar takes a space around a comma but not a
- * newline, so a projection wrapped over several lines makes the whole read
- * answer `400 PGRST100 … unexpected "\n"`. Measured on the local stack with the
- * two strings below: the wrapped bytes are refused, the same bytes with each
- * line break collapsed answer 200. `/assessments` shipped broken by exactly
- * this, because both of its reads are written wrapped and no gate renders an
- * authenticated page.
+ * PostgREST 16.5's select grammar takes a space around a comma and a space
+ * before an embed's `(`, but not a newline and not a space just inside the
+ * brackets. Measured on the local stack: `applications ( full_name )` answers
+ * `400 PGRST100 … unexpected ")"`, the same string with the padding removed
+ * answers 200. `/assessments` shipped broken by the newline and the Analytics
+ * report by the padding — no gate renders an authenticated page, so both were
+ * invisible until a signed-in browser opened them.
  *
  * The assertion is on the DECODED parameter, not the escaped string: the bug is
  * a character the grammar owns, and the encoder (`URLSearchParams`) is already
@@ -209,21 +209,37 @@ const wrapped = [
   ],
 ];
 
+// The same strings Analytics and the row reports hand-write today. A space
+// before `(` is legal and kept; only the padding inside the brackets goes.
+const padded = [
+  [
+    "id, applications ( full_name, job_openings ( title ) )",
+    "id, applications (full_name, job_openings (title))",
+  ],
+  [
+    "applications ( created_at, job_openings ( title ) ), user_profiles ( full_name )",
+    "applications (created_at, job_openings (title)), user_profiles (full_name)",
+  ],
+  ["prospect_id, application_id, applications ( full_name )", "prospect_id, application_id, applications (full_name)"],
+];
+
 let wrapBad = 0;
-for (const [input, expected] of wrapped) {
+for (const [input, expected] of [...wrapped, ...padded]) {
   const qs = q().select(input).toQuerystring();
   const got = new URLSearchParams(qs.slice(1)).get("select");
   if (got === null) { wrapBad++; console.error(`FAIL  select vanished from ${qs}`); continue; }
-  if (got.includes("\n") || got !== expected) {
+  if (got.includes("\n") || /\(\s|\s\)/.test(got) || got !== expected) {
     wrapBad++;
-    console.error(`FAIL  wrapped projection\n  expected ${expected}\n  got      ${got}`);
+    console.error(`FAIL  wrapped or padded projection\n  expected ${expected}\n  got      ${got}`);
   }
 }
-// A projection written on one line must go out byte-for-byte as authored.
-const singleLine = q().select("id, name").toQuerystring();
-if (new URLSearchParams(singleLine.slice(1)).get("select") !== "id, name") {
+// A projection written on one line with no padding must go out byte-for-byte.
+const singleLine = q().select("id, name, applications(full_name)").toQuerystring();
+if (new URLSearchParams(singleLine.slice(1)).get("select") !== "id, name, applications(full_name)") {
   wrapBad++;
   console.error(`FAIL  single-line projection was rewritten: ${singleLine}`);
 }
 if (wrapBad) process.exit(1);
-console.log(`PASS ${wrapped.length + 1} wrapped projections (no newline reaches the grammar)`);
+console.log(
+  `PASS ${wrapped.length + padded.length + 1} wrapped and padded projections (no newline or bracket padding reaches the grammar)`
+);

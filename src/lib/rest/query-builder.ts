@@ -275,21 +275,26 @@ function stripParens(value: string): string {
 }
 
 /**
- * Flatten a hand-formatted projection onto one line.
+ * Flatten a hand-formatted projection and strip the padding inside its brackets.
  *
- * PostgREST's select grammar accepts a space around a comma but not a newline:
- * `select=a,\n b` answers `400 PGRST100 … unexpected "\n"` (measured against
- * this stack's PostgREST 16.5). A long projection is therefore unreadable as one
- * line, and a wrapped one fails the whole page — `/assessments` rendered the
- * error boundary because both of its reads
- * (`(admin)/assessments/actions.ts:249` and `:386`) are written wrapped.
- * Normalise here, at the seam that owns putting the chain on the wire, rather
- * than at each call site: only line breaks and the indentation that follows them
- * collapse, so a projection's own spacing and every quoted identifier are left
- * exactly as written.
+ * PostgREST's select grammar accepts a space around a comma and a space between
+ * an embed and its `(`, but not a newline and not a space just inside the
+ * brackets: `select=a,\n b` answers `400 PGRST100 … unexpected "\n"`, and
+ * `applications( full_name )` answers `400 PGRST100 … unexpected ")"` (both
+ * measured against this stack's PostgREST 16.5). A wrapped projection failed
+ * `/assessments` by the newline; the spaced embeds Analytics, the sourcing
+ * desk and the grading reads write failed the same way, and no gate renders an
+ * authenticated page to notice. Normalise here, at the seam that owns putting
+ * the chain on the wire, rather than at each call site: only line breaks and
+ * whitespace directly inside brackets collapse, so a projection's spacing
+ * elsewhere and every quoted identifier are left as written.
  */
 function encodeSelect(select: string): string {
-  return select.replace(/\s*\n\s*/g, " ").trim();
+  return select
+    .replace(/\s*\n\s*/g, " ")
+    .replace(/\(\s+/g, "(")
+    .replace(/\s+\)/g, ")")
+    .trim();
 }
 
 export function buildUrl(table: string, builder: QueryBuilder<Row>): string {
