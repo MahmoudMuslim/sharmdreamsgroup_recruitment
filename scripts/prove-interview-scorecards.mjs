@@ -544,7 +544,7 @@ sourceHas("the registry shared barrel exports the new names", "src/modules/assis
 // ---------------------------------------------------------------------------
 // 12. The live watch and the Guide
 // ---------------------------------------------------------------------------
-sourceHas("scorecards are watched on their own table and stamp", "src/modules/live/infrastructure/changeWatch.ts", [
+sourceHas("scorecards are watched on their own table and stamp", "src/modules/live/domain/watch.ts", [
   'area: "interview scorecards"',
   'table: "interview_scorecards"',
   'stamp: "updated_at"',
@@ -552,7 +552,7 @@ sourceHas("scorecards are watched on their own table and stamp", "src/modules/li
 ]);
 check(
   "the agenda's hashed watch does not gain the round column",
-  !read("src/modules/live/infrastructure/changeWatch.ts").includes(
+  !read("src/modules/live/domain/watch.ts").includes(
     'columns: ["id", "application_id", "scheduled_at", "status", "meeting_link", "round"]'
   )
 );
