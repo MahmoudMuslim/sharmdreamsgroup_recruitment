@@ -567,11 +567,10 @@ export function AssistantChat({
                   I read and change the same data the screens do — openings, candidates, screening,
                   assessments, interviews, onboarding, the apply questions, sourcing, stored files,
                   the message outbox, the analytics report, the row-level reports, the settings,
-                  team, model-routing, API-keys and change-trail consoles, and the hiring-data
-                  activity trail — by calling the very actions those pages call, so the
-                  permissions on your role apply here unchanged. Time Tracker is the one screen
-                  I cannot read: its table is on the database and the page works, but no tool of
-                  mine reaches it. The “What can the assistant do?” button
+                  team, model-routing, API-keys and change-trail consoles, the hiring-data
+                  activity trail and the hours people logged in the Time Tracker — by calling the
+                  very actions those pages call, so the permissions on your role apply here
+                  unchanged. The “What can the assistant do?” button
                   above lists every one.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">

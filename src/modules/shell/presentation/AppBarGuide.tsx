@@ -562,11 +562,11 @@ export function GuidePanel({ open }: { open: Panel }) {
           <span className="font-semibold">Time Tracker</span> both read tables that
           are applied on this database — db/migrations/024_activity_log.sql and
           db/migrations/025_time_entries.sql — so each page lists real rows. The
-          chat reads Activity through get_activity_trail;{" "}
-          <span className="font-semibold">Time Tracker</span> is the one screen it
-          has no tool for. On a database that has not applied one of those two
-          files, its page says the table has not been created yet and refuses its
-          writes.
+          chat reads both: get_activity_trail takes the Activity console&apos;s own
+          filters, and get_time_ledger takes the Time Tracker&apos;s window and
+          scope, each answering with a link back to the cut it read. On a database
+          that has not applied one of those two files, its page says the table has
+          not been created yet and refuses its writes.
         </p>
         </div>
       </details>

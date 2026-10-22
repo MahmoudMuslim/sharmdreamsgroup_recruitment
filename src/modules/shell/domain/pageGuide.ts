@@ -107,6 +107,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Everything here, including the read, needs the Track time permission.",
       "Only the person who logged a span can change it, and one timer runs at a time per person.",
       "The read is the newest 1,000 entries in the cut you picked.",
+      "The chat reads the same ledger through get_time_ledger, with the same window and scope; its answer states the cut's count, the rows the capped read loaded and the rows it lists as three separate numbers, and links back to that cut.",
     ],
   },
 
@@ -370,7 +371,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Your saved conversations on the left, the chat on the right, and a What can the assistant do? button listing its tools. Above the message box, a Settings button holds the model choice and the two switches, and its own label names the model that replies.",
     ],
     use: [
-      "Ask in words: it reads candidates, openings, tests, the outbox, settings and the change trails, and answers with a table or a chart drawn by the portal from the figures it read.",
+      "Ask in words: it reads candidates, openings, tests, the outbox, settings, the change trails and the time ledger, and answers with a table or a chart drawn by the portal from the figures it read.",
       "Instruct a change and nothing happens until you press Approve & run on the card. A delete also needs the Allow deletions switch, behind the Settings button. Ignoring the card leaves the record exactly as it is.",
       "Allow web search opens two lookups that leave the portal — search_web and read_web_page — about any subject: a pay band, a law, a competitor's ad, a release note, a company. The search belongs to this portal rather than to one engine, so it works whichever engine or model answers the turn, and the choice is remembered in this browser. Every lookup shows as a chip naming the words searched and the pages read; what comes back is advice with its source named and nothing it reads is written into a record. Lookups run on the OpenRouter key in Settings → API keys, so without one each chip refuses with the reason.",
       `Attach a file and it is read: ${ATTACHMENT_INPUT_ACCEPT.split(",").join(", ")}, up to ${MAX_UPLOAD_MB} MB. Ask a follow-up and the same text is still in front of the assistant for that conversation, as far back as the 12 turns it reads.`,
@@ -382,7 +383,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Every read is capped, and the answer carries its own note saying what it left out; a long result is clipped.",
       "Never type a secret into this chat. The credential tool edits only non-secret fields, because your words are sent to the inference provider.",
       "Approvals live in the server's memory, so on a host that starts a fresh isolate per request the card answers that it is gone — and nothing changed.",
-      "The Time Tracker is the one screen with no tool here: its table is live and the page works, but the chat does not read it. The hiring-data activity trail does have one — get_activity_trail reads the same cut the /activity console shows, and its answers link back to that cut.",
+      "The chat reads the time ledger too: get_time_ledger takes this console's window (today, 7, 14 or 30 days) and scope (mine or team), and its answer states the cut's count, the rows the capped read loaded and the rows it lists as three separate numbers before linking back to that cut. The hiring-data activity trail has its own read — get_activity_trail reads the same cut the /activity console shows, and its answers link back to that cut.",
       `Attachments are read, not stored: ${MAX_MATERIAL_CHARS.toLocaleString("en-GB")} characters of the file attached to your question reach the model and ${MAX_HISTORY_ATTACHMENT_CHARS.toLocaleString("en-GB")} of a file from an earlier turn, and the text the model is handed says how much of it was left out.`,
       "The 97-2003 Office files (.doc, .xls, .ppt) and pictures are refused, with the door that works named: Save As .docx, .xlsx or .pptx, or paste the words. A file that opens but holds no text, like a scanned page, is refused the same way.",
       `A built file is handed to your browser and nowhere else: it is not stored, so after a reload the card offers Build again and makes the file once more from the same rows. Its own size ceiling is ${formatBytes(MAX_FILE_BYTES)}.`,
