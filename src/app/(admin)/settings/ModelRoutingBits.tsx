@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 export interface ModelRow extends AiModelRow {
   status: "idle" | "saving" | "saved" | "error";
   message?: string;
+  inferred?: boolean;
   /** Result of the most recent live probe for this capability. */
   probe?: ChainTestResult;
   probing?: boolean;

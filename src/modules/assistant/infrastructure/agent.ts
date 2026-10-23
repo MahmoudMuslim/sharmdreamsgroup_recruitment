@@ -2,8 +2,8 @@ import {
   complete,
   parseJsonResponse,
   TruncatedJsonResponseError,
-  type GatewayProvider,
 } from "@/modules/screening/infrastructure/aiGateway";
+import { type GatewayProvider } from "@/modules/settings/domain/modelRouting";
 import {
   ASSISTANT_TOOLS,
   asQuestion,

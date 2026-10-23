@@ -8,7 +8,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 
 ## What can call the AI
 
-Eight **capabilities**, each independently routable to its own model (`AI_CAPABILITIES` in `src/modules/settings/domain/providers.ts`, mirrored by the `AiCapability` union in `src/lib/config.ts`):
+Nine **capabilities**, each independently routable to its own model (`AI_CAPABILITIES` in `src/modules/settings/domain/providers.ts`, mirrored by the `AiCapability` union in `src/lib/config.ts`):
 
 | Capability | Used for |
 |------------|----------|
@@ -17,11 +17,12 @@ Eight **capabilities**, each independently routable to its own model (`AI_CAPABI
 | `case_reasoning` | Deep-reasoning: case studies, rubrics, complex analysis. |
 | `feedback` | Draft candidate feedback and advance/reject summaries. |
 | `interview_questions` | Generate interview guides and follow-ups. |
-| `transcription` | Turn video pitches and interview audio into text. |
+| `transcription` | Turn video pitches and interview audio into text — **not** a `complete()` call, see [Transcription](#transcription). |
 | `assistant` | The in-app agentic assistant (reads/changes portal records). |
 | `chatbot` | The public careers assistant. |
+| `translation` | Draft the Arabic wording behind the Settings → Languages editor. |
 
-> **Invariant:** the `id`s in `AI_CAPABILITIES` must match the `AiCapability` union — the gateway looks up `ai_model_config` rows by exactly these keys.
+> **Invariant:** the `id`s in `AI_CAPABILITIES` must match the `AiCapability` union — the gateway looks up `ai_model_config` rows by exactly these keys. And every one of them must have a caller: a capability nobody asks for is a card in Settings that decides nothing.
 
 ---
 
@@ -66,11 +67,13 @@ Secrets are stored AES-256-GCM encrypted (see [AUTHENTICATION.md](AUTHENTICATION
 
 ## How a model id picks its provider
 
-A routing row carries **no provider column** — the model id itself names the provider:
+A routing row carries **no provider column** — the model id itself names the provider. The whole rule lives in one pure module, **`src/modules/settings/domain/modelRouting.ts`**, because the Settings console, the catalogue writers and the gateway all have to agree on it:
 
 1. **Explicit prefix** (`ROUTING_PREFIXES`): `opencode:…`, `qoder:…`, `cloudflare:…`, `nvidia:…` → that provider (prefix stripped before the call).
 2. **Namespaced id** (contains a `/`, e.g. `google/gemma-4-31b-it:free`) → **OpenRouter**.
 3. **Bare id** (e.g. `gemini-3.5-flash`) → **Google AI Studio**.
+
+The same module holds `ROUTING_FALLBACK` — the row the gateway answers with when `ai_model_config` has no row for a capability — so a routing card that has nothing saved shows what actually runs instead of a blank.
 
 ---
 
@@ -105,8 +108,8 @@ Defaults, overridable per capability in the DB:
 | `case_reasoning` | REASONING → FALLBACK → PRIMARY |
 | `feedback` | PRIMARY → FALLBACK |
 | `interview_questions` | FAST → PRIMARY |
-| `transcription` | PRIMARY → FALLBACK |
-| `assistant` / `chatbot` | `gemini-3-flash-preview` → `gemini-3.1-flash-lite` → PRIMARY → FALLBACK |
+| `transcription` | PRIMARY → FALLBACK — **not what the audio path walks**; see [Transcription](#transcription) |
+| `assistant` / `chatbot` / `translation` | `gemini-3-flash-preview` → `gemini-3.1-flash-lite` → PRIMARY → FALLBACK |
 
 The two chat chains start on Google's own endpoint because the free OpenRouter ids they would otherwise inherit are the first to rate-limit, and the assistant must hold a JSON tool protocol across turns.
 
@@ -120,7 +123,11 @@ Google is reached through `GOOGLE_MODEL_CHAIN` (`gemini-3.8-flash → 3.7 → 3.
 
 ## Transcription
 
-`transcribeRecording(bytes, mimeType)` sends audio/video **inline** to Gemini. Anything above `MAX_INLINE_MEDIA_BYTES` (**14 MB**) throws `RecordingNotTranscribableError` so a human reviews it instead of the request silently failing on payload size.
+`transcribeRecording(bytes, mimeType)` sends audio/video **inline** to Google's Gemini endpoint. The enabled transcription row's native Gemini picks lead, followed by the deduplicated `GOOGLE_MODEL_CHAIN`. Other picks are skipped: existing rows may contain Qoder/OpenRouter models, but saving new incompatible picks is refused. This family check is not a live guarantee that a particular model or account supports audio.
+
+Audio uses temperature **0** and a **2,000-token** output limit; the routing row's sampling fields affect its text probe, not audio. Settings **Test** sends text through `complete()` and explicitly does **not** verify a recording. Disabling saved models skips those picks, not transcription itself.
+
+Anything above `MAX_INLINE_MEDIA_BYTES` (**14 MB**) throws `RecordingNotTranscribableError` so a human reviews it instead of the request silently failing on payload size.
 
 ---
 

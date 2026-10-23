@@ -3,6 +3,7 @@ import "server-only";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import { decryptSecret } from "@/lib/crypto/secrets";
 import { providerById } from "@/modules/settings/domain/providers";
+import { ROUTING_FALLBACK, type ModelRouting } from "@/modules/settings/domain/modelRouting";
 
 /**
  * Runtime credential + model resolution.
@@ -184,27 +185,14 @@ export async function resolveExtraSecretPresence(
   return Object.fromEntries(Object.entries(blob).map(([key]) => [key, true]));
 }
 
-export interface ResolvedRouting {
-  enabled: boolean;
-  primaryModel: string;
-  fallbackModel: string | null;
-  temperature: number;
-  maxTokens: number;
-}
-
 /**
  * Per-capability model routing. Falls back to sensible defaults when the table
  * has no row or the capability is unknown, so the gateway never starts empty.
+ *
+ * The fallback is the console's too: a card for a capability with no row has to
+ * show this pair, because it is the answer a call actually gets.
  */
-export async function resolveModelRouting(capability: string): Promise<ResolvedRouting> {
-  const fallback: ResolvedRouting = {
-    enabled: true,
-    primaryModel: "google/gemma-4-31b-it:free",
-    fallbackModel: "google/gemma-4-26b-a4b-it:free",
-    temperature: 0.3,
-    maxTokens: 1200,
-  };
-
+export async function resolveModelRouting(capability: string): Promise<ModelRouting> {
   try {
     const { data } = await getServiceRestClient()
       .from("ai_model_config")
@@ -220,16 +208,16 @@ export async function resolveModelRouting(capability: string): Promise<ResolvedR
       is_enabled: boolean;
     } | null;
 
-    if (!row) return fallback;
+    if (!row) return ROUTING_FALLBACK;
 
     return {
       enabled: row.is_enabled ?? true,
       primaryModel: row.primary_model,
       fallbackModel: row.fallback_model,
-      temperature: Number(row.temperature ?? fallback.temperature),
-      maxTokens: row.max_tokens ?? fallback.maxTokens,
+      temperature: Number(row.temperature ?? ROUTING_FALLBACK.temperature),
+      maxTokens: row.max_tokens ?? ROUTING_FALLBACK.maxTokens,
     };
   } catch {
-    return fallback;
+    return ROUTING_FALLBACK;
   }
 }

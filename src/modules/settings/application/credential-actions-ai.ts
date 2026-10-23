@@ -5,10 +5,10 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { resolveSecret, resolveConfig, resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { aiConfig } from "@/lib/config.server";
 import { AI_CAPABILITIES } from "@/modules/settings/domain/providers";
+import { ROUTING_PROVIDER_NAMES, probeCaveat } from "@/modules/settings/domain/modelRouting";
 import {
   complete,
   AiGatewayError,
-  type GatewayProvider,
 } from "@/modules/screening/infrastructure/aiGateway";
 import type { AiCapability } from "@/lib/config";
 import type { ChatCompletionMessage } from "@/types";
@@ -62,16 +62,6 @@ const PROVIDER_NAMES: Record<string, string> = {
   qoder: "Qoder",
   cloudflare_workers_ai: "Cloudflare Workers AI",
   nvidia_nim: "NVIDIA NIM",
-};
-
-/** The gateway's own provider keys, spelled for the test result's provenance line. */
-const GATEWAY_PROVIDER_NAMES: Record<GatewayProvider, string> = {
-  openrouter: "OpenRouter",
-  google: "Google AI Studio",
-  opencode: "OpenCode",
-  qoder: "Qoder",
-  cloudflare: "Cloudflare Workers AI",
-  nvidia: "NVIDIA NIM",
 };
 
 /** Tests one provider's credential with a real API call. */
@@ -521,6 +511,11 @@ function reportFailure(
   };
 }
 
+function withCaveat(result: ChainTestResult, capability: string): ChainTestResult {
+  const caveat = probeCaveat(capability);
+  return caveat ? { ...result, detail: `${result.detail} · ${caveat}` } : result;
+}
+
 /**
  * Runs a real completion through one capability's configured model chain.
  *
@@ -558,7 +553,7 @@ export async function testCapability(capability: string): Promise<ChainTestResul
       ok: false,
       status: "disabled",
       latencyMs: 0,
-      detail: "This capability is switched off in Settings.",
+      detail: "Saved models are disabled. Runtime calls still use built-in models; this saved-chain probe was not run.",
     };
   }
 
@@ -573,34 +568,44 @@ export async function testCapability(capability: string): Promise<ChainTestResul
     // A chain that recovered says as much: an early hop failing is the thing an
     // operator needs to see before the daily quota turns it into a mystery.
     const failures = result.attempts.filter((a) => !a.ok);
+    const answered =
+      failures.length > 0
+        ? `${excerpt(result.content)} · ${failures.length} hop(s) failed first: ${excerpt(
+            failures.map((f) => `${f.model}: ${f.error ?? "failed"}`).join(" | "),
+            180
+          )}`
+        : excerpt(result.content);
 
-    return {
-      capability,
-      label,
-      ok: true,
-      status: "responded",
-      latencyMs: Date.now() - started,
-      detail:
-        failures.length > 0
-          ? `${excerpt(result.content)} · ${failures.length} hop(s) failed first: ${excerpt(
-              failures.map((f) => `${f.model}: ${f.error ?? "failed"}`).join(" | "),
-              180
-            )}`
-          : excerpt(result.content),
-      servedBy: `${result.model} (${GATEWAY_PROVIDER_NAMES[result.provider]})`,
-    };
-  } catch (error) {
-    if (error instanceof AiGatewayError) {
-      return reportFailure(
+    return withCaveat(
+      {
         capability,
         label,
-        started,
-        error.attempts.map((a) => `${a.model}: ${a.error ?? "ok"}`)
+        ok: true,
+        status: "responded",
+        latencyMs: Date.now() - started,
+        detail: answered,
+        servedBy: `${result.model} (${ROUTING_PROVIDER_NAMES[result.provider]})`,
+      },
+      capability
+    );
+  } catch (error) {
+    if (error instanceof AiGatewayError) {
+      return withCaveat(
+        reportFailure(
+          capability,
+          label,
+          started,
+          error.attempts.map((a) => `${a.model}: ${a.error ?? "ok"}`)
+        ),
+        capability
       );
     }
-    return reportFailure(capability, label, started, [
-      error instanceof Error ? error.message : "unknown error",
-    ]);
+    return withCaveat(
+      reportFailure(capability, label, started, [
+        error instanceof Error ? error.message : "unknown error",
+      ]),
+      capability
+    );
   }
 }
 /** Convenience: run every provider probe in one call for the console. */

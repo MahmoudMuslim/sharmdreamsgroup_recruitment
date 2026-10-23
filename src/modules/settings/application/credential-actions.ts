@@ -30,6 +30,11 @@ import {
   type ProviderGroup,
 } from "@/modules/settings/domain/providers";
 import {
+  TRANSCRIPTION_CAPABILITY,
+  qualifiedId,
+  transcriptionRefusal,
+} from "@/modules/settings/domain/modelRouting";
+import {
   TRAIL_LIMIT,
   TRAIL_SEARCH_SCAN,
   trailPrintedMatches,
@@ -606,10 +611,12 @@ export async function listModelRouting(): Promise<AiModelRow[]> {
   await requireStaff("/settings");
 
   const restClient = await createServerRestClient();
-  const { data } = await restClient
+  const { data, error } = await restClient
     .from("ai_model_config")
     .select("capability, primary_model, fallback_model, temperature, max_tokens, is_enabled, updated_at")
     .order("capability");
+
+  if (error) throw new Error("Could not load model routing.");
 
   return ((data ?? []) as unknown[]).map((row) => {
     const r = row as {
@@ -655,6 +662,11 @@ export async function saveModelRouting(input: {
   }
   if (!Number.isInteger(input.maxTokens) || input.maxTokens < 64 || input.maxTokens > 32_000) {
     return { ok: false, error: "Max tokens must be between 64 and 32000." };
+  }
+
+  if (input.capability === TRANSCRIPTION_CAPABILITY) {
+    const unusable = transcriptionRefusal(input.primaryModel, input.fallbackModel);
+    if (unusable) return { ok: false, error: unusable };
   }
 
   const session = await createServerRestClient();
@@ -976,11 +988,11 @@ async function fetchOpenCodeModels(): Promise<SourceResult> {
 
     const payload = (await response.json()) as { data?: { id: string; created?: number }[] };
     const models: ModelOption[] = (payload.data ?? []).map((model) => ({
-      // Qualified with its provider: OpenCode's ids are flat (`claude-haiku-4-5`),
-      // which is the shape the gateway reads as "Google's own endpoint", so an
-      // unqualified id would be stored in the routing table and then sent to the
-      // wrong provider.
-      id: `opencode:${model.id}`,
+      // Qualified with its provider: OpenCode's ids are flat
+      // (`claude-haiku-4-5`), the shape the gateway reads as Google's own
+      // endpoint, so an unqualified id would be stored and then billed to the
+      // wrong provider. `qualifiedId` is the one place that pairing is written.
+      id: qualifiedId("opencode", model.id),
       name: model.id,
       promptPrice: null,
       completionPrice: null,
@@ -1045,7 +1057,7 @@ async function fetchQoderModels(): Promise<SourceResult> {
       // Qualified like OpenCode's ids: `auto` and `qfmodel` carry no namespace,
       // and the routing table has no provider column, so the prefix is the only
       // thing that tells the gateway these are not a Google model.
-      id: `qoder:${model.id}`,
+      id: qualifiedId("qoder", model.id),
       name: model.display_name ?? model.id,
       promptPrice: null,
       completionPrice: null,
@@ -1121,7 +1133,7 @@ async function fetchNvidiaModels(): Promise<SourceResult> {
     const models: ModelOption[] = (payload.data ?? [])
       .filter((model) => !/embed|rerank|retriever|diffusion|deplot|cosmos/i.test(model.id))
       .map((model) => ({
-        id: `nvidia:${model.id}`,
+        id: qualifiedId("nvidia_nim", model.id),
         name: model.id,
         promptPrice: null,
         completionPrice: null,
@@ -1229,7 +1241,7 @@ async function fetchCloudflareModels(): Promise<SourceResult> {
           // Qualified for the routing table, which has no provider column:
           // `@cf/…` is namespaced the way an OpenRouter id is, so an unqualified
           // one would quietly be billed to OpenRouter.
-          id: `cloudflare:${modelId}`,
+          id: qualifiedId("cloudflare_workers_ai", modelId),
           name: modelId,
           promptPrice: null,
           completionPrice: null,

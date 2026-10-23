@@ -36,6 +36,13 @@ import {
 } from "@/modules/settings/domain/providers";
 import { modelSearchWords, searchModels } from "@/modules/settings/domain/modelSearch";
 import {
+  ROUTING_FALLBACK,
+  ROUTING_PROVIDER_NAMES,
+  TRANSCRIPTION_CAPABILITY,
+  acceptsAudio,
+  routeFor,
+} from "@/modules/settings/domain/modelRouting";
+import {
   MODEL_CONSOLE_TAB_IDS,
   MODEL_CONSOLE_TABS,
   modelConsoleTab,
@@ -335,7 +342,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
    * gating the whole console on them held an empty spinner for twenty seconds.
    * The cards paint from the table, then the model list fills in behind them.
    * Routing rows are keyed off AI_CAPABILITIES so a capability that has never
-   * been saved still gets an editable card.
+   * been saved still gets an editable card showing the resolver's defaults.
    */
   useEffect(() => {
     let active = true;
@@ -350,11 +357,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             ? { ...stored, status: "idle" as const }
             : {
                 capability: capability.id,
-                primaryModel: "",
-                fallbackModel: null,
-                temperature: 0.3,
-                maxTokens: 1200,
-                isEnabled: true,
+                primaryModel: ROUTING_FALLBACK.primaryModel,
+                fallbackModel: ROUTING_FALLBACK.fallbackModel,
+                temperature: ROUTING_FALLBACK.temperature,
+                maxTokens: ROUTING_FALLBACK.maxTokens,
+                isEnabled: ROUTING_FALLBACK.enabled,
+                inferred: true,
                 updatedAt: new Date().toISOString(),
                 status: "idle" as const,
               };
@@ -445,7 +453,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       if (result.ok) {
         setSaved((s) => ({ ...s, [row.capability]: snapshot(row) }));
         setRows((rs) =>
-          rs.map((r) => (r.capability === row.capability ? { ...r, status: "saved" } : r))
+          rs.map((r) =>
+            r.capability === row.capability ? { ...r, status: "saved", inferred: false } : r
+          )
         );
         setTimeout(
           () =>
@@ -1059,9 +1069,10 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       >
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-line bg-white px-4 py-3">
           <p className="text-sm text-brand-ink/60">
-            One card per AI task: the <strong>primary</strong> model answers every request and the{" "}
-            <strong>fallback</strong> takes it over when the primary fails. Temperature and the token
-            cap are stored with the row, and the gateway reads them on the next call.
+            Saved models are tried first when enabled, followed by built-in fallbacks. Turning off
+            saved models does not turn off AI. A task with no saved row shows the resolver defaults.
+            Temperature and token limits apply to text calls unless the caller overrides them;
+            Qoder manages its own sampling. Test uses saved values, not unsaved edits.
           </p>
           {unsavedCount > 0 ? (
             <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-800">
@@ -1069,7 +1080,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             </span>
           ) : (
             <span className="shrink-0 rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-ink/55">
-              Everything saved
+              No unsaved changes
             </span>
           )}
         </div>
@@ -1094,6 +1105,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           const definition = AI_CAPABILITIES.find((c) => c.id === row.capability);
           const dirty = saved[row.capability] !== snapshot(row);
           const model = getModelById(row.primaryModel, catalogue?.models);
+          const isTranscription = row.capability === TRANSCRIPTION_CAPABILITY;
+          const audioUnusable = isTranscription
+            ? [row.primaryModel, row.fallbackModel]
+                .filter((id): id is string => !!id && !acceptsAudio(id))
+                .map((id) => `${id} (${ROUTING_PROVIDER_NAMES[routeFor(id).provider]})`)
+            : [];
 
           return (
             <div
@@ -1114,7 +1131,15 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     </h3>
                     {!row.isEnabled && (
                       <span className="rounded bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">
-                        Disabled
+                        Built-in models
+                      </span>
+                    )}
+                    {row.inferred && (
+                      <span
+                        className="rounded bg-brand-sand px-2 py-0.5 text-[10px] font-bold uppercase text-brand-ink/55"
+                        title="No row is saved for this task. These are the values the gateway falls back to."
+                      >
+                        Nothing saved
                       </span>
                     )}
                   </div>
@@ -1135,10 +1160,26 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                         )}
                       </>
                     ) : (
-                      <span className="italic">No primary model yet — choose one below and save.</span>
+                      <span className="font-mono">{row.primaryModel || "No primary model selected."}</span>
                     )}
                     {row.probe && <ProbeBadge result={row.probe} />}
                   </div>
+
+                  {isTranscription && (
+                    <p className="mt-3 rounded-xl bg-brand-sand px-3 py-2 text-xs leading-relaxed text-brand-ink/70">
+                      Recordings use the Google Gemini audio path. When enabled, compatible saved
+                      picks lead, followed by the built-in Gemini list. Audio uses temperature 0 and
+                      a 2,000-token limit; the fields below affect only the text probe for this task.
+                      Test sends text, not a recording, so it does not verify transcription.
+                    </p>
+                  )}
+                  {audioUnusable.length > 0 && (
+                    <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                      <TriangleAlert className="mr-1.5 inline h-3.5 w-3.5" aria-hidden />
+                      Skipped by the audio path: {audioUnusable.join("; ")}. Choose native Google
+                      Gemini models, or clear the fallback. Built-in Gemini models remain available.
+                    </p>
+                  )}
                 </div>
 
                 <label className="flex shrink-0 items-center gap-2 rounded-lg border border-brand-line bg-white px-3 py-2 text-xs font-semibold">
@@ -1149,12 +1190,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     onChange={(e) => patch(row.capability, { isEnabled: e.target.checked })}
                     className="h-4 w-4 rounded border-brand-line"
                   />
-                  Enabled
+                  Use saved models
                 </label>
               </div>
 
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Field label="Primary model" htmlFor={`model-${row.capability}`} hint="Model used for every request.">
+                <Field label="Primary model" htmlFor={`model-${row.capability}`} hint="The model the gateway asks first.">
                   <div className="relative">
                     <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
                     <Select
@@ -1178,7 +1219,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                 <Field
                   label="Fallback model"
                   htmlFor={`fallback-${row.capability}`}
-                  hint="Used automatically when the primary fails."
+                  hint="The model it asks when the primary fails."
                 >
                   <div className="relative">
                     <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
@@ -1233,8 +1274,11 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                 </Field>
               </div>
 
-              {row.probe && !row.probe.ok && (
-                <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-relaxed text-rose-800">
+              {row.probe && (!row.probe.ok || isTranscription) && (
+                <p className={cn(
+                  "mt-2 rounded-lg border px-3 py-2 text-[11px] leading-relaxed",
+                  row.probe.ok ? "border-brand-line bg-brand-sand text-brand-ink/70" : "border-rose-200 bg-rose-50 text-rose-800"
+                )}>
                   {row.probe.detail}
                 </p>
               )}
