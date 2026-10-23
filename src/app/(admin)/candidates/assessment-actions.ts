@@ -513,13 +513,13 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   const openBefore = await openAnswers(restClient, attemptId);
   if (openBefore === 0) {
+    // A graded paper has no run left in it, and saying `ok` here would let the
+    // chat report a change this call made none of — the desk hides its button in
+    // this state, so the only door that reaches it is the assistant's.
     if (found.status === "GRADED") {
       return {
-        ok: true,
-        scored: 0,
-        still_unscored: 0,
-        finalized: false,
-        application_id: applicationId,
+        ok: false,
+        error: "This test is already graded, so there is no grading run to make.",
       };
     }
 

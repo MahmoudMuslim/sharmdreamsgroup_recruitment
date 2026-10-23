@@ -211,6 +211,15 @@ check(
     consoleActions.slice(zeroOpenAt, aiSwitchAt).includes('if (found.status !== "SUBMITTED")')
 );
 check(
+  "an already graded paper is refused rather than reported as a change",
+  consoleActions.includes("This test is already graded, so there is no grading run to make.") &&
+    !consoleActions.includes("finalized: false,")
+);
+check(
+  "the assistant's retry tool says a graded paper refuses",
+  gradingTool.includes("A paper already graded refuses too")
+);
+check(
   "the action reports whether the paper crossed",
   consoleActions.includes("finalized: true,") &&
     consoleActions.includes('if (after?.status !== "GRADED")')
