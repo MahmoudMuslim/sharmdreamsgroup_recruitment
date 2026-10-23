@@ -23,6 +23,7 @@ import {
   EMAIL_INTERVIEW_TEMPLATES,
   EMAIL_STAGE_TEMPLATES,
   EMAIL_SUBJECT_DEFAULTS,
+  EMAIL_SUBJECT_FALLBACK,
   EMAIL_TEMPLATE_DEFAULTS,
   STAGE_FALLBACK_TEMPLATE,
   TEMPLATE_DEFAULTS,
@@ -130,7 +131,7 @@ async function resolveEmailCopy(
     if (row?.body?.trim()) {
       return {
         key,
-        subject: row.subject?.trim() || EMAIL_SUBJECT_DEFAULTS[key] || "An update on your application",
+        subject: row.subject?.trim() || EMAIL_SUBJECT_DEFAULTS[key] || EMAIL_SUBJECT_FALLBACK,
         body: row.body,
       };
     }
@@ -141,7 +142,7 @@ async function resolveEmailCopy(
     if (body) {
       return {
         key,
-        subject: EMAIL_SUBJECT_DEFAULTS[key] || "An update on your application",
+        subject: EMAIL_SUBJECT_DEFAULTS[key] || EMAIL_SUBJECT_FALLBACK,
         body,
       };
     }
