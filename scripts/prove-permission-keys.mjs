@@ -235,6 +235,26 @@ if (reachable) {
     );
   }
 
+  // A door the chat holds open by itself is a door the matrix cannot close. The
+  // assistant reaches the portal only through `application/sources.ts`, which
+  // imports the same action files the screens call — so the grants those actions
+  // consult are the grants that decide a chat write too. That holds only while the
+  // chat owns no writer of its own: its transcript tables are the one exception,
+  // because no screen-action writes those.
+  const chatWriters = walk("src/modules/assistant")
+    .filter((rel) => {
+      const text = read(rel).replace(/\s+/g, " ");
+      return /\.from\(\s*"[a-z_]+"[^)]*\)\.(insert|update|delete)\s*\(/.test(text);
+    })
+    .filter((rel) => rel !== "src/modules/assistant/infrastructure/transcriptStore.ts");
+  check(
+    "the assistant writes only through the actions the screens use",
+    chatWriters.length === 0,
+    chatWriters.length
+      ? `${chatWriters.join(", ")} mutate a table without the action that owns the gate`
+      : "one writer, and it is the chat's own transcript store"
+  );
+
   // `AssignableStaffRole` is the set the Team console's role picker offers; the
   // enum is what the database can store on a profile. Widening one without the
   // other either invents a role that cannot be saved or hides one that can.
