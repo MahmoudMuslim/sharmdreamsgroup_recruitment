@@ -183,7 +183,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
   "/jobs": {
     purpose: "The openings, who applied to each, and what they submitted.",
     shows: [
-      "A summary strip, status rails and a Still hiring rail, a company rail, and one card per opening carrying its live applicant count.",
+      "A summary strip, status rails and a Still hiring rail, a company rail, and one card per opening carrying its live applicant count and its hiring-demand line — the headcount target, who sits in the pipeline now and who is hired.",
       "Newer and Older under the cards — 25 openings to a page, and the page is in the address bar, so a copied link shows the same cards.",
     ],
     use: [
@@ -200,6 +200,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Departments and locations come from Settings → Organisation. A retired or misspelt value is refused on a new write, and the drift desk there names the openings already carrying one.",
       "Starting from a position needs that list: db/migrations/026_positions.sql is applied on this database, so the drawer offers the positions it holds, and an opening's company has to match the position's company unless the position is group-wide. On a database where that file has not been run, the drawer says the positions have not been created yet and offers a blank opening instead.",
       "Seniority levels and the Remote and Hybrid job types arrive with db/migrations/033_opening_terms.sql, which is authored but not applied on this database: until it is, the drawer offers the four job types the database already accepts, hides the level picker, and the grid says so above the cards. A level is never inferred — an opening nobody has levelled reads not recorded, never a middle tier.",
+      "The demand line's target is db/migrations/031_job_headcount.sql's positions_needed column, which is authored but not applied on this database: until it is, every card reads no target set and the grid says above the cards that the target could not be read. The pipeline and hired counts need no migration, and a target nobody recorded reads no target set — never a role that wants zero people.",
       "A card's count is live; the drawer lists the newest 200 applicants.",
       "The grid holds the newest 200 openings in the browser — its rails, its search box and its page count those, while the strip's figure is the whole scope. When the two differ, a line under the strip names what is not here.",
       "A rail, new search words or the assistant's link to one opening moves you to the page that holds it; anything else starts you back at the front.",

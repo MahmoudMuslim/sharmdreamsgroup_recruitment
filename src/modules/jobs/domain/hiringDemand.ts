@@ -80,5 +80,5 @@ export function demandLine(demand: HiringDemand): string {
  * is the demand column is not there yet.
  */
 export function demandUnavailableNote(): string {
-  return "The headcount target could not be read, so only the pipeline and hire counts are shown.";
+  return "The headcount target could not be read — on a database where db/migrations/031_job_headcount.sql has not been run, job_openings has no positions_needed column to read — so only the pipeline and hire counts are shown.";
 }
