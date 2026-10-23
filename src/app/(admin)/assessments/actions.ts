@@ -28,6 +28,7 @@ import { LINKS_LIMIT, type IssuedLink } from "@/modules/assessment/domain/issued
 import type { EditableQuestion } from "./QuestionEditorDrawer";
 import { readFollowUpAvailability } from "@/modules/assessment/application/followUpAvailability";
 import { readFollowUpRule } from "@/modules/assessment/domain/followUp";
+import { comparisonPaper, comparisonSelectionIssue, type AttemptComparison } from "@/modules/assessment/domain/comparison";
 
 export interface TemplateSummary {
   id: string;
@@ -362,6 +363,7 @@ function one<T extends object>(value: T | T[] | null | undefined): T | null {
 interface LinkApplication {
   full_name?: string;
   tracking_code?: string;
+  job_id?: string;
   job_openings?: { title?: string } | { title?: string }[] | null;
 }
 
@@ -412,7 +414,7 @@ function linksWindow(restClient: Awaited<ReturnType<typeof createServerRestClien
     .from("candidate_attempts")
     .select(
       `id, application_id, template_id, status, time_limit_minutes, created_at, started_at, expires_at, submitted_at, total_score, max_score, integrity_flags,
-       applications!inner(full_name, tracking_code, archived_at, job_openings(title)),
+       applications!inner(full_name, tracking_code, job_id, archived_at, job_openings(title)),
        assessment_templates(name, assessment_questions(id)),
        candidate_responses(id)`,
       { count: "exact" }
@@ -466,6 +468,7 @@ export async function getIssuedLinks(): Promise<IssuedLinksRead> {
         ? blindHandle(application?.tracking_code)
         : (application?.full_name ?? "Candidate"),
       identity_blind: identityBlind,
+      job_id: application?.job_id ?? null,
       job_title: one(application?.job_openings ?? null)?.title ?? null,
       template_id: row.template_id,
       template_name: template?.name ?? "Assessment",
@@ -552,7 +555,37 @@ interface ResponseRow {
 export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswers | null> {
   await requireStaff("/assessments");
   if (!ATTEMPT_ID.test(attemptId ?? "")) return null;
+  return readAttemptAnswers(attemptId);
+}
 
+export async function getAttemptComparison(attemptIds: string[]): Promise<AttemptComparison> {
+  await requireStaff("/assessments");
+  if (!Array.isArray(attemptIds) || attemptIds.length < 2 || attemptIds.length > 4 ||
+      attemptIds.some((id) => typeof id !== "string" || !ATTEMPT_ID.test(id)) ||
+      new Set(attemptIds.map((id) => id.toLowerCase())).size !== attemptIds.length) {
+    return { ok: false, error: "Choose two to four distinct assessment links." };
+  }
+  try {
+    const results = await Promise.all(attemptIds.map((id) => readAttemptAnswers(id, true)));
+    if (results.some((paper) => paper === null)) {
+      return { ok: false, error: "One or more selected papers are no longer available to you." };
+    }
+    const papers = results.filter((paper) => paper !== null);
+    const issue = comparisonSelectionIssue(papers.map((paper) => ({
+      id: paper.attempt_id, application_id: paper.application_id,
+      job_id: paper.job_id, template_id: paper.template_id,
+    })));
+    if (issue) return { ok: false, error: issue };
+    return { ok: true, papers: papers.map(comparisonPaper) };
+  } catch {
+    return { ok: false, error: "The comparison could not be read. Please try again." };
+  }
+}
+
+async function readAttemptAnswers(
+  attemptId: string,
+  comparison = false
+): Promise<(AttemptAnswers & { job_id: string | null; template_id: string }) | null> {
   const [restClient, masked, blind] = await Promise.all([
     createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
@@ -560,15 +593,17 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
   ]);
   const files = await getFileStore();
 
-  const { data: found } = await restClient
+  const query = restClient
     .from("candidate_attempts")
     .select(
       `id, application_id, template_id, status, time_limit_minutes, started_at, expires_at, submitted_at, total_score, max_score, integrity_flags, question_order, option_order,
        assessment_templates(name),
-       applications(full_name, tracking_code, job_openings(title))`
+       applications${comparison ? "!inner" : ""}(full_name, tracking_code, job_id, job_openings(title))`
     )
-    .eq("id", attemptId)
-    .maybeSingle();
+    .eq("id", attemptId);
+  if (comparison) query.is(LIVE_LINKS_FILTER, null);
+  const { data: found, error: attemptError } = await query.maybeSingle();
+  if (comparison && attemptError) throw attemptError;
 
   const attempt = found as unknown as {
     id: string;
@@ -590,7 +625,7 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
 
   if (!attempt) return null;
 
-  const [{ data: questionRows }, { data: responseRows }, benchmark] = await Promise.all([
+  const [{ data: questionRows, error: questionError }, { data: responseRows, error: responseError }, benchmark] = await Promise.all([
     restClient
       .from("assessment_questions")
       .select("id, title, prompt, instructions, question_type, config, points, position")
@@ -605,8 +640,10 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
     // Not counted at all when this reviewer's marks are withheld: a percentile
     // is a claim about other candidates' marks, which is the thing the setting
     // exists to hide.
-    masked ? Promise.resolve(null) : readAttemptBenchmark(restClient, attempt),
+    masked || comparison ? Promise.resolve(null) : readAttemptBenchmark(restClient, attempt),
   ]);
+  if (comparison && questionError) throw questionError;
+  if (comparison && responseError) throw responseError;
 
   const questions = (questionRows ?? []) as unknown as QuestionRow[];
   const byId = new Map(questions.map((question) => [question.id, question]));
@@ -738,6 +775,8 @@ export async function getAttemptAnswers(attemptId: string): Promise<AttemptAnswe
   return {
     attempt_id: attempt.id,
     application_id: attempt.application_id,
+    job_id: application?.job_id ?? null,
+    template_id: attempt.template_id,
     // The whole paper reads blind, not just the header: the drawer is where a
     // reviewer goes through someone's answers, and a name at the top of it is
     // exactly the priming the switch exists to keep out of that reading.

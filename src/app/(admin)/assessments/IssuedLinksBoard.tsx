@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
@@ -44,6 +44,8 @@ import {
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
 import { blindMarkingNote } from "@/modules/assessment/domain/blindMarking";
+import { comparisonSelectionIssue } from "@/modules/assessment/domain/comparison";
+import { ComparisonDrawer } from "./ComparisonDrawer";
 
 const TYPE_META: Record<string, { word: string; icon: LucideIcon }> = {
   MULTIPLE_CHOICE: { word: "Quiz", icon: Check },
@@ -101,6 +103,14 @@ export function IssuedLinksBoard({
   const [rail, setRail] = useState<LinkRail>("ALL");
   const [query, setQuery] = useState("");
   const [reading, setReading] = useState<IssuedLink | null>(null);
+  const compareButton = useRef<HTMLButtonElement>(null);
+  const [selection, setSelection] = useState<{ source: IssuedLinksRead; links: IssuedLink[]; open: boolean }>({ source: read, links: [], open: false });
+  if (selection.source !== read) {
+    setSelection({ source: read, links: [], open: false });
+  }
+  const selected = selection.source === read ? selection.links : [];
+  const attemptIds = useMemo(() => selection.links.map((link) => link.id), [selection.links]);
+  const clearSelection = () => setSelection({ source: read, links: [], open: false });
 
   const counts = useMemo(() => {
     const map = new Map<string, number>([["ALL", read.rows.length]]);
@@ -147,7 +157,7 @@ export function IssuedLinksBoard({
             />
             <TextInput
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => { setQuery(event.target.value); clearSelection(); }}
               placeholder={`Search by ${linkSearchWords()}…`}
               aria-label="Search issued links"
               className="pl-9"
@@ -162,9 +172,29 @@ export function IssuedLinksBoard({
               label={entry.label}
               count={counts.get(entry.key) ?? 0}
               active={rail === entry.key}
-              onClick={() => setRail(entry.key)}
+              onClick={() => { setRail(entry.key); clearSelection(); }}
             />
           ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            ref={compareButton}
+            type="button"
+            disabled={selected.length < 2}
+            onClick={() => { setReading(null); setSelection({ ...selection, open: true }); }}
+            className="min-h-11 rounded-xl border border-brand-line bg-brand-cream px-3 text-xs font-semibold transition hover:bg-brand-sand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Compare selected ({selected.length})
+          </button>
+          {selected.length > 0 && (
+            <button type="button" onClick={clearSelection} className="min-h-11 rounded-lg px-2 text-xs font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-brand-ink">
+              Clear selection
+            </button>
+          )}
+          <p id="comparison-selection-help" className="text-xs text-brand-ink/70">
+            Choose 2–4 candidates for the same job and suite, one attempt each.
+          </p>
+          <span className="sr-only" role="status">{selected.length} candidates selected for comparison.</span>
         </div>
       </div>
 
@@ -202,6 +232,20 @@ export function IssuedLinksBoard({
                 >
                   <div className="col-span-3 min-w-0">
                     <span className="flex min-w-0 items-center gap-2">
+                      <label className="flex h-11 w-11 shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Compare ${link.candidate_name}`}
+                          aria-describedby="comparison-selection-help"
+                          checked={selected.some((row) => row.id === link.id)}
+                          disabled={!selected.some((row) => row.id === link.id) && comparisonSelectionIssue([...selected, link]) !== null}
+                          onChange={(event) => {
+                            const links = event.target.checked ? [...selected, link] : selected.filter((row) => row.id !== link.id);
+                            if (!comparisonSelectionIssue(links)) setSelection({ source: read, links, open: false });
+                          }}
+                          className="h-4 w-4 accent-brand-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ink disabled:cursor-not-allowed"
+                        />
+                      </label>
                       <Link
                         href={`/candidates/${link.application_id}`}
                         className="truncate font-semibold text-brand-ink underline-offset-2 hover:underline"
@@ -280,6 +324,12 @@ export function IssuedLinksBoard({
 
       {reading && (
         <AnswersDrawer link={reading} timeZone={timeZone} onClose={() => setReading(null)} />
+      )}
+      {selection.open && selection.source === read && (
+        <ComparisonDrawer
+          attemptIds={attemptIds}
+          onClose={() => { setSelection({ ...selection, open: false }); compareButton.current?.focus(); }}
+        />
       )}
     </Card>
   );

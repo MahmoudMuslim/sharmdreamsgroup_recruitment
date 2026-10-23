@@ -38,6 +38,7 @@ export interface IssuedLink {
    * instead of leaving a name-shaped gap.
    */
   identity_blind: boolean;
+  job_id: string | null;
   job_title: string | null;
   template_id: string;
   template_name: string;
