@@ -45,6 +45,7 @@ import { IssuedLinksBoard } from "./IssuedLinksBoard";
 import { ItemStatsDrawer } from "./ItemStatsDrawer";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { SuiteAuthoringDrawer } from "./SuiteAuthoringDrawer";
+import { TestRecommendationDrawer } from "./TestRecommendationDrawer";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 
@@ -941,6 +942,7 @@ export function AssessmentGrid({
     setStatViewing(statsTarget(incomingStats));
   }
   const [draftingSuite, setDraftingSuite] = useState(false);
+  const [recommendingTests, setRecommendingTests] = useState(false);
 
   // `?q=` seeds the box so an assistant answer that searched the suites lands on
   // the suites it named, not on a grid holding the whole catalogue. Typing stays
@@ -1043,7 +1045,7 @@ export function AssessmentGrid({
           />
         </div>
 
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-3 2xl:flex-row 2xl:flex-wrap 2xl:items-center 2xl:justify-between">
           <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
             <div className="relative sm:max-w-xs sm:flex-1">
               <Search
@@ -1082,7 +1084,17 @@ export function AssessmentGrid({
               <option value="paused">Paused</option>
             </Select>
           </div>
-          <div className="flex shrink-0 gap-2">
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setRecommendingTests(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-brand-line bg-brand-cream px-4 py-2.5 text-sm font-semibold transition hover:bg-brand-sand"
+              >
+                <ListChecks className="h-4 w-4" aria-hidden />
+                Recommend tests
+              </button>
+            )}
             {canEdit && (
               <button
                 type="button"
@@ -1214,6 +1226,12 @@ export function AssessmentGrid({
           options={options}
           defaultDurationMinutes={defaultDurationMinutes}
           onCreated={router.refresh}
+        />
+      )}
+      {canEdit && recommendingTests && (
+        <TestRecommendationDrawer
+          onClose={() => setRecommendingTests(false)}
+          defaultDurationMinutes={defaultDurationMinutes}
         />
       )}
     </>
