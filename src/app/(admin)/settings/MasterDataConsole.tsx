@@ -673,9 +673,9 @@ export function MasterDataConsole({
   const rows = rowsFor(data, tab);
   const activeTab = meta;
 
-  // The positions table arrives with a migration the owner has not applied yet. A
-  // failed read is not an empty list, and offering an Add form would promise a save
-  // that cannot land, so this section says what is missing instead.
+  // Where db/migrations/026_positions.sql has not been run, the positions table does
+  // not exist. A failed read is not an empty list, and offering an Add form would
+  // promise a save that cannot land, so this section says what is missing instead.
   const unavailable = tab === "positions" && !data.positionsAvailable;
   const missingMigration = UNAPPLIED_MASTER_LIST[tab];
 
