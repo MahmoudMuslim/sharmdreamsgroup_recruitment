@@ -34,10 +34,12 @@
 -- second row that reads alike before it gets here, because that is also how a
 -- job filing resolves, but the database is the last line against a script.
 --
--- This migration is NOT applied to any database yet. Everything in the
--- application that reads positions treats a missing table as "not created yet"
--- and says so, so the rest of the jobs and settings screens keep working until
--- the owner runs it.
+-- Applied to the local self-hosted database on 2026-10-23 and proven against it:
+-- the positions console, the create-from-position door on /jobs and the
+-- assistant's inheritance path all read this table. The application still treats
+-- a missing table as "not created yet" and says so — `positionsAvailable` is the
+-- one flag for that — so a database where this has not been run keeps its jobs
+-- and settings screens working, with only the position doors shut.
 -- ============================================================================
 
 create table if not exists public.positions (

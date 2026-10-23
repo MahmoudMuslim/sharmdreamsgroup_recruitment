@@ -427,6 +427,7 @@ create table if not exists public.job_openings (
   created_by uuid,
   created_at timestamp with time zone default now() not null,
   salary_currency text default 'USD'::text not null,
+  position_id uuid,
   positions_needed integer,
   constraint job_openings_positions_needed_sane check ((positions_needed is null) or (positions_needed >= 1 and positions_needed <= 1000)),
   PRIMARY KEY (id)
@@ -496,6 +497,24 @@ create table if not exists public.permissions (
   description text,
   PRIMARY KEY (key)
 );
+create table if not exists public.positions (
+  id uuid default gen_random_uuid(),
+  tenant_id uuid,
+  title text not null,
+  department text not null,
+  grade text,
+  responsibilities text,
+  requirements text[] default '{}'::text[] not null,
+  min_salary_usd numeric(12,2),
+  max_salary_usd numeric(12,2),
+  salary_currency text default 'USD'::text not null,
+  is_active boolean default true not null,
+  sort_order integer default 100 not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
+  PRIMARY KEY (id)
+);
+comment on table public.positions is 'A post a company or the group hires for: the title, department, grade, responsibilities, requirements and salary band a new job opening inherits. Not a requisition — location, employment type and status belong to the opening.';
 create table if not exists public.provider_credentials (
   id uuid default gen_random_uuid(),
   provider text not null,
@@ -772,6 +791,27 @@ do $$ begin
   alter table public.onboarding_plans add constraint onboarding_plans_progress_check CHECK (((progress >= (0)::numeric) AND (progress <= (100)::numeric)));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
+  alter table public.positions add constraint positions_currency_check CHECK ((salary_currency ~ '^[A-Z]{3}$'::text));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_department_check CHECK (((char_length(btrim(department)) >= 1) AND (char_length(btrim(department)) <= 120)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_grade_check CHECK (((grade IS NULL) OR (char_length(btrim(grade)) <= 40)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_requirements_check CHECK (((array_length(requirements, 1) IS NULL) OR (array_length(requirements, 1) <= 30)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_responsibilities_check CHECK (((responsibilities IS NULL) OR (char_length(responsibilities) <= 4000)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_salary_check CHECK ((((min_salary_usd IS NULL) OR (min_salary_usd >= (0)::numeric)) AND ((max_salary_usd IS NULL) OR (max_salary_usd >= (0)::numeric)) AND ((min_salary_usd IS NULL) OR (max_salary_usd IS NULL) OR (max_salary_usd >= min_salary_usd))));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_title_check CHECK (((char_length(btrim(title)) >= 1) AND (char_length(btrim(title)) <= 160)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
   alter table public.role_families add constraint role_families_key_key UNIQUE (key);
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
@@ -934,6 +974,9 @@ do $$ begin
   alter table public.job_openings add constraint job_openings_created_by_fkey FOREIGN KEY (created_by) REFERENCES user_profiles(id) ON DELETE SET NULL;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
+  alter table public.job_openings add constraint job_openings_position_id_fkey FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
   alter table public.job_openings add constraint job_openings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants_and_companies(id) ON DELETE CASCADE;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
@@ -944,6 +987,9 @@ do $$ begin
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.onboarding_plans add constraint onboarding_plans_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants_and_companies(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.positions add constraint positions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants_and_companies(id) ON DELETE CASCADE;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.role_families add constraint role_families_department_id_fkey FOREIGN KEY (department_id) REFERENCES departments(id) ON DELETE SET NULL;
@@ -1034,6 +1080,7 @@ alter table public.locations enable row level security;
 alter table public.notification_templates enable row level security;
 alter table public.onboarding_plans enable row level security;
 alter table public.permissions enable row level security;
+alter table public.positions enable row level security;
 alter table public.provider_credentials enable row level security;
 alter table public.provider_models enable row level security;
 alter table public.role_families enable row level security;
@@ -1287,11 +1334,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_slug_uniq ON public.departm
 CREATE INDEX IF NOT EXISTS idx_departments_tenant ON public.departments USING btree (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_integrity_events_attempt ON public.integrity_events USING btree (attempt_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_interview_schedules_application ON public.interview_schedules USING btree (application_id);
+CREATE INDEX IF NOT EXISTS idx_job_openings_position ON public.job_openings USING btree (position_id);
 CREATE INDEX IF NOT EXISTS idx_job_openings_status ON public.job_openings USING btree (status);
 CREATE INDEX IF NOT EXISTS idx_job_openings_tenant ON public.job_openings USING btree (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_locations_tenant ON public.locations USING btree (tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS locations_global_name_uniq ON public.locations USING btree (name, city) WHERE (tenant_id IS NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS locations_tenant_name_uniq ON public.locations USING btree (tenant_id, name, city) WHERE (tenant_id IS NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS positions_global_title_uniq ON public.positions USING btree (lower(btrim(title))) WHERE (tenant_id IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS positions_tenant_title_uniq ON public.positions USING btree (tenant_id, lower(btrim(title))) WHERE (tenant_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_positions_active ON public.positions USING btree (is_active, sort_order);
+CREATE INDEX IF NOT EXISTS idx_positions_tenant ON public.positions USING btree (tenant_id);
 CREATE UNIQUE INDEX IF NOT EXISTS provider_credentials_provider_priority_key ON public.provider_credentials USING btree (provider, priority) WHERE (is_active = true);
 CREATE INDEX IF NOT EXISTS provider_models_price_idx ON public.provider_models USING btree (prompt_price_per_million, completion_price_per_million);
 CREATE INDEX IF NOT EXISTS provider_models_provider_active_idx ON public.provider_models USING btree (provider, is_active);
@@ -1596,6 +1648,17 @@ create policy "locations_write" on public.locations
   to public
   using (has_permission('settings.manage_platform'::text))
   with check (has_permission('settings.manage_platform'::text));
+drop policy if exists "positions_read" on public.positions;
+create policy "positions_read" on public.positions
+  for SELECT
+  to public
+  using ((is_active OR is_staff()));
+drop policy if exists "positions_write" on public.positions;
+create policy "positions_write" on public.positions
+  for ALL
+  to public
+  using (has_permission('settings.manage_platform'::text))
+  with check (has_permission('settings.manage_platform'::text));
 drop policy if exists "notification_templates_read" on public.notification_templates;
 create policy "notification_templates_read" on public.notification_templates
   for SELECT
@@ -1791,6 +1854,8 @@ drop trigger if exists "trg_locations_updated" on public.locations;
 CREATE TRIGGER trg_locations_updated BEFORE UPDATE ON public.locations FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_notification_templates_updated" on public.notification_templates;
 CREATE TRIGGER trg_notification_templates_updated BEFORE UPDATE ON public.notification_templates FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+drop trigger if exists "trg_positions_updated" on public.positions;
+CREATE TRIGGER trg_positions_updated BEFORE UPDATE ON public.positions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_provider_credentials_updated" on public.provider_credentials;
 CREATE TRIGGER trg_provider_credentials_updated BEFORE UPDATE ON public.provider_credentials FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_provider_models_updated" on public.provider_models;
@@ -1818,6 +1883,16 @@ comment on column public.assistant_messages.steps is 'The tool calls the answer 
 comment on column public.assistant_messages.attachment_text is 'Extracted text of the document attached to that turn, clipped to what the model was allowed to read. Without it a restored thread cannot answer a follow-up about the CV it was given.';
 comment on column public.job_openings.min_salary_usd is 'Minimum salary in salary_currency. Column name retained for compatibility.';
 comment on column public.job_openings.salary_currency is 'ISO 4217 code the min/max salary values are denominated in.';
+comment on column public.job_openings.position_id is 'The position definition this opening was created from, when there was one. Set null if that position is deleted; the opening keeps the copy it inherited.';
+comment on column public.positions.tenant_id is 'The company that owns this definition. NULL is group-wide, offered to an opening at any company, the same scope departments and locations use.';
+comment on column public.positions.title is 'The post as a recruiter names it. Copied into job_openings.title when an opening starts here.';
+comment on column public.positions.department is 'The department name as the departments list spells it. Resolved against that list on write, and copied into job_openings.department.';
+comment on column public.positions.grade is 'The internal grade or band label, e.g. "G7" or "Manager". Not copied to the opening: seniority is a property of the post, not of one intake.';
+comment on column public.positions.responsibilities is 'What the post owns, in prose. Copied into job_openings.description.';
+comment on column public.positions.requirements is 'One requirement per line. Copied into job_openings.requirements.';
+comment on column public.positions.min_salary_usd is 'Minimum salary in salary_currency. Column name matches job_openings and is retained for compatibility; it does not mean US dollars.';
+comment on column public.positions.max_salary_usd is 'Maximum salary in salary_currency. Column name matches job_openings and is retained for compatibility; it does not mean US dollars.';
+comment on column public.positions.salary_currency is 'ISO 4217 code the salary band is denominated in, resolved against the currencies list on write.';
 comment on column public.sourced_prospects.profile is 'Structured profile as last read: experience, education, certifications, projects, skills, languages, links. Null until someone reads it.';
 comment on column public.sourced_prospects.profile_source is 'URL = fetched from profile_url, PASTE = text a recruiter copied out of a page they can see, FILE = an export they uploaded. Which reader produced the row.';
 comment on column public.sourced_prospects.profile_error is 'Last refusal a reader gave, in recruiter-facing words, cleared when a read succeeds. Not a failure of this application.';
@@ -2000,6 +2075,9 @@ grant delete, insert, maintain, references, select, trigger, truncate, update on
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.permissions to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.permissions to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.permissions to service_role;
+grant delete, insert, select, update on table public.positions to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.positions to postgres;
+grant delete, insert, select, update on table public.positions to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.provider_credentials to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.provider_credentials to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.provider_credentials to postgres;
