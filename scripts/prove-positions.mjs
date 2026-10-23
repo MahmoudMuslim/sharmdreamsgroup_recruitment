@@ -486,10 +486,26 @@ sourceHas("the settings page does not print a count for an uncreated table", "sr
 sourceHas("the master-data console says the section is not created", "src/app/(admin)/settings/MasterDataConsole.tsx", [
   'tab === "positions" && !data.positionsAvailable',
 ]);
-sourceHas("the assistant writes positions and says 026 is unapplied", "src/modules/assistant/domain/registry/masterData.ts", [
+sourceHas("the assistant writes positions from their own columns", "src/modules/assistant/domain/registry/masterData.ts", [
   "position, skill or currency",
-  "026_positions.sql",
+  "min_salary_usd, max_salary_usd and salary_currency",
 ]);
+
+// The three tool descriptions the model reads before every call used to say the
+// positions table had not been applied. That copy is what makes an assistant
+// refuse a working `position_id` and tell a recruiter the feature is not live,
+// so it is pinned both ways: the sentence that says applied, and the absence of
+// the sentence that said not.
+const CHAT_POSITION_COPY = [
+  "src/modules/assistant/domain/registry/masterData.ts",
+  "src/modules/assistant/domain/registry/reads.ts",
+  "src/modules/assistant/domain/registry/writes.ts",
+];
+for (const rel of CHAT_POSITION_COPY) {
+  const text = read(rel);
+  check(`${path.basename(rel)} says the positions list is applied here`, text.includes("which is applied on this database"), "");
+  check(`${path.basename(rel)} no longer claims the owner has yet to apply 026`, !/until the owner applies it/.test(text), "");
+}
 sourceHas("the assistant's create_job reaches the same inheritance", "src/modules/assistant/domain/registry/writes.ts", [
   "position_id:",
   "fromPosition: true",
