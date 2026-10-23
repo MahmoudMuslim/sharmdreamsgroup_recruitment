@@ -7,8 +7,9 @@ import { getFileStore } from "@/lib/files/store";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { blindMarkingEnabled } from "@/modules/settings/application/blindMarking";
 import { blindHandle, isIdentityBlind } from "@/modules/assessment/domain/blindMarking";
-import type { QuestionType } from "@/types";
+import type { QuestionType, RubricLine } from "@/types";
 import {
+  awardedCriteriaOf,
   changedCellsOf,
   countWords,
   type AttemptAnswer,
@@ -534,6 +535,8 @@ interface ResponseRow {
     strengths?: string[];
     improvements?: string[];
     graded_by?: string;
+    /** The criteria snapshot this paper was marked on, absent before rubrics. */
+    criteria?: RubricLine[];
   } | null;
 }
 
@@ -765,6 +768,9 @@ async function readAttemptAnswers(
       rationale: response?.ai_evaluation?.rationale ?? null,
       strengths: response?.ai_evaluation?.strengths ?? [],
       improvements: response?.ai_evaluation?.improvements ?? [],
+      // The marks the grader awarded, read from this response's own snapshot and
+      // withheld with every other figure when this reviewer's scores are hidden.
+      criteria: awardedCriteriaOf(response?.ai_evaluation, masked),
       saved_at: response?.updated_at ?? null,
     });
   }

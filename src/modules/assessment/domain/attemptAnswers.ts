@@ -42,6 +42,25 @@ export interface ExpectedCell {
   formula_hint: string | null;
 }
 
+/**
+ * One criterion a rubric'd paper was marked on, as it was marked at the time.
+ *
+ * The row is read from the response's own `ai_evaluation`, which holds the
+ * snapshot the grader wrote, so a criterion renamed or reweighted later cannot
+ * reinterpret a mark already given. Marks are null while this reviewer's scores
+ * are withheld — the label, the note and the quotation stay readable, because
+ * what the answer did is not a mark.
+ */
+export interface AnswerCriterion {
+  label: string;
+  marks: number | null;
+  allowance: number | null;
+  percent: number | null;
+  evidence: string | null;
+  /** What a strong answer shows for this criterion, as the author wrote it. */
+  description: string | null;
+}
+
 export interface AttemptAnswer {
   question_id: string;
   title: string;
@@ -83,6 +102,12 @@ export interface AttemptAnswer {
   rationale: string | null;
   strengths: string[];
   improvements: string[];
+  /**
+   * The criteria this paper was marked on, empty for a question marked without a
+   * rubric. Snapshotted in the response, so it survives every later edit to the
+   * question's scheme.
+   */
+  criteria: AnswerCriterion[];
   saved_at: string | null;
 }
 
@@ -132,6 +157,64 @@ export interface AttemptAnswers {
   dealt_from_order: boolean;
 
   answers: AttemptAnswer[];
+}
+
+/**
+ * The criteria one paper was marked on, read out of its own snapshot.
+ *
+ * A response's `ai_evaluation.criteria` is what the grader wrote beside the mark,
+ * so a question whose rubric was later renamed, reweighted or retired still reads
+ * the way it was marked. A paper graded before rubrics existed simply has no such
+ * row and returns an empty list — the desk then says nothing about criteria rather
+ * than inventing a zero.
+ *
+ * Figures are read strictly: a `marks` that arrived as `"6 of 8"` is prose, not a
+ * number, and is reported absent. Guessing it would put a mark on the record the
+ * grader never wrote.
+ */
+export function awardedCriteriaOf(
+  evaluation: { criteria?: unknown } | null | undefined,
+  masked: boolean
+): AnswerCriterion[] {
+  const stored = evaluation?.criteria;
+  if (!Array.isArray(stored)) return [];
+  const lines: AnswerCriterion[] = [];
+  for (const row of stored) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const label = typeof record.label === "string" ? record.label.trim() : "";
+    if (!label) continue;
+    lines.push({
+      label,
+      marks: figure(record.marks),
+      allowance: figure(record.allowance),
+      percent: figure(record.percent),
+      evidence: prose(record.evidence),
+      description: prose(record.description),
+    });
+  }
+  return masked ? maskCriterionMarks(lines) : lines;
+}
+
+/**
+ * The same criteria with their points withheld.
+ *
+ * `security.mask_scores_for_reviewers` hides marks, not feedback: which criteria
+ * were graded, what a strong answer shows, and the quotation the grader pulled
+ * from the answer all stay, because none of them is a score.
+ */
+export function maskCriterionMarks(criteria: readonly AnswerCriterion[]): AnswerCriterion[] {
+  return criteria.map((line) => ({ ...line, marks: null, allowance: null, percent: null }));
+}
+
+function figure(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function prose(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
 }
 
 /**

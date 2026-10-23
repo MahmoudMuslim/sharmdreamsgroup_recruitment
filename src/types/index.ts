@@ -172,6 +172,47 @@ export interface SpreadsheetCellData {
   value: string | number | null;
 }
 
+/**
+ * One named share of a question's marks, written by the recruiter who set it.
+ *
+ * A rubric replaces the fixed criteria the grading prompt used to hardcode, so
+ * this is the marking scheme the reviewer reads and the candidate must never
+ * see — `label` and `weight` together say exactly how many marks each sentence
+ * of the answer is worth.
+ */
+export interface RubricCriterion {
+  /** The name a mark is matched and reported by. Unique within its rubric. */
+  label: string;
+  /** Whole 1–100. A question's criteria add up to 100. */
+  weight: number;
+  /** What a strong answer shows, in the author's words. Optional. */
+  description?: string;
+}
+
+/**
+ * One criterion's mark, as it was awarded.
+ *
+ * Produced by `scoreRubric` from the bands a grader returns and the question's
+ * own points, then stored inside the response's `ai_evaluation` rather than read
+ * back from the question — so editing a rubric tomorrow cannot reinterpret a mark
+ * given today.
+ */
+export interface RubricLine {
+  label: string;
+  /** The criterion's share of the rubric, as its author set it. */
+  weight: number;
+  /** What the criterion is worth on this question, in whole marks. */
+  allowance: number;
+  /** How well this answer showed it, 0–100. */
+  percent: number;
+  /** `allowance` × `percent`, rounded once. */
+  marks: number;
+  /** A quote from the answer, or null when nothing was quoted. */
+  evidence: string | null;
+  /** What the criterion asks for, as the author wrote it, when they said. */
+  description?: string;
+}
+
 export interface QuestionConfig {
   /** EXCEL_MODEL: initial grid + expected outputs */
   initial_sheet?: { data: (string | number | null)[][]; col_widths?: number[] };
@@ -184,6 +225,14 @@ export interface QuestionConfig {
   min_words?: number;
   /** MULTIPLE_CHOICE, SITUATIONAL_JUDGMENT */
   options?: MultipleChoiceOption[];
+  /**
+   * CASE_STUDY, VIDEO_PITCH: the marking scheme, in the author's words.
+   *
+   * Reader-only for the review desk and the grader. The candidate route rebuilds
+   * a config from the keys its runner reads rather than copying the row, so a
+   * rubric cannot reach a sitting candidate by being forgotten there.
+   */
+  rubric?: RubricCriterion[];
 }
 
 export interface CandidateAttempt {
@@ -222,6 +271,15 @@ export interface QuestionEvaluation {
   rationale: string;
   strengths: string[];
   improvements: string[];
+  /**
+   * CASE_STUDY, VIDEO_PITCH: the per-criterion marks behind `score`.
+   *
+   * Kept on the response rather than read back from the question, because the
+   * recruiter who set the criteria may rewrite them after this answer was marked.
+   * Absent means the question set no rubric, which is every paper written before
+   * rubrics existed — and a rubric-less mark stays explained by its own rationale.
+   */
+  criteria?: RubricLine[];
 }
 
 export interface CommunicationLog {

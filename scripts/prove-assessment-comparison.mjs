@@ -40,7 +40,11 @@ function loadSource(filename, bindings = {}, cache = new Map()) {
   function localRequire(name) {
     if (name in bindings) return bindings[name];
     if (name.startsWith("@/modules/assessment/domain/") || name === "@/lib/textSearch" || name.startsWith(".")) {
-      return loadSource(name.startsWith("@/") ? resolve(root, "src", name.slice(2) + ".ts") : resolve(dirname(filename), name + ".ts"), bindings, cache);
+      // A domain module may name its sibling with or without the extension — the
+      // native ESM reader requires it, the bundled app accepts either — so add it
+      // only when it is not already there, or both spellings load as two modules.
+      const target = name.startsWith("@/") ? resolve(root, "src", name.slice(2)) : resolve(dirname(filename), name);
+      return loadSource(target.endsWith(".ts") ? target : `${target}.ts`, bindings, cache);
     }
     if (name.startsWith("@/")) return new Proxy({}, { get() { throw new Error(`Unexpected boundary: ${name}`); } });
     return require(name);

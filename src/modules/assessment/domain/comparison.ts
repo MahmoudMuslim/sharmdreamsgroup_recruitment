@@ -1,4 +1,4 @@
-import type { AttemptAnswer, AttemptAnswers } from "./attemptAnswers";
+import { maskCriterionMarks, type AttemptAnswer, type AttemptAnswers } from "./attemptAnswers.ts";
 
 export interface ComparisonSelection {
   id: string;
@@ -10,7 +10,7 @@ export interface ComparisonSelection {
 export type ComparisonAnswer = Pick<AttemptAnswer,
   "question_id" | "title" | "prompt" | "question_type" | "answered" |
   "answer_text" | "chosen_text" | "cells" | "video_url" | "transcript" |
-  "score" | "max_score" | "rationale" | "strengths" | "improvements"
+  "score" | "max_score" | "rationale" | "strengths" | "improvements" | "criteria"
 >;
 
 export type ComparisonPaper = Pick<AttemptAnswers,
@@ -62,6 +62,9 @@ export function comparisonPaper(paper: AttemptAnswers): ComparisonPaper {
       rationale: answer.rationale,
       strengths: answer.strengths,
       improvements: answer.improvements,
+      // Re-masked here rather than trusted from the read: a paper assembled from
+      // a stale or hand-built row must not carry points into a withheld view.
+      criteria: paper.scores_masked ? maskCriterionMarks(answer.criteria) : answer.criteria,
     })),
   };
 }

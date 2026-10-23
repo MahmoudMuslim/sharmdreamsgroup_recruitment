@@ -584,7 +584,7 @@ check(
 
 const attemptRoute = read("src/app/api/attempt/[token]/route.ts");
 const sanitized = attemptRoute.match(
-  /const options = config\.options\.map\(\(option\) => \(\{([\s\S]*?)\}\)\);/
+  /const options = source\.options\.map\(\(option\) => \(\{([\s\S]*?)\}\)\);/
 )?.[1] ?? "";
 check("the attempt read sanitizes options", sanitized.length > 0);
 check(
@@ -592,6 +592,15 @@ check(
   /label: option\.label/.test(sanitized) && /text: option\.text/.test(sanitized)
 );
 check("a candidate never receives a percentage", !/score/.test(sanitized), sanitized.trim());
+// Copying the whole config would have handed a sitting candidate the rubric a
+// recruiter writes, so the candidate's copy is now built from the keys the
+// runner reads. `scripts/prove-scoring-rubric.mjs` runs the route and proves the
+// behaviour; this marker keeps it from quietly becoming a spread again.
+check(
+  "the candidate's config is rebuilt from an allow-list, not a copy of the row",
+  /const config: AttemptPayload\["questions"\]\[number\]\["config"\] = \{\};/.test(attemptRoute) &&
+    !/\.\.\.\(question\.config/.test(attemptRoute)
+);
 
 sourceHas("the submit route marks a judgment pick against its percentage", "src/app/api/attempt/[token]/submit/route.ts", [
   'question.question_type === "SITUATIONAL_JUDGMENT"',

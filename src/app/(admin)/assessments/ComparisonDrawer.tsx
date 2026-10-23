@@ -148,6 +148,19 @@ function AnswerEvidence({ answer, masked }: { answer: ComparisonAnswer; masked: 
           {(answer.question_type === "MULTIPLE_CHOICE" || answer.question_type === "SITUATIONAL_JUDGMENT") && answer.chosen_text === null && <p>Selected option wording is unavailable in the current suite.</p>}
         </>
       )}
+      {answer.criteria.length > 0 && (
+        <div>
+          <p className="font-semibold">Criterion marks</p>
+          <ul className="mt-1 space-y-1">
+            {answer.criteria.map((criterion, index) => (
+              <li key={`${criterion.label}-${index}`}>
+                <span className="font-semibold">{criterion.label}</span> — {masked ? "Hidden" : criterion.marks === null ? "No mark on file" : `${criterion.marks} of ${criterion.allowance}${criterion.percent === null ? "" : ` (${criterion.percent}%)`}`}
+                {criterion.evidence && <span className="block italic">Quoted: {criterion.evidence}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {answer.rationale && <p><strong>Grading explanation:</strong> {answer.rationale}</p>}
       {answer.strengths.length > 0 && <div><p className="font-semibold">Strengths</p><ul className="list-disc pl-4">{answer.strengths.map((text, index) => <li key={index}>{text}</li>)}</ul></div>}
       {answer.improvements.length > 0 && <div><p className="font-semibold">Improvements</p><ul className="list-disc pl-4">{answer.improvements.map((text, index) => <li key={index}>{text}</li>)}</ul></div>}

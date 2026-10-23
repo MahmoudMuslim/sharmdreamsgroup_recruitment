@@ -23,7 +23,7 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { Badge } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
-import type { QuestionConfig, QuestionType } from "@/types";
+import type { QuestionConfig, QuestionType, RubricCriterion } from "@/types";
 import {
   DIFFICULTIES,
   DIFFICULTY_LABELS,
@@ -35,6 +35,13 @@ import {
   type GeneratedQuestion,
 } from "@/modules/assessment/domain/aiAuthoring";
 import { columnLetters } from "@/modules/assessment/domain/attemptAnswers";
+import {
+  MAX_RUBRIC_CRITERIA,
+  MIN_RUBRIC_CRITERIA,
+  RUBRIC_WEIGHT_TOTAL,
+  isRubricType,
+  type RubricType,
+} from "@/modules/assessment/domain/rubric";
 import {
   addDraftedQuestions,
   deleteQuestion,
@@ -84,6 +91,20 @@ export const TYPE_HINTS: Record<QuestionType, string> = {
     "A workplace scene with plausible responses. Each response earns a percentage; no single one is correct.",
 };
 
+/**
+ * What each type's marks can actually be seen in.
+ *
+ * A criterion the grader cannot read from the answer is a criterion whose marks
+ * go nowhere, so the panel names the one thing each type puts in front of the
+ * model: a case's words, a pitch's transcript.
+ */
+const RUBRIC_NOTES: Record<RubricType, string> = {
+  CASE_STUDY:
+    "The grader reads the written answer against each criterion and gives it a share of that criterion's marks. The question's total is the sum of those marks, never a number the model chose.",
+  VIDEO_PITCH:
+    "A pitch is graded from its transcript, so name only what the transcript carries. Delivery, presence and anything off-camera stay with the human reviewer.",
+};
+
 interface Draft {
   id: string | null;
   question_type: QuestionType;
@@ -98,7 +119,49 @@ interface Draft {
   min_words: string;
   min_duration_seconds: string;
   max_duration_seconds: string;
+  rubric: RubricRow[];
   preserve_config: QuestionConfig | null;
+}
+
+/** One criterion as the author is writing it — every field a string until it leaves. */
+interface RubricRow {
+  label: string;
+  weight: string;
+  description: string;
+}
+
+const blankRubricRows = (): RubricRow[] =>
+  Array.from({ length: MIN_RUBRIC_CRITERIA }, () => ({ label: "", weight: "", description: "" }));
+
+/**
+ * The stored scheme, back in the panel that wrote it.
+ *
+ * A question whose config carries no criteria opens on the minimum two blank rows
+ * rather than none: an author who has never set a scheme still sees the panel
+ * asking for the two names it needs, and an emptied panel stays the way to retire
+ * one that exists.
+ */
+function rubricRowsFrom(rows: RubricCriterion[] | undefined): RubricRow[] {
+  if (!rows || rows.length === 0) return blankRubricRows();
+  return rows.map((criterion) => ({
+    label: criterion.label,
+    weight: String(criterion.weight),
+    description: criterion.description ?? "",
+  }));
+}
+
+/**
+ * A weight the validator can read, or nothing at all.
+ *
+ * The rubric refuses a weight sent as text, so an empty box leaves as an absent
+ * key rather than `0` — a criterion nobody weighted is a criterion the author
+ * still has to write, not one worth nothing.
+ */
+function weightNumber(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const weight = Number(trimmed);
+  return Number.isFinite(weight) ? weight : undefined;
 }
 
 function toDraft(question: EditableQuestion | null): Draft {
@@ -121,6 +184,7 @@ function toDraft(question: EditableQuestion | null): Draft {
       min_words: "",
       min_duration_seconds: "",
       max_duration_seconds: "120",
+      rubric: blankRubricRows(),
       preserve_config: null,
     };
   }
@@ -148,6 +212,7 @@ function toDraft(question: EditableQuestion | null): Draft {
     max_duration_seconds: config.max_duration_seconds
       ? String(config.max_duration_seconds)
       : "120",
+    rubric: rubricRowsFrom(config.rubric),
     // Handed back untouched so EXCEL_MODEL workbooks survive an edit.
     preserve_config: config,
   };
@@ -341,6 +406,18 @@ export function QuestionEditorDrawer({
         min_words: numberOrNull(editing.min_words),
         min_duration_seconds: numberOrNull(editing.min_duration_seconds),
         max_duration_seconds: numberOrNull(editing.max_duration_seconds),
+        // Only a type with a panel speaks of a marking scheme: an absent key
+        // means "keep what is stored", which is what a quiz or a workbook draft
+        // must mean, since neither ever read one.
+        ...(isRubricType(editing.question_type)
+          ? {
+              rubric: editing.rubric.map((row) => ({
+                label: row.label,
+                weight: weightNumber(row.weight),
+                description: row.description,
+              })),
+            }
+          : {}),
         preserve_config: editing.preserve_config,
       });
 
@@ -726,6 +803,14 @@ export function QuestionEditorDrawer({
             </div>
           )}
 
+          {isRubricType(editing.question_type) && (
+            <RubricFieldset
+              rows={editing.rubric}
+              note={RUBRIC_NOTES[editing.question_type]}
+              onChange={(rubric) => patch({ rubric })}
+            />
+          )}
+
           {editing.question_type === "EXCEL_MODEL" && (
             <p className="rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/55">
               The spreadsheet definition and expected outputs are kept exactly as they are.
@@ -1056,6 +1141,93 @@ export function QuestionEditorDrawer({
         </ul>
       )}
     </Drawer>
+  );
+}
+
+/**
+ * The marking scheme an author writes for a case study or a pitch.
+ *
+ * Rows are kept in the draft as text, because a weight typed as "40" and a weight
+ * left blank mean different things to the validator — and only the second one
+ * means "the author has not decided yet". Removal is never blocked: an emptied
+ * panel is how a scheme is retired, so a row the author cannot delete is a scheme
+ * they cannot undo.
+ */
+function RubricFieldset({
+  rows,
+  note,
+  onChange,
+}: {
+  rows: RubricRow[];
+  note: string;
+  onChange: (rows: RubricRow[]) => void;
+}) {
+  const write = (index: number, next: Partial<RubricRow>) =>
+    onChange(rows.map((row, i) => (i === index ? { ...row, ...next } : row)));
+  const total = rows.reduce((sum, row) => sum + (weightNumber(row.weight) ?? 0), 0);
+
+  return (
+    <fieldset className="rounded-xl border border-brand-line bg-brand-cream p-4">
+      <legend className="px-1 text-xs font-bold">Marking scheme</legend>
+      <p className="mb-3 text-[11px] leading-relaxed text-brand-ink/45">
+        Name {MIN_RUBRIC_CRITERIA} to {MAX_RUBRIC_CRITERIA} criteria. Their weights are shares of
+        this question&rsquo;s marks and must add up to {RUBRIC_WEIGHT_TOTAL}. {note}
+      </p>
+
+      <ul className="space-y-3">
+        {rows.map((row, index) => (
+          <li key={index} className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <TextInput
+                value={row.label}
+                onChange={(e) => write(index, { label: e.target.value })}
+                placeholder={`Criterion ${index + 1}`}
+                aria-label={`Name of criterion ${index + 1}`}
+              />
+              <TextInput
+                type="number"
+                min={1}
+                max={RUBRIC_WEIGHT_TOTAL}
+                value={row.weight}
+                onChange={(e) => write(index, { weight: e.target.value })}
+                placeholder="Weight"
+                aria-label={`Weight of criterion ${index + 1}`}
+                className="w-24 shrink-0"
+              />
+              <button
+                type="button"
+                onClick={() => onChange(rows.filter((_, i) => i !== index))}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-brand-line text-brand-ink/50 transition hover:bg-rose-50 hover:text-rose-700"
+              >
+                <X className="h-4 w-4" aria-hidden />
+                <span className="sr-only">{`Remove criterion ${index + 1}`}</span>
+              </button>
+            </div>
+            <TextArea
+              rows={2}
+              value={row.description}
+              onChange={(e) => write(index, { description: e.target.value })}
+              placeholder="What a strong answer shows (optional)"
+              aria-label={`What a strong answer shows for criterion ${index + 1}`}
+            />
+          </li>
+        ))}
+      </ul>
+
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { label: "", weight: "", description: "" }])}
+        disabled={rows.length >= MAX_RUBRIC_CRITERIA}
+        className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        <Plus className="h-3.5 w-3.5" aria-hidden />
+        Add criterion
+      </button>
+
+      <p className="mt-2 text-[11px] text-brand-ink/45">
+        Weights so far add up to {total} of {RUBRIC_WEIGHT_TOTAL}.
+      </p>
+    </fieldset>
   );
 }
 

@@ -30,7 +30,13 @@ import {
   readJudgmentDraft,
   type JudgmentDraft,
 } from "@/modules/assessment/domain/situational";
-import type { QuestionConfig, QuestionType } from "@/types";
+import {
+  RUBRIC_WEIGHT_TOTAL,
+  isRubricType,
+  readRubricDraft,
+  type RubricDraftRow,
+} from "@/modules/assessment/domain/rubric";
+import type { QuestionConfig, QuestionType, RubricCriterion } from "@/types";
 
 /**
  * Per-question authoring.
@@ -93,6 +99,14 @@ export interface QuestionDraft {
   min_duration_seconds: number | null;
   max_duration_seconds: number | null;
   /**
+   * CASE_STUDY and VIDEO_PITCH: the marking scheme, one row per criterion.
+   *
+   * Absent means the caller does not read the marking scheme and must not
+   * destroy it; an array with nothing named or weighted in it is an author
+   * emptying the panel, which retires the rubric.
+   */
+  rubric?: RubricDraftRow[] | null;
+  /**
    * EXCEL_MODEL carries a spreadsheet definition that no simple form can
    * represent. When editing, the caller sends the original config back
    * untouched so the editor never silently destroys it.
@@ -117,14 +131,67 @@ function questionWriteError(error: { code?: string | null; message: string }): s
   return isMissingQuestionTypeError(error) ? SITUATIONAL_WRITE_REFUSAL : error.message;
 }
 
+/** What a draft means for the question's marking scheme. */
+type RubricChange =
+  | { kind: "keep" }
+  | { kind: "clear" }
+  | { kind: "set"; criteria: RubricCriterion[] }
+  | { kind: "refuse"; error: string };
+
+/**
+ * Whether a draft row is a criterion at all.
+ *
+ * Mirrors the rows `readRubricDraft` drops, so "the panel is empty" and "the
+ * panel has criteria in it" cannot disagree with the validator that reads them.
+ */
+function rubricRowIsUsed(row: RubricDraftRow | null | undefined): boolean {
+  if (!row) return false;
+  if (typeof row.label === "string" && row.label.trim().length > 0) return true;
+  return (
+    typeof row.weight === "number" &&
+    Number.isInteger(row.weight) &&
+    row.weight >= 1 &&
+    row.weight <= RUBRIC_WEIGHT_TOTAL
+  );
+}
+
+/**
+ * What the draft means for the question's marking scheme.
+ *
+ * Three states arrive as one absent key otherwise: a caller that has no rubric
+ * panel (an Excel config, an older draft) must not destroy criteria it never
+ * read, while an author who emptied the panel means the criteria to go.
+ */
+function resolveRubricChange(draft: QuestionDraft): RubricChange {
+  if (!isRubricType(draft.question_type) || !Array.isArray(draft.rubric)) {
+    return { kind: "keep" };
+  }
+  if (!draft.rubric.some(rubricRowIsUsed)) return { kind: "clear" };
+
+  const read = readRubricDraft(draft.rubric);
+  return read.ok ? { kind: "set", criteria: read.criteria } : { kind: "refuse", error: read.error };
+}
+
+/** Store or retire the marking scheme on a config this form is rebuilding. */
+function applyRubricChange(config: QuestionConfig, rubric: RubricChange): void {
+  if (rubric.kind === "clear") delete config.rubric;
+  else if (rubric.kind === "set") config.rubric = rubric.criteria;
+}
+
 /**
  * Builds the type-specific config, preserving anything this form cannot edit.
  *
  * `judgment` carries the responses a scene already had validated, because
  * `buildConfig` cannot return a refusal — `saveQuestion` reads them first and
- * only calls this once they are markable.
+ * only calls this once they are markable. `rubric` is resolved the same way: an
+ * invalid scheme is refused by the caller, so the config builder only stores
+ * what has already passed.
  */
-function buildConfig(draft: QuestionDraft, judgment: JudgmentDraft[] = []): QuestionConfig {
+function buildConfig(
+  draft: QuestionDraft,
+  judgment: JudgmentDraft[] = [],
+  rubric: RubricChange = { kind: "keep" }
+): QuestionConfig {
   switch (draft.question_type) {
     case "MULTIPLE_CHOICE": {
       const options = draft.options
@@ -136,11 +203,18 @@ function buildConfig(draft: QuestionDraft, judgment: JudgmentDraft[] = []): Ques
           text: option.text.trim(),
           is_correct: option.is_correct,
         }));
-      return { ...(draft.preserve_config ?? {}), options };
+      const config: QuestionConfig = { ...(draft.preserve_config ?? {}), options };
+      delete config.rubric;
+      return config;
     }
 
     case "SITUATIONAL_JUDGMENT": {
-      return { ...(draft.preserve_config ?? {}), options: judgmentStoredOptions(judgment) };
+      const config: QuestionConfig = {
+        ...(draft.preserve_config ?? {}),
+        options: judgmentStoredOptions(judgment),
+      };
+      delete config.rubric;
+      return config;
     }
 
     case "CASE_STUDY": {
@@ -148,6 +222,7 @@ function buildConfig(draft: QuestionDraft, judgment: JudgmentDraft[] = []): Ques
       config.context = draft.context.trim() || undefined;
       if (draft.min_words && draft.min_words > 0) config.min_words = draft.min_words;
       else delete config.min_words;
+      applyRubricChange(config, rubric);
       return config;
     }
 
@@ -163,6 +238,7 @@ function buildConfig(draft: QuestionDraft, judgment: JudgmentDraft[] = []): Ques
       } else {
         delete config.min_duration_seconds;
       }
+      applyRubricChange(config, rubric);
       return config;
     }
 
@@ -257,6 +333,12 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     judgment = read.options;
   }
 
+  // The marking scheme is resolved before a client exists. A rubric is the
+  // arithmetic a candidate's marks come from, so a scheme that cannot add up is
+  // answered with the sentence that says why, without a database round trip.
+  const rubric = resolveRubricChange(draft);
+  if (rubric.kind === "refuse") return { ok: false, error: rubric.error };
+
   const restClient = await createServerRestClient();
 
   // Confirm the template exists so a typo cannot create an orphan question.
@@ -275,7 +357,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     title,
     prompt,
     instructions: draft.instructions.trim() || null,
-    config: buildConfig(draft, judgment) as Record<string, unknown>,
+    config: buildConfig(draft, judgment, rubric) as Record<string, unknown>,
     points,
     position: draft.position,
     time_limit_minutes:

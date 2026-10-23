@@ -5,6 +5,7 @@ import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
 import { recordActivity } from "@/modules/activity/application/record";
 import { attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import type { AttemptPayload } from "@/stores/useAssessmentStore";
+import type { QuestionConfig } from "@/types";
 import { NextResponse } from "next/server";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
@@ -107,16 +108,27 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
 
   const byId = new Map((questions ?? []).map((q) => [q.id, q]));
 
-  // Sanitize: strip correct-answer flags before exposing to candidates, and
-  // apply this candidate's option order.
+  // Sanitize: rebuild the candidate's copy from the keys the runner reads.
+  //
+  // This column holds the marking scheme, not only the question, so a spread
+  // hands out whatever the author form grows next. Correct-answer flags, a cell
+  // formula hint and a rubric's criteria and weights all live beside the text a
+  // candidate needs, and the ones we knew about were deleted one at a time. The
+  // payload type is the allow-list: a config key not named here stays behind
+  // the server, which is the only guarantee that survives the next field.
   const sanitize = (question: (typeof questions extends undefined ? never : NonNullable<typeof questions>)[number]) => {
-    const config = {
-      ...(question.config as AttemptPayload["questions"][number]["config"]),
-    };
+    const source = (question.config ?? {}) as QuestionConfig;
+    const config: AttemptPayload["questions"][number]["config"] = {};
 
-    if (config.options) {
+    if (source.initial_sheet) config.initial_sheet = source.initial_sheet;
+    if (source.context) config.context = source.context;
+    if (source.min_words) config.min_words = source.min_words;
+    if (source.min_duration_seconds) config.min_duration_seconds = source.min_duration_seconds;
+    if (source.max_duration_seconds) config.max_duration_seconds = source.max_duration_seconds;
+
+    if (source.options) {
       const order = optionOrder[question.id];
-      const options = config.options.map((option) => ({
+      const options = source.options.map((option) => ({
         label: option.label,
         text: option.text,
       }));
@@ -125,8 +137,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
         : options;
     }
 
-    if (config.expected_outputs) {
-      config.expected_outputs = config.expected_outputs.map((output) => ({
+    if (source.expected_outputs) {
+      config.expected_outputs = source.expected_outputs.map((output) => ({
         cell: output.cell,
         description: output.description,
       }));

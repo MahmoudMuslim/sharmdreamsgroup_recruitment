@@ -853,7 +853,10 @@ function AnswerCard({
         )}
       </div>
 
-      {(answer.rationale || answer.strengths.length > 0 || answer.improvements.length > 0) && (
+      {(answer.rationale ||
+        answer.strengths.length > 0 ||
+        answer.improvements.length > 0 ||
+        answer.criteria.length > 0) && (
         <div className="mt-3 border-t border-brand-line pt-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
             {answer.awarded_by === "STAFF"
@@ -864,6 +867,39 @@ function AnswerCard({
           </p>
           {answer.rationale && (
             <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/70">{answer.rationale}</p>
+          )}
+          {answer.criteria.length > 0 && (
+            <div className="mt-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+                Criterion marks
+              </p>
+              <ul className="mt-1.5 space-y-2">
+                {answer.criteria.map((criterion, index) => (
+                  <li key={`${criterion.label}-${index}`} className="text-xs leading-relaxed">
+                    <p className="font-semibold text-brand-ink/80">
+                      {criterion.label} —{" "}
+                      {masked
+                        ? "Hidden"
+                        : criterion.marks === null
+                          ? "No mark on file"
+                          : `${criterion.marks} of ${criterion.allowance}${
+                              criterion.percent === null ? "" : ` (${criterion.percent}%)`
+                            }`}
+                    </p>
+                    {criterion.description && (
+                      <p className="mt-0.5 text-brand-ink/55">
+                        What a strong answer shows: {criterion.description}
+                      </p>
+                    )}
+                    {criterion.evidence && (
+                      <p className="mt-0.5 italic text-brand-ink/60">
+                        Quoted from the answer: {criterion.evidence}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {answer.strengths.length > 0 && (
             <ul className="mt-2 space-y-1">

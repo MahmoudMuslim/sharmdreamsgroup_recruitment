@@ -24,13 +24,24 @@ import {
   evaluateCaseStudy,
   evaluateExcelModel,
   evaluateVideoPitch,
+  gradeAgainstRubric,
 } from "@/modules/screening/infrastructure/openRouterEngine";
+import {
+  rubricCriteriaOf,
+  rubricEvaluation,
+  scoreRubric,
+} from "@/modules/assessment/domain/rubric";
 import {
   RecordingNotTranscribableError,
   TruncatedJsonResponseError,
   transcribeRecording,
 } from "@/modules/screening/infrastructure/aiGateway";
-import type { QuestionEvaluation, SpreadsheetCellData } from "@/types";
+import type {
+  QuestionEvaluation,
+  RubricCriterion,
+  RubricLine,
+  SpreadsheetCellData,
+} from "@/types";
 
 /**
  * Post-submission AI grading for the response types the submit route leaves
@@ -51,6 +62,12 @@ import type { QuestionEvaluation, SpreadsheetCellData } from "@/types";
  * failing the pass forever; the scheduled sweep leaves a parked answer alone,
  * while a recruiter asking again may re-offer it.
  *
+ * A case study or pitch that carries a rubric is marked on the recruiter's own
+ * criteria: the model is asked for one band per criterion, the domain module adds
+ * up the marks, and the criteria travel with the response so editing them later
+ * cannot reinterpret a mark already given. A question with no rubric keeps the
+ * grading prompt's own judgement, exactly as it did before rubrics existed.
+ *
  * Failure-tolerant by design: the candidate's submission is already persisted
  * before grading runs, so an AI error just leaves that response ungraded and
  * the attempt in SUBMITTED rather than breaking the submission.
@@ -66,6 +83,7 @@ interface QuestionRow {
     context?: string;
     min_duration_seconds?: number;
     max_duration_seconds?: number;
+    rubric?: RubricCriterion[];
     initial_sheet?: { data: (string | number | null)[][]; col_widths?: number[] };
     expected_outputs?: { cell: string; formula_hint?: string; description: string }[];
   } | null;
@@ -89,6 +107,17 @@ interface GradedEvaluation {
   rationale: string;
   strengths: string[];
   improvements: string[];
+  /**
+   * The marks actually awarded.
+   *
+   * A rubric sets this from the criteria's own arithmetic, so the question's
+   * points and a percentage never have to meet; every other question type leaves
+   * it unset and {@link gradePendingResponses} converts the percentage as it
+   * always did.
+   */
+  awarded?: number;
+  /** The criteria that produced the mark, stored beside it. */
+  criteria?: RubricLine[];
 }
 
 /** GRADED carries a score; MANUAL leaves the row for a human with a reason. */
@@ -338,12 +367,16 @@ async function gradePendingResponses(
       }
 
       const evaluation = outcome.evaluation;
-      const awarded = Math.round((question.points * evaluation.score) / 100);
+      const awarded =
+        evaluation.awarded ?? Math.round((question.points * evaluation.score) / 100);
       const payload: QuestionEvaluation = {
         score: awarded,
         rationale: evaluation.rationale,
         strengths: evaluation.strengths,
         improvements: evaluation.improvements,
+        // The scheme that produced this mark, kept with the mark rather than read
+        // back from the question, so a later edit cannot reinterpret it.
+        ...(evaluation.criteria ? { criteria: evaluation.criteria } : {}),
       };
       const { error } = await restClient
         .from("candidate_responses")
@@ -448,6 +481,14 @@ async function gradeResponse(
   trail: GradingTrail
 ): Promise<GradeOutcome> {
   if (question.question_type === "CASE_STUDY" && response.answer_text) {
+    const criteria = rubricCriteriaOf(question.config);
+    if (criteria.length > 0) {
+      return gradeByRubric(question, criteria, response.answer_text, {
+        capability: "case_reasoning",
+        context: question.config?.context ?? "",
+      });
+    }
+
     const result = await evaluateCaseStudy(
       `${question.title}\n\n${question.prompt}`,
       question.config?.context ?? "",
@@ -502,6 +543,18 @@ async function gradeResponse(
       };
     }
 
+    const criteria = rubricCriteriaOf(question.config);
+    if (criteria.length > 0) {
+      return gradeByRubric(question, criteria, transcript, {
+        capability: "soft_skills",
+        transcriptOnly: true,
+        limits: {
+          minDurationSeconds: question.config?.min_duration_seconds,
+          maxDurationSeconds: question.config?.max_duration_seconds,
+        },
+      });
+    }
+
     const result = await evaluateVideoPitch(
       `${question.title}\n\n${question.prompt}`,
       transcript,
@@ -522,6 +575,57 @@ async function gradeResponse(
   }
 
   return { status: "UNSUPPORTED" };
+}
+
+/**
+ * Mark an answer on the question's own criteria.
+ *
+ * The model is asked for one band per criterion and no total: `scoreRubric` does
+ * the arithmetic, so the marks a candidate is awarded are the ones the recruiter's
+ * weights produce rather than a number a model felt. The criteria that produced
+ * the mark are returned with it, and stored on the response — a rubric edited
+ * next month cannot reinterpret a mark given today.
+ *
+ * A rubric that cannot be added up (a criterion the model skipped, a name the
+ * question never set, a band with no number in it) is a `MANUAL` outcome, not a
+ * failed pass: parked rows tell the reviewer the scheme needs a human, and the
+ * sweep leaves them alone instead of re-paying for the same call.
+ */
+async function gradeByRubric(
+  question: QuestionRow,
+  criteria: RubricCriterion[],
+  material: string,
+  options: {
+    capability: "case_reasoning" | "soft_skills";
+    transcriptOnly?: boolean;
+    context?: string;
+    limits?: { minDurationSeconds?: number; maxDurationSeconds?: number };
+  }
+): Promise<GradeOutcome> {
+  const bands = await gradeAgainstRubric(
+    `${question.title}\n\n${question.prompt}`,
+    material,
+    criteria,
+    options
+  );
+
+  const score = scoreRubric(question.points, criteria, bands);
+  if (!score.ok) return { status: "MANUAL", reason: score.error };
+
+  const copy = rubricEvaluation(score, { transcriptOnly: options.transcriptOnly });
+  return {
+    status: "GRADED",
+    evaluation: {
+      // Only for the trail, which speaks in percentages; the mark itself is
+      // `awarded`, which is what lands on the response row.
+      score: score.max > 0 ? clampPct((score.total / score.max) * 100) : 0,
+      rationale: copy.rationale,
+      strengths: copy.strengths,
+      improvements: copy.improvements,
+      awarded: score.total,
+      criteria: score.lines,
+    },
+  };
 }
 
 /**

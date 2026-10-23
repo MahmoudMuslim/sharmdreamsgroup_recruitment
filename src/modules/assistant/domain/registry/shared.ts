@@ -140,6 +140,7 @@ import {
 import { searchWeb, readWebPage } from "@/modules/assistant/infrastructure/webLookup";
 import type { GateOption } from "@/modules/careers/gate-questions";
 import type { AssignableStaffRole, MasterEntity, MasterPayload } from "@/modules/settings/domain/types";
+import type { RubricDraftRow } from "@/modules/assessment/domain/rubric";
 import type { QuestionConfig, QuestionType } from "@/types";
 import {
   getDashboardAnalytics,
@@ -629,6 +630,27 @@ function gateOptions(args: ToolArgs): GateOption[] {
   }));
 }
 
+/**
+ * `[{ label, weight, description? }, …]` as the question editor expects it.
+ *
+ * A chat model quotes a number as `"40"` as often as it sends `40`, so a numeric
+ * string is read as the number it stands for. Anything else is passed through
+ * unread — `readRubricDraft` owns the rule about what a weight may be, and its
+ * refusal names the criterion the model actually mistyped.
+ */
+function rubricDrafts(args: ToolArgs): RubricDraftRow[] {
+  return objArray(args, "rubric").map((row) => ({
+    label: textField(row, "label"),
+    weight: numberField(row.weight),
+    description: textField(row, "description"),
+  }));
+}
+
+function numberField(value: unknown): number | undefined {
+  const parsed = typeof value === "string" ? Number(value) : value;
+  return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : undefined;
+}
+
 const QUESTION_TYPES: QuestionType[] = [
   "MULTIPLE_CHOICE",
   "SITUATIONAL_JUDGMENT",
@@ -733,6 +755,10 @@ function questionDraftFrom(args: ToolArgs): QuestionDraft {
       args.preserve_config && typeof args.preserve_config === "object"
         ? (args.preserve_config as QuestionConfig)
         : null,
+    // Only present when the caller spoke of it: an absent key tells the writer to
+    // leave the stored scheme alone, while a list — even an empty one, which is
+    // how a cleared panel arrives — is an instruction about the scheme itself.
+    ...(args.rubric === undefined ? {} : { rubric: rubricDrafts(args) }),
   };
 }
 

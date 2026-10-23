@@ -12,7 +12,7 @@ const jsx = (type, props, key) => ({ type, props: props ?? {}, key });
 const Fragment = Symbol("Fragment");
 const link = (n, overrides = {}) => ({ id: `attempt-${n}`, application_id: `app-${n}`, job_id: "job-a", template_id: "suite-a", candidate_name: `Candidate ${n}`, identity_blind: false, job_title: "Guest relations", template_name: "Guest service", status: "SUBMITTED", time_limit_minutes: 30, issued_at: "2026-10-23T10:00:00Z", started_at: null, expires_at: null, submitted_at: null, score: null, max_score: null, answers: 1, questions: 1, integrity_flags: 0, ...overrides });
 const rows = [...[1, 2, 3, 4, 5].map((n) => link(n)), link(6, { job_id: "job-b" }), link(7, { template_id: "suite-b" }), link(8, { application_id: "app-1" })];
-const answer = { question_id: "q1", title: "Guest complaint", prompt: "Resolve a complaint", question_type: "CASE_STUDY", answered: true, answer_text: "Listen and investigate", chosen_text: null, cells: [], video_url: null, transcript: null, score: null, max_score: 10, rationale: "Explain your reasoning", strengths: ["Empathy"], improvements: ["More detail"] };
+const answer = { question_id: "q1", title: "Guest complaint", prompt: "Resolve a complaint", question_type: "CASE_STUDY", answered: true, answer_text: "Listen and investigate", chosen_text: null, cells: [], video_url: null, transcript: null, score: null, max_score: 10, rationale: "Explain your reasoning", strengths: ["Empathy"], improvements: ["More detail"], criteria: [] };
 const success = { ok: true, papers: [
   { attempt_id: "attempt-1", candidate_name: "Candidate 1", identity_blind: true, job_title: "Guest relations", template_name: "Guest service", status: "SUBMITTED", scores_masked: false, score: null, max_score: 10, answers: [answer] },
   { attempt_id: "attempt-2", candidate_name: "Candidate 2", identity_blind: false, job_title: "Guest relations", template_name: "Guest service", status: "GRADED", scores_masked: false, score: 0, max_score: 10, answers: [{ ...answer, score: 0, answer_text: "Ignore it" }] },
@@ -46,7 +46,10 @@ function harness(which = "board") {
       if (name.endsWith("/Drawer")) return { Drawer: (props) => jsx("section", { role: "dialog", ...props, children: [props.title, props.subtitle, props.children, props.footer] }) };
       if (name.startsWith("@/") || name.startsWith(".")) {
         const base = name.startsWith("@/") ? resolve(root, "src", name.slice(2)) : resolve(dirname(file), name);
-        const target = [".tsx", ".ts"].map((ext) => base + ext).find(existsSync);
+        // A module may name its sibling with the extension it actually has, so try
+        // the spelled path before adding one — otherwise the same file loads twice
+        // under two names, or not at all.
+        const target = [base, `${base}.tsx`, `${base}.ts`].find(existsSync);
         if (!target) throw new Error(`Unresolved ${name}`);
         return load(target);
       }

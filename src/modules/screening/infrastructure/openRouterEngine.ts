@@ -21,7 +21,14 @@ import {
   type AuthoringBrief,
   type SuiteSeedingContext,
 } from "@/modules/assessment/domain/aiAuthoring";
-import type { CvScreeningResult, SentimentAnalysisResult, FeedbackReport, GeneratedInterviewQuestions } from "@/types";
+import type {
+  CvScreeningResult,
+  RubricCriterion,
+  SentimentAnalysisResult,
+  FeedbackReport,
+  GeneratedInterviewQuestions,
+} from "@/types";
+import type { RubricBand } from "@/modules/assessment/domain/rubric";
 
 /**
  * Bias reduction: strips demographic markers from CV text before sending to LLM.
@@ -569,6 +576,103 @@ Evaluate and return:
     strengths: string[];
     improvements: string[];
   }>(result.content, { truncated: result.truncated });
+}
+
+/**
+ * Marking against the criteria the recruiter wrote for this question.
+ *
+ * The question's own criteria are named and weighted in the prompt and the model
+ * is asked for one judgement each: how well the answer showed it, and the quote
+ * from the answer that justifies the number. No total is asked for. `scoreRubric`
+ * multiplies each band by the marks that criterion is worth on this question and
+ * adds the parts up — a mark the model both proposes and explains cannot be
+ * checked against a weighting a person set by hand.
+ *
+ * A pitch's material is its transcript, and the prompt says so: what the model
+ * cannot perceive must not be quietly scored, and presence, dress and delivery
+ * stay with the reviewer who can play the recording.
+ */
+export async function gradeAgainstRubric(
+  brief: string,
+  material: string,
+  criteria: readonly RubricCriterion[],
+  options: {
+    capability: CompletionRequest["capability"];
+    transcriptOnly?: boolean;
+    context?: string;
+    limits?: { minDurationSeconds?: number; maxDurationSeconds?: number };
+  }
+): Promise<RubricBand[]> {
+  const systemPrompt = options.transcriptOnly
+    ? `You are assessing a recorded candidate pitch for a hospitality / finance leadership role.
+You are given a verbatim transcript, NOT the video. Judge only what was said and how it was organised.
+Never score presence, dress, voice quality or camera delivery — you cannot perceive them, and a reviewer who can plays the recording.
+The pitch may be in any language; assess the argument, not the language choice.
+Return ONLY valid JSON. No markdown.`
+    : `You are a domain expert evaluating a candidate's written case-study response for a hospitality / finance leadership role.
+Judge the answer for what it says, not for its length or fluency.
+Return ONLY valid JSON. No markdown.`;
+
+  const scheme = criteria
+    .map(
+      (criterion) =>
+        `• “${criterion.label}” — ${criterion.weight}% of the question's marks${
+          criterion.description ? `: ${criterion.description}` : ""
+        }`
+    )
+    .join("\n");
+
+  const durations = options.limits ?? {};
+  const limits =
+    durations.minDurationSeconds || durations.maxDurationSeconds
+      ? `TIME ALLOWED: ${durations.minDurationSeconds ?? 0}-${durations.maxDurationSeconds ?? 120} seconds.`
+      : "";
+
+  const materialLabel = options.transcriptOnly
+    ? `TRANSCRIPT (${material.split(/\s+/).filter(Boolean).length} words)`
+    : "CANDIDATE ANSWER";
+
+  const userPrompt = `BRIEF GIVEN TO THE CANDIDATE:
+${brief}
+${options.context ? `\nCONTEXT PROVIDED TO THE CANDIDATE:\n${options.context}` : ""}
+${limits ? `\n${limits}` : ""}
+
+${materialLabel}:
+${material}
+
+MARKING SCHEME — judge each criterion on its own:
+${scheme}
+
+Return:
+{
+  "bands": [
+    {
+      "criterion": "string — the criterion's name exactly as written above",
+      "percent": number (0-100, how well this answer shows this criterion),
+      "evidence": "string (the few words of the answer that justify the number, under 20 words)"
+    }
+  ]
+}
+One band for every criterion, named exactly as written above. Do not add a total: the marks are added up from these bands.`;
+
+  const request: CompletionRequest = {
+    capability: options.capability,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.2,
+    // Each band carries a quote, so the room grows with the criteria. A capped
+    // chain truncates the verdict and the answer is parked instead of marked.
+    maxTokens: Math.min(2400, 400 + 300 * criteria.length),
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  const parsed = parseJsonResponse<{ bands?: RubricBand[] }>(result.content, {
+    truncated: result.truncated,
+  });
+  return Array.isArray(parsed?.bands) ? parsed.bands : [];
 }
 
 /**
