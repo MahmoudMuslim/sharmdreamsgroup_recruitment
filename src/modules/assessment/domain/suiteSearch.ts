@@ -18,13 +18,7 @@ import {
   type SearchField,
 } from "@/lib/textSearch";
 
-/**
- * The columns a suite search reads.
- *
- * Role family and the active/paused switch are the grid's *other* two filters and
- * deliberately not part of this: they are picklists, not words, and folding them
- * in would let a description of the search box promise a filter it cannot apply.
- */
+// Structured filters belong to the grid, not the shared text-search promise.
 interface SearchableSuite {
   name: string;
   description: string;

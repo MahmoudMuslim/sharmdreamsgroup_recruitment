@@ -959,6 +959,8 @@ export function AssessmentGrid({
 
   const [family, setFamily] = useState("ALL");
   const [status, setStatus] = useState<"all" | "active" | "paused">("all");
+  const [maxDuration, setMaxDuration] = useState("");
+  const [questionFormat, setQuestionFormat] = useState("ALL");
 
   const families = useMemo(() => {
     const keys = new Set(templates.map((template) => template.role_family));
@@ -977,16 +979,16 @@ export function AssessmentGrid({
   };
 
   const filtered = useMemo(() => {
-    // The words run through the same predicate the assistant's `query` uses, so
-    // a suite the chat names is a suite this box finds. Family and status stay
-    // here — they are this grid's own picklists, not something a search promises.
     return searchSuites(templates, query).filter((template) => {
       if (family !== "ALL" && template.role_family !== family) return false;
       if (status === "active" && !template.is_active) return false;
       if (status === "paused" && template.is_active) return false;
+      if (maxDuration !== "" && template.time_limit_minutes > Number(maxDuration)) return false;
+      if (questionFormat !== "ALL" && !(questionsByTemplate[template.id] ?? [])
+        .some((question) => question.question_type === questionFormat)) return false;
       return true;
     });
-  }, [templates, query, family, status]);
+  }, [templates, query, family, status, maxDuration, questionFormat, questionsByTemplate]);
 
   const activeCount = templates.filter((template) => template.is_active).length;
   const totalQuestions = templates.reduce((sum, template) => sum + template.question_count, 0);
@@ -999,12 +1001,14 @@ export function AssessmentGrid({
       )
     : 0;
 
-  const filtersActive = query.trim() !== "" || family !== "ALL" || status !== "all";
+  const filtersActive = query.trim() !== "" || family !== "ALL" || status !== "all" || maxDuration !== "" || questionFormat !== "ALL";
 
   function clearFilters() {
     setQuery("");
     setFamily("ALL");
     setStatus("all");
+    setMaxDuration("");
+    setQuestionFormat("ALL");
   }
 
   return (
@@ -1046,8 +1050,8 @@ export function AssessmentGrid({
         </div>
 
         <div className="flex flex-col gap-3 2xl:flex-row 2xl:flex-wrap 2xl:items-center 2xl:justify-between">
-          <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative sm:max-w-xs sm:flex-1">
+          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative sm:w-64 sm:flex-1">
               <Search
                 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/35"
                 aria-hidden
@@ -1083,6 +1087,30 @@ export function AssessmentGrid({
               <option value="active">Active</option>
               <option value="paused">Paused</option>
             </Select>
+            <Select
+              value={maxDuration}
+              onChange={(e) => setMaxDuration(e.target.value)}
+              aria-label="Maximum suite duration"
+              title="Maximum configured suite time limit"
+              className="sm:w-44"
+            >
+              <option value="">Any duration</option>
+              {[15, 30, 45, 60, 90, 120].map((minutes) => (
+                <option key={minutes} value={minutes}>Up to {minutes} min</option>
+              ))}
+            </Select>
+            <Select
+              value={questionFormat}
+              onChange={(e) => setQuestionFormat(e.target.value)}
+              aria-label="Filter by question format"
+              title="Suites containing at least one question of this format"
+              className="sm:w-48"
+            >
+              <option value="ALL">All question formats</option>
+              {Object.entries(TYPE_META).map(([type, meta]) => (
+                <option key={type} value={type}>{meta.singular}</option>
+              ))}
+            </Select>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
             {canEdit && (
@@ -1116,6 +1144,21 @@ export function AssessmentGrid({
           </div>
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p role="status" className="text-xs text-brand-ink/60">
+            Showing {filtered.length} of {templates.length} suites
+          </p>
+          {filtersActive && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="inline-flex items-center rounded-xl border border-brand-line bg-brand-cream px-4 py-2.5 text-sm font-semibold transition hover:bg-brand-sand"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+
         {filtered.length === 0 ? (
           <Card>
             <EmptyState
@@ -1135,17 +1178,6 @@ export function AssessmentGrid({
                 )
               }
             />
-            {filtersActive && (
-              <div className="flex justify-center pb-8">
-                <button
-                  type="button"
-                  onClick={clearFilters}
-                  className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-4 py-2.5 text-sm font-semibold transition hover:bg-brand-sand"
-                >
-                  Clear filters
-                </button>
-              </div>
-            )}
           </Card>
         ) : (
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
