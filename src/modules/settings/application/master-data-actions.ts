@@ -104,6 +104,11 @@ const DIFF_COLUMNS: Partial<Record<MasterEntity, string>> = {
     `${READ_COLUMNS.companies}, website, contact_phone, address, sort_order,` +
     " tagline, description, history, careers_pitch, founded_year, ownership_type," +
     " employee_range, headquarters, milestones, benefits, is_group_profile",
+  // A position's prose is the half a recruiter edits most, and the edit form always
+  // posts it. Read the short list and the diff never sees those keys, so
+  // `scalarEdits` reports a column the person did not touch as "set to …" on every
+  // save — and the trail says four fields moved when two did.
+  positions: `${READ_COLUMNS.positions}, responsibilities, requirements`,
 };
 
 /**
@@ -115,6 +120,7 @@ const DIFF_COLUMNS: Partial<Record<MasterEntity, string>> = {
  */
 const DOCUMENT_COLUMNS: Partial<Record<MasterEntity, readonly string[]>> = {
   companies: ["milestones", "benefits"],
+  positions: ["requirements"],
 };
 
 /** The row as a person would name it in a sentence. */
@@ -1124,6 +1130,9 @@ function listWords(value: unknown): string {
   const named = value
     .slice(0, 3)
     .map((item) => {
+      // A requirements list is plain strings, and "an entry" says nothing about
+      // which one a person just reworded.
+      if (typeof item === "string") return item;
       const row = (item ?? {}) as Record<string, unknown>;
       return `${row.year ? `${row.year} ` : ""}${String(row.title ?? "")}`.trim() || "an entry";
     })

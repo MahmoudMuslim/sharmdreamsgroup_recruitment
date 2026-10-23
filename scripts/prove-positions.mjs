@@ -1,22 +1,26 @@
 /* scripts/prove-positions.mjs
  * Run: node --experimental-strip-types scripts/prove-positions.mjs
  *
- * #254 lets a new opening inherit its copy from a position definition. Most of the
- * feature needs a database — `db/migrations/026_positions.sql` is authored and NOT
- * applied, so no position row can be read or written here. What can be pinned
- * without one is the part that decides what the opening says and what the portal
- * promises while the table is missing:
+ * #254 lets a new opening inherit its copy from a position definition, and
+ * `db/migrations/026_positions.sql` is now applied to the local self-hosted
+ * database. This proof still runs without a database, because what it pins is the
+ * part that decides what an opening says and what the portal promises — and that
+ * part has to keep deciding it the same way on a database where 026 has not been
+ * run:
  *
  *   1. precedence — a supplied field wins, a blank one comes from the position;
  *   2. the Settings/chat answer for an uncreated list — "not created", not "empty";
  *   3. the authored DDL — table, opening link, RLS, cache reload, all present;
  *   4. the wiring markers — the picker, the conditional insert, the cross-company
- *      refusal and the assistant's `create_job` path.
+ *      refusal and the assistant's `create_job` path;
+ *   5. the edit trail's diff — which columns the diff reads, and what an unread
+ *      column and a reworded requirement look like to each comparison pass (#482).
  *
- * (3) and (4) are text assertions, deliberately: the SQL is reviewed, never run
- * here, and the UI needs a browser. They catch the file being edited apart, not a
- * runtime that was misconfigured. Whether 026 is applied to any given database is
- * a fact about that database, not about this tree, and is checked separately.
+ * (3), (4) and the source half of (5) are text assertions, deliberately: the SQL is
+ * reviewed, never run here, and the UI needs a browser. They catch the file being
+ * edited apart, not a runtime that was misconfigured. Whether 026 is applied to any
+ * given database is a fact about that database, not about this tree, and is checked
+ * there.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -35,6 +39,11 @@ import {
   projectMasterRow,
 } from "../src/modules/settings/domain/masterDataLists.ts";
 import { resolveFiling } from "../src/modules/settings/domain/masterDataFiling.ts";
+import {
+  changePhrase,
+  printableValue,
+  scalarEdits,
+} from "../src/modules/activity/domain/trail.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => readFileSync(path.join(root, rel), "utf8");
@@ -402,7 +411,7 @@ check(
 );
 
 // ---------------------------------------------------------------------------
-// 5. The authored migration (not executed here)
+// 5. The migration's DDL (read from the file, never executed here)
 // ---------------------------------------------------------------------------
 const migration = read("db/migrations/026_positions.sql");
 for (const [label, needle] of [
@@ -419,10 +428,12 @@ for (const [label, needle] of [
   ["checks settings.manage_platform", "has_permission('settings.manage_platform')"],
   ["revokes anon", "revoke all on table public.positions from anon"],
   ["reloads the REST schema", "notify pgrst, 'reload schema';"],
-  ["says it is not applied", "This migration is NOT applied to any database yet."],
+  ["says it is applied and proven locally", "Applied to the local self-hosted database on 2026-10-23 and proven against it:"],
+  ["keeps the not-created fallback on the record", 'still treats\n-- a missing table as "not created yet"'],
 ]) {
   check(`026 ${label}`, migration.includes(needle), needle);
 }
+check("026 does not claim to be unapplied", !/NOT applied to any database/.test(migration));
 check("026 does not seed rows", !/insert into public\.positions/i.test(migration));
 check("026 does not add the link as required", !/position_id uuid[^;]*not null/i.test(migration));
 
@@ -512,6 +523,109 @@ sourceHas("the console still shows a value the list has retired", "src/app/(admi
   'const kept = field.kind === "select"',
   "retired or no longer on the list",
 ]);
+
+// ---------------------------------------------------------------------------
+// 7. What the trail says a position save moved (#482)
+// ---------------------------------------------------------------------------
+// The position form posts every declared field on every save, and the write door
+// compares that patch against the row it read back beforehand. A column missing
+// from that read cannot be compared, so `scalarEdits` reports it as a field the save
+// set — a recruiter who moved one salary figure and reworded one requirement saved
+// and saw three changed fields, two of them columns they never touched.
+// The columns for the diff come from the door's own `DIFF_COLUMNS`, so they are read
+// out of the source here rather than repeated: a prose column added to the row and
+// left out of that read re-opens the hole, and this fails.
+const door = read("src/modules/settings/application/master-data-actions.ts");
+
+function declaredBlock(name) {
+  const match = new RegExp(`const ${name}[\\s\\S]{0,120}?\\{([\\s\\S]*?)\\n\\};`).exec(door);
+  check(`the write door declares ${name}`, Boolean(match), match ? "" : "no such block");
+  return match ? match[1] : "";
+}
+
+const shortMatch = /positions:\s*\n?\s*"([^"]+)"/.exec(declaredBlock("READ_COLUMNS"));
+const extraMatch = /positions:\s*`\$\{READ_COLUMNS\.positions\},([^`]*)`/.exec(
+  declaredBlock("DIFF_COLUMNS")
+);
+const docMatch = /positions:\s*\[([^\]]*)\]/.exec(declaredBlock("DOCUMENT_COLUMNS"));
+
+const shortColumns = shortMatch ? shortMatch[1].split(",").map((c) => c.trim()) : [];
+const proseColumns = extraMatch ? extraMatch[1].split(",").map((c) => c.trim()).filter(Boolean) : [];
+const documentColumns = docMatch
+  ? docMatch[1].split(",").map((c) => c.trim().replace(/^"|"$/g, "")).filter(Boolean)
+  : [];
+
+check("the short read names the columns a position is addressed by", same(shortColumns, [
+  "title", "tenant_id", "department", "grade", "min_salary_usd", "max_salary_usd",
+  "salary_currency", "is_active",
+]), shortColumns.join(", "));
+check("the diff read adds the prose the form posts", same(proseColumns, ["responsibilities", "requirements"]), proseColumns.join(", "));
+check("requirements is compared as a document, not a scalar", same(documentColumns, ["requirements"]), documentColumns.join(", "));
+
+// The row the door reads back, and the patch the form posts against it. The write
+// door shapes the salary fields as numbers and the requirements as an array, so the
+// patch below is what `updateMasterRecord` actually diffs — including the ceiling,
+// which comes back as `6100` against the column's "6100.00".
+const prose = {
+  responsibilities: "Runs the desk and owns the night handover.",
+  requirements: ["3 seasons at a front desk", "Fluent English and Arabic"],
+};
+const stored = {
+  title: "Probe Guest Services Team Lead",
+  tenant_id: null,
+  department: "Front Office",
+  grade: "G5",
+  min_salary_usd: "4200.00",
+  max_salary_usd: "6100.00",
+  salary_currency: "USD",
+  is_active: true,
+};
+const fullRead = { ...stored, ...prose };
+// Two fields moved: the floor was retyped, and the first requirement reworded.
+const posted = {
+  ...stored,
+  ...prose,
+  min_salary_usd: 4500,
+  max_salary_usd: 6100,
+  requirements: ["3 seasons at a busy front desk", "Fluent English and Arabic"],
+};
+
+const shortBefore = Object.fromEntries(shortColumns.map((c) => [c, stored[c]]));
+const blamed = scalarEdits(shortBefore, posted);
+check("a column the read skips is blamed on the save", blamed.responsibilities === `set to ${prose.responsibilities}`, blamed.responsibilities);
+check("so is the requirements list", blamed.requirements === "set to 2 items", blamed.requirements);
+check("the short read reports three changed fields where two moved", changePhrase(blamed) === "changed 3 fields (min_salary_usd, responsibilities, requirements)", changePhrase(blamed));
+
+const scalarPass = Object.fromEntries(Object.entries(posted).filter(([key]) => !documentColumns.includes(key)));
+const moved = scalarEdits(fullRead, scalarPass);
+check("the diff read leaves nothing to blame", same(Object.keys(moved), ["min_salary_usd"]), Object.keys(moved).join(", "));
+check("the retyped floor prints as the move it is", moved.min_salary_usd === "4200.00 → 4500", moved.min_salary_usd);
+check("a band posted back as 6100 against 6100.00 is not a change", !("max_salary_usd" in moved), String(moved.max_salary_usd));
+check("the untouched prose is not a change", !("responsibilities" in moved), JSON.stringify(moved.responsibilities));
+
+// The document half: a reworded list prints as the same number of items, so the
+// scalar pass cannot see it at all. That is why the door compares it on its contents
+// and describes it by `listWords`, which names a plain string entry by its words.
+check(
+  "a reworded requirement is invisible to the words-only compare",
+  printableValue(posted.requirements) === printableValue(prose.requirements) &&
+    printableValue(posted.requirements) === "2 items",
+  `${printableValue(prose.requirements)} vs ${printableValue(posted.requirements)}`
+);
+sourceHas("the document columns are kept out of the scalar pass", "src/modules/settings/application/master-data-actions.ts", [
+  "const docs = DOCUMENT_COLUMNS[entity] ?? [];",
+  ".filter(([key]) => !docs.includes(key))",
+  "edits[key] = `${listWords(before[key])} → ${listWords(patch[key])}`;",
+]);
+sourceHas("a plain string entry is named by its own words", "src/modules/settings/application/master-data-actions.ts", [
+  'if (typeof item === "string") return item;',
+]);
+sourceHas("the row for the diff is read through DIFF_COLUMNS", "src/modules/settings/application/master-data-actions.ts", [
+  ".select(DIFF_COLUMNS[entity] ?? READ_COLUMNS[entity])",
+]);
+
+const trail = { ...moved, requirements: "2 entries (3 seasons at a busy front desk, Fluent English and Arabic)" };
+check("the trail a fixed save leaves", changePhrase(trail) === "changed 2 fields (min_salary_usd, requirements)", changePhrase(trail));
 
 const failed = results.filter((result) => !result.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
