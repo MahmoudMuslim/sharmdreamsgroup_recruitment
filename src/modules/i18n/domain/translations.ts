@@ -1,4 +1,4 @@
-import { isLocale, placeholdersIn, shippedText, translationKeys } from "@/lib/i18n";
+import { placeholdersIn, shippedText, translationKeys } from "@/lib/i18n";
 import type { Locale } from "@/types";
 
 /**
@@ -31,18 +31,6 @@ export const OVERRIDES_KEY_PREFIX = "i18n.";
 
 export function overridesKey(locale: Locale): string {
   return `${OVERRIDES_KEY_PREFIX}${locale}`;
-}
-
-/**
- * Which language an `app_settings` key holds wording for, or `null` for any other
- * setting. Used to keep these rows out of the settings editor, which lists every
- * `GLOBAL` row it can find and would otherwise render a 400-key JSON blob as a
- * text field.
- */
-export function localeOfSettingKey(key: string): Locale | null {
-  if (!key.startsWith(OVERRIDES_KEY_PREFIX)) return null;
-  const code = key.slice(OVERRIDES_KEY_PREFIX.length);
-  return isLocale(code) ? code : null;
 }
 
 /** Longest wording one key may carry. A paragraph is a template, not a label. */
