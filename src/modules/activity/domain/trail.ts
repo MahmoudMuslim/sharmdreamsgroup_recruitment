@@ -467,6 +467,7 @@ export function recordHref(
     currency: { href: "/settings?area=organisation&section=currencies", label: "Currencies" },
     "role family": { href: "/settings?area=organisation&section=role_families", label: "Role families" },
     skill: { href: "/settings?area=organisation&section=skills", label: "Skills" },
+    position: { href: "/settings?area=organisation&section=positions", label: "Positions" },
   };
 
   return CONSOLES[entity as ActivityEntity] ?? null;

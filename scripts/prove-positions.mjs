@@ -13,8 +13,9 @@
  *   3. the authored DDL — table, opening link, RLS, cache reload, all present;
  *   4. the wiring markers — the picker, the conditional insert, the cross-company
  *      refusal and the assistant's `create_job` path;
- *   5. the edit trail's diff — which columns the diff reads, and what an unread
- *      column and a reworded requirement look like to each comparison pass (#482).
+ *   5. the edit trail's diff — which columns the diff reads, what an unread
+ *      column and a reworded requirement look like to each comparison pass, and
+ *      where a position's own trail row points the reader back to (#482).
  *
  * (3), (4) and the source half of (5) are text assertions, deliberately: the SQL is
  * reviewed, never run here, and the UI needs a browser. They catch the file being
@@ -42,6 +43,7 @@ import { resolveFiling } from "../src/modules/settings/domain/masterDataFiling.t
 import {
   changePhrase,
   printableValue,
+  recordHref,
   scalarEdits,
 } from "../src/modules/activity/domain/trail.ts";
 
@@ -626,6 +628,37 @@ sourceHas("the row for the diff is read through DIFF_COLUMNS", "src/modules/sett
 
 const trail = { ...moved, requirements: "2 entries (3 seasons at a busy front desk, Fluent English and Arabic)" };
 check("the trail a fixed save leaves", changePhrase(trail) === "changed 2 fields (min_salary_usd, requirements)", changePhrase(trail));
+
+// ---------------------------------------------------------------------------
+// 8. A position's own trail row points back at the list it changed (#482)
+// ---------------------------------------------------------------------------
+// The trail console renders a Record link from `recordHref`, and every other
+// organisation list has one — a company row lands on Companies, a skill row on
+// Skills. A position row had nowhere to go, so the reviewer of a reworded
+// requirement could not reach the row they would want to re-read. The section's
+// id and label are read out of the nav table rather than repeated here, because
+// a link built from a stale id would land on the default section and look right.
+const nav = read("src/modules/settings/domain/settingsNav.ts");
+const sectionMatch = /id: "positions",\s*\n\s*label: "([^"]+)"/.exec(nav);
+check("the dock declares a positions section", Boolean(sectionMatch), sectionMatch ? "" : "no positions section");
+check(
+  "that section belongs to the organisation area",
+  /const ORGANISATION_SECTIONS[\s\S]*?id: "positions"/.test(nav) &&
+    /id: "organisation",[\s\S]*?sections: ORGANISATION_SECTIONS,/.test(nav),
+  "positions is not under organisation"
+);
+
+const positionLink = recordHref("position", "4a45b47f-0000-4000-8000-000000000000");
+check(
+  "a position trail row links to the positions section",
+  positionLink?.href === "/settings?area=organisation&section=positions",
+  String(positionLink?.href)
+);
+check(
+  "and labels the link with the dock's own words",
+  positionLink?.label === sectionMatch?.[1],
+  `${positionLink?.label} vs ${sectionMatch?.[1]}`
+);
 
 const failed = results.filter((result) => !result.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
