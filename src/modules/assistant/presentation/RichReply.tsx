@@ -3,6 +3,7 @@
 import { type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Meter } from "@/modules/analytics/presentation/ui";
+import { insideAWord } from "@/modules/assistant/domain/inlineEmphasis";
 import { cn } from "@/lib/utils";
 
 /**
@@ -162,6 +163,15 @@ export function renderInline(
   INLINE.lastIndex = 0;
   while ((match = INLINE.exec(text)) !== null) {
     if (match.index > cursor) nodes.push(text.slice(cursor, match.index));
+
+    // A `_…_` pair inside a word is spelling, not emphasis — the chat echoes
+    // column names, and italicising `min_salary_usd` drops both underscores and
+    // prints a field the recruiter cannot find on any console.
+    if (match[3] && insideAWord(text, match.index, INLINE.lastIndex)) {
+      nodes.push(match[0]);
+      cursor = INLINE.lastIndex;
+      continue;
+    }
 
     if (match[1]) nodes.push(<strong key={match.index}>{match[1]}</strong>);
     else if (match[2] || match[3]) nodes.push(<em key={match.index}>{match[2] ?? match[3]}</em>);
