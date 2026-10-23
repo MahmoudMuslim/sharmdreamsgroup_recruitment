@@ -248,7 +248,7 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
         kind: "toggle",
         key: "security.mask_scores_for_reviewers",
         label: "Mask scores for interviewers",
-        help: "Hides AI match scores, assessment marks and retention risk from every staff member whose role lacks the “View unmasked scores” permission — by default that means recruiters and hiring managers see the pipeline without the numbers. Switch off to show them to all staff.",
+        help: "Hides AI match scores, assessment marks and retention risk from every staff member whose role lacks the “View unmasked scores” permission — by default that means recruiters and hiring managers see the pipeline without the numbers. Switch off to show them to every staff member who holds “View scores” — that grant is the outer gate, so a role without it stays masked whatever this switch says.",
       },
       {
         kind: "toggle",

@@ -407,8 +407,8 @@ export function InterviewAgenda({
 
       {!canWrite && rows.length > 0 && (
         <p className="text-xs text-brand-ink/50">
-          Reading the calendar. Moving a panel or recording an outcome needs the Edit candidates
-          permission.
+          Reading the calendar. Moving a panel or recording an outcome needs both the Edit
+          candidates and Schedule interviews permissions.
         </p>
       )}
 

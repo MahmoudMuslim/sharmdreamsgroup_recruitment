@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
-import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { permissionsForCurrentUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { generateInterviewQuestions } from "@/modules/screening/infrastructure/openRouterEngine";
@@ -59,13 +59,17 @@ async function interviewsFor(
   return ((data ?? []) as Record<string, unknown>[]).map(toInterviewRecord);
 }
 
-/** Staff session + write permission, or a message explaining which is missing. */
+/** Staff session + both interview grants, or a message naming the one missing. */
 async function requireWriteAccess(): Promise<
   { restClient: Awaited<ReturnType<typeof createServerRestClient>> } | { error: string }
 > {
   await requireStaff("/candidates");
-  if (!(await hasPermissionForUser("candidates.write"))) {
+  const granted = await permissionsForCurrentUser();
+  if (!granted.has("candidates.write")) {
     return { error: "You need the Edit candidates permission." };
+  }
+  if (!granted.has("interviews.schedule")) {
+    return { error: "Booking an interview needs the Schedule interviews permission." };
   }
   return { restClient: await createServerRestClient() };
 }

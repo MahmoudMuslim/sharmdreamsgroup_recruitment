@@ -11,7 +11,7 @@ import { InterviewAgenda } from "./InterviewAgenda";
 import { listInterviewers } from "@/app/(admin)/candidates/interview-actions";
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
-import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { canScheduleInterviews } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { Card, PageHeader } from "@/modules/analytics/presentation/ui";
 import { connection } from "next/server";
@@ -49,7 +49,7 @@ export default async function InterviewsPage({
     requireStaff("/interviews"),
     getInterviewAgenda(),
     getOrganisationTimeZone(),
-    hasPermissionForUser("candidates.write"),
+    canScheduleInterviews(),
     countInterviewsOutsideAgenda(),
   ]);
   // Rounds and scorecards are read beside the agenda, not with it: one missing

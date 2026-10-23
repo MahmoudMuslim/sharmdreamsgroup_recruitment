@@ -105,3 +105,33 @@ export async function canManageStaffUsers(): Promise<boolean> {
   const granted = await permissionsForCurrentUser();
   return STAFF_MANAGE_KEYS.some((key) => granted.has(key));
 }
+
+/**
+ * Whether the signed-in member may open a staff account that did not exist.
+ *
+ * The manage gate plus `users.create`: editing, disabling and deleting the
+ * accounts a company already has is a different hand from inventing a new one,
+ * and the matrix keeps a box for each. Both reads come off the request's cached
+ * grant set, so this costs no query beyond `canManageStaffUsers`.
+ */
+export async function canCreateStaffUsers(): Promise<boolean> {
+  const granted = await permissionsForCurrentUser();
+  return STAFF_MANAGE_KEYS.some((key) => granted.has(key)) && granted.has("users.create");
+}
+
+/**
+ * Whether the signed-in member may book, move or score an interview slot.
+ *
+ * Both grants, because the matrix keeps them apart: `candidates.write` is the
+ * hand on the applicant's record and `interviews.schedule` is the calendar the
+ * slot sits on. A member with only the first edits the candidate but cannot put
+ * a panel in the diary; only the second gets a calendar they cannot write the
+ * applicant behind it.
+ *
+ * This is also what makes the "Schedule interviews" box in the matrix decide
+ * something: the booking, reschedule and outcome actions all pass through it.
+ */
+export async function canScheduleInterviews(): Promise<boolean> {
+  const granted = await permissionsForCurrentUser();
+  return granted.has("candidates.write") && granted.has("interviews.schedule");
+}

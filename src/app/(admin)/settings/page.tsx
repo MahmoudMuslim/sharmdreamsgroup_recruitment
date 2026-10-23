@@ -17,7 +17,11 @@ import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { connection } from "next/server";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
-import { canManageStaffUsers, hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import {
+  canCreateStaffUsers,
+  canManageStaffUsers,
+  hasPermissionForUser,
+} from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import { TeamSection } from "./TeamSection";
@@ -154,14 +158,23 @@ export default async function SettingsPage({
   // every other console here, so a role granted `manage_platform` alone sees locked
   // toggles rather than clicks the database will refuse. Reads the same cached grants
   // as `editable`, so it costs no extra query.
-  const [bundle, master, staffConsole, editable, canManageRoles, canManageStaff, organisationTimezone] =
-    await Promise.all([
+  const [
+    bundle,
+    master,
+    staffConsole,
+    editable,
+    canManageRoles,
+    canManageStaff,
+    canCreateStaff,
+    organisationTimezone,
+  ] = await Promise.all([
       loadSettings(),
       getMasterData(),
       loadStaffConsole(),
       hasPermissionForUser("settings.manage_platform"),
       hasPermissionForUser("settings.manage_roles"),
       canManageStaffUsers(),
+      canCreateStaffUsers(),
       getOrganisationTimeZone(),
     ]);
 
@@ -237,6 +250,7 @@ export default async function SettingsPage({
               companies={bundle.companies}
               passwordMinLength={passwordMinLength}
               canManage={canManageStaff}
+              canCreate={canCreateStaff}
               viewerAuthUserId={user.authUserId}
               timeZone={organisationTimezone}
             />

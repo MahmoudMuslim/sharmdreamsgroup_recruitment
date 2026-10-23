@@ -52,7 +52,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     edges: [
       "The board is the newest 200 live applications. When a tile counts more than that, the header says how many are missing and — for one active filter — links to the rail that reaches them.",
       "Stage figures are populations: who sits where now, never who moved. Nothing here is a conversion rate.",
-      "Fit bands, average score and the scored list are withheld without the View unmasked scores permission.",
+      "Fit bands, average score and the scored list are withheld without the View scores permission, and while the score-masking setting is on they are withheld from anyone who also lacks View unmasked scores.",
       "A staff session is the only gate — this screen asks for no separate reporting permission.",
     ],
   },
@@ -153,7 +153,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Archiving is refused while an assessment link is open or an interview is on the calendar. Nothing is deleted — a filed-away candidate keeps their own tracking page.",
       "One live application per person per role is what refuses a duplicate. One person may hold several live applications on different roles, and the profile page says so rather than splitting them into two candidates.",
       "A profile page is addressed by the person's oldest live record: a link naming a newer application is moved onto that address.",
-      "Hand-marking needs Grade assessments, edits need Edit candidates, sending needs Send messages.",
+      "Hand-marking needs Grade assessments, edits need Edit candidates, sending needs Send messages, and booking a panel needs Schedule interviews on top of Edit candidates.",
       "A bulk send stops at 200 recipients, and the panel names the mail provider's own daily ceiling.",
     ],
   },
@@ -169,6 +169,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Read a profile from a link, a pasted page or an uploaded export, then Structure the pasted page into fields.",
       "Convert to an application files the person on the pipeline under a role you choose.",
       "Select rows and Message to send one text to the whole selection.",
+      "Remove on a row takes that prospect out of the pool.",
       "Visitors who leave their details to the assistant on the public careers pages arrive here as new prospects, sourced by \"Careers assistant\", with the conversation in the notes — that is a lead, not an application, so the person is still yours to reach.",
     ],
     edges: [
@@ -177,6 +178,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "A repeated profile link is refused by the database. An email match is only skipped when it sits among the newest 5,000 records.",
       "Setting a stage of Applied or Passed by hand is a label: no application backs it until you convert.",
       "A paste is capped at 200,000 characters and a bulk message at 200 recipients.",
+      "Removing a prospect needs the Delete candidates permission, and the row's outreach history goes with it.",
     ],
   },
 
@@ -318,7 +320,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "The agenda reads 30 days back and 90 days forward. Panels booked past either edge are counted and named, not listed.",
       "A slot that has passed cannot be moved — record what happened, or book a new panel from the candidate.",
       "Panels are scheduled from a candidate's profile, and the interview guide is drafted there, not here.",
-      "Reading needs only a staff session; moving a panel or recording an outcome needs Edit candidates.",
+      "Reading needs only a staff session; moving a panel or recording an outcome needs both Edit candidates and Schedule interviews, so revoking either box in the role matrix closes those two writes.",
     ],
   },
 
@@ -422,7 +424,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Both trails page and search: by key, value, action or person.",
     ],
     edges: [
-      "Writes and both trails need the Manage platform settings permission; role and permission grants need Manage roles (the same key the database checks); staff accounts need Manage users.",
+      "Writes and both trails need the Manage platform settings permission — Companies is the one master-data table whose own Manage companies grant opens it without that; role and permission grants need Manage roles (the same key the database checks); an existing staff account needs Manage users to edit, disable or delete, and opening a new one needs Create users on top of it.",
       "A stored key always wins over the environment variable of the same name, and removing one falls back to the environment. A saved key is never displayed back to you.",
       "A second master-data row carrying the same words is refused, because a job opening stores only the name.",
       "The Positions list arrives with db/migrations/026_positions.sql, which is applied on this database. On one where it has not been run, its section says the list has not been created — not that it is empty — and nothing can be saved there.",

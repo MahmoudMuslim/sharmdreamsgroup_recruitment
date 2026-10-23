@@ -49,6 +49,8 @@ interface TeamSectionProps {
   companies: CompanyChoice[];
   passwordMinLength: number;
   canManage: boolean;
+  /** The `users.create` half of the staff gate — the Add member door alone. */
+  canCreate: boolean;
   viewerAuthUserId: string;
   timeZone: string;
 }
@@ -86,6 +88,7 @@ export function TeamSection({
   companies,
   passwordMinLength,
   canManage,
+  canCreate,
   viewerAuthUserId,
   timeZone,
 }: TeamSectionProps) {
@@ -123,7 +126,7 @@ export function TeamSection({
             <span className="shrink-0 rounded-lg bg-brand-cream px-3 py-1.5 text-xs font-semibold text-brand-ink/50">
               {companies.length} companies
             </span>
-            {canManage && (
+            {canCreate && (
               <Button size="sm" onClick={() => setUserPanelOpen(true)}>
                 <Plus className="h-3.5 w-3.5" aria-hidden />
                 Add member
@@ -222,13 +225,15 @@ export function TeamSection({
         </section>
       )}
 
-      <UserCreatePanel
-        companies={companies}
-        passwordMinLength={passwordMinLength}
-        open={userPanelOpen}
-        onClose={() => setUserPanelOpen(false)}
-        onSuccess={() => setUserPanelOpen(false)}
-      />
+      {canCreate && (
+        <UserCreatePanel
+          companies={companies}
+          passwordMinLength={passwordMinLength}
+          open={userPanelOpen}
+          onClose={() => setUserPanelOpen(false)}
+          onSuccess={() => setUserPanelOpen(false)}
+        />
+      )}
 
       {editingMember && (
         <MemberEditPanel

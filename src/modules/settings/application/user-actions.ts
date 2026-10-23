@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
-import { canManageStaffUsers } from "@/modules/settings/infrastructure/permissions";
+import { canCreateStaffUsers, canManageStaffUsers } from "@/modules/settings/infrastructure/permissions";
 import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
 import {
   ASSIGNABLE_ROLE_KEYS,
@@ -258,6 +258,15 @@ async function createStaffAccount(
 export async function createUser(payload: CreateUserPayload): Promise<CreateUserResult> {
   if (!(await requireStaffManager())) {
     return { ok: false, error: "You need the Manage users permission." };
+  }
+  // The door the "Add member" button opens: `users.create` is its own box in the
+  // matrix, so a role that holds the manage grant but not this one is refused here,
+  // exactly where the page already hid the button.
+  if (!(await canCreateStaffUsers())) {
+    return {
+      ok: false,
+      error: "Opening a new account needs both the Manage users and Create users permissions.",
+    };
   }
 
   const restClient = getServiceRestClient();
