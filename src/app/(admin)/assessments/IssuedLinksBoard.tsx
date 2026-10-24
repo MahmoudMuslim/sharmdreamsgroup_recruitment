@@ -395,6 +395,7 @@ export function AnswersDrawer({
   const skillPapers = useMemo<SkillEvidencePaper[]>(
     () =>
       (paper?.answers ?? []).map((answer) => ({
+        key: answer.question_id,
         title: answer.title,
         criteria: answer.criteria,
       })),
@@ -545,53 +546,42 @@ export function AnswersDrawer({
                 Skill evidence
               </h3>
               <ul className="mt-2 space-y-2">
-                {skillEvidence.map((line) => {
-                  // `skillPapers` holds one entry per question, so counting the
-                  // papers that contributed matches the coverage line below and
-                  // counts criteria on one question once. A title is not an
-                  // identity: two questions may share one.
-                  const questionCount = skillPapers.filter((p) =>
-                    p.criteria.some(
-                      (c) => typeof c.skill_id === "string" && c.skill_id.trim() === line.skill_id
-                    )
-                  ).length;
-                  return (
-                    <li key={line.skill_id} className="text-xs leading-relaxed">
-                      <p className="font-semibold">
-                        {line.skill_name}
-                        {" · "}
-                        {paper.scores_masked
-                          ? "Hidden"
-                          : line.percent === null
-                            ? "No mark on file"
-                            : `${line.percent}%`}
-                        {line.awarded !== null && line.allowance !== null
-                          ? ` (${line.awarded} of ${line.allowance} marks)`
-                          : ""}
-                      </p>
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-[11px] text-brand-ink/60">
-                          {questionCount} contributing{" "}
-                          {questionCount === 1 ? "question" : "questions"}
-                        </summary>
-                        <ul className="mt-1 space-y-1">
-                          {line.contributions.map((contribution, index) => (
-                            <li
-                              key={`${contribution.question_title}:${contribution.criterion_label}:${index}`}
-                              className="text-[11px] leading-relaxed text-brand-ink/65"
-                            >
-                              {contribution.question_title} — {contribution.criterion_label}
-                              {contribution.awarded !== null && contribution.allowance !== null
-                                ? ` · ${contribution.awarded} of ${contribution.allowance}`
-                                : ""}
-                              {contribution.evidence ? ` — “${contribution.evidence}”` : ""}
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    </li>
-                  );
-                })}
+                {skillEvidence.map((line) => (
+                  <li key={line.skill_id} className="text-xs leading-relaxed">
+                    <p className="font-semibold">
+                      {line.skill_name}
+                      {" · "}
+                      {paper.scores_masked
+                        ? "Hidden"
+                        : line.percent === null
+                          ? "No mark on file"
+                          : `${line.percent}%`}
+                      {line.awarded !== null && line.allowance !== null
+                        ? ` (${line.awarded} of ${line.allowance} marks)`
+                        : ""}
+                    </p>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[11px] text-brand-ink/60">
+                        {line.questionCount} contributing{" "}
+                        {line.questionCount === 1 ? "question" : "questions"}
+                      </summary>
+                      <ul className="mt-1 space-y-1">
+                        {line.contributions.map((contribution, index) => (
+                          <li
+                            key={`${contribution.question_title}:${contribution.criterion_label}:${index}`}
+                            className="text-[11px] leading-relaxed text-brand-ink/65"
+                          >
+                            {contribution.question_title} — {contribution.criterion_label}
+                            {contribution.awarded !== null && contribution.allowance !== null
+                              ? ` · ${contribution.awarded} of ${contribution.allowance}`
+                              : ""}
+                            {contribution.evidence ? ` — “${contribution.evidence}”` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </li>
+                ))}
               </ul>
               <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
                 {skillCoverage}

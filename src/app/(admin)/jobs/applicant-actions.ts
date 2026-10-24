@@ -5,6 +5,13 @@ import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 import type { DemonstratedSkill } from "@/modules/jobs/domain/openingSkills";
+import {
+  rollUpSkillEvidence,
+  skillEvidenceCoverage,
+  skillEvidencePapers,
+  type SkillEvidenceLine,
+  type SkillEvidenceSource,
+} from "@/modules/assessment/domain/skillEvidence";
 
 /**
  * Applicants of one job opening, and what each of them actually submitted.
@@ -58,6 +65,12 @@ export interface ApplicantSubmission {
   /** Same file with a `Content-Disposition`, so the browser saves it. */
   cv_download_url: string | null;
   screening_summary: string | null;
+  /** Marks this application's graded tests earned per catalogue skill. */
+  skill_evidence: SkillEvidenceLine[];
+  /** What the roll-up covers, in one sentence. Null when it covers nothing. */
+  skill_evidence_coverage: string | null;
+  /** Set when the 500-response bound was reached or the read itself failed. */
+  skill_evidence_note: string | null;
 }
 
 export type ApplicantsResult = { ok: true; applicants: JobApplicant[] } | { ok: false; error: string };
@@ -70,6 +83,17 @@ function attemptTemplate(attempt: Record<string, unknown> | null): string | null
   if (row && typeof row === "object" && "name" in row) {
     const name = (row as { name?: unknown }).name;
     if (typeof name === "string") return name;
+  }
+  return null;
+}
+
+/** The question title from a `candidate_responses` join, singular or wrapped. */
+function joinedQuestionTitle(row: Record<string, unknown>): string | null {
+  const joined = row.assessment_questions;
+  const question = Array.isArray(joined) ? joined[0] : joined;
+  if (question && typeof question === "object" && "title" in question) {
+    const title = (question as { title?: unknown }).title;
+    if (typeof title === "string" && title.trim()) return title.trim();
   }
   return null;
 }
@@ -183,6 +207,41 @@ export async function getApplicantSubmission(
     };
   }
 
+  // One bounded read, only when the recruiter opens this applicant. `limit(501)`
+  // is how the read can tell 500 from "more than 500" without a count query; the
+  // extra row is never mapped or printed. Graded responses only, newest first, so
+  // the bound keeps the most recent work rather than an arbitrary page.
+  const masked = await scoresAreMaskedForCurrentUser();
+  const { data: graded, error: evidenceError } = await restClient
+    .from("candidate_responses")
+    .select(
+      "question_id, ai_evaluation, assessment_questions!inner(title), candidate_attempts!inner(application_id)"
+    )
+    .eq("candidate_attempts.application_id", applicationId)
+    .not("ai_evaluation", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(501);
+
+  const rows = (graded ?? []) as Record<string, unknown>[];
+  const capped = rows.length > 500;
+  const sources: SkillEvidenceSource[] = (capped ? rows.slice(0, 500) : rows).map((row) => ({
+    question_id:
+      typeof row.question_id === "string" && row.question_id.trim() ? row.question_id.trim() : null,
+    question_title: joinedQuestionTitle(row),
+    ai_evaluation:
+      (row as { ai_evaluation?: { criteria?: unknown } | null }).ai_evaluation ?? null,
+  }));
+  // One mapping for both readers: the lines and the coverage sentence must agree
+  // about which papers were read and whether their figures are withheld.
+  const papers = skillEvidencePapers(sources, masked);
+  const skillEvidence = rollUpSkillEvidence(papers);
+
+  const evidenceNote = evidenceError
+    ? "Skill evidence could not be read on this occasion; the CV and screening summary are unaffected."
+    : capped
+      ? "Skill evidence covers the 500 most recent graded responses; this applicant has more."
+      : null;
+
   return {
     ok: true,
     submission: {
@@ -190,6 +249,9 @@ export async function getApplicantSubmission(
       cv_url: links.cv_url,
       cv_download_url: links.cv_download_url,
       screening_summary: row.ai_screening_summary ? String(row.ai_screening_summary) : null,
+      skill_evidence: skillEvidence,
+      skill_evidence_coverage: skillEvidence.length > 0 ? skillEvidenceCoverage(papers) : null,
+      skill_evidence_note: evidenceNote,
     },
   };
 }

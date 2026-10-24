@@ -149,6 +149,35 @@ const submission = {
   cv_url: "https://files.invalid/candidate-1.pdf",
   cv_download_url: "https://files.invalid/candidate-1.download.pdf",
   screening_summary: "Strong on pricing, thin on the numbers behind it.",
+  skill_evidence: [],
+  skill_evidence_coverage: null,
+  skill_evidence_note: null,
+};
+
+/** One roll-up line, shaped exactly as the action returns it. */
+const EVIDENCE_LINE = {
+  skill_id: "s-revenue",
+  skill_name: "Revenue management",
+  awarded: 16,
+  allowance: 20,
+  percent: 80,
+  questionCount: 2,
+  contributions: [
+    {
+      question_title: "Rate card",
+      criterion_label: "Diagnosis",
+      awarded: 8,
+      allowance: 10,
+      evidence: "names the driver",
+    },
+    {
+      question_title: "Weekend pricing",
+      criterion_label: "Model",
+      awarded: 8,
+      allowance: 10,
+      evidence: null,
+    },
+  ],
 };
 
 /* -------------------------------------------------------------------------- */
@@ -384,6 +413,38 @@ async function desk(requiredSkills, rows, options = {}) {
   ui.requests[0].resolve({ ok: true, applicants: rows });
   await ui.settle();
   return ui;
+}
+
+/** The first applicant's expanded submission, read on open. */
+async function opened(ui, body) {
+  const row = ui.find((node) => node.type === "button" && ui.textOf(node).includes("Candidate 1"));
+  row.props.onClick();
+  await ui.settle();
+  const request = ui.requests.find((entry) => entry.kind === "submission");
+  assert.ok(request, "opening a row reads its submission");
+  request.resolve({ ok: true, submission: body });
+  await ui.settle();
+}
+
+/**
+ * The test-evidence section, and only it.
+ *
+ * The Drawer stub wraps the whole drawer in `<section role="dialog">`, and the
+ * requisition section prints the same "Revenue management · required 4" prefix,
+ * so a drawer-wide match would prove nothing about the new line. Scoping to the
+ * section whose heading is "From this applicant’s tests" is the only way to ask
+ * whether this line was drawn by the test read.
+ */
+function evidenceSection(ui) {
+  ui.render();
+  const section = ui.nodes().find(
+    (node) =>
+      node.type === "section" &&
+      node.props.role !== "dialog" &&
+      ui.textOf(node).includes("From this applicant’s tests")
+  );
+  assert.ok(section, "the test-evidence section is on screen");
+  return section;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -692,6 +753,69 @@ test("a reviewer whose scores are masked reads the ask without the candidate's l
   assert.doesNotMatch(ui.text(), /Meets 1/);
   assert.doesNotMatch(ui.text(), /Hidden of|null|undefined|NaN/);
   assert.match(ui.text(), /not granted/i);
+  ui.unmount();
+});
+
+test("the expanded applicant shows test evidence beside the CV level", async () => {
+  const ui = await desk(
+    [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
+    [applicant({ demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+  );
+  await opened(ui, {
+    ...submission,
+    skill_evidence: [EVIDENCE_LINE],
+    skill_evidence_coverage:
+      "From 2 tagged criteria on 2 questions. A percentage is evidence from this paper, not a proficiency level.",
+  });
+  const text = ui.textOf(evidenceSection(ui));
+  assert.match(text, /Revenue management · required 4 · shown 3 · test evidence 80% \(2 questions\)/);
+  assert.match(text, /not a proficiency level/);
+  // The CV verdict is still the CV verdict.
+  assert.match(ui.text(), /meets|below|no evidence/);
+  ui.unmount();
+});
+
+test("a masked reviewer reads the skill and the count, never the level or the figure", async () => {
+  const ui = await desk(
+    [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
+    [
+      applicant({
+        scores_masked: true,
+        ai_match_score: null,
+        demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }],
+      }),
+    ]
+  );
+  await opened(ui, {
+    ...submission,
+    skill_evidence: [
+      {
+        ...EVIDENCE_LINE,
+        awarded: null,
+        allowance: null,
+        percent: null,
+      },
+    ],
+  });
+  const text = ui.textOf(evidenceSection(ui));
+  assert.match(text, /Revenue management · required 4 · test evidence Hidden \(2 questions\)/);
+  assert.doesNotMatch(text, /shown 3|80%/);
+  assert.doesNotMatch(ui.text(), /null|undefined|NaN/);
+  ui.unmount();
+});
+
+test("a capped read says the figure covers what it read, even with no line to show", async () => {
+  const ui = await desk(
+    [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
+    [applicant({ demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+  );
+  await opened(ui, {
+    ...submission,
+    skill_evidence: [],
+    skill_evidence_note:
+      "Skill evidence covers the 500 most recent graded responses; this applicant has more.",
+  });
+  assert.match(ui.textOf(evidenceSection(ui)), /500 most recent graded responses/);
   ui.unmount();
 });
 

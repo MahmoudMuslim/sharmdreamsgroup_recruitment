@@ -30,6 +30,10 @@ import {
   type SkillMatchLine,
 } from "@/modules/jobs/domain/openingSkills";
 import {
+  skillEvidenceSentence,
+  type SkillEvidenceLine,
+} from "@/modules/assessment/domain/skillEvidence";
+import {
   getApplicantSubmission,
   getJobApplicants,
   type ApplicantSubmission,
@@ -353,6 +357,23 @@ function ApplicantDetail({
   const decision = canDecide ? <StageDecisions applicant={applicant} onMoved={onMoved} /> : null;
   const wrap = "space-y-5 border-t border-brand-line bg-brand-cream/60 px-4 py-4";
 
+  /**
+   * The context the test line is read against.
+   *
+   * `getJobApplicants` returns `demonstrated` whole even when this reviewer's
+   * scores are withheld, because a masked level is still a recorded level; the
+   * grant is applied here, as `RequiredSkillLines` does. The requisition's
+   * `required_level` is the ask, not a score, and stays visible either way.
+   */
+  const contextOf = (line: SkillEvidenceLine) => {
+    const match = skillLines.find((row) => row.skill_id === line.skill_id) ?? null;
+    return {
+      required_level: match?.required_level ?? null,
+      demonstrated_level: applicant.scores_masked ? null : (match?.demonstrated_level ?? null),
+      figures_withheld: applicant.scores_masked,
+    };
+  };
+
   if (error) {
     return (
       <div className={wrap}>
@@ -404,6 +425,40 @@ function ApplicantDetail({
             Against the requisition’s skills
           </h4>
           <RequiredSkillLines lines={skillLines} masked={applicant.scores_masked} compact={false} />
+        </section>
+      )}
+
+      {/* The test read is separate evidence from the CV read: it never moves the
+          meets/below verdict above, and a skill with marks but no CV row is still
+          "no evidence" about the CV. The note prints even with nothing to list, so
+          a failed or capped read cannot look like an applicant who sat nothing. */}
+      {(submission.skill_evidence.length > 0 || submission.skill_evidence_note) && (
+        <section>
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+            From this applicant’s tests
+          </h4>
+          {submission.skill_evidence.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {submission.skill_evidence.map((line) => (
+                <li
+                  key={line.skill_id}
+                  className="text-xs leading-relaxed text-brand-ink/75"
+                >
+                  {skillEvidenceSentence(line, contextOf(line))}
+                </li>
+              ))}
+            </ul>
+          )}
+          {submission.skill_evidence_coverage && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-brand-ink/50">
+              {submission.skill_evidence_coverage}
+            </p>
+          )}
+          {submission.skill_evidence_note && (
+            <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+              {submission.skill_evidence_note}
+            </p>
+          )}
         </section>
       )}
 

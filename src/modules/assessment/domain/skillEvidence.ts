@@ -38,11 +38,28 @@ export interface SkillEvidenceLine {
   allowance: number | null;
   /** Whole number 0–100, or null while figures are withheld. */
   percent: number | null;
+  /**
+   * Distinct questions behind this line — not the number of criteria.
+   *
+   * Two criteria on one question, or a retake of one question on two papers,
+   * produced one question's evidence; counting contributions would print "2
+   * questions" for a single question's marks.
+   */
+  questionCount: number;
   contributions: SkillContribution[];
 }
 
 export interface SkillEvidencePaper {
   title: string;
+  /**
+   * The question this paper is an answer to, when the caller knows it.
+   *
+   * Follow-up attempts let one application hold the same question twice, so the
+   * count of questions is a count of distinct keys. A paper without a key cannot
+   * be matched to another and therefore counts as its own question — the report
+   * would rather over-count an unidentified paper than fold two questions into one.
+   */
+  key?: string | null;
   criteria: readonly SkillEvidenceCriterion[];
 }
 
@@ -54,6 +71,11 @@ function taggedId(criterion: SkillEvidenceCriterion): string | null {
 
 function snapshotName(criterion: SkillEvidenceCriterion): string {
   return typeof criterion.skill_name === "string" ? criterion.skill_name.trim() : "";
+}
+
+/** The paper's question identity, or null when the caller did not supply one. */
+function paperKey(paper: SkillEvidencePaper): string | null {
+  return typeof paper.key === "string" && paper.key.trim() ? paper.key.trim() : null;
 }
 
 /**
@@ -77,10 +99,15 @@ export function rollUpSkillEvidence(
     awarded: number | null;
     allowance: number | null;
     contributions: SkillContribution[];
+    /** Distinct question keys already counted for this skill. */
+    keys: Set<string>;
+    /** Contributing papers with no key; each is its own question. */
+    keyless: number;
   }
 
   const groups = new Map<string, Group>();
   for (const paper of papers) {
+    const touched = new Set<string>();
     for (const criterion of paper.criteria) {
       const skillId = taggedId(criterion);
       if (!skillId) continue;
@@ -90,6 +117,8 @@ export function rollUpSkillEvidence(
         awarded: 0,
         allowance: 0,
         contributions: [],
+        keys: new Set<string>(),
+        keyless: 0,
       };
       if (!group.skill_name) group.skill_name = snapshotName(criterion);
       group.awarded = add(group.awarded, criterion.marks);
@@ -103,20 +132,35 @@ export function rollUpSkillEvidence(
           ? criterion.evidence
           : null,
       });
+      touched.add(skillId);
       groups.set(skillId, group);
+    }
+
+    // One paper is one question per skill however many criteria it carries, and a
+    // key already counted is a second attempt at a question already counted.
+    const key = paperKey(paper);
+    for (const skillId of touched) {
+      const group = groups.get(skillId);
+      if (!group) continue;
+      if (key) group.keys.add(key);
+      else group.keyless += 1;
     }
   }
 
   return [...groups.values()]
     .map((group) => ({
-      ...group,
+      skill_id: group.skill_id,
       skill_name: group.skill_name || group.skill_id,
+      awarded: group.awarded,
+      allowance: group.allowance,
       percent:
         group.awarded === null || group.allowance === null
           ? null
           : group.allowance > 0
             ? Math.round((group.awarded / group.allowance) * 100)
             : 0,
+      questionCount: group.keys.size + group.keyless,
+      contributions: group.contributions,
     }))
     .sort(
       (a, b) =>
@@ -128,12 +172,19 @@ export function rollUpSkillEvidence(
 /** What the block covers, printed beside it so a partial paper never looks whole. */
 export function skillEvidenceCoverage(papers: readonly SkillEvidencePaper[]): string {
   let criteria = 0;
-  let questions = 0;
+  const keys = new Set<string>();
+  let keyless = 0;
   for (const paper of papers) {
     const tagged = paper.criteria.filter((criterion) => taggedId(criterion) !== null).length;
     criteria += tagged;
-    if (tagged > 0) questions += 1;
+    if (tagged === 0) continue;
+    // The same identity rule the lines count by, so the two can never disagree
+    // about how many questions a retake is.
+    const key = paperKey(paper);
+    if (key) keys.add(key);
+    else keyless += 1;
   }
+  const questions = keys.size + keyless;
   return `From ${criteria} tagged ${criteria === 1 ? "criterion" : "criteria"} on ${questions} ${
     questions === 1 ? "question" : "questions"
   }. A percentage is evidence from this paper, not a proficiency level.`;
@@ -143,6 +194,12 @@ export function skillEvidenceCoverage(papers: readonly SkillEvidencePaper[]): st
 export interface SkillEvidenceContext {
   required_level?: number | null;
   demonstrated_level?: number | null;
+  /**
+   * True when a null percentage means "withheld from this reviewer" rather than
+   * "no figure on file". A masked figure and an unreadable one are different
+   * claims, and only the caller knows which it is holding.
+   */
+  figures_withheld?: boolean;
 }
 
 export function skillEvidenceSentence(
@@ -156,19 +213,22 @@ export function skillEvidenceSentence(
   if (context.demonstrated_level !== null && context.demonstrated_level !== undefined) {
     parts.push(`shown ${context.demonstrated_level}`);
   }
-  const count = `${line.contributions.length} ${
-    line.contributions.length === 1 ? "question" : "questions"
+  const count = `${line.questionCount} ${
+    line.questionCount === 1 ? "question" : "questions"
   }`;
   parts.push(
-    line.percent === null
-      ? `test evidence Hidden (${count})`
-      : `test evidence ${line.percent}% (${count})`
+    line.percent !== null
+      ? `test evidence ${line.percent}% (${count})`
+      : context.figures_withheld
+        ? `test evidence Hidden (${count})`
+        : `test evidence no mark on file (${count})`
   );
   return parts.join(" · ");
 }
 
 /** One row of the applicant's bounded read, turned into a paper the roll-up reads. */
 export interface SkillEvidenceSource {
+  question_id: string | null;
   question_title: string | null;
   ai_evaluation: { criteria?: unknown } | null;
 }
@@ -178,6 +238,7 @@ export function skillEvidencePapers(
   masked: boolean
 ): SkillEvidencePaper[] {
   return sources.map((source) => ({
+    key: source.question_id,
     title: source.question_title ?? "Assessment question",
     criteria: awardedCriteriaOf(source.ai_evaluation, masked),
   }));

@@ -45,6 +45,8 @@ test("two questions' marks for one skill are added, not averaged", () => {
   assert.equal(lines[0].awarded, 10);
   assert.equal(lines[0].allowance, 20);
   assert.equal(lines[0].percent, 50);
+  assert.equal(lines[0].contributions.length, 2);
+  assert.equal(lines[0].questionCount, 2);
   assert.deepEqual(lines[0].contributions.map((c) => c.question_title), ["Case one", "Case two"]);
 });
 
@@ -61,6 +63,8 @@ test("two criteria on one question can be evidence of the same skill", () => {
   assert.equal(line.awarded, 9);
   assert.equal(line.allowance, 10);
   assert.equal(line.contributions.length, 2);
+  // Two criteria, one question: the report must not read "2 questions".
+  assert.equal(line.questionCount, 1);
 });
 
 test("an untagged criterion contributes to no skill", () => {
@@ -145,20 +149,115 @@ test("the applicant sentence puts the test figure beside the CV levels", () => {
       ],
     },
   ]);
+  assert.equal(line.questionCount, 1);
   assert.equal(
     skillEvidenceSentence(line, { required_level: 4, demonstrated_level: 3 }),
-    "Financial modelling · required 4 · shown 3 · test evidence 80% (2 questions)"
+    "Financial modelling · required 4 · shown 3 · test evidence 80% (1 question)"
   );
   assert.equal(
-    skillEvidenceSentence({ ...line, percent: null }, { required_level: 4, demonstrated_level: 3 }),
-    "Financial modelling · required 4 · shown 3 · test evidence Hidden (2 questions)"
+    skillEvidenceSentence(
+      { ...line, percent: null },
+      { required_level: 4, demonstrated_level: 3, figures_withheld: true }
+    ),
+    "Financial modelling · required 4 · shown 3 · test evidence Hidden (1 question)"
   );
+});
+
+test("a skill's questions are counted, not its criteria", () => {
+  const [line] = rollUpSkillEvidence([
+    {
+      title: "Case one",
+      criteria: [
+        criterion({ skill_id: "s-fin", skill_name: "Financial modelling" }),
+        criterion({ skill_id: "s-fin", skill_name: "Financial modelling" }),
+      ],
+    },
+    {
+      title: "Case two",
+      criteria: [criterion({ skill_id: "s-fin", skill_name: "Financial modelling" })],
+    },
+  ]);
+  assert.equal(line.contributions.length, 3);
+  assert.equal(line.questionCount, 2);
+  assert.match(skillEvidenceSentence(line), /\(2 questions\)$/);
+});
+
+test("a retake of one question is one question, and an unidentifiable paper is its own", () => {
+  const paper = (key, title) => ({
+    ...(key ? { key } : {}),
+    title,
+    criteria: [criterion({ skill_id: "s-fin", skill_name: "Financial modelling" })],
+  });
+
+  const [retake] = rollUpSkillEvidence([paper("q-1", "Case one"), paper("q-1", "Case one")]);
+  assert.equal(retake.contributions.length, 2);
+  assert.equal(retake.questionCount, 1);
+  assert.match(skillEvidenceSentence(retake), /\(1 question\)$/);
+
+  const [distinct] = rollUpSkillEvidence([paper("q-1", "Case one"), paper("q-2", "Case two")]);
+  assert.equal(distinct.questionCount, 2);
+
+  // Two papers we cannot identify must not be folded into one question.
+  const [keyless] = rollUpSkillEvidence([paper(null, "Case one"), paper(null, "Case one")]);
+  assert.equal(keyless.questionCount, 2);
+});
+
+test("a null percentage says no mark on file unless the figures are withheld", () => {
+  const [line] = rollUpSkillEvidence([
+    {
+      title: "Case",
+      criteria: [
+        criterion({ skill_id: "s-fin", skill_name: "Financial modelling", marks: null, allowance: null }),
+      ],
+    },
+  ]);
+  assert.equal(line.percent, null);
+  const unreadable = skillEvidenceSentence(line, { figures_withheld: false });
+  assert.match(unreadable, /test evidence no mark on file \(1 question\)/);
+  assert.doesNotMatch(unreadable, /Hidden/);
+  assert.equal(
+    skillEvidenceSentence(line, { figures_withheld: true }),
+    "Financial modelling · test evidence Hidden (1 question)"
+  );
+});
+
+test("the coverage sentence counts a retake once, the way a line does", () => {
+  const papers = [
+    { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" }), criterion({ skill_id: "s2" })] },
+    { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" })] },
+  ];
+  assert.match(skillEvidenceCoverage(papers), /From 3 tagged criteria on 1 question/);
+  const [first] = rollUpSkillEvidence(papers);
+  assert.equal(first.skill_id, "s1");
+  assert.equal(first.questionCount, 1);
+});
+
+test("the applicant mapper carries the question id into the paper's key", () => {
+  const papers = skillEvidencePapers(
+    [
+      {
+        question_id: "q-7",
+        question_title: "Case one",
+        ai_evaluation: {
+          criteria: [
+            { label: "Diagnosis", marks: 6, allowance: 10, skill_id: "s-fin", skill_name: "Financial modelling" },
+          ],
+        },
+      },
+    ],
+    false
+  );
+  assert.equal(papers[0].key, "q-7");
+  assert.equal(papers[0].title, "Case one");
+  const [line] = rollUpSkillEvidence(papers);
+  assert.equal(line.questionCount, 1);
 });
 
 test("the applicant mapper masks the criteria it hands the roll-up", () => {
   const papers = skillEvidencePapers(
     [
       {
+        question_id: "q-1",
         question_title: "Case one",
         ai_evaluation: {
           criteria: [
