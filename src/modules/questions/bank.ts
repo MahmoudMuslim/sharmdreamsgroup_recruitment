@@ -90,6 +90,7 @@ const SUITE_KINDS: Record<QuestionType, BankKind> = {
   CASE_STUDY: "written",
   EXCEL_MODEL: "spreadsheet",
   VIDEO_PITCH: "video",
+  CODING: "written",
 };
 
 /* -------------------------------------------------------------------------- */

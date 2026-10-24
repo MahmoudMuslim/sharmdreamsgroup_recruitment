@@ -242,6 +242,38 @@ function fakeClient(failingType) {
   check("the situational note still names migration 034", /034/.test(availability.note ?? ""), String(availability.note));
 }
 
+// ---------------------------------------------------------------------------
+// The sixth type is everywhere the first five are.
+// ---------------------------------------------------------------------------
+sourceHas("the model type gains CODING", "src/types/index.ts", [
+  '"CODING"',
+  "language?: string",
+  "starter_code?: string",
+]);
+sourceHas("the runner's store knows the sixth type", "src/stores/useAssessmentStore.ts", [
+  '| "CODING"',
+  "language?: string",
+  "starter_code?: string",
+]);
+sourceHas("the editor has words for CODING", "src/app/(admin)/assessments/QuestionEditorDrawer.tsx", [
+  "CODING:",
+]);
+sourceHas("the bank files a coding question", "src/modules/questions/bank.ts", [
+  "CODING:",
+]);
+sourceHas("the drafting contract knows the sixth type", "src/modules/assessment/domain/aiAuthoring.ts", [
+  "CODING:",
+]);
+sourceHas("the GET allow-list carries the two new config keys", "src/app/api/attempt/[token]/route.ts", [
+  "source.language",
+  "source.starter_code",
+]);
+check(
+  "the manual type picker still hides CODING",
+  !/QUESTION_TYPES[^=]*=\s*\[[^\]]*"CODING"/s.test(read("src/app/(admin)/assessments/question-actions.ts")),
+  "question-actions QUESTION_TYPES should not include CODING until Task 4"
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);

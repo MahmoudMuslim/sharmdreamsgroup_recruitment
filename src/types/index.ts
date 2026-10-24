@@ -32,7 +32,8 @@ export type QuestionType =
   | "VIDEO_PITCH"
   | "CASE_STUDY"
   | "MULTIPLE_CHOICE"
-  | "SITUATIONAL_JUDGMENT";
+  | "SITUATIONAL_JUDGMENT"
+  | "CODING";
 
 export type AttemptStatus = "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "GRADED" | "EXPIRED";
 
@@ -232,6 +233,10 @@ export interface QuestionConfig {
   min_words?: number;
   /** MULTIPLE_CHOICE, SITUATIONAL_JUDGMENT */
   options?: MultipleChoiceOption[];
+  /** CODING only: the closed language list entry the author picked. */
+  language?: string;
+  /** CODING only: a snippet shown read-only beside the prompt. Never graded. */
+  starter_code?: string;
   /**
    * CASE_STUDY, VIDEO_PITCH: the marking scheme, in the author's words.
    *

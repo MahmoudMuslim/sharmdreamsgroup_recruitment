@@ -10,7 +10,8 @@ export interface AttemptQuestionClient {
     | "VIDEO_PITCH"
     | "CASE_STUDY"
     | "MULTIPLE_CHOICE"
-    | "SITUATIONAL_JUDGMENT";
+    | "SITUATIONAL_JUDGMENT"
+    | "CODING";
   title: string;
   prompt: string;
   config: {
@@ -21,6 +22,8 @@ export interface AttemptQuestionClient {
     context?: string;
     min_words?: number;
     options?: { label: string; text: string }[];
+    language?: string;
+    starter_code?: string;
   };
   points: number;
   position: number;

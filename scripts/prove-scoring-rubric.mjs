@@ -335,6 +335,35 @@ test("the keys the sanitizer already guards are still guarded", async () => {
   );
 });
 
+test("a coding question reaches the runner with its language and starter, and nothing else", async () => {
+  const codingRow = {
+    id: "q-code",
+    template_id: "suite-1",
+    question_type: "CODING",
+    title: "Flatten a nested list",
+    prompt: "Write a function that flattens arbitrary nesting.",
+    points: 10,
+    position: 4,
+    config: {
+      language: "Python",
+      starter_code: "def flatten(x):",
+      rubric: CASE_RUBRIC,
+    },
+  };
+  const { get } = harness({
+    candidate_attempts: [attemptRow],
+    assessment_templates: [{ id: "suite-1", name: "Front office" }],
+    assessment_questions: [...paperRows, codingRow],
+  });
+  const response = await get("token-1");
+  // The route runs inside a `vm` context, so its objects carry that realm's
+  // prototypes; a copy brings them home for a strict deep-equal.
+  assert.deepEqual({ ...configOf(response.body, "q-code") }, {
+    language: "Python",
+    starter_code: "def flatten(x):",
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 2. What an author may save
 // ---------------------------------------------------------------------------

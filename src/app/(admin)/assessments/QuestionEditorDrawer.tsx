@@ -80,6 +80,7 @@ export const TYPE_LABELS: Record<QuestionType, string> = {
   EXCEL_MODEL: "Spreadsheet model",
   VIDEO_PITCH: "Video pitch",
   SITUATIONAL_JUDGMENT: "Situational judgment",
+  CODING: "Coding",
 };
 
 export const TYPE_HINTS: Record<QuestionType, string> = {
@@ -90,6 +91,7 @@ export const TYPE_HINTS: Record<QuestionType, string> = {
   VIDEO_PITCH: "Candidate records a short video answer.",
   SITUATIONAL_JUDGMENT:
     "A workplace scene with plausible responses. Each response earns a percentage; no single one is correct.",
+  CODING: "The candidate writes code in a plain text box. Nothing runs it.",
 };
 
 /**
@@ -518,6 +520,8 @@ export function QuestionEditorDrawer({
             >
               {(Object.keys(TYPE_LABELS) as QuestionType[])
                 .filter((type) => type !== "SITUATIONAL_JUDGMENT" || situationalAvailable)
+                // CODING has words but no editor or drafting rules yet.
+                .filter((type) => type !== "CODING")
                 .map((type) => (
                   <option key={type} value={type}>
                     {TYPE_LABELS[type]}
@@ -892,6 +896,8 @@ export function QuestionEditorDrawer({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(Object.keys(TYPE_LABELS) as QuestionType[])
                 .filter((type) => type !== "SITUATIONAL_JUDGMENT" || situationalAvailable)
+                // CODING has words but no editor or drafting rules yet.
+                .filter((type) => type !== "CODING")
                 .map((type) => (
                   <label key={type} className="flex items-start gap-2 text-xs">
                     <input

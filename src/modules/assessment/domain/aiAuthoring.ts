@@ -44,6 +44,7 @@ const TYPE_WORDS: Record<QuestionType, string> = {
   EXCEL_MODEL: "spreadsheet model",
   VIDEO_PITCH: "video pitch",
   SITUATIONAL_JUDGMENT: "situational judgment",
+  CODING: "coding task",
 };
 
 export interface AuthoringBrief {

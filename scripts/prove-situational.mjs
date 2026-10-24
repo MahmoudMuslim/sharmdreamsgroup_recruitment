@@ -557,8 +557,9 @@ function sourceHas(label, rel, needles) {
   return text;
 }
 
-sourceHas("the model type has five members", "src/types/index.ts", [
+sourceHas("the model type has six members", "src/types/index.ts", [
   '"SITUATIONAL_JUDGMENT"',
+  '"CODING"',
   "score?: number",
 ]);
 

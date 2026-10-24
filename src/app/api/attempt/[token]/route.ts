@@ -144,6 +144,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
       }));
     }
 
+    if (source.language) config.language = source.language;
+    if (source.starter_code) config.starter_code = source.starter_code;
+
     return {
       id: question.id,
       question_type: question.question_type,
