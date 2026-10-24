@@ -36,6 +36,7 @@ import {
   readRubricDraft,
   type RubricDraftRow,
 } from "@/modules/assessment/domain/rubric";
+import { resolveSkillTags } from "@/modules/assessment/domain/skillTags";
 import type { QuestionConfig, QuestionType, RubricCriterion } from "@/types";
 
 /**
@@ -333,13 +334,24 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     judgment = read.options;
   }
 
-  // The marking scheme is resolved before a client exists. A rubric is the
-  // arithmetic a candidate's marks come from, so a scheme that cannot add up is
-  // answered with the sentence that says why, without a database round trip.
-  const rubric = resolveRubricChange(draft);
+  // The marking scheme is read before a client exists: a scheme that cannot add
+  // up is answered with the sentence that says why, without a database round
+  // trip. Its skill tags are a different question — they are claims about
+  // catalogue rows, so they are resolved below, once there is a client to read.
+  let rubric = resolveRubricChange(draft);
   if (rubric.kind === "refuse") return { ok: false, error: rubric.error };
 
   const restClient = await createServerRestClient();
+
+  // A tag is a claim about a catalogue row, so it is resolved against the
+  // catalogue before anything is written. An unknown or retired id is refused
+  // with the criterion and the skill named; the stored name is always the
+  // catalogue's own spelling, never the one a client sent.
+  if (rubric.kind === "set") {
+    const tagged = await resolveSkillTags(restClient, rubric.criteria);
+    if (!tagged.ok) return { ok: false, error: tagged.error };
+    rubric = { kind: "set", criteria: tagged.criteria };
+  }
 
   // Confirm the template exists so a typo cannot create an orphan question.
   const { data: template } = await restClient

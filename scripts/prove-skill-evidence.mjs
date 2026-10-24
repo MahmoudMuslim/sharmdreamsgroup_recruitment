@@ -16,6 +16,7 @@ import {
   skillEvidencePapers,
   skillEvidenceSentence,
 } from "../src/modules/assessment/domain/skillEvidence.ts";
+import { resolveSkillTags } from "../src/modules/assessment/domain/skillTags.ts";
 
 const criterion = (overrides = {}) => ({
   label: "Criterion",
@@ -192,4 +193,74 @@ test("the module is arithmetic only: it imports no server read and no writer", a
   assert.doesNotMatch(code, /candidate_skills/);
   assert.doesNotMatch(code, /from "@\/modules\/jobs/);
   assert.doesNotMatch(identifiers, /proficiency/);
+});
+
+function catalogueClient(rows, error = null) {
+  const reads = [];
+  return {
+    reads,
+    from(table) {
+      reads.push(table);
+      return {
+        select() {
+          return Promise.resolve({ data: error ? null : rows, error });
+        },
+      };
+    },
+  };
+}
+
+const rubric = (overrides = {}) => ({
+  label: "Diagnoses the cause",
+  weight: 100,
+  ...overrides,
+});
+
+test("an untagged rubric resolves without reading the catalogue", async () => {
+  const client = catalogueClient([]);
+  const result = await resolveSkillTags(client, [rubric()]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.criteria, [{ label: "Diagnoses the cause", weight: 100 }]);
+  assert.deepEqual(client.reads, []);
+});
+
+test("an active tag is stored with the catalogue's own spelling", async () => {
+  const client = catalogueClient([
+    { id: "s-fin", name: "Financial modelling", is_active: true },
+  ]);
+  const result = await resolveSkillTags(client, [
+    rubric({ skill_id: "s-fin", skill_name: "Forged name" }),
+  ]);
+  assert.equal(result.ok, true);
+  assert.equal(result.criteria[0].skill_id, "s-fin");
+  assert.equal(result.criteria[0].skill_name, "Financial modelling");
+  assert.deepEqual(client.reads, ["skills"]);
+});
+
+test("an unknown tag is refused and names the criterion", async () => {
+  const result = await resolveSkillTags(catalogueClient([]), [
+    rubric({ skill_id: "s-gone" }),
+  ]);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Diagnoses the cause/);
+  assert.match(result.error, /does not hold/);
+});
+
+test("a retired tag is refused and names the skill", async () => {
+  const result = await resolveSkillTags(
+    catalogueClient([{ id: "s-old", name: "Legacy tooling", is_active: false }]),
+    [rubric({ skill_id: "s-old" })]
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Legacy tooling/);
+  assert.match(result.error, /retired/);
+});
+
+test("a catalogue read failure refuses the save rather than storing an unchecked tag", async () => {
+  const result = await resolveSkillTags(
+    catalogueClient(null, { message: "boom" }),
+    [rubric({ skill_id: "s-fin" })]
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /boom/);
 });
