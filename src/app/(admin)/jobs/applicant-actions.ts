@@ -13,6 +13,9 @@ import {
   type SkillEvidenceSource,
 } from "@/modules/assessment/domain/skillEvidence";
 
+/** The newest applicants the drawer lists; the Guide pins the same figure. */
+const APPLICANTS_LIMIT = 200;
+
 /**
  * Applicants of one job opening, and what each of them actually submitted.
  *
@@ -139,7 +142,7 @@ export async function getJobApplicants(jobId: string): Promise<ApplicantsResult>
     .eq("job_id", jobId)
     .is("archived_at", null)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(APPLICANTS_LIMIT);
 
   if (error) {
     console.error("[jobs] applicants query failed:", error.message);

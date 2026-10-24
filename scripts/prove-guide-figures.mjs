@@ -156,7 +156,10 @@ const FIGURES = [
     want: "the applicants drawer window",
     guide: /the drawer lists the newest ([\d,]+) applicants/,
     sources: [
-      { rel: "src/app/(admin)/jobs/applicant-actions.ts", pattern: /\.limit\(([\d_]+)\)/ },
+      {
+        rel: "src/app/(admin)/jobs/applicant-actions.ts",
+        pattern: /const APPLICANTS_LIMIT = ([\d_]+);/,
+      },
     ],
   },
   {

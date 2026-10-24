@@ -1141,6 +1141,69 @@ test("an unknown skill tag is refused by the real catalogue check", async () => 
   assert.equal(h.inserts.length, 0, "a rejected tag still inserted a question");
 });
 
+test("a preserved rubric still passes the catalogue check", async () => {
+  const h = authoringHarness();
+  const result = await h.save(
+    draftOf({
+      preserve_config: {
+        rubric: [
+          { label: "Structure", weight: 60, skill_id: "s-gone" },
+          { label: "Evidence", weight: 40 },
+        ],
+      },
+    })
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Structure/);
+  assert.match(result.error, /does not hold/);
+  assert.equal(h.inserts.length, 0, "a rejected preserved tag still inserted a question");
+});
+
+test("a preserved rubric's stored name is the catalogue's spelling", async () => {
+  const h = authoringHarness({
+    tables: { skills: [{ id: "s-live", name: "Financial analysis", is_active: true }] },
+  });
+  const result = await h.save(
+    draftOf({
+      preserve_config: {
+        rubric: [
+          {
+            label: "Structure",
+            weight: 60,
+            skill_id: "s-live",
+            skill_name: "Forged name",
+            description: "kept",
+          },
+          { label: "Evidence", weight: 40 },
+        ],
+      },
+    })
+  );
+  assert.equal(result.ok, true, result.error);
+  const stored = h.insertedRow().config.rubric;
+  assert.equal(stored.length, 2);
+  assert.equal(stored[0].skill_id, "s-live");
+  assert.equal(stored[0].skill_name, "Financial analysis");
+  assert.equal(stored[0].description, "kept");
+  assert.equal("skill_id" in stored[1], false);
+});
+
+test("an active tag's stored name is the catalogue's spelling on the panel path", async () => {
+  const h = authoringHarness({
+    tables: { skills: [{ id: "s-live", name: "Financial analysis", is_active: true }] },
+  });
+  const result = await h.save(
+    draftOf({
+      rubric: [
+        { label: "Structure", weight: 60, skill_id: "s-live" },
+        { label: "Evidence", weight: 40 },
+      ],
+    })
+  );
+  assert.equal(result.ok, true, result.error);
+  assert.equal(h.insertedRow().config.rubric[0].skill_name, "Financial analysis");
+});
+
 // ---------------------------------------------------------------------------
 // 8. Marking an answer with one — the real grading engine
 //
@@ -2340,8 +2403,19 @@ test("the Guide says a percentage is not a proficiency level", () => {
   const guide = read("src/modules/shell/domain/pageGuide.ts");
   assert.match(guide, /not a proficiency level|never a 1–5 level/);
   assert.match(guide, /skill tag|tied to a skill|names one skill/i);
-  assert.match(guide, /500 most recent graded responses/);
   assert.match(guide, /summed, never averaged/);
+
+  const jobsAt = guide.indexOf('"/jobs": {');
+  const assessmentsAt = guide.indexOf('"/assessments": {');
+  assert.ok(jobsAt >= 0, "no /jobs entry in the Guide");
+  assert.ok(assessmentsAt >= 0, "no /assessments entry in the Guide");
+  assert.ok(jobsAt < assessmentsAt, "the /jobs entry should come before /assessments");
+
+  const jobsEntry = guide.slice(jobsAt, assessmentsAt);
+  const assessmentsEntry = guide.slice(assessmentsAt);
+  assert.match(jobsEntry, /An expanded applicant's test-evidence line/);
+  assert.match(jobsEntry, /500 most recent graded responses/);
+  assert.doesNotMatch(assessmentsEntry, /An expanded applicant's test-evidence line/);
 });
 
 // ---------------------------------------------------------------------------

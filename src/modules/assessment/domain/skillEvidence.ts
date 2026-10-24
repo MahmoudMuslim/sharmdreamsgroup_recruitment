@@ -205,9 +205,12 @@ export function skillEvidenceCoverage(papers: readonly SkillEvidencePaper[]): st
   }
   const questions = keys.size + keyless;
   const across = sittings > questions ? ` across ${sittings} sittings` : "";
+  // The applicant read aggregates several papers, so the noun follows the same
+  // sittings figure the sentence already counted.
+  const paper = sittings === 1 ? "this paper" : "these papers";
   return `From ${criteria} tagged ${criteria === 1 ? "criterion" : "criteria"} on ${questions} ${
     questions === 1 ? "question" : "questions"
-  }${across}. A percentage is evidence from this paper, not a proficiency level.`;
+  }${across}. A percentage is evidence from ${paper}, not a proficiency level.`;
 }
 
 /** The applicant line: the test figure is additive beside the CV's own levels. */

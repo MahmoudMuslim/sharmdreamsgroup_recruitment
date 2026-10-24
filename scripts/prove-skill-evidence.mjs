@@ -138,9 +138,29 @@ test("the coverage sentence names the tagged criteria and the questions they cam
   assert.match(sentence, /From 2 tagged criteria on 2 questions/);
   assert.match(sentence, /not a proficiency level/);
   // One sitting per question: naming sittings here would imply a retake that never happened.
+  // Two papers were read, so the noun is plural.
   assert.equal(
     sentence,
-    "From 2 tagged criteria on 2 questions. A percentage is evidence from this paper, not a proficiency level."
+    "From 2 tagged criteria on 2 questions. A percentage is evidence from these papers, not a proficiency level."
+  );
+});
+
+test("the coverage sentence says this paper for one and these papers for several", () => {
+  const single = skillEvidenceCoverage([
+    { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" })] },
+  ]);
+  assert.equal(
+    single,
+    "From 1 tagged criterion on 1 question. A percentage is evidence from this paper, not a proficiency level."
+  );
+
+  const several = skillEvidenceCoverage([
+    { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" })] },
+    { key: "q-2", title: "Case two", criteria: [criterion({ skill_id: "s2" })] },
+  ]);
+  assert.match(
+    several,
+    /A percentage is evidence from these papers, not a proficiency level\.$/
   );
 });
 

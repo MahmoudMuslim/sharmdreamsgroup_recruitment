@@ -211,6 +211,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "The grid holds the newest 200 openings in the browser — its rails, its search box and its page count those, while the strip's figure is the whole scope. When the two differ, a line under the strip names what is not here.",
       "A rail, new search words or the assistant's link to one opening moves you to the page that holds it; anything else starts you back at the front.",
       "Writes need Manage jobs; a stage move inside the drawer needs Edit candidates.",
+      "An expanded applicant's test-evidence line sits beside the CV's required and shown levels and changes neither: a skill with test marks but no CV row is still no-evidence about the CV. The read covers at most the 500 most recent graded responses and says so when it stopped at that bound.",
     ],
   },
 
@@ -296,7 +297,6 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Marks are read here, never set: the desk that awards them is the candidate's assessment report.",
       "A scheme is stored inside the paper it graded, so criteria renamed, reweighted or retired after a candidate sat are never read back as the marks actually awarded. The totals are added here from the per-criterion bands, not from whatever sum the model returned; a paper whose question has no scheme is still graded by the model's own judgement of it, and its drawer says nothing about criteria.",
       "Skill evidence counts only tagged criteria: an untagged criterion is evidence of something, but not of a named skill. A tag added now does not reinterpret a mark already given — a new grading writes a new snapshot — and the percentage is a share of the marks its tagged criteria were worth, not a proficiency level.",
-      "An expanded applicant's test-evidence line sits beside the CV's required and shown levels and changes neither: a skill with test marks but no CV row is still no-evidence about the CV. The read covers at most the 500 most recent graded responses and says so when it stopped at that bound.",
       "A half-written scheme is refused with the sum quoted — one criterion named, a weight left out, weights that total 90 — and nothing is stored. Emptying the panel is different: that is the author retiring the scheme, and it saves.",
       "On a video pitch the grader reads the transcript, so a criterion can mark only what the transcript carries. Delivery, presence and anything off-camera stay with the reviewer who watches the recording.",
       "The board lists the newest 300 links and says how many more are on file. Assigned links on the tiles counts every link ever issued, including a filed-away candidate's, so the two figures can differ.",

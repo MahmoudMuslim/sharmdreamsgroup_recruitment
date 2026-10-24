@@ -34,6 +34,7 @@ import {
   RUBRIC_WEIGHT_TOTAL,
   isRubricType,
   readRubricDraft,
+  rubricCriteriaOf,
   type RubricDraftRow,
 } from "@/modules/assessment/domain/rubric";
 import { resolveSkillTags } from "@/modules/assessment/domain/skillTags";
@@ -191,7 +192,8 @@ function applyRubricChange(config: QuestionConfig, rubric: RubricChange): void {
 function buildConfig(
   draft: QuestionDraft,
   judgment: JudgmentDraft[] = [],
-  rubric: RubricChange = { kind: "keep" }
+  rubric: RubricChange = { kind: "keep" },
+  preserve: QuestionConfig | null = draft.preserve_config
 ): QuestionConfig {
   switch (draft.question_type) {
     case "MULTIPLE_CHOICE": {
@@ -204,14 +206,14 @@ function buildConfig(
           text: option.text.trim(),
           is_correct: option.is_correct,
         }));
-      const config: QuestionConfig = { ...(draft.preserve_config ?? {}), options };
+      const config: QuestionConfig = { ...(preserve ?? {}), options };
       delete config.rubric;
       return config;
     }
 
     case "SITUATIONAL_JUDGMENT": {
       const config: QuestionConfig = {
-        ...(draft.preserve_config ?? {}),
+        ...(preserve ?? {}),
         options: judgmentStoredOptions(judgment),
       };
       delete config.rubric;
@@ -219,7 +221,7 @@ function buildConfig(
     }
 
     case "CASE_STUDY": {
-      const config: QuestionConfig = { ...(draft.preserve_config ?? {}) };
+      const config: QuestionConfig = { ...(preserve ?? {}) };
       config.context = draft.context.trim() || undefined;
       if (draft.min_words && draft.min_words > 0) config.min_words = draft.min_words;
       else delete config.min_words;
@@ -228,7 +230,7 @@ function buildConfig(
     }
 
     case "VIDEO_PITCH": {
-      const config: QuestionConfig = { ...(draft.preserve_config ?? {}) };
+      const config: QuestionConfig = { ...(preserve ?? {}) };
       if (draft.max_duration_seconds && draft.max_duration_seconds > 0) {
         config.max_duration_seconds = draft.max_duration_seconds;
       } else {
@@ -246,7 +248,7 @@ function buildConfig(
     // EXCEL_MODEL is not editable through this form; keep the original bytes.
     case "EXCEL_MODEL":
     default:
-      return draft.preserve_config ?? {};
+      return preserve ?? {};
   }
 }
 
@@ -353,6 +355,43 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     rubric = { kind: "set", criteria: tagged.criteria };
   }
 
+  // A preserved rubric arrives as stored config handed straight back, and it
+  // reaches the row through the same spread as one typed in the panel. It must
+  // pass the same catalogue check, or "preserve" would be a door around it.
+  // A preserved row too malformed for `rubricCriteriaOf` (no readable label or
+  // weight) never reaches a grading snapshot, so it is neither checked nor
+  // rewritten here.
+  let preserveConfig = draft.preserve_config;
+  if (rubric.kind === "keep" && isRubricType(draft.question_type) && preserveConfig) {
+    const preserved = rubricCriteriaOf(preserveConfig);
+    if (preserved.length > 0) {
+      const tagged = await resolveSkillTags(restClient, preserved);
+      if (!tagged.ok) return { ok: false, error: tagged.error };
+
+      // The catalogue owns the name. Rows without a tag keep every key they had.
+      const names = new Map<string, string>();
+      for (const criterion of tagged.criteria) {
+        if (criterion.skill_id && criterion.skill_name) {
+          names.set(criterion.skill_id, criterion.skill_name);
+        }
+      }
+      const rows = (
+        Array.isArray(preserveConfig.rubric) ? preserveConfig.rubric : []
+      ) as unknown as RubricDraftRow[];
+      preserveConfig = {
+        ...preserveConfig,
+        rubric: rows.map((row) => {
+          if (!row || typeof row !== "object") return row as unknown as RubricCriterion;
+          const skillId = typeof row.skill_id === "string" ? row.skill_id.trim() : "";
+          const name = skillId ? names.get(skillId) : undefined;
+          return name
+            ? ({ ...row, skill_name: name } as unknown as RubricCriterion)
+            : (row as unknown as RubricCriterion);
+        }),
+      };
+    }
+  }
+
   // Confirm the template exists so a typo cannot create an orphan question.
   const { data: template } = await restClient
     .from("assessment_templates")
@@ -369,7 +408,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     title,
     prompt,
     instructions: draft.instructions.trim() || null,
-    config: buildConfig(draft, judgment, rubric) as Record<string, unknown>,
+    config: buildConfig(draft, judgment, rubric, preserveConfig) as Record<string, unknown>,
     points,
     position: draft.position,
     time_limit_minutes:

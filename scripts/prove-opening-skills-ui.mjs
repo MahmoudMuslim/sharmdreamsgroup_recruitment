@@ -775,7 +775,7 @@ test("the expanded applicant shows test evidence beside the CV level", async () 
     ...submission,
     skill_evidence: [EVIDENCE_LINE],
     skill_evidence_coverage:
-      "From 2 tagged criteria on 2 questions. A percentage is evidence from this paper, not a proficiency level.",
+      "From 2 tagged criteria on 2 questions. A percentage is evidence from these papers, not a proficiency level.",
   });
   const text = ui.textOf(evidenceSection(ui));
   assert.match(text, /Revenue management · required 4 · shown 3 · test evidence 80% \(2 questions\)/);
