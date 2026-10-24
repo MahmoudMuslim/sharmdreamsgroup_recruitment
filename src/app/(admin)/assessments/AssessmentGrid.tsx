@@ -33,6 +33,7 @@ import {
 } from "@/modules/analytics/presentation/Form";
 import { saveTemplate, assignTemplate, deleteTemplate, setTemplateActive } from "./assessment-actions";
 import { searchSuites, suiteSearchWords } from "@/modules/assessment/domain/suiteSearch";
+import type { QuestionTypeAvailability } from "@/modules/assessment/application/questionTypeAvailability";
 import { followUpBandText, readFollowUpRuleInput } from "@/modules/assessment/domain/followUp";
 import type {
   FollowUpRulesRead,
@@ -913,8 +914,8 @@ export function AssessmentGrid({
   links: IssuedLinksRead;
   /** `organisation.timezone` — the clock a link's deadline runs on for the group. */
   timeZone: string;
-  /** Whether the database's enum accepts the situational judgment label yet. */
-  situational: { situational: boolean; note: string | null };
+  /** Which of the newer question types this database's enum has. */
+  situational: QuestionTypeAvailability;
   /** Second-test rules, or the reason they cannot be read or routed. */
   followUps: FollowUpRulesRead;
   /** Active catalogue skills the rubric editor may tag; empty closes tagging. */

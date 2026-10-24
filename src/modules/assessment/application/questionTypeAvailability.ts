@@ -1,47 +1,60 @@
 import "server-only";
-
 import type { RestClient } from "@/lib/rest/client";
+import { CODING, CODING_SCHEMA_NOTE } from "@/modules/assessment/domain/coding";
 import {
   SITUATIONAL_JUDGMENT,
   SITUATIONAL_SCHEMA_NOTE,
   isMissingQuestionTypeError,
 } from "@/modules/assessment/domain/situational";
 
-/** What the builder pages may offer, and the sentence that explains a closed door. */
 export interface QuestionTypeAvailability {
-  /** The database's `question_type` enum holds SITUATIONAL_JUDGMENT. */
   situational: boolean;
-  /** Why it cannot be offered yet; null when it can. */
+  coding: boolean;
   note: string | null;
+  codingNote: string | null;
 }
 
 /**
- * Whether the database will accept a situational judgment question.
+ * Which of the newer question types this database's enum actually has.
  *
- * The question type is added by `db/migrations/034_situational_judgment.sql`,
- * which is authored and not applied. A page cannot test an enum by inspecting
- * its rows, so it asks the enum directly: a filter on the label. While the
- * label is missing Postgres refuses the *filter* with 22P02, which is the same
- * refusal a write would get — one probe answers both "may I offer this?" and
- * "would a save fail?".
- *
- * The read is a head count: nothing is printed, so the count is only the
- * vehicle for the filter, and an empty table is as good an answer as a full one.
+ * Both labels are newer than the deployed schema, so both are checked the same
+ * way: a head-count query that fails with 22P02 until its migration runs. The
+ * two probes are issued together, and each absence is reported separately — a
+ * missing 039 must not hide an available 034.
  */
 export async function readQuestionTypeAvailability(
   restClient: RestClient
 ): Promise<QuestionTypeAvailability> {
+  const [situationalError, codingError] = await Promise.all([
+    probe(restClient, SITUATIONAL_JUDGMENT),
+    probe(restClient, CODING),
+  ]);
+
+  return {
+    situational: situationalError === null,
+    coding: codingError === null,
+    note:
+      situationalError === null
+        ? null
+        : isMissingQuestionTypeError(situationalError)
+          ? SITUATIONAL_SCHEMA_NOTE
+          : `Situational judgment questions could not be checked on this database: ${situationalError.message}.`,
+    codingNote:
+      codingError === null
+        ? null
+        : isMissingQuestionTypeError(codingError)
+          ? CODING_SCHEMA_NOTE
+          : `Coding questions could not be checked on this database: ${codingError.message}.`,
+  };
+}
+
+async function probe(
+  restClient: RestClient,
+  questionType: string
+): Promise<{ code?: string | null; message: string } | null> {
   const { error } = await restClient
     .from("assessment_questions")
     .select("id", { count: "exact", head: true })
-    .eq("question_type", SITUATIONAL_JUDGMENT);
-
-  if (!error) return { situational: true, note: null };
-
-  return {
-    situational: false,
-    note: isMissingQuestionTypeError(error)
-      ? SITUATIONAL_SCHEMA_NOTE
-      : `Situational judgment questions could not be checked on this database: ${error.message}.`,
-  };
+    .eq("question_type", questionType);
+  return error ?? null;
 }

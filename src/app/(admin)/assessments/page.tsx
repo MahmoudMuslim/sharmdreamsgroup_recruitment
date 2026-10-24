@@ -32,7 +32,7 @@ async function loadTemplates() {
     questionsByTemplate,
     links,
     timeZone,
-    situational,
+    availability,
     followUps,
     skills,
   ] = await Promise.all([
@@ -54,7 +54,7 @@ async function loadTemplates() {
     questionsByTemplate,
     links,
     timeZone,
-    situational,
+    availability,
     followUps,
     skills,
   };
@@ -76,7 +76,7 @@ export default async function AssessmentsBuilderPage() {
     questionsByTemplate,
     links,
     timeZone,
-    situational,
+    availability,
     followUps,
     skills,
   } = await loadTemplates();
@@ -109,7 +109,7 @@ export default async function AssessmentsBuilderPage() {
         canEdit={canEdit}
         links={links}
         timeZone={timeZone}
-        situational={situational}
+        situational={availability}
         followUps={followUps}
         skillOptions={skills.skills}
         skillsNote={skills.note}

@@ -166,6 +166,82 @@ check(
   questionWriteError("CODING", { code: "23505", message: "duplicate key" }) === "duplicate key"
 );
 
+// ---------------------------------------------------------------------------
+// The availability probe asks the database once per type.
+// ---------------------------------------------------------------------------
+const { readQuestionTypeAvailability } = await import(
+  pathToFileURL(path.join(root, "src/modules/assessment/application/questionTypeAvailability.ts")).href
+);
+
+function fakeClient(failingType) {
+  const queries = [];
+  return {
+    queries,
+    from(table) {
+      let asked = null;
+      const query = {
+        select() {
+          return query;
+        },
+        eq(column, value) {
+          asked = value;
+          queries.push({ table, column, value });
+          return query;
+        },
+        then(resolve, reject) {
+          const failed = failingType !== null && asked === failingType;
+          return Promise.resolve(
+            failed
+              ? { data: null, count: null, error: { code: "22P02", message: 'invalid input value for enum public.question_type: "CODING"' } }
+              : { data: null, count: 3, error: null }
+          ).then(resolve, reject);
+        },
+      };
+      return query;
+    },
+  };
+}
+
+{
+  const client = fakeClient(null);
+  const availability = await readQuestionTypeAvailability(client);
+  check(
+    "both types are available when both probes succeed",
+    availability.situational === true && availability.coding === true,
+    JSON.stringify(availability)
+  );
+  check("neither note is written when both types are available", availability.note === null && availability.codingNote === null);
+  check(
+    "one probe is issued per type",
+    client.queries.length === 2,
+    JSON.stringify(client.queries)
+  );
+  check(
+    "the coding probe asks about CODING",
+    client.queries.some((query) => query.value === "CODING"),
+    JSON.stringify(client.queries)
+  );
+}
+
+{
+  const availability = await readQuestionTypeAvailability(fakeClient("CODING"));
+  check("coding alone can be missing", availability.situational === true && availability.coding === false);
+  check("the situational note is not written when only coding is missing", availability.note === null);
+  check("the coding note names migration 039", /039/.test(availability.codingNote ?? ""), String(availability.codingNote));
+  check(
+    "the coding note promises no retry that cannot work",
+    !/try again|retry/i.test(availability.codingNote ?? ""),
+    String(availability.codingNote)
+  );
+}
+
+{
+  const availability = await readQuestionTypeAvailability(fakeClient("SITUATIONAL_JUDGMENT"));
+  check("situational alone can be missing", availability.situational === false && availability.coding === true);
+  check("the coding note is not written when only situational is missing", availability.codingNote === null);
+  check("the situational note still names migration 034", /034/.test(availability.note ?? ""), String(availability.note));
+}
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
