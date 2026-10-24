@@ -651,6 +651,78 @@ test("an empty catalogue says tagging is unavailable and offers no select", () =
   ui.unmount();
 });
 
+/** A question whose first criterion already carries a stored tag. */
+const taggedQuestion = (skillId = "s-old", skillName = "Legacy tooling") =>
+  rubricQuestion({
+    config: {
+      rubric: [
+        {
+          label: "Diagnoses the cause",
+          weight: 60,
+          description: "Names the real driver before recommending anything",
+          skill_id: skillId,
+          skill_name: skillName,
+        },
+        { label: "Protects the guest", weight: 40 },
+      ],
+    },
+  });
+
+test("an empty catalogue still shows a stored tag, disabled, with its note", () => {
+  const ui = harness("editor", {
+    question: taggedQuestion(),
+    skillOptions: [],
+    skillsNote: "No active skills are on file.",
+  });
+  const select = skillSelect(ui, 1);
+  assert.equal(select.props.value, "s-old");
+  const stored = ui.nodes().find(
+    (node) => node.type === "option" && node.props.value === "s-old"
+  );
+  assert.ok(stored, "the stored option exists");
+  assert.equal(stored.props.disabled, true);
+  assert.match(ui.textOf(stored), /Legacy tooling/);
+  assert.match(ui.text(), /No active skills are on file/);
+  // The untagged second criterion has nothing to show, so it keeps the note only.
+  assert.equal(
+    ui.nodes().some(
+      (node) => node.type === "select" && node.props["aria-label"] === "Skill of criterion 2"
+    ),
+    false
+  );
+  ui.unmount();
+});
+
+test("the note beside a stored tag does not promise an untagged save", () => {
+  const ui = harness("editor", { question: taggedQuestion(), skillOptions: [] });
+  assert.doesNotMatch(ui.text(), /Every criterion still saves untagged/);
+  assert.match(ui.text(), /save this criterion untagged/);
+  ui.unmount();
+});
+
+test("an unchanged editor still sends a stored tag under an empty catalogue", async () => {
+  const ui = harness("editor", { question: taggedQuestion(), skillOptions: [] });
+  // The tag is on screen, so not retagging cannot be mistaken for dropping it.
+  assert.equal(skillSelect(ui, 1).props.value, "s-old");
+  ui.submit();
+  await ui.settle();
+  const [payload] = ui.saves;
+  assert.equal(payload.rubric[0].skill_id, "s-old");
+  ui.unmount();
+});
+
+test("a stored tag is clearable even when the catalogue is empty", async () => {
+  const ui = harness("editor", { question: taggedQuestion(), skillOptions: [] });
+  skillSelect(ui, 1).props.onChange({ target: { value: "" } });
+  ui.render();
+  ui.submit();
+  await ui.settle();
+  const [payload] = ui.saves;
+  const wire = JSON.parse(JSON.stringify(payload.rubric[0]));
+  assert.equal("skill_id" in wire, false);
+  ui.unmount();
+});
+
 /* -------------------------------------------------------------------------- */
 /* 4. The Guide                                                                */
 /* -------------------------------------------------------------------------- */

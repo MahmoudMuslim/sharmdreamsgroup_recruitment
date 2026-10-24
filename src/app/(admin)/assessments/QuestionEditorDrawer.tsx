@@ -1191,6 +1191,9 @@ function RubricFieldset({
   const write = (index: number, next: Partial<RubricRow>) =>
     onChange(rows.map((row, i) => (i === index ? { ...row, ...next } : row)));
   const total = rows.reduce((sum, row) => sum + (weightNumber(row.weight) ?? 0), 0);
+  // With an empty catalogue, one tagged row makes "every criterion saves
+  // untagged" false for the whole scheme, so the fallback narrows to this row.
+  const anyTagged = rows.some((row) => Boolean(row.skill_id));
 
   return (
     <fieldset className="rounded-xl border border-brand-line bg-brand-cream p-4">
@@ -1236,30 +1239,46 @@ function RubricFieldset({
               placeholder="What a strong answer shows (optional)"
               aria-label={`What a strong answer shows for criterion ${index + 1}`}
             />
-            {skillOptions.length > 0 ? (
-              <select
-                value={row.skill_id}
-                onChange={(e) => write(index, { skill_id: e.target.value })}
-                aria-label={`Skill of criterion ${index + 1}`}
-                className="w-full rounded-xl border border-brand-line bg-white px-3 py-2 text-sm text-brand-ink"
-              >
-                <option value="">Not tied to a skill</option>
-                {row.skill_id &&
-                  !skillOptions.some((skill) => skill.id === row.skill_id) && (
-                    <option value={row.skill_id} disabled>
-                      {row.skill_name || "Retired skill"}
+            {/*
+              A stored tag keeps the select even with an empty catalogue: the
+              criterion already carries an id, and a row that can only be read
+              as an absence is a row whose tag cannot be cleared, which leaves
+              the save refused with no control on screen that could fix it.
+            */}
+            {skillOptions.length > 0 || row.skill_id ? (
+              <>
+                <select
+                  value={row.skill_id}
+                  onChange={(e) => write(index, { skill_id: e.target.value })}
+                  aria-label={`Skill of criterion ${index + 1}`}
+                  className="w-full rounded-xl border border-brand-line bg-white px-3 py-2 text-sm text-brand-ink"
+                >
+                  <option value="">Not tied to a skill</option>
+                  {row.skill_id &&
+                    !skillOptions.some((skill) => skill.id === row.skill_id) && (
+                      <option value={row.skill_id} disabled>
+                        {row.skill_name || "Retired skill"}
+                      </option>
+                    )}
+                  {skillOptions.map((skill) => (
+                    <option key={skill.id} value={skill.id}>
+                      {skill.name}
                     </option>
-                  )}
-                {skillOptions.map((skill) => (
-                  <option key={skill.id} value={skill.id}>
-                    {skill.name}
-                  </option>
-                ))}
-              </select>
+                  ))}
+                </select>
+                {skillOptions.length === 0 && (
+                  <p className="text-[11px] leading-relaxed text-brand-ink/45">
+                    {skillsNote ??
+                      "Skill tagging is unavailable because no active skills are on file. Choose “Not tied to a skill” to save this criterion untagged."}
+                  </p>
+                )}
+              </>
             ) : (
               <p className="text-[11px] leading-relaxed text-brand-ink/45">
                 {skillsNote ??
-                  "Skill tagging is unavailable because no active skills are on file. Every criterion still saves untagged."}
+                  (anyTagged
+                    ? "Skill tagging is unavailable because no active skills are on file. This criterion still saves untagged."
+                    : "Skill tagging is unavailable because no active skills are on file. Every criterion still saves untagged.")}
               </p>
             )}
           </li>
