@@ -45,6 +45,11 @@ import {
 } from "@/modules/assessment/domain/attemptAnswers";
 import { blindMarkingNote } from "@/modules/assessment/domain/blindMarking";
 import { comparisonSelectionIssue } from "@/modules/assessment/domain/comparison";
+import {
+  rollUpSkillEvidence,
+  skillEvidenceCoverage,
+  type SkillEvidencePaper,
+} from "@/modules/assessment/domain/skillEvidence";
 import { ComparisonDrawer } from "./ComparisonDrawer";
 
 const TYPE_META: Record<string, { word: string; icon: LucideIcon }> = {
@@ -384,6 +389,20 @@ export function AnswersDrawer({
   // watch, so a second read is the only way to see work done after the open.
   const [reloadKey, setReloadKey] = useState(0);
 
+  // The paper already carries every criterion it was marked on, so the skill
+  // total costs no query. A masked paper's figures arrive null and stay hidden;
+  // the skill names and the contributed-question count are not scores.
+  const skillPapers = useMemo<SkillEvidencePaper[]>(
+    () =>
+      (paper?.answers ?? []).map((answer) => ({
+        title: answer.title,
+        criteria: answer.criteria,
+      })),
+    [paper]
+  );
+  const skillEvidence = useMemo(() => rollUpSkillEvidence(skillPapers), [skillPapers]);
+  const skillCoverage = useMemo(() => skillEvidenceCoverage(skillPapers), [skillPapers]);
+
   useEffect(() => {
     let active = true;
     void readAnswers(link.id).then((outcome) => {
@@ -519,6 +538,58 @@ export function AnswersDrawer({
           )}
 
           <p className="text-[11px] leading-relaxed text-brand-ink/60">{answersScopeNote(paper)}</p>
+
+          {skillEvidence.length > 0 && (
+            <section className="rounded-xl border border-brand-line px-4 py-3">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+                Skill evidence
+              </h3>
+              <ul className="mt-2 space-y-2">
+                {skillEvidence.map((line) => {
+                  // Two criteria on one question are one contributing question:
+                  // counting contribution rows would overstate the paper.
+                  const questionCount = new Set(
+                    line.contributions.map((contribution) => contribution.question_title)
+                  ).size;
+                  return (
+                    <li key={line.skill_id} className="text-xs leading-relaxed">
+                      <p className="font-semibold">
+                        {line.skill_name}
+                        {" · "}
+                        {line.percent === null ? "Hidden" : `${line.percent}%`}
+                        {line.awarded !== null && line.allowance !== null
+                          ? ` (${line.awarded} of ${line.allowance} marks)`
+                          : ""}
+                      </p>
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-[11px] text-brand-ink/60">
+                          {questionCount} contributing{" "}
+                          {questionCount === 1 ? "question" : "questions"}
+                        </summary>
+                        <ul className="mt-1 space-y-1">
+                          {line.contributions.map((contribution, index) => (
+                            <li
+                              key={`${contribution.question_title}:${contribution.criterion_label}:${index}`}
+                              className="text-[11px] leading-relaxed text-brand-ink/65"
+                            >
+                              {contribution.question_title} — {contribution.criterion_label}
+                              {contribution.awarded !== null && contribution.allowance !== null
+                                ? ` · ${contribution.awarded} of ${contribution.allowance}`
+                                : ""}
+                              {contribution.evidence ? ` — “${contribution.evidence}”` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+                {skillCoverage}
+              </p>
+            </section>
+          )}
 
           {paper.answers.length === 0 ? (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900">

@@ -404,6 +404,62 @@ test("a late read cannot write into a closed drawer", async () => {
   assert.equal(ui.lateWrites, 0);
 });
 
+test("a tagged paper totals its marks per skill and keeps the contributing questions", async () => {
+  const tagged = [
+    { ...MARKED[0], skill_id: "s-fin", skill_name: "Financial modelling" },
+    { ...MARKED[1], skill_id: "s-fin", skill_name: "Financial modelling" },
+  ];
+  const ui = await desk(paper([answer({ criteria: tagged })]));
+  assert.match(ui.text(), /Skill evidence/);
+  assert.match(ui.text(), /Financial modelling/);
+  assert.match(ui.text(), /16 of 20 marks/);
+  assert.match(ui.text(), /80%/);
+  // Two criteria on one question are one contributing question, not two.
+  assert.match(ui.text(), /1 contributing question/);
+  assert.match(ui.text(), /From 2 tagged criteria on 1 question/);
+  const contributions = ui.nodes().find((node) => node.type === "details");
+  assert.match(ui.textOf(contributions), /Diagnoses the cause/);
+  assert.match(ui.textOf(contributions), /Protects the guest/);
+  ui.unmount();
+});
+
+test("two questions contributing to one skill are counted as two", async () => {
+  const finance = "Financial modelling";
+  const ui = await desk(
+    paper([
+      answer({ criteria: [{ ...MARKED[0], skill_id: "s-fin", skill_name: finance }] }),
+      answer({
+        question_id: "q-case-2",
+        title: "A rate cut with no numbers",
+        criteria: [{ ...MARKED[1], skill_id: "s-fin", skill_name: finance }],
+      }),
+    ])
+  );
+  assert.match(ui.text(), /2 contributing questions/);
+  assert.match(ui.text(), /From 2 tagged criteria on 2 questions/);
+  ui.unmount();
+});
+
+test("a withheld reviewer sees the skill name and count but no figures", async () => {
+  const tagged = WITHHELD.map((row) => ({
+    ...row,
+    skill_id: "s-fin",
+    skill_name: "Financial modelling",
+  }));
+  const ui = await desk(paper([answer({ criteria: tagged })], { scores_masked: true }));
+  assert.match(ui.text(), /Financial modelling/);
+  assert.match(ui.text(), /Hidden/);
+  assert.doesNotMatch(ui.text(), /80%/);
+  assert.doesNotMatch(ui.text(), /16 of 20/);
+  ui.unmount();
+});
+
+test("an untagged paper prints no skill block", async () => {
+  const ui = await desk(paper([answer({ criteria: MARKED })]));
+  assert.doesNotMatch(ui.text(), /Skill evidence/);
+  ui.unmount();
+});
+
 /* -------------------------------------------------------------------------- */
 /* 2. The comparison table                                                     */
 /* -------------------------------------------------------------------------- */
