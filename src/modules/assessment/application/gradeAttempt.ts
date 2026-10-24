@@ -72,6 +72,9 @@ import type {
  * rubrics existed; a coding answer without one is read as source text, never
  * carried out.
  *
+ * A blank code answer is left unscored, exactly as a blank case study is:
+ * there is nothing to read, and a mark on nothing is a mark nobody earned.
+ *
  * Failure-tolerant by design: the candidate's submission is already persisted
  * before grading runs, so an AI error just leaves that response ungraded and
  * the attempt in SUBMITTED rather than breaking the submission.
@@ -511,8 +514,11 @@ async function gradeResponse(
     };
   }
 
-  if (question.question_type === "CODING") {
-    const material = response.answer_text ?? "";
+  if (question.question_type === "CODING" && response.answer_text?.trim()) {
+    // The gate asks whether there is anything to read, but the text handed to
+    // the grader is the answer as written — a code answer is judged on the
+    // source the candidate typed, whitespace and all.
+    const material = response.answer_text;
     const language = codingLanguageOf(question.config);
     const criteria = rubricCriteriaOf(question.config);
     if (criteria.length > 0) {
@@ -527,7 +533,8 @@ async function gradeResponse(
     const result = await evaluateCodeSubmission(
       `${question.title}\n\n${question.prompt}`,
       language,
-      material
+      material,
+      question.config?.context ?? ""
     );
     return {
       status: "GRADED",

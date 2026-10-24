@@ -112,7 +112,7 @@ export interface QuestionDraft {
   min_duration_seconds: number | null;
   max_duration_seconds: number | null;
   /**
-   * CASE_STUDY and VIDEO_PITCH: the marking scheme, one row per criterion.
+   * CASE_STUDY, VIDEO_PITCH and CODING: the marking scheme, one row per criterion.
    *
    * Absent means the caller does not read the marking scheme and must not
    * destroy it; an array with nothing named or weighted in it is an author

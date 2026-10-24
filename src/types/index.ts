@@ -238,7 +238,7 @@ export interface QuestionConfig {
   /** CODING only: a snippet shown read-only beside the prompt. Never graded. */
   starter_code?: string;
   /**
-   * CASE_STUDY, VIDEO_PITCH: the marking scheme, in the author's words.
+   * CASE_STUDY, VIDEO_PITCH, CODING: the marking scheme, in the author's words.
    *
    * Reader-only for the review desk and the grader. The candidate route rebuilds
    * a config from the keys its runner reads rather than copying the row, so a

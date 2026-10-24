@@ -513,21 +513,64 @@ sourceHas("the rubric prompt fences code with its language", "src/modules/screen
   "fencedCode",
   "options.code",
 ]);
+// The wording a model reads must never claim that anything was executed. The
+// first alternation here missed the shipped negative sentence, so it could not
+// fail on the wording it policed: it forbade "compile", never "compiled", and
+// "run the tests", never "the code was compiled". These forbid a positive
+// claim in either voice, and the word "sandbox", which would promise a place
+// to run the answer.
+const engineSource = read("src/modules/screening/infrastructure/openRouterEngine.ts");
+const codeEvaluator = between(
+  engineSource,
+  "export async function evaluateCodeSubmission(",
+  "const request: CompletionRequest"
+);
+const rubricGrader = between(
+  engineSource,
+  "export async function gradeAgainstRubric(",
+  "const request: CompletionRequest"
+);
+const EXECUTION_CLAIM =
+  /\b(?:compile|compiles|compiled|compiling|execute|executes|executed|executing|run|runs|running)\s+(?:was\s+|were\s+|is\s+|are\s+|been\s+|being\s+)?(?:the\s+|a\s+|its\s+)?(?:code|answer|submission|source|program|tests?)\b/i;
+const EXECUTION_CLAIM_PASSIVE =
+  /\b(?:code|answer|submission|source|program|tests?)\s+(?:was|were|is|are|has\s+been|have\s+been|had\s+been|gets?|got)\s+(?:compiled|executed|run|tested)\b/i;
+check(
+  "the engine still carries both code graders",
+  codeEvaluator.length > 0 && rubricGrader.length > 0,
+  "the code evaluator and the rubric grader must both be in the engine"
+);
 check(
   "no grading path claims to compile or run the answer",
-  !/\b(compile|execute|run the tests?|sandbox)\b/i.test(
-    read("src/modules/screening/infrastructure/openRouterEngine.ts").slice(
-      read("src/modules/screening/infrastructure/openRouterEngine.ts").indexOf("evaluateCodeSubmission")
-    )
-  ),
+  !EXECUTION_CLAIM.test(`${codeEvaluator}\n${rubricGrader}`) &&
+    !EXECUTION_CLAIM_PASSIVE.test(`${codeEvaluator}\n${rubricGrader}`) &&
+    !/\bsandbox\b/i.test(engineSource),
   "the code prompt must not promise execution"
+);
+// A pin that only forbids something is vacuous when the honest sentence is
+// gone, so the sentence itself is pinned too — in the fallback prompt and in
+// the rubric path, which carries it twice.
+check(
+  "the fallback code prompt says out loud that nothing was compiled, run or tested",
+  /has not been compiled, run or tested/i.test(codeEvaluator),
+  codeEvaluator
+);
+check(
+  "the rubric path says out loud that nothing was compiled, run or tested",
+  (rubricGrader.match(/has not been compiled, run or tested/gi) ?? []).length >= 2,
+  rubricGrader
 );
 check(
   "nothing in the grading path spawns a process",
   !/child_process|execSync|spawnSync|new Worker/.test(
-    read("src/modules/assessment/application/gradeAttempt.ts") +
-      read("src/modules/screening/infrastructure/openRouterEngine.ts")
+    read("src/modules/assessment/application/gradeAttempt.ts") + engineSource
   )
+);
+check(
+  "nothing in the grading path can evaluate a string or a worker",
+  !/worker_threads|\bfork\s*\(|\beval\s*\(|new Function/.test(
+    read("src/modules/assessment/application/gradeAttempt.ts") + engineSource
+  ),
+  "a grading path that could evaluate text could run a candidate's answer"
 );
 
 const editorSource = read("src/app/(admin)/assessments/QuestionEditorDrawer.tsx");
@@ -574,6 +617,11 @@ const credentialCopy = between(
 check(
   "the suite read says a coding question is graded against the scheme",
   /coding question is graded against/i.test(credentialCopy),
+  credentialCopy
+);
+check(
+  "the suite read names the language and the starter snippet a coding question carries",
+  /language/i.test(credentialCopy) && /starter/i.test(credentialCopy),
   credentialCopy
 );
 

@@ -2132,6 +2132,56 @@ test("a coding answer with no rubric falls back to the code reader", async () =>
   assert.equal(values.ai_evaluation.rationale, "Legacy code verdict.");
 });
 
+test("the fallback code reader is given the question's own context", async () => {
+  const h = gradingHarness({
+    tables: {
+      assessment_questions: [
+        codingQuestion({
+          config: { language: "Python", context: "The feed nests lists three deep." },
+        }),
+      ],
+      candidate_responses: [codeRow()],
+    },
+  });
+  await h.run();
+  assert.equal(h.calls.code.length, 1);
+  const [, , , context] = h.calls.code[0];
+  assert.equal(context, "The feed nests lists three deep.");
+});
+
+test("a blank code answer is left unscored, the way a blank case study is", async () => {
+  for (const blank of ["", "  \n\t "]) {
+    const h = gradingHarness({
+      tables: {
+        assessment_questions: [codingQuestion()],
+        candidate_responses: [codeRow({ answer_text: blank })],
+      },
+    });
+    const result = await h.run();
+    jsonEqual(result, { graded: 0, failed: 0 });
+    assert.equal(h.calls.code.length, 0, `a blank code answer (${JSON.stringify(blank)}) was sent to a model`);
+    assert.equal(
+      h.calls.rubric.length,
+      0,
+      `a blank code answer (${JSON.stringify(blank)}) was marked against a scheme`
+    );
+    assert.equal(
+      h.written("r-code"),
+      undefined,
+      `a blank code answer (${JSON.stringify(blank)}) was given a mark`
+    );
+  }
+
+  const study = gradingHarness({
+    tables: {
+      assessment_questions: [rubricCase()],
+      candidate_responses: [answerRow({ answer_text: "" })],
+    },
+  });
+  jsonEqual(await study.run(), { graded: 0, failed: 0 });
+  assert.equal(study.written("r-1"), undefined, "a blank case study was given a mark");
+});
+
 test("a rubric'd pitch is scored from the transcript and says what it could not see", async () => {
   const h = gradingHarness({
     tables: { assessment_questions: [rubricPitch()], candidate_responses: [pitchRow()] },
@@ -2285,10 +2335,31 @@ function engineHarness(response = { bands: [] }) {
         { capability: "case_reasoning", ...callOptions }
       );
     },
+    /**
+     * The fallback code evaluator, called the way the grader calls it.
+     *
+     * The real function runs with the gateway stubbed, so what the assertions
+     * read is the request a model would have received — the fence, the label,
+     * the language, the caveat, and the question's own context.
+     */
+    code: async (options = {}) => {
+      const { answer, ...rest } = options;
+      return context.exports.evaluateCodeSubmission(
+        rest.brief ?? "Flatten a nested list\n\nWrite a function that flattens arbitrary nesting.",
+        rest.language === undefined ? "Python" : rest.language,
+        answer ?? "def flatten(x):\n    return x",
+        rest.context ?? ""
+      );
+    },
     /** Everything the model is told, in one string. */
     words: (index = 0) => requests[index].messages.map((m) => m.content).join("\n"),
   };
 }
+
+/** The engine harness with a response shaped like a code verdict. */
+const codeHarness = (
+  response = { score: 70, rationale: "Read as written.", strengths: [], improvements: [] }
+) => engineHarness(response);
 
 test("the band request names every criterion and the share it carries", async () => {
   const h = engineHarness();
@@ -2401,6 +2472,29 @@ test("a written case is not fenced and is not told the answer is code", async ()
   assert.doesNotMatch(words, /```/);
   assert.doesNotMatch(words, /compiled|run or tested/i);
   assert.match(words, /CANDIDATE ANSWER/);
+});
+
+test("the fallback code prompt fences the answer, names the language and promises no run", async () => {
+  const h = codeHarness();
+  await h.code({ answer: "def flatten(x):\n    return x", language: "Python" });
+  const words = h.words();
+  assert.match(words, /```python\n/);
+  assert.match(words, /def flatten\(x\):/);
+  assert.match(words, /CANDIDATE CODE/);
+  assert.match(words, /LANGUAGE:\nPython/);
+  assert.match(words, /not been compiled, run or tested/i);
+});
+
+test("the fallback code prompt carries the question's own context", async () => {
+  const h = codeHarness();
+  await h.code({ context: "The feed nests lists three deep." });
+  assert.match(h.words(), /CONTEXT:\nThe feed nests lists three deep\./);
+});
+
+test("the fallback code prompt has no context block when the question carries none", async () => {
+  const h = codeHarness();
+  await h.code();
+  assert.doesNotMatch(h.words(), /CONTEXT:/);
 });
 
 // ---------------------------------------------------------------------------

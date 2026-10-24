@@ -439,11 +439,17 @@ Evaluate and return:
  * tested, so a verdict cannot claim a result nobody observed. The improvements
  * it names are the things a person would need to exercise, not a run it implies
  * it performed.
+ *
+ * The context is the question's own scenario, the same one the rubric path is
+ * given: a case study converted to a coding question keeps its brief, and two
+ * coding questions with the same source must not be marked on different input.
+ * It is optional, and the prompt is unchanged when there is none.
  */
 export async function evaluateCodeSubmission(
   questionPrompt: string,
   language: string | null,
-  candidateAnswer: string
+  candidateAnswer: string,
+  context = ""
 ): Promise<{ score: number; rationale: string; strengths: string[]; improvements: string[] }> {
   const systemPrompt = `You are a senior engineer marking a candidate's coding answer for a hospitality / finance leadership role.
 You are given source text a person wrote. It has not been compiled, run or tested. Never claim it works or fails, and never imply you observed an outcome.
@@ -451,12 +457,14 @@ Assess correctness, edge cases and clarity from the source alone, and name what 
 Return ONLY valid JSON. No markdown.
 Score 0-100 for the answer as written.`;
 
+  const contextBlock = context.trim() ? `\nCONTEXT:\n${context}\n` : "";
+
   const userPrompt = `CODE QUESTION:
 ${questionPrompt}
 
 LANGUAGE:
 ${language ?? "Not named"}
-
+${contextBlock}
 CANDIDATE CODE:
 ${fencedCode(language, candidateAnswer)}
 

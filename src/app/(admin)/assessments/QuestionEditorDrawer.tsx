@@ -1254,7 +1254,7 @@ export function QuestionEditorDrawer({
 }
 
 /**
- * The marking scheme an author writes for a case study or a pitch.
+ * The marking scheme an author writes for a case study, a pitch or a coding question.
  *
  * Rows are kept in the draft as text, because a weight typed as "40" and a weight
  * left blank mean different things to the validator — and only the second one
