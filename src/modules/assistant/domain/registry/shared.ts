@@ -697,6 +697,7 @@ const QUESTION_TYPES: QuestionType[] = [
   "CASE_STUDY",
   "EXCEL_MODEL",
   "VIDEO_PITCH",
+  "CODING",
 ];
 const STAFF_ROLES: AssignableStaffRole[] = ["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"];
 const INTERVIEW_OUTCOMES = ["COMPLETED", "NO_SHOW", "CANCELLED"] as const;
@@ -787,6 +788,8 @@ function questionDraftFrom(args: ToolArgs): QuestionDraft {
     options,
     context: optionalStr(args, "context") ?? "",
     min_words: args.min_words === undefined ? null : num(args, "min_words"),
+    language: optionalStr(args, "language"),
+    starter_code: optionalStr(args, "starter_code"),
     min_duration_seconds:
       args.min_duration_seconds === undefined ? null : num(args, "min_duration_seconds"),
     max_duration_seconds:

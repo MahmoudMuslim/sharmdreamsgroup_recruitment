@@ -93,7 +93,7 @@ export const authoring: readonly AssistantTool[] = [
     name: "save_question",
     label: "Saving a question",
     description:
-      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct. A CASE_STUDY or VIDEO_PITCH can carry a marking scheme — the named criteria its answer is marked against, which the grader scores one by one and reports with the evidence it quoted. A criterion may name one skill from the catalogue; the paper's answers drawer then totals the marks each skill earned across the paper.",
+      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct. A CODING question names one language from the closed list and may carry an optional starter snippet; the platform never runs, compiles or tests the candidate's code, so never ask them to run or test it. A CASE_STUDY or VIDEO_PITCH can carry a marking scheme — the named criteria its answer is marked against, which the grader scores one by one and reports with the evidence it quoted. A criterion may name one skill from the catalogue; the paper's answers drawer then totals the marks each skill earned across the paper.",
     args: {
       id: "string — optional, the question being edited",
       template_id: "string — suite id",
@@ -109,6 +109,10 @@ export const authoring: readonly AssistantTool[] = [
         "object[] — MULTIPLE_CHOICE: [{\"text\":\"answer\",\"is_correct\":true}, …], at least two; SITUATIONAL_JUDGMENT: [{\"text\":\"response\",\"score\":0-100}, …], at least two with different scores and no is_correct",
       context: "string — optional, the case study brief",
       min_words: "number — optional, case study minimum",
+      language:
+        "string — CODING only: one of JavaScript, TypeScript, Python, Java, C#, Go, SQL, PHP, Ruby, C++",
+      starter_code:
+        "string — CODING only: optional snippet shown beside the prompt; never graded",
       min_duration_seconds: "number — optional, video pitch minimum",
       max_duration_seconds: "number — optional, video pitch maximum",
       rubric:

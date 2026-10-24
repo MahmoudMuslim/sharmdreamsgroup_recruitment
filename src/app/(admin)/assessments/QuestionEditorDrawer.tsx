@@ -976,8 +976,7 @@ export function QuestionEditorDrawer({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {(Object.keys(TYPE_LABELS) as QuestionType[])
                 .filter((type) => type !== "SITUATIONAL_JUDGMENT" || situationalAvailable)
-                // CODING has words but no editor or drafting rules yet.
-                .filter((type) => type !== "CODING")
+                .filter((type) => type !== "CODING" || codingAvailable)
                 .map((type) => (
                   <label key={type} className="flex items-start gap-2 text-xs">
                     <input

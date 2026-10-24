@@ -1,6 +1,7 @@
 import type { QuestionConfig, QuestionType } from "@/types";
 import type { QuestionDraft } from "@/app/(admin)/assessments/question-actions";
 import { refToRowAndColumn } from "./attemptAnswers";
+import { CODING_LANGUAGES, readCodingLanguage, starterCodeIssue } from "./coding";
 import { readJudgmentDraft } from "./situational";
 
 /**
@@ -85,6 +86,10 @@ export interface GeneratedQuestion {
   max_duration_seconds: number | null;
   sheet: (string | number | null)[][];
   outputs: GeneratedOutput[];
+  /** CODING only: one of `CODING_LANGUAGES`. */
+  language?: string;
+  /** CODING only: the optional snippet shown beside the prompt, never graded. */
+  starter_code?: string;
   /** What the recruiter has to look at before this can be handed to a candidate. */
   cautions: string[];
 }
@@ -104,7 +109,7 @@ export interface DraftReview {
 export const GENERATED_JSON_SHAPE = `{
   "questions": [
     {
-      "question_type": "MULTIPLE_CHOICE" | "CASE_STUDY" | "EXCEL_MODEL" | "VIDEO_PITCH" | "SITUATIONAL_JUDGMENT",
+      "question_type": "MULTIPLE_CHOICE" | "CASE_STUDY" | "EXCEL_MODEL" | "VIDEO_PITCH" | "SITUATIONAL_JUDGMENT" | "CODING",
       "title": "short label for the candidate's contents list",
       "prompt": "the question the candidate is asked",
       "instructions": "one or two lines shown under the question, or an empty string",
@@ -130,6 +135,8 @@ Field rules:
   scores must differ. There is no single right answer — rank the responses.
 - "context" and "min_words": CASE_STUDY only.
 - "min_duration_seconds" and "max_duration_seconds": VIDEO_PITCH only.
+- "language": CODING only, and required — exactly one of ${CODING_LANGUAGES.join(", ")}.
+- "starter_code": CODING only and optional; a snippet shown beside the prompt, never graded.
 - "initial_sheet" and "expected_outputs": EXCEL_MODEL only. The sheet ships with
   the question, so it holds only labels and given figures — never the answer.
 - "expected_outputs": 1 to 6 cells the candidate must produce, and every one of
@@ -142,6 +149,7 @@ const QUESTION_TYPES: readonly string[] = [
   "EXCEL_MODEL",
   "VIDEO_PITCH",
   "SITUATIONAL_JUDGMENT",
+  "CODING",
 ];
 
 /**
@@ -157,6 +165,7 @@ export const QUESTION_RULES = `Each question must be answerable with only what i
 - CASE_STUDY: put the scenario the candidate reads first in "context", then ask one thing of them in "prompt".
 - EXCEL_MODEL: the candidate edits a grid. "initial_sheet" is the paper handed to them: labels and given figures ONLY. Every cell listed in "expected_outputs" must be BLANK there — a required cell that the sheet already prints is an answer given away, not a question.
 - VIDEO_PITCH: the candidate speaks to a camera. Ask something answerable out loud in the seconds allowed, with nothing to look up.
+- CODING: the candidate writes code in "language", which must be exactly one of ${CODING_LANGUAGES.join(", ")}. Ask for something one file can answer, so a reviewer can read it in full. Nothing here runs, compiles or tests the code, so never ask the candidate to run, execute or test what they write, or to paste a program's output. "starter_code" is optional — a snippet to start from, never the answer and never graded.
 
 Do not invent company figures you then ask the candidate to find. Do not ask for something the question itself states. Set every number a candidate needs inside the question.`;
 
@@ -488,6 +497,24 @@ export function reviewDrafts(
       cautions.push("Read the required cells against the figures the sheet ships with.");
     }
 
+    if (questionType === "CODING") {
+      const language = readCodingLanguage(record.language);
+      if (!language) {
+        dropped.push(
+          `${where} is a coding question, and its language must be one of ${CODING_LANGUAGES.join(", ")}.`
+        );
+        return;
+      }
+      const starterIssue = starterCodeIssue(record.starter_code);
+      if (starterIssue) {
+        dropped.push(`${where} — ${starterIssue}`);
+        return;
+      }
+      cautions.push(
+        "Read the prompt to be sure it asks for one file of code and never asks the candidate to run or test it — there is nowhere to run it."
+      );
+    }
+
     const maxSeconds = whole(record.max_duration_seconds, 10, 1800);
     const minSeconds = whole(record.min_duration_seconds, 0, 1800);
     if (questionType === "VIDEO_PITCH" && maxSeconds === null && minSeconds === null) {
@@ -516,6 +543,11 @@ export function reviewDrafts(
       max_duration_seconds: maxSeconds,
       sheet,
       outputs,
+      language: questionType === "CODING" ? (readCodingLanguage(record.language) ?? undefined) : undefined,
+      starter_code:
+        questionType === "CODING" && typeof record.starter_code === "string" && record.starter_code.trim()
+          ? record.starter_code
+          : undefined,
       cautions,
     });
   });
@@ -588,6 +620,8 @@ export function asReviewedDraft(raw: unknown): GeneratedQuestion {
         formula_hint: text(output.formula_hint, 200) || null,
       };
     }),
+    language: typeof record.language === "string" ? record.language : undefined,
+    starter_code: typeof record.starter_code === "string" ? record.starter_code : undefined,
     cautions: Array.isArray(record.cautions)
       ? record.cautions.map((line) => text(line, 400)).filter(Boolean)
       : [],
@@ -635,6 +669,14 @@ export function asReviewedDraft(raw: unknown): GeneratedQuestion {
     min_duration_seconds: draft.min_duration_seconds,
     max_duration_seconds: draft.max_duration_seconds,
     preserve_config: Object.keys(config).length > 0 ? config : null,
+    // `buildConfig`'s CODING case reads these two at the top level of the draft,
+    // so a generated coding question is stored exactly like a hand-authored one.
+    ...(draft.question_type === "CODING"
+      ? {
+          language: readCodingLanguage(draft.language) ?? undefined,
+          starter_code: draft.starter_code?.trim() ? draft.starter_code : undefined,
+        }
+      : {}),
   };
 }
 

@@ -278,6 +278,67 @@ sourceHas("the suite drafting drawer still hides CODING", "src/app/(admin)/asses
   'type !== "CODING"',
 ]);
 
+// ---------------------------------------------------------------------------
+// A drafted coding question is held to the same rules a manual one is.
+// ---------------------------------------------------------------------------
+const { reviewDrafts, draftForRow } = await import(
+  pathToFileURL(path.join(root, "src/modules/assessment/domain/aiAuthoring.ts")).href
+);
+
+const codingBrief = {
+  topic: "Flattening nested lists",
+  types: ["CODING"],
+  count: 1,
+  difficulty: "MID",
+  pointsEach: 10,
+  notes: "",
+};
+
+function drafted(overrides = {}) {
+  return {
+    question_type: "CODING",
+    title: "Flatten a nested list",
+    prompt: "Write a function that flattens arbitrary nesting.",
+    points: 10,
+    language: "Python",
+    ...overrides,
+  };
+}
+
+{
+  const result = reviewDrafts([drafted()], codingBrief);
+  check("a well-formed coding draft is kept", result.drafts.length === 1, JSON.stringify(result.dropped));
+  check("the kept draft carries its language", result.drafts[0]?.language === "Python", JSON.stringify(result.drafts[0]));
+}
+{
+  const result = reviewDrafts([drafted({ language: undefined })], codingBrief);
+  check("a coding draft with no language is refused", result.drafts.length === 0);
+  check("the refusal asks for a language", /language/i.test(result.dropped.join(" ")), JSON.stringify(result.dropped));
+}
+{
+  const result = reviewDrafts([drafted({ language: "COBOL" })], codingBrief);
+  check("a coding draft in an unknown language is refused", result.drafts.length === 0);
+}
+{
+  const result = reviewDrafts([drafted({ starter_code: "x".repeat(10_001) })], codingBrief);
+  check("a coding draft with an oversized starter is refused", result.drafts.length === 0);
+  check(
+    "the oversized starter is refused in the cap's own words",
+    /10,000/.test(result.dropped.join(" ")),
+    JSON.stringify(result.dropped)
+  );
+}
+{
+  const result = reviewDrafts([drafted({ prompt: "   " })], codingBrief);
+  check("a coding draft with no prompt is refused", result.drafts.length === 0);
+}
+
+const codingRow = draftForRow(reviewDrafts([drafted()], codingBrief).drafts[0], "template-id", 3);
+check("a drafted coding row carries its type", codingRow.question_type === "CODING", String(codingRow.question_type));
+check("a drafted coding row carries its language", codingRow.language === "Python", JSON.stringify(codingRow));
+check("a drafted coding row carries no starter when none was given", codingRow.starter_code === undefined, JSON.stringify(codingRow));
+check("a drafted coding row leaves the preserved config alone", codingRow.preserve_config === null, JSON.stringify(codingRow.preserve_config));
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);

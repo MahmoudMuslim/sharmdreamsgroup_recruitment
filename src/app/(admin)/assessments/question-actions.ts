@@ -765,6 +765,14 @@ export async function draftQuestions(input: AuthoringInput): Promise<AuthoringRe
   };
 
   const restClient = await createServerRestClient();
+  // A coding draft is only worth asking for when the enum carries the label:
+  // without 039 the review would drop every one after the provider was paid for.
+  if (types.includes("CODING")) {
+    const availability = await readQuestionTypeAvailability(restClient);
+    if (!availability.coding) {
+      return { ok: false, error: availability.codingNote ?? CODING_SCHEMA_NOTE };
+    }
+  }
   const suite = await readSuiteForAuthoring(restClient, input.templateId);
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
