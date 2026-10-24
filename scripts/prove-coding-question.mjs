@@ -449,6 +449,48 @@ sourceHas("the submit route selects the title its refusal names", "src/app/api/a
   '"id, question_type, points, title, config"',
 ]);
 
+// ---------------------------------------------------------------------------
+// The runner has a coding branch, and the answer box is a textarea.
+// ---------------------------------------------------------------------------
+sourceHas("the runner dispatches a coding question", "src/modules/assessment/presentation/AssessmentRunner.tsx", [
+  "CodingRunner",
+  "CODING",
+]);
+sourceHas("the coding runner is a textarea that writes the code map", "src/modules/assessment/presentation/components/CodingRunner.tsx", [
+  'useAssessmentStore',
+  "setCodeAnswer",
+  "syncDraft",
+  "<textarea",
+  "spellCheck={false}",
+  "autoCapitalize",
+  'font-mono',
+  "whitespace-pre-wrap",
+]);
+check(
+  "the coding runner claims nothing about running the code",
+  /not run|never run|is not run|reviewed/i.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")),
+  "the runner must say the code is reviewed, not run"
+);
+check(
+  "the coding runner does not seed the answer from the starter",
+  !/setCodeAnswer\([^)]*starter/i.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")),
+  "a seeded answer would be counted as answered"
+);
+// The spec says an over-cap answer is refused at submit, not truncated here: a
+// paste the box silently cut would make the refusal unreachable and lose text.
+check(
+  "the coding runner counts against the cap without truncating the paste",
+  !/maxLength=/.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")) &&
+    read("src/modules/assessment/presentation/components/CodingRunner.tsx").includes("CODE_ANSWER_CAP"),
+  "no maxLength; show the count against CODE_ANSWER_CAP instead"
+);
+check(
+  "the coding runner warns when the answer is over the cap",
+  /text-rose-700/.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")) &&
+    /over the character limit/i.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")),
+  "an over-cap answer must be visibly flagged so it can be trimmed"
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
