@@ -121,7 +121,9 @@ export const GENERATED_JSON_SHAPE = `{
       "min_duration_seconds": number or null,
       "max_duration_seconds": number or null,
       "initial_sheet": [["label", "label"], ["input", "input"]],
-      "expected_outputs": [{ "cell": "C5", "description": "what belongs there", "formula_hint": "how to work it out" }]
+      "expected_outputs": [{ "cell": "C5", "description": "what belongs there", "formula_hint": "how to work it out" }],
+      "language": "Python or null when the type is not CODING",
+      "starter_code": "optional snippet for a CODING question, or null"
     }
   ]
 }
@@ -509,6 +511,14 @@ export function reviewDrafts(
       if (starterIssue) {
         dropped.push(`${where} — ${starterIssue}`);
         return;
+      }
+      cautions.push(
+        "Nothing here has been run: the platform never compiles or executes code."
+      );
+      if (typeof record.starter_code === "string" && record.starter_code.trim()) {
+        cautions.push(
+          "Read the starter code before issuing this question — it is shown to the candidate exactly as written."
+        );
       }
       cautions.push(
         "Read the prompt to be sure it asks for one file of code and never asks the candidate to run or test it — there is nowhere to run it."

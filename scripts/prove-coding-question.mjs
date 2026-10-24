@@ -338,6 +338,46 @@ check("a drafted coding row carries its type", codingRow.question_type === "CODI
 check("a drafted coding row carries its language", codingRow.language === "Python", JSON.stringify(codingRow));
 check("a drafted coding row carries no starter when none was given", codingRow.starter_code === undefined, JSON.stringify(codingRow));
 check("a drafted coding row leaves the preserved config alone", codingRow.preserve_config === null, JSON.stringify(codingRow.preserve_config));
+{
+  const cautions = reviewDrafts([drafted()], codingBrief).drafts[0]?.cautions ?? [];
+  // The design asks for "has not been run"; the shipped sentence says it in
+  // the positive ("Nothing here has been run"). Either wording passes, and a
+  // draft with neither fails.
+  check(
+    "a drafted coding question says nothing has run it",
+    cautions.some((caution) => /has not been run|nothing here has been run/i.test(caution)),
+    JSON.stringify(cautions)
+  );
+  check(
+    "a coding draft with no starter does not tell anyone to read one",
+    !cautions.some((caution) => caution.includes("Read the starter code")),
+    JSON.stringify(cautions)
+  );
+}
+{
+  const result = reviewDrafts(
+    [drafted({ language: "python", starter_code: "def flatten(x):" })],
+    codingBrief
+  );
+  const kept = result.drafts[0];
+  check(
+    "a coding draft with a starter keeps it unchanged",
+    kept?.starter_code === "def flatten(x):",
+    JSON.stringify(kept?.starter_code)
+  );
+  check(
+    "a coding draft with a starter says to read it",
+    (kept?.cautions ?? []).some((caution) => caution.includes("Read the starter code")),
+    JSON.stringify(kept?.cautions)
+  );
+  check("a lower-case language is normalised to the kept draft", kept?.language === "Python", JSON.stringify(kept?.language));
+  const row = draftForRow(kept, "template-id", 4);
+  check(
+    "the starter reaches the drafted row at the top level",
+    row.starter_code === "def flatten(x):",
+    JSON.stringify(row.starter_code)
+  );
+}
 
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
