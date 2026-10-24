@@ -152,6 +152,7 @@ const submission = {
   skill_evidence: [],
   skill_evidence_coverage: null,
   skill_evidence_note: null,
+  skill_evidence_masked: false,
 };
 
 /** One roll-up line, shaped exactly as the action returns it. */
@@ -162,6 +163,7 @@ const EVIDENCE_LINE = {
   allowance: 20,
   percent: 80,
   questionCount: 2,
+  sittingCount: 2,
   contributions: [
     {
       question_title: "Rate card",
@@ -770,8 +772,10 @@ test("the expanded applicant shows test evidence beside the CV level", async () 
   const text = ui.textOf(evidenceSection(ui));
   assert.match(text, /Revenue management · required 4 · shown 3 · test evidence 80% \(2 questions\)/);
   assert.match(text, /not a proficiency level/);
-  // The CV verdict is still the CV verdict.
-  assert.match(ui.text(), /meets|below|no evidence/);
+  // The CV verdict is still the CV verdict — and this fixture is below on its one
+  // required skill, so the exact sentence is the claim, not a word that happens to
+  // appear somewhere in the drawer.
+  assert.match(ui.text(), /Meets 0 of 1, below 1, no evidence for 0\./);
   ui.unmount();
 });
 
@@ -794,6 +798,14 @@ test("a masked reviewer reads the skill and the count, never the level or the fi
         awarded: null,
         allowance: null,
         percent: null,
+        // The real mapper (`maskCriterionMarks`) nulls the contribution marks too,
+        // so a fixture that only zeroed the totals would not be the paper a masked
+        // reviewer receives.
+        contributions: EVIDENCE_LINE.contributions.map((contribution) => ({
+          ...contribution,
+          awarded: null,
+          allowance: null,
+        })),
       },
     ],
   });
@@ -801,6 +813,87 @@ test("a masked reviewer reads the skill and the count, never the level or the fi
   assert.match(text, /Revenue management · required 4 · test evidence Hidden \(2 questions\)/);
   assert.doesNotMatch(text, /shown 3|80%/);
   assert.doesNotMatch(ui.text(), /null|undefined|NaN/);
+  ui.unmount();
+});
+
+test("evidence for a skill the CV never named is still evidence, and never a CV verdict", async () => {
+  const ui = await desk(
+    [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
+    [applicant({ demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+  );
+  await opened(ui, {
+    ...submission,
+    skill_evidence: [
+      {
+        skill_id: "s-ats",
+        skill_name: "ATS / HRIS tooling",
+        awarded: 7,
+        allowance: 10,
+        percent: 70,
+        questionCount: 1,
+        sittingCount: 1,
+        contributions: [
+          {
+            question_title: "Tooling",
+            criterion_label: "Data entry",
+            awarded: 7,
+            allowance: 10,
+            evidence: null,
+          },
+        ],
+      },
+    ],
+  });
+  const text = ui.textOf(evidenceSection(ui));
+  assert.match(text, /ATS \/ HRIS tooling · test evidence 70% \(1 question\)/);
+  // The line is not against the requisition, so it carries no "required".
+  assert.doesNotMatch(text, /required/);
+  assert.match(ui.text(), /Meets 0 of 1, below 1, no evidence for 0\./);
+  ui.unmount();
+});
+
+test("an unmasked paper with no mark says so instead of claiming it was withheld", async () => {
+  const ui = await desk(
+    [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
+    [applicant({ demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+  );
+  await opened(ui, {
+    ...submission,
+    skill_evidence: [
+      {
+        ...EVIDENCE_LINE,
+        awarded: null,
+        allowance: null,
+        percent: null,
+        contributions: EVIDENCE_LINE.contributions.map((contribution) => ({
+          ...contribution,
+          awarded: null,
+          allowance: null,
+        })),
+      },
+    ],
+  });
+  const text = ui.textOf(evidenceSection(ui));
+  assert.match(text, /test evidence no mark on file \(2 questions\)/);
+  assert.doesNotMatch(text, /Hidden/);
+  ui.unmount();
+});
+
+test("a submission read that says masked hides the figure even when the list row does not", async () => {
+  const ui = await desk(
+    [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
+    [applicant({ scores_masked: false, demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+  );
+  await opened(ui, {
+    ...submission,
+    skill_evidence_masked: true,
+    skill_evidence: [EVIDENCE_LINE],
+  });
+  const text = ui.textOf(evidenceSection(ui));
+  assert.match(text, /Revenue management · required 4 · test evidence Hidden \(2 questions\)/);
+  assert.doesNotMatch(text, /80%/);
+  assert.doesNotMatch(text, /shown 3/);
+  assert.doesNotMatch(ui.text(), /80%/);
   ui.unmount();
 });
 

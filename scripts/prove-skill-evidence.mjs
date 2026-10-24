@@ -192,14 +192,60 @@ test("a retake of one question is one question, and an unidentifiable paper is i
   const [retake] = rollUpSkillEvidence([paper("q-1", "Case one"), paper("q-1", "Case one")]);
   assert.equal(retake.contributions.length, 2);
   assert.equal(retake.questionCount, 1);
-  assert.match(skillEvidenceSentence(retake), /\(1 question\)$/);
+  // A retake is one question but two sittings, and the line must say so.
+  assert.equal(retake.sittingCount, 2);
+  assert.match(skillEvidenceSentence(retake), /\(1 question across 2 sittings\)$/);
 
   const [distinct] = rollUpSkillEvidence([paper("q-1", "Case one"), paper("q-2", "Case two")]);
   assert.equal(distinct.questionCount, 2);
+  assert.equal(distinct.sittingCount, 2);
+  assert.match(skillEvidenceSentence(distinct), /\(2 questions\)$/);
 
   // Two papers we cannot identify must not be folded into one question.
   const [keyless] = rollUpSkillEvidence([paper(null, "Case one"), paper(null, "Case one")]);
   assert.equal(keyless.questionCount, 2);
+});
+
+test("a retake's sum says which sittings of the question it covers", () => {
+  const papers = [
+    {
+      key: "q-1",
+      title: "Case one",
+      criteria: [criterion({ skill_id: "s-fin", skill_name: "Financial modelling", marks: 14, allowance: 20 })],
+    },
+    {
+      key: "q-1",
+      title: "Case one",
+      criteria: [criterion({ skill_id: "s-fin", skill_name: "Financial modelling", marks: 20, allowance: 20 })],
+    },
+  ];
+  const [line] = rollUpSkillEvidence(papers);
+  assert.equal(line.awarded, 34);
+  assert.equal(line.allowance, 40);
+  assert.equal(line.percent, 85);
+  assert.equal(line.questionCount, 1);
+  assert.equal(line.sittingCount, 2);
+  assert.equal(
+    skillEvidenceSentence(line),
+    "Financial modelling · test evidence 85% (1 question across 2 sittings)"
+  );
+  assert.match(skillEvidenceCoverage(papers), /From 2 tagged criteria on 1 question across 2 sittings/);
+});
+
+test("a withheld figure wins over a percentage that is still present", () => {
+  const [line] = rollUpSkillEvidence([
+    {
+      title: "Case",
+      criteria: [
+        criterion({ skill_id: "s-fin", skill_name: "Financial modelling", marks: 17, allowance: 20 }),
+      ],
+    },
+  ]);
+  assert.equal(line.percent, 85);
+  assert.equal(
+    skillEvidenceSentence(line, { figures_withheld: true }),
+    "Financial modelling · test evidence Hidden (1 question)"
+  );
 });
 
 test("a null percentage says no mark on file unless the figures are withheld", () => {
@@ -221,15 +267,16 @@ test("a null percentage says no mark on file unless the figures are withheld", (
   );
 });
 
-test("the coverage sentence counts a retake once, the way a line does", () => {
+test("the coverage sentence counts a retake once, the way a line does, and names its sittings", () => {
   const papers = [
     { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" }), criterion({ skill_id: "s2" })] },
     { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" })] },
   ];
-  assert.match(skillEvidenceCoverage(papers), /From 3 tagged criteria on 1 question/);
+  assert.match(skillEvidenceCoverage(papers), /From 3 tagged criteria on 1 question across 2 sittings/);
   const [first] = rollUpSkillEvidence(papers);
   assert.equal(first.skill_id, "s1");
   assert.equal(first.questionCount, 1);
+  assert.equal(first.sittingCount, 2);
 });
 
 test("the applicant mapper carries the question id into the paper's key", () => {

@@ -71,6 +71,14 @@ export interface ApplicantSubmission {
   skill_evidence_coverage: string | null;
   /** Set when the 500-response bound was reached or the read itself failed. */
   skill_evidence_note: string | null;
+  /**
+   * True when this read's own mask predicate withheld the evidence figures.
+   *
+   * The list row carries `scores_masked` from a separate read, so the two can
+   * disagree on a stale screen; the drawer ORs them and a figure is hidden if
+   * either says so.
+   */
+  skill_evidence_masked: boolean;
 }
 
 export type ApplicantsResult = { ok: true; applicants: JobApplicant[] } | { ok: false; error: string };
@@ -252,6 +260,7 @@ export async function getApplicantSubmission(
       skill_evidence: skillEvidence,
       skill_evidence_coverage: skillEvidence.length > 0 ? skillEvidenceCoverage(papers) : null,
       skill_evidence_note: evidenceNote,
+      skill_evidence_masked: masked,
     },
   };
 }

@@ -357,23 +357,6 @@ function ApplicantDetail({
   const decision = canDecide ? <StageDecisions applicant={applicant} onMoved={onMoved} /> : null;
   const wrap = "space-y-5 border-t border-brand-line bg-brand-cream/60 px-4 py-4";
 
-  /**
-   * The context the test line is read against.
-   *
-   * `getJobApplicants` returns `demonstrated` whole even when this reviewer's
-   * scores are withheld, because a masked level is still a recorded level; the
-   * grant is applied here, as `RequiredSkillLines` does. The requisition's
-   * `required_level` is the ask, not a score, and stays visible either way.
-   */
-  const contextOf = (line: SkillEvidenceLine) => {
-    const match = skillLines.find((row) => row.skill_id === line.skill_id) ?? null;
-    return {
-      required_level: match?.required_level ?? null,
-      demonstrated_level: applicant.scores_masked ? null : (match?.demonstrated_level ?? null),
-      figures_withheld: applicant.scores_masked,
-    };
-  };
-
   if (error) {
     return (
       <div className={wrap}>
@@ -393,6 +376,28 @@ function ApplicantDetail({
       </div>
     );
   }
+
+  /**
+   * The context the test line is read against.
+   *
+   * `getJobApplicants` returns `demonstrated` whole even when this reviewer's
+   * scores are withheld, because a masked level is still a recorded level; the
+   * grant is applied here, as `RequiredSkillLines` does. The requisition's
+   * `required_level` is the ask, not a score, and stays visible either way.
+   *
+   * The mask is the OR of the two reads: the list row and this submission were
+   * fetched separately, so a stale row must not out-vote a submission read that
+   * says withheld. When either says so, neither a level nor a figure is printed.
+   */
+  const withheld = applicant.scores_masked || submission.skill_evidence_masked;
+  const contextOf = (line: SkillEvidenceLine) => {
+    const match = skillLines.find((row) => row.skill_id === line.skill_id) ?? null;
+    return {
+      required_level: match?.required_level ?? null,
+      demonstrated_level: withheld ? null : (match?.demonstrated_level ?? null),
+      figures_withheld: withheld,
+    };
+  };
 
   return (
     <div className={wrap}>

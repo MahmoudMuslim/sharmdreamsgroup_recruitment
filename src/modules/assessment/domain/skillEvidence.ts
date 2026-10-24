@@ -46,6 +46,16 @@ export interface SkillEvidenceLine {
    * questions" for a single question's marks.
    */
   questionCount: number;
+  /**
+   * Papers behind this line — the population its total adds up.
+   *
+   * A retake is one question but two sittings, and the marks of both sittings are
+   * summed; a paper carrying two criteria for the skill is still one sitting, and
+   * a paper with no key is its own. When this is larger than `questionCount` the
+   * line says so, because a figure totalled across sittings is not the same claim
+   * as one totalled over distinct questions.
+   */
+  sittingCount: number;
   contributions: SkillContribution[];
 }
 
@@ -103,6 +113,8 @@ export function rollUpSkillEvidence(
     keys: Set<string>;
     /** Contributing papers with no key; each is its own question. */
     keyless: number;
+    /** Contributing papers, however many criteria or retakes they carry. */
+    sittings: number;
   }
 
   const groups = new Map<string, Group>();
@@ -119,6 +131,7 @@ export function rollUpSkillEvidence(
         contributions: [],
         keys: new Set<string>(),
         keyless: 0,
+        sittings: 0,
       };
       if (!group.skill_name) group.skill_name = snapshotName(criterion);
       group.awarded = add(group.awarded, criterion.marks);
@@ -137,11 +150,13 @@ export function rollUpSkillEvidence(
     }
 
     // One paper is one question per skill however many criteria it carries, and a
-    // key already counted is a second attempt at a question already counted.
+    // key already counted is a second attempt at a question already counted. The
+    // paper still counts as a sitting either way: its marks are in the total.
     const key = paperKey(paper);
     for (const skillId of touched) {
       const group = groups.get(skillId);
       if (!group) continue;
+      group.sittings += 1;
       if (key) group.keys.add(key);
       else group.keyless += 1;
     }
@@ -160,6 +175,7 @@ export function rollUpSkillEvidence(
             ? Math.round((group.awarded / group.allowance) * 100)
             : 0,
       questionCount: group.keys.size + group.keyless,
+      sittingCount: group.sittings,
       contributions: group.contributions,
     }))
     .sort(
@@ -174,20 +190,24 @@ export function skillEvidenceCoverage(papers: readonly SkillEvidencePaper[]): st
   let criteria = 0;
   const keys = new Set<string>();
   let keyless = 0;
+  let sittings = 0;
   for (const paper of papers) {
     const tagged = paper.criteria.filter((criterion) => taggedId(criterion) !== null).length;
     criteria += tagged;
     if (tagged === 0) continue;
     // The same identity rule the lines count by, so the two can never disagree
-    // about how many questions a retake is.
+    // about how many questions a retake is. The paper still counts as a sitting:
+    // every tagged mark it carries is in the total.
+    sittings += 1;
     const key = paperKey(paper);
     if (key) keys.add(key);
     else keyless += 1;
   }
   const questions = keys.size + keyless;
+  const across = sittings > questions ? ` across ${sittings} sittings` : "";
   return `From ${criteria} tagged ${criteria === 1 ? "criterion" : "criteria"} on ${questions} ${
     questions === 1 ? "question" : "questions"
-  }. A percentage is evidence from this paper, not a proficiency level.`;
+  }${across}. A percentage is evidence from this paper, not a proficiency level.`;
 }
 
 /** The applicant line: the test figure is additive beside the CV's own levels. */
@@ -215,12 +235,14 @@ export function skillEvidenceSentence(
   }
   const count = `${line.questionCount} ${
     line.questionCount === 1 ? "question" : "questions"
-  }`;
+  }${line.sittingCount > line.questionCount ? ` across ${line.sittingCount} sittings` : ""}`;
   parts.push(
-    line.percent !== null
-      ? `test evidence ${line.percent}% (${count})`
-      : context.figures_withheld
-        ? `test evidence Hidden (${count})`
+    // Withheld wins over a figure: a caller holding a stale percentage beside a
+    // fresh mask must still never print the number.
+    context.figures_withheld
+      ? `test evidence Hidden (${count})`
+      : line.percent !== null
+        ? `test evidence ${line.percent}% (${count})`
         : `test evidence no mark on file (${count})`
   );
   return parts.join(" · ");
