@@ -274,6 +274,10 @@ check(
   "question-actions QUESTION_TYPES should not include CODING until Task 4"
 );
 
+sourceHas("the suite drafting drawer still hides CODING", "src/app/(admin)/assessments/SuiteAuthoringDrawer.tsx", [
+  'type !== "CODING"',
+]);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
