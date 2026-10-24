@@ -45,7 +45,6 @@ import {
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
 import { blindMarkingNote } from "@/modules/assessment/domain/blindMarking";
-import { codingFenceTag } from "@/modules/assessment/domain/coding";
 import { comparisonSelectionIssue } from "@/modules/assessment/domain/comparison";
 import {
   rollUpSkillEvidence,
@@ -838,13 +837,16 @@ function AnswerCard({
               <>
                 {/* A code answer is read, never run: it is printed as the text
                     the candidate wrote, in a block that keeps its own line
-                    breaks, and never as markup. */}
+                    breaks, and never as markup. The label is the language the
+                    author picked, read as a person reads it — the same word the
+                    comparison drawer prints — and it is left off entirely when
+                    the question named no language. */}
                 {answer.language ? (
                   <p className="text-[11px] font-medium text-brand-ink/45">
-                    {codingFenceTag(answer.language)}
+                    {answer.language}
                   </p>
                 ) : null}
-                <pre className="mt-1 whitespace-pre-wrap font-mono text-sm leading-relaxed text-brand-ink/80">
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-brand-ink/80">
                   {answer.answer_text}
                 </pre>
               </>

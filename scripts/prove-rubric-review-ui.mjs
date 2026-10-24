@@ -522,7 +522,8 @@ test("the desk prints a code answer as the source it was written in", async () =
   assert.equal(ui.textOf(blocks[0]), CODE_SOURCE, "the source is printed as it was written");
   // The prose branch cannot print it as well.
   assert.equal(ui.nodes().filter((node) => node.type === "p" && ui.textOf(node) === CODE_SOURCE).length, 0);
-  assert.match(ui.text(), /python/, "the language the author picked is named");
+  // The label is the language the author picked, in the author's own spelling.
+  assert.match(ui.text(), /Python/, "the language the author picked is named");
   assert.match(ui.text(), /Coding/, "the sixth type is named as the others are");
   ui.unmount();
 });
@@ -542,6 +543,42 @@ test("a withheld reviewer still reads the code, and still no mark", async () => 
   assert.equal(blocks.length, 1);
   assert.equal(ui.textOf(blocks[0]), CODE_SOURCE);
   assert.match(ui.text(), /Hidden/, "the mark stays hidden");
+  ui.unmount();
+});
+
+/**
+ * The label is a name a person reads, not a tag a model reads.
+ *
+ * `C++` is the language the author picked; `cpp` is the fence tag a model
+ * reads. A recruiter comparing the desk with the drawer must not see two
+ * different names for the same language, and the desk must not show a name the
+ * author never wrote.
+ */
+const CPP_SOURCE = "int sum(const std::vector<int>& xs) {\n  return std::accumulate(xs.begin(), xs.end(), 0);\n}";
+
+test("the desk names the language the author picked, not a fence tag", async () => {
+  const ui = await desk(paper([codeAnswer({ language: "C++", answer_text: CPP_SOURCE })]));
+  assert.match(ui.text(), /C\+\+/, "the desk shows the language as the author wrote it");
+  assert.doesNotMatch(ui.text(), /\bcpp\b/, "the desk does not show the model's fence tag");
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(ui.textOf(blocks[0]), CPP_SOURCE, "the source is printed as it was written");
+  ui.unmount();
+});
+
+/**
+ * A long unbroken line — a minified line, a base64 blob, a long URL — must
+ * wrap inside the card that holds it, not spill out of it.
+ */
+const LONG_LINE = `const token = "${"a".repeat(240)}";`;
+
+test("the desk's code block wraps a long unbroken line inside the card", async () => {
+  const ui = await desk(paper([codeAnswer({ answer_text: LONG_LINE })]));
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(blocks.length, 1);
+  assert.equal(ui.textOf(blocks[0]), LONG_LINE, "the line is printed as it was written");
+  const className = String(blocks[0].props.className ?? "");
+  assert.match(className, /whitespace-pre-wrap/, "the block keeps the author's own line breaks");
+  assert.match(className, /break-words/, "a long unbroken line wraps inside the card");
   ui.unmount();
 });
 
@@ -617,6 +654,53 @@ test("a code answer with no language is printed without a label", async () => {
   );
   assert.equal(ui.nodes().filter((node) => node.type === "pre").length, 2);
   assert.doesNotMatch(ui.text(), /\bnull\b/, "a missing language must not print the word null");
+  ui.unmount();
+});
+
+test("the drawer names the language the author picked, not a fence tag", async () => {
+  const ui = await compared(
+    paper([codeAnswer({ language: "C++", answer_text: CPP_SOURCE })]),
+    otherPaper([codeAnswer({ language: "C++", answer_text: CPP_SOURCE })])
+  );
+  assert.match(ui.text(), /C\+\+/, "the drawer shows the language as the author wrote it");
+  assert.doesNotMatch(ui.text(), /\bcpp\b/, "the drawer does not show the model's fence tag");
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  for (const block of blocks) {
+    assert.equal(ui.textOf(block), CPP_SOURCE, "the source is printed as it was written");
+  }
+  ui.unmount();
+});
+
+test("the drawer's code block wraps a long unbroken line inside the cell", async () => {
+  const ui = await compared(
+    paper([codeAnswer({ answer_text: LONG_LINE })]),
+    otherPaper([codeAnswer({ answer_text: LONG_LINE })])
+  );
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(blocks.length, 2, "one preformatted block per column");
+  for (const block of blocks) {
+    assert.equal(ui.textOf(block), LONG_LINE, "the line is printed as it was written");
+    const className = String(block.props.className ?? "");
+    assert.match(className, /whitespace-pre-wrap/, "the block keeps the author's own line breaks");
+    assert.match(className, /break-words/, "a long unbroken line wraps inside the cell");
+  }
+  ui.unmount();
+});
+
+test("a code answer with no text is given a sentence, not a line of code", async () => {
+  const ui = await compared(
+    paper([codeAnswer({ answer_text: null })]),
+    otherPaper([codeAnswer({ answer_text: null })])
+  );
+  // The fallback is plain English about a missing answer: it belongs in prose,
+  // not in the block that holds the code.
+  for (const block of ui.nodes().filter((node) => node.type === "pre")) {
+    assert.doesNotMatch(ui.textOf(block), /No written text recorded/, "a sentence is not a line of code");
+  }
+  const notes = ui.nodes().filter(
+    (node) => node.type === "p" && ui.textOf(node).trim() === "No written text recorded."
+  );
+  assert.equal(notes.length, 2, "the fallback is printed as ordinary prose, once per column");
   ui.unmount();
 });
 

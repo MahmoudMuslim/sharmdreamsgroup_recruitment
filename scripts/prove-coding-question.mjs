@@ -636,7 +636,7 @@ sourceHas("the comparison carries a language", "src/modules/assessment/domain/co
 ]);
 sourceHas("the reading desk prints code preformatted", "src/app/(admin)/assessments/IssuedLinksBoard.tsx", [
   "<pre",
-  "codingFenceTag",
+  "answer.language",
 ]);
 sourceHas("the comparison drawer prints code preformatted", "src/app/(admin)/assessments/ComparisonDrawer.tsx", [
   "<pre",
@@ -670,6 +670,18 @@ check(
   (drawerSource.match(/<pre/g) ?? []).length === 1 &&
     drawerSource.includes('answer.question_type === "CODING"'),
   "one preformatted block, and the prose branch cannot print a code answer"
+);
+// A fence tag is a word for a model, not for a recruiter: the desk and the
+// drawer both name the language the author picked.
+check(
+  "the reading desk does not print a model's fence tag",
+  !deskSource.includes("codingFenceTag"),
+  "the desk names the language as the author wrote it"
+);
+check(
+  "the comparison drawer does not print a model's fence tag",
+  !drawerSource.includes("codingFenceTag"),
+  "the drawer names the language as the author wrote it"
 );
 // A code answer whose question carries no language must read as plain text:
 // no label, and never the word "null".

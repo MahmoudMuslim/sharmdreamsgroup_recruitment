@@ -2872,6 +2872,10 @@ test("a code answer keeps its language where the marks are withheld", async () =
   const masked = await codingDesk({}, { masked: true }).answer();
   assert.equal(masked.score, null, "the mark stays hidden");
   assert.equal(masked.language, "Python", "the language is a label, not a mark");
+  // Masking hides marks. It must not hide the answer the reviewer came to
+  // read: a withheld reviewer still reads the code, exactly as they read every
+  // other answer.
+  assert.equal(masked.answer_text, CODE_SOURCE, "the code survives masking as it was written");
 });
 
 test("the side-by-side comparison carries each paper's own per-criterion marks", async () => {

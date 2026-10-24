@@ -135,10 +135,16 @@ function AnswerEvidence({ answer, masked }: { answer: ComparisonAnswer; masked: 
           {answer.question_type === "CODING" ? (
             /* The code is read, never run: it is printed as the text the
                candidate wrote, in a block that keeps its own line breaks, and
-               never as markup. A question with no language carries no label. */
+               never as markup. A question with no language carries no label,
+               and a code answer with no text carries no block — the fallback
+               is an ordinary sentence, not a line of code. */
             <div>
               {answer.language ? <p className="font-semibold">{answer.language}</p> : null}
-              <pre className="whitespace-pre-wrap break-words font-mono">{answer.answer_text || "No written text recorded."}</pre>
+              {answer.answer_text ? (
+                <pre className="whitespace-pre-wrap break-words font-mono">{answer.answer_text}</pre>
+              ) : (
+                <p>No written text recorded.</p>
+              )}
             </div>
           ) : (
             (answer.question_type === "CASE_STUDY" || answer.answer_text !== null) && <p>{answer.answer_text || "No written text recorded."}</p>
