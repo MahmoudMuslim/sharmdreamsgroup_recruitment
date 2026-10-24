@@ -14,6 +14,7 @@ import {
   type InterviewScorecard,
   type ScorecardCriterion,
 } from "@/modules/interviews/domain/interviewScorecard";
+import { prefillFeedbackFromNotes } from "@/modules/interviews/domain/interviewNotes";
 import { saveInterviewScorecard } from "./scorecard-actions";
 
 const RATING_OPTIONS = [
@@ -56,12 +57,15 @@ export function ScorecardDesk({
   interviewId,
   viewerId,
   cards,
+  myNote,
   timeZone,
   onSaved,
 }: {
   interviewId: string;
   viewerId: string;
   cards: InterviewScorecard[];
+  /** The signed-in interviewer's own note on this panel, if they wrote one. */
+  myNote: string | null;
   timeZone: string;
   /** Re-reads the agenda and this panel's cards after a save. */
   onSaved: () => Promise<void>;
@@ -98,6 +102,16 @@ export function ScorecardDesk({
     setOpen(false);
     setMarks(EMPTY_MARKS);
     setFeedback("");
+  }
+
+  function insertNotes() {
+    const result = prefillFeedbackFromNotes(feedback, myNote);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setError(null);
+    setFeedback(result.feedback);
   }
 
   async function save() {
@@ -206,6 +220,13 @@ export function ScorecardDesk({
               onChange={(event) => setFeedback(event.target.value)}
               placeholder="What convinced you, what worried you, what to probe in the next round…"
             />
+            {myNote && (
+              <div className="mt-2 flex justify-end">
+                <Button type="button" size="sm" variant="ghost" onClick={insertNotes}>
+                  Insert my notes
+                </Button>
+              </div>
+            )}
           </Field>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] leading-relaxed text-brand-ink/45">

@@ -130,6 +130,10 @@ import {
   saveInterviewScorecard,
 } from "@/app/(admin)/interviews/scorecard-actions";
 import {
+  getInterviewNotesForPanel,
+  saveInterviewNotes,
+} from "@/app/(admin)/interviews/notes-actions";
+import {
   INTERVIEW_ROUND_LABELS,
   INTERVIEW_ROUNDS,
   panelAverage,
@@ -137,6 +141,13 @@ import {
   scorecardAverage,
   scorecardsFor,
 } from "@/modules/interviews/domain/interviewScorecard";
+import {
+  NOTES_BODY_LIMIT,
+  NOTES_CHAT_CLIP,
+  NOTES_SCHEMA_NOTE,
+  clipNoteBody,
+  notesFor,
+} from "@/modules/interviews/domain/interviewNotes";
 import { getOnboardingData } from "@/app/(admin)/onboarding/actions";
 import { generateOnboardingPlan } from "@/app/(admin)/onboarding/onboarding-actions";
 import { deleteTask, saveTask, setTaskCompleted } from "@/app/(admin)/onboarding/task-actions";
@@ -251,6 +262,13 @@ export { agendaWindowDays };
 export { getInterviewRoundSupport };
 export { getInterviewScorecardLayer };
 export { saveInterviewScorecard };
+export { getInterviewNotesForPanel };
+export { saveInterviewNotes };
+export { NOTES_BODY_LIMIT };
+export { NOTES_CHAT_CLIP };
+export { NOTES_SCHEMA_NOTE };
+export { clipNoteBody };
+export { notesFor };
 export { INTERVIEW_ROUNDS };
 export { INTERVIEW_ROUND_LABELS };
 export { panelAverage };

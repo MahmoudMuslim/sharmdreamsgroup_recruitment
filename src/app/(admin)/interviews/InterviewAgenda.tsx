@@ -28,6 +28,13 @@ import {
 } from "./actions";
 import { getInterviewScorecardLayer } from "./scorecard-actions";
 import { ScorecardDesk } from "./ScorecardDesk";
+import { NotesDesk } from "./NotesDesk";
+import { getInterviewNotesLayer } from "./notes-actions";
+import {
+  canOpenNotesDesk,
+  notesFor,
+  type InterviewNotesLayer,
+} from "@/modules/interviews/domain/interviewNotes";
 import {
   agendaRangeLabel,
   AGENDA_FUTURE_DAYS,
@@ -126,6 +133,7 @@ export function InterviewAgenda({
   readAt,
   viewerId,
   scorecardLayer,
+  notesLayer,
 }: {
   interviews: AgendaInterview[];
   timeZone: string;
@@ -150,12 +158,16 @@ export function InterviewAgenda({
   viewerId: string;
   /** Rounds and scorecards, read beside the agenda and reseeded with it. */
   scorecardLayer: InterviewScorecardLayer;
+  /** Every interviewer's notes on these panels, read beside the agenda for the same reason. */
+  notesLayer: InterviewNotesLayer;
 }) {
   const [rows, setRows] = useState<AgendaInterview[]>(interviews);
   const [outside, setOutside] = useState(outsideAgenda);
   const [seededFrom, setSeededFrom] = useState(interviews);
   const [layer, setLayer] = useState(scorecardLayer);
   const [seededLayerFrom, setSeededLayerFrom] = useState(scorecardLayer);
+  const [notes, setNotes] = useState(notesLayer);
+  const [seededNotesFrom, setSeededNotesFrom] = useState(notesLayer);
   // A panel booked from a candidate's profile, or by the assistant, re-renders
   // this page with a fresh read. Adopting it is what keeps the agenda and the
   // interview alert describing one set: the Bell re-counts the database on every
@@ -171,6 +183,14 @@ export function InterviewAgenda({
   if (scorecardLayer !== seededLayerFrom) {
     setSeededLayerFrom(scorecardLayer);
     setLayer(scorecardLayer);
+  }
+  // Notes are the third read with their own freshness, reseeded on their own identity
+  // for the same reason the scorecards are: a page render carries whatever the database
+  // said when it was cut, and a note saved from a candidate's profile has to reach this
+  // desk without the recruiter reloading.
+  if (notesLayer !== seededNotesFrom) {
+    setSeededNotesFrom(notesLayer);
+    setNotes(notesLayer);
   }
   const [range, setRange] = useState<AgendaRange>(initialRange);
   const [status, setStatus] = useState<InterviewStatus | null>(initialStatus);
@@ -256,9 +276,14 @@ export function InterviewAgenda({
     ]);
     setRows(fresh);
     setOutside(edges);
-    // The layer is a second read of the same rows — a newly booked panel needs
-    // its round, and a scorecard just saved needs to arrive without a refresh.
-    setLayer(await getInterviewScorecardLayer(fresh.map((row) => row.id)));
+    // Both layers are reads of the same rows: a newly booked panel needs its
+    // round, and a scorecard or note just saved has to arrive without a reload.
+    const [scorecards, notes] = await Promise.all([
+      getInterviewScorecardLayer(fresh.map((row) => row.id)),
+      getInterviewNotesLayer(fresh.map((row) => row.id)),
+    ]);
+    setLayer(scorecards);
+    setNotes(notes);
   }
 
   function closeEditor() {
@@ -413,6 +438,7 @@ export function InterviewAgenda({
       )}
 
       {layer.note && <p className="text-xs text-brand-ink/50">{layer.note}</p>}
+      {notes.note && <p className="text-xs text-brand-ink/50">{notes.note}</p>}
 
       {(outside.ahead > 0 || outside.overdue > 0) && (
         <p className="text-xs text-brand-ink/50">
@@ -687,6 +713,17 @@ export function InterviewAgenda({
                     </form>
                   )}
 
+                  {notes.available && (
+                    <NotesDesk
+                      interviewId={row.id}
+                      viewerId={viewerId}
+                      notes={notesFor(notes, row.id)}
+                      timeZone={timeZone}
+                      canWrite={canOpenNotesDesk(row.status, row.scheduled_at, readAt)}
+                      onSaved={reload}
+                    />
+                  )}
+
                   {layer.scorecardsAvailable &&
                     (row.status === "COMPLETED" ||
                       (row.status === "SCHEDULED" && !inFuture)) && (
@@ -694,6 +731,11 @@ export function InterviewAgenda({
                         interviewId={row.id}
                         viewerId={viewerId}
                         cards={scorecardsFor(layer, row.id)}
+                        myNote={
+                          notesFor(notes, row.id).find(
+                            (note) => note.authorProfileId === viewerId
+                          )?.body ?? null
+                        }
                         timeZone={timeZone}
                         onSaved={reload}
                       />

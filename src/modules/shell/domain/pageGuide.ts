@@ -310,25 +310,32 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
 
   "/interviews": {
     purpose:
-      "The panel calendar: who is being seen, when, by whom, which round it is, and what came of it.",
+      "The panel calendar: who is being seen, when, by whom, which round it is, what came of it, and what the interviewers wrote down.",
     shows: [
       "Cards grouped by day with the time, status, candidate, role, round, duration and interviewer, and a line saying how many are still awaiting an outcome in the range on screen.",
       "Each panel that has happened carries its scorecards: who wrote one, their four marks, the panel average and the written feedback — or a line saying it has not been scored yet.",
+      "Each panel also carries its staff notes, one per writer: who wrote it, when, and the words. Your own note is marked as yours; every staff reader sees the rest.",
     ],
     use: [
       "Cut the view by Today / Next 7 days / Next 30 days / Next 90 days / Last 30 days, and by status: All, Awaiting outcome, Completed, No-show, Cancelled.",
       "Move reschedules — date and time typed in the organisation's timezone, duration, interviewer, round, meeting link — and tells the candidate the slot changed.",
       "Add a scorecard rates the panel from 1 to 5 on Technical, Communication, Problem solving and Culture, with optional notes. Every interviewer's row is kept separately, and the button reopens only your own.",
+      "Add notes writes what was said and what you would probe next. Edit and Clear touch only your own note; a colleague's stays as they wrote it.",
+      "Insert my notes copies your own panel note into the scorecard feedback box for you to edit. Marks are never filled in from a note, and the button refuses to replace feedback you have already typed.",
       "Record Completed, No-show or Cancelled. Only a move messages the candidate; an outcome never does.",
       "Join opens the meeting link and the candidate's name opens their record.",
+      "A generated interview guide on a candidate's profile can be filed into your notes on a scheduled or completed panel. It arrives below your own words under a model-drafted heading, and stays editable like the rest of the note.",
     ],
     edges: [
       "Rounds and scorecards arrive with db/migrations/032_interview_scorecards.sql. Until that file is applied the page says so, the round pickers are hidden and no scorecard can be saved; the calendar itself keeps working.",
+      "Panel notes arrive with db/migrations/038_interview_notes.sql. Until that file is applied the notes desk is absent and the assistant names the file rather than pretending the panel has no notes; the agenda and its scorecards keep working.",
       "Only a panel whose slot has passed, or one marked Completed, offers the scorecard desk. A cancelled panel and a no-show have nothing to score.",
       "Any staff member can write their own scorecard without Edit candidates — the judgement of the person who sat the panel is the record — while every staff reader can see all of them. The candidate never does.",
+      "Notes follow the same rule and are readable on every panel, including cancelled and no-show ones, but the desk stops writing them there: a panel beside the point keeps its record and takes no new words.",
+      "A note is capped at 4,000 characters. The refusal quotes the limit before anything is written, and one note per writer per panel is stored — reopening edits it rather than adding a second.",
+      "The guide itself is drafted on the candidate's profile, not here. Filing it writes a normal note, so it is staff-readable and yours to edit.",
       "The agenda reads 30 days back and 90 days forward. Panels booked past either edge are counted and named, not listed.",
       "A slot that has passed cannot be moved — record what happened, or book a new panel from the candidate.",
-      "Panels are scheduled from a candidate's profile, and the interview guide is drafted there, not here.",
       "Reading needs only a staff session; moving a panel or recording an outcome needs both Edit candidates and Schedule interviews, so revoking either box in the role matrix closes those two writes.",
     ],
   },

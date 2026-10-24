@@ -1,14 +1,20 @@
 // One section of the assistant's tool registry — see ./shared.ts and ../tools.ts.
 
-import type { AssistantTool } from "./shared";
+import type { AssistantTool, ToolArgs } from "./shared";
 import {
   INTERVIEW_OUTCOMES,
   INTERVIEW_ROUNDS,
+  NOTES_BODY_LIMIT,
+  NOTES_CHAT_CLIP,
+  NOTES_SCHEMA_NOTE,
   ToolArgumentError,
   clip,
+  clipNoteBody,
   generateInterviewGuide,
+  getInterviewNotesForPanel,
   getInterviewScorecardLayer,
   isoDateTime,
+  notesFor,
   num,
   optionalChoice,
   optionalStr,
@@ -16,6 +22,7 @@ import {
   report,
   rescheduleInterview,
   roundLabel,
+  saveInterviewNotes,
   saveInterviewScorecard,
   scheduleInterview,
   scorecardAverage,
@@ -166,6 +173,85 @@ export const interviews: readonly AssistantTool[] = [
       ),
   },
   {
+    name: "read_interview_notes",
+    label: "Reading interview notes",
+    description:
+      "Every staff member's written account of one panel: who wrote it and when, and the words, each carried up to " +
+      `${NOTES_CHAT_CLIP} characters and marked when cut. Read \`notes_note\` before saying nobody left notes: it names ` +
+      "db/migrations/038_interview_notes.sql when this database has no notes table at all, which is not the same as a " +
+      "panel nobody wrote about. `mine` marks the signed-in recruiter's own note — the only one save_interview_notes " +
+      "changes; a colleague's is always read-only. The candidate never sees a note. The interview id comes from " +
+      "list_interviews.",
+    args: { interview_id: "string — from list_interviews" },
+    run: async (args) => {
+      const interviewId = str(args, "interview_id");
+      const panel = await getInterviewNotesForPanel(interviewId);
+      // A schedule query that failed proves nothing about which panels exist, so it
+      // is reported as a failure rather than as a panel with no notes.
+      if (panel.error) return { ok: false, error: `The panel could not be read: ${panel.error}` };
+      if (!panel.found) {
+        return { ok: false, error: "No interview has that id — take one from list_interviews." };
+      }
+
+      const cards = notesFor(panel.layer, interviewId);
+      const cut = cards.filter((card) => card.body.length > NOTES_CHAT_CLIP).length;
+      return {
+        // First, because the result is clipped at a fixed length: a disclosure that
+        // sits behind the notes it describes is cut off along with them.
+        notes_note: !panel.layer.available
+          ? panel.layer.note ?? NOTES_SCHEMA_NOTE
+          : cards.length === 0
+            ? "Nobody has written a note on this panel yet."
+            : `${cards.length === 1 ? "One note is" : `${cards.length} notes are`} below, each carried up to ` +
+              `${NOTES_CHAT_CLIP} characters.${
+                cut === 0
+                  ? ""
+                  : ` ${cut === 1 ? "One note is" : `${cut} notes are`} longer than that and marked clipped — ` +
+                    "the whole of it is on the agenda."
+              }`,
+        ok: true,
+        interview_id: interviewId,
+        status: panel.status,
+        scheduled_at: panel.scheduledAt,
+        notes_available: panel.layer.available,
+        count: cards.length,
+        notes: cards.map((card) => {
+          const body = clipNoteBody(card.body);
+          return {
+            author: card.authorName ?? "a former staff member",
+            mine: card.authorProfileId === panel.viewerId,
+            body: body.text,
+            clipped: body.clipped,
+            written_at: card.createdAt,
+            updated_at: card.updatedAt,
+          };
+        }),
+      };
+    },
+  },
+  {
+    name: "save_interview_notes",
+    label: "Writing interview notes",
+    description:
+      "Save the signed-in recruiter's own note on one panel: their account of what was said, up to " +
+      `${NOTES_BODY_LIMIT} characters. One note is kept per writer per panel, so a second save replaces those words; ` +
+      "an empty `body` clears it and leaves a line in the trail. Refused on a cancelled panel or a no-show, and " +
+      "impossible until db/migrations/038_interview_notes.sql is applied — the refusal names the file. Every staff " +
+      "member can read the notes and only their author can change them; the author is always the session's recruiter, " +
+      "never a name in these arguments, and the candidate never sees a note.",
+    args: {
+      interview_id: "string — from list_interviews",
+      body: "string — the note in the recruiter's own words; an empty string clears it",
+    },
+    run: async (args) =>
+      report(
+        await saveInterviewNotes({
+          interviewId: str(args, "interview_id"),
+          body: noteBody(args),
+        })
+      ),
+  },
+  {
     name: "draft_interview_guide",
     label: "Drafting interview questions",
     description:
@@ -184,3 +270,21 @@ export const interviews: readonly AssistantTool[] = [
   },
 
 ];
+
+/**
+ * The note body as typed, including the empty string that clears it.
+ *
+ * `str` refuses a blank because most string arguments have to say something. Here
+ * blank is an instruction — remove the note — so it is read directly instead. An
+ * absent or non-text body is refused rather than treated as a clear, because a
+ * model that forgot the argument must not wipe words it never saw.
+ */
+function noteBody(args: ToolArgs): string {
+  const value = args.body;
+  if (typeof value !== "string") {
+    throw new ToolArgumentError(
+      '"body" must be a string; send an empty string to clear your note.'
+    );
+  }
+  return value;
+}

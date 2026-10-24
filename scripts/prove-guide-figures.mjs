@@ -239,6 +239,17 @@ const FIGURES = [
     ],
   },
   {
+    route: "/interviews",
+    want: "the panel-note body cap",
+    guide: /A note is capped at ([\d,]+) characters/,
+    sources: [
+      {
+        rel: "src/modules/interviews/domain/interviewNotes.ts",
+        pattern: /export const NOTES_BODY_LIMIT = ([\d_]+);/,
+      },
+    ],
+  },
+  {
     route: "/files",
     want: "a folder's listing",
     guide: /A folder lists its first ([\d,]+) items/,

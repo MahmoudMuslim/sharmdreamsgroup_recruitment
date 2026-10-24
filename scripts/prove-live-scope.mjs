@@ -79,7 +79,7 @@ const allAreas = LIVE_WATCH.map((watch) => watch.area);
 /* 1. The watch table                                                          */
 /* -------------------------------------------------------------------------- */
 
-check("the table watches twelve areas", allAreas.length === 12, `got ${allAreas.length}`);
+check("the table watches thirteen areas", allAreas.length === 13, `got ${allAreas.length}`);
 check(
   "every area has its own name",
   new Set(allAreas).size === allAreas.length,
@@ -102,6 +102,23 @@ check(
   "no area is both stamped and hashed",
   LIVE_WATCH.every((watch) => Boolean(watch.stamp) !== Boolean(watch.columns?.length))
 );
+{
+  const notes = LIVE_WATCH.find((watch) => watch.area === "interview notes");
+  check(
+    "the notes area watches its own stamped table on the agenda",
+    notes?.table === "interview_notes" &&
+      notes?.stamp === "updated_at" &&
+      JSON.stringify(notes?.paths) === JSON.stringify(["/interviews"]),
+    JSON.stringify(notes)
+  );
+  const schedule = LIVE_WATCH.find((watch) => watch.area === "interviews");
+  check(
+    "the schedule watch was not widened to carry note columns",
+    JSON.stringify(schedule?.columns) ===
+      JSON.stringify(["id", "application_id", "scheduled_at", "status", "meeting_link"]),
+    JSON.stringify(schedule?.columns)
+  );
+}
 
 /* -------------------------------------------------------------------------- */
 /* 2. The scope                                                                */
@@ -138,9 +155,10 @@ equal("the whatsapp page reads three areas", areas("/whatsapp"), [
   "outreach",
   "queue",
 ]);
-equal("the interviews page reads both interview tables", areas("/interviews"), [
+equal("the interviews page reads all three interview tables", areas("/interviews"), [
   "interviews",
   "interview scorecards",
+  "interview notes",
 ]);
 equal("the jobs page reads the pipeline and the openings", areas("/jobs"), [
   "pipeline",
@@ -192,7 +210,7 @@ check(
   reads <= oldReads * 0.25,
   `${reads} reads across ${STAFF_ROUTES.length} pages vs ${oldReads} before`
 );
-equal("the per-page sum is the tree's 29", reads, 29);
+equal("the per-page sum is the tree's 30", reads, 30);
 check(
   "the reduction is at least 80 per cent",
   (oldReads - reads) / oldReads >= 0.8,

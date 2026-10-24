@@ -247,6 +247,13 @@ import {
   getInterviewRoundSupport,
   getInterviewScorecardLayer,
   saveInterviewScorecard,
+  getInterviewNotesForPanel,
+  saveInterviewNotes,
+  NOTES_BODY_LIMIT,
+  NOTES_CHAT_CLIP,
+  NOTES_SCHEMA_NOTE,
+  clipNoteBody,
+  notesFor,
   INTERVIEW_ROUNDS,
   INTERVIEW_ROUND_LABELS,
   panelAverage,
@@ -1002,6 +1009,13 @@ export { getInterviewAgenda };
 export { getInterviewRoundSupport };
 export { getInterviewScorecardLayer };
 export { saveInterviewScorecard };
+export { getInterviewNotesForPanel };
+export { saveInterviewNotes };
+export { NOTES_BODY_LIMIT };
+export { NOTES_CHAT_CLIP };
+export { NOTES_SCHEMA_NOTE };
+export { clipNoteBody };
+export { notesFor };
 export { INTERVIEW_ROUNDS };
 export { INTERVIEW_ROUND_LABELS };
 export { panelAverage };

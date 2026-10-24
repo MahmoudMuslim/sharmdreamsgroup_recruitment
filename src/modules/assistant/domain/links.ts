@@ -495,6 +495,26 @@ function filingDriftView(args: ToolArgs, result: unknown): AssistantLink {
 }
 
 /**
+ * The agenda, opened on the half of the calendar the panel sits in.
+ *
+ * The board shows one range at a time and no range holds both a past and a future
+ * panel, so the default view would hide the completed panel a note is usually
+ * written about. The slot comes from the action's own result, never from the
+ * model's arguments, and a refusal reports none — which opens the plain agenda
+ * rather than a range nobody touched. Neither half opens the panel itself: the
+ * page reads no `?panel=` from the address bar, and a parameter it ignores would
+ * make the link look like it opened a row it did not.
+ */
+function interviewAgendaView(scheduledAt: unknown): AssistantLink {
+  const when = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : Number.NaN;
+  const range = Number.isFinite(when) ? (when < Date.now() ? "past" : "upcoming") : null;
+  return {
+    href: `/interviews${query([["range", range]])}`,
+    label: "Open the interview agenda",
+  };
+}
+
+/**
  * The person's own page — every application they hold, with the tests, files,
  * messages and changes sitting on any of them.
  *
@@ -616,6 +636,11 @@ export function linkForTool(
       // three weeks out is exactly what the recruiter clicks through to check, and
       // a landing view that hides it reads as a failed move.
       return { href: "/interviews?range=upcoming", label: "Open the interview agenda" };
+    case "read_interview_notes":
+    case "save_interview_notes": {
+      const record = (result ?? {}) as { scheduled_at?: unknown; scheduledAt?: unknown };
+      return interviewAgendaView(record.scheduled_at ?? record.scheduledAt);
+    }
     case "list_onboarding_plans":
     case "generate_onboarding_plan":
     case "save_onboarding_task":

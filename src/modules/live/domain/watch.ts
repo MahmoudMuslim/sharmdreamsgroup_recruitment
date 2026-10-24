@@ -71,6 +71,17 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     paths: ["/interviews"],
   },
   {
+    // A third table for the same reason the scorecards are one: a note is a
+    // separate row per writer, and 038's absence has to take only this area
+    // down. A column added to the schedule watch instead would refuse the whole
+    // hashed area while that migration is unapplied, stopping the agenda's live
+    // reload over a table it does not need to refresh the calendar.
+    area: "interview notes",
+    table: "interview_notes",
+    stamp: "updated_at",
+    paths: ["/interviews"],
+  },
+  {
     area: "openings",
     table: "job_openings",
     columns: ["id", "title", "status", "closing_at", "department"],

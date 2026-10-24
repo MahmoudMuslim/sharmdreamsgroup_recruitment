@@ -27,6 +27,7 @@ import {
   getInterviewRoundSupport,
   type RoundSupport,
 } from "@/app/(admin)/interviews/scorecard-actions";
+import { saveInterviewGuideInNotes } from "@/app/(admin)/interviews/notes-actions";
 
 function statusTone(status: string) {
   if (status === "COMPLETED") return "success" as const;
@@ -80,10 +81,17 @@ export function InterviewPanel({
   const [questions, setQuestions] = useState<InterviewGuideQuestion[] | null>(null);
   const [guideError, setGuideError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [guideSavingId, setGuideSavingId] = useState<string | null>(null);
+  const [savedGuideFor, setSavedGuideFor] = useState<string | null>(null);
+  const [guideSaveError, setGuideSaveError] = useState<string | null>(null);
+  const [guideSavedNotice, setGuideSavedNotice] = useState<string | null>(null);
 
   async function makeGuide() {
     setGenerating(true);
     setGuideError(null);
+    setGuideSaveError(null);
+    setGuideSavedNotice(null);
+    setSavedGuideFor(null);
     try {
       const result = await generateInterviewGuide({ applicationId });
       if (result.ok) setQuestions(result.questions ?? []);
@@ -98,6 +106,30 @@ export function InterviewPanel({
       setGenerating(false);
     }
   }
+
+  async function saveGuide(interviewId: string) {
+    if (!questions || questions.length === 0) return;
+    setGuideSavingId(interviewId);
+    setGuideSaveError(null);
+    setGuideSavedNotice(null);
+    try {
+      const result = await saveInterviewGuideInNotes({ interviewId, questions });
+      if (!result.ok) {
+        setGuideSaveError(result.error ?? "The guide was not saved.");
+        return;
+      }
+      setSavedGuideFor(interviewId);
+      setGuideSavedNotice("The guide is now part of your notes on that panel.");
+    } catch {
+      setGuideSaveError("The portal did not answer, so the guide is still only on this screen.");
+    } finally {
+      setGuideSavingId(null);
+    }
+  }
+
+  const saveablePanels = interviews.filter(
+    (row) => row.status === "SCHEDULED" || row.status === "COMPLETED"
+  );
 
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("45");
@@ -480,7 +512,7 @@ export function InterviewPanel({
                 <p className="mt-1 text-xs text-brand-ink/55">
                   Asked of the model behind Settings → AI & screening: it reads the gaps AI screening
                   found in this CV, the role&rsquo;s requirements and the answers from the test. The
-                  guide is not stored — copy what you need into your notes before closing this panel.
+                  guide stays on this screen until you file it in your own notes on a panel below.
                 </p>
 
                 {guideError && <p className="mt-3 text-xs font-semibold text-rose-700">{guideError}</p>}
@@ -507,6 +539,49 @@ export function InterviewPanel({
 
                 {questions && questions.length === 0 && !guideError && (
                   <p className="mt-3 text-xs text-brand-ink/55">The model returned no questions.</p>
+                )}
+
+                {questions && questions.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-brand-line bg-white p-3">
+                    <p className="text-xs leading-relaxed text-brand-ink/60">
+                      Save this guide into your own notes on the panel you are preparing for. Only
+                      you can edit those notes; every staff member can read them.
+                    </p>
+                    {saveablePanels.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {saveablePanels.map((row) => {
+                          const when = formatSlot(row.scheduled_at, timeZone);
+                          return (
+                            <Button
+                              key={row.id}
+                              size="sm"
+                              variant="outline"
+                              disabled={guideSavingId !== null || savedGuideFor === row.id}
+                              onClick={() => void saveGuide(row.id)}
+                              aria-label={`Save the guide to my notes on the ${when} panel`}
+                            >
+                              {guideSavingId === row.id && (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                              )}
+                              {savedGuideFor === row.id
+                                ? `Saved to my notes · ${when}`
+                                : `Save to my notes · ${when}`}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs font-semibold text-brand-ink/55">
+                        There is no scheduled or completed panel to file this guide on yet.
+                      </p>
+                    )}
+                    {guideSaveError && (
+                      <p className="mt-2 text-xs font-semibold text-rose-700">{guideSaveError}</p>
+                    )}
+                    {guideSavedNotice && (
+                      <p className="mt-2 text-xs font-semibold text-emerald-700">{guideSavedNotice}</p>
+                    )}
+                  </div>
                 )}
               </section>
             )}

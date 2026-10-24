@@ -84,6 +84,10 @@ const MIGRATIONS = [
     file: "037_opening_skills.sql",
     asks: "select to_regclass('public.job_opening_skills') is not null as present",
   },
+  {
+    file: "038_interview_notes.sql",
+    asks: "select to_regclass('public.interview_notes') is not null as present",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -191,6 +195,7 @@ const SOFT_FILES = [
   "src/modules/assessment/domain/followUp.ts",
   "src/modules/assessment/application/questionTypeAvailability.ts",
   "src/modules/interviews/domain/interviewScorecard.ts",
+  "src/modules/interviews/domain/interviewNotes.ts",
   "src/modules/assistant/domain/registry/writes.ts",
   "src/modules/assistant/domain/registry/reads.ts",
   "src/modules/assistant/domain/registry/interviews.ts",
@@ -206,8 +211,15 @@ const SOFT_FILES = [
 // this database — 024 and 025", where the wording sits behind the names. Absent wins
 // a tie, because `until that file is applied` is absent wording wrapped in a verb
 // that looks present.
+//
+// The last clause is the schema-refusal idiom — "Rounds and scorecards have not been
+// created on this database yet. Apply db/migrations/032_interview_scorecards.sql".
+// The file name lives in a `const` that the sentences interpolate, so the marker sits
+// on the far side of the declaration, and without it every refusal file in SOFT reads
+// as making no claim at all. The phrase asserts this database in as many words, so it
+// belongs in the list; the scorecard and notes refusals are the copy it was added for.
 const ABSENT =
-  /(not\s+applied|has\s+not\s+been\s+(?:run|applied)|is\s+unapplied|not\s+yet\s+applied|until\s+(?:that\s+file|it)\s+is\b)/i;
+  /(not\s+applied|has\s+not\s+been\s+(?:run|applied)|is\s+unapplied|not\s+yet\s+applied|until\s+(?:that\s+file|it)\s+is\b|(?:have|has)\s+not\s+been\s+created\s+on\s+this\s+database)/i;
 const PRESENT = /(applied\s+on\s+this\s+database|is\s+applied,\s+so|are\s+applied,\s+so)/i;
 const WINDOW = 200;
 
