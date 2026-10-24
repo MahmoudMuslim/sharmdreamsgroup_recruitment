@@ -231,6 +231,25 @@ const FIGURES = [
     ],
   },
   {
+    // The coding caps live in the domain module as constants, so a change
+    // there silently turns the Guide's promise about what an answer holds into
+    // a lie. Each figure is read out of its own clause.
+    route: "/assessments",
+    want: "the coding answer cap",
+    guide: /A coding answer holds at most ([\d,]+) characters/,
+    sources: [
+      { rel: "src/modules/assessment/domain/coding.ts", pattern: /export const CODE_ANSWER_CAP = ([\d_]+);/ },
+    ],
+  },
+  {
+    route: "/assessments",
+    want: "the coding starter cap",
+    guide: /starter is optional and holds at most ([\d,]+) characters/,
+    sources: [
+      { rel: "src/modules/assessment/domain/coding.ts", pattern: /export const CODE_STARTER_CAP = ([\d_]+);/ },
+    ],
+  },
+  {
     route: "/jobs",
     want: "the requisition's skill ceiling",
     guide: /A requisition lists at most ([\d,]+) skills/,

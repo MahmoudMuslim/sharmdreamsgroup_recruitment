@@ -88,6 +88,11 @@ const MIGRATIONS = [
     file: "038_interview_notes.sql",
     asks: "select to_regclass('public.interview_notes') is not null as present",
   },
+  {
+    file: "039_coding_questions.sql",
+    asks:
+      "select exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'question_type' and e.enumlabel = 'CODING') as present",
+  },
 ];
 
 // ---------------------------------------------------------------------------

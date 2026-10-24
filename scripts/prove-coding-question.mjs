@@ -754,6 +754,20 @@ const codingPaper = {
   );
 }
 
+// ---------------------------------------------------------------------------
+// The Guide states the coding rules, in the manual's own voice.
+// ---------------------------------------------------------------------------
+sourceHas("the Guide states the coding rules in the same voice as the rest", "src/modules/shell/domain/pageGuide.ts", [
+  "A coding answer holds at most",
+  "never compiled",
+  "039_coding_questions.sql",
+]);
+check(
+  "the Guide names every language the picker offers, in order",
+  read("src/modules/shell/domain/pageGuide.ts").includes(CODING_LANGUAGES.join(", ")),
+  "a language missing from the Guide is a language the author cannot look up"
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
