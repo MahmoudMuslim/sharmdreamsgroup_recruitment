@@ -2841,6 +2841,39 @@ test("a figure that is not a number is reported absent, never guessed", async ()
   assert.deepEqual(answer.criteria, [{ ...CASE_LINES[0], marks: null, allowance: null, percent: null }]);
 });
 
+/* ---------------------------------------------------------------------------
+// A code answer reaches the desk as the source the candidate wrote, under the
+// language the author picked. The desk's read is the only place that mapping
+// happens, so it is proved here rather than pinned in the source.
+ * --------------------------------------------------------------------------- */
+const CODE_SOURCE = "def flatten(xs):\n    return [x for x in xs]";
+const codingDesk = (overrides = {}, harnessOptions = {}) =>
+  deskHarness({
+    ...harnessOptions,
+    questions: [
+      deskQuestion({ id: "q-code", question_type: "CODING", config: { language: "Python" }, ...overrides }),
+    ],
+    responses: [deskResponse(undefined, { question_id: "q-code", answer_text: CODE_SOURCE })],
+  });
+
+test("the desk carries a code answer as it was written, under its language", async () => {
+  const answer = await codingDesk().answer();
+  assert.equal(answer.question_type, "CODING");
+  assert.equal(answer.answer_text, CODE_SOURCE);
+  assert.equal(answer.language, "Python");
+});
+
+test("a code answer whose question names no language carries no language", async () => {
+  const answer = await codingDesk({ config: {} }).answer();
+  assert.equal(answer.language, null, "a missing language must not become the word null");
+});
+
+test("a code answer keeps its language where the marks are withheld", async () => {
+  const masked = await codingDesk({}, { masked: true }).answer();
+  assert.equal(masked.score, null, "the mark stays hidden");
+  assert.equal(masked.language, "Python", "the language is a label, not a mark");
+});
+
 test("the side-by-side comparison carries each paper's own per-criterion marks", async () => {
   const h = deskHarness({
     attempts: [deskAttempt(1), deskAttempt(2)],

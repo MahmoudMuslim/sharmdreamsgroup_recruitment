@@ -16,6 +16,7 @@ import {
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
 import { readJudgmentScore } from "@/modules/assessment/domain/situational";
+import { codingLanguageOf } from "@/modules/assessment/domain/coding";
 import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
 import {
   readTemplateItemStats,
@@ -529,6 +530,8 @@ interface QuestionRow {
     initial_sheet?: { data?: (string | number | null)[][] };
     context?: string;
     min_words?: number;
+    /** CODING only: the closed language list entry the author picked. */
+    language?: string;
   } | null;
   points: number;
   position: number;
@@ -747,6 +750,11 @@ async function readAttemptAnswers(
         question.question_type === "SITUATIONAL_JUDGMENT"
           ? null
           : typed || null,
+      // The language a code answer was written in, read from the question's
+      // own config. Null for every other type, and null for a code question
+      // whose author named no language — the desk then reads it as plain text.
+      language:
+        question.question_type === "CODING" ? codingLanguageOf(question.config) : null,
       options: arranged,
       chosen_text: arranged.find((option) => option.chosen)?.text ?? null,
       // A judgment scene has no right option to name — every response is scored

@@ -507,6 +507,44 @@ test("an untagged paper prints no skill block", async () => {
   ui.unmount();
 });
 
+/* ---------------------------------------------------------------------------
+// A code answer is read, never run: the desk prints the source the candidate
+// wrote as text, in one preformatted block, and never as prose.
+ * --------------------------------------------------------------------------- */
+const CODE_SOURCE = "def flatten(xs):\n    return [x for x in xs]";
+const codeAnswer = (overrides = {}) =>
+  answer({ question_type: "CODING", answer_text: CODE_SOURCE, language: "Python", words: null, ...overrides });
+
+test("the desk prints a code answer as the source it was written in", async () => {
+  const ui = await desk(paper([codeAnswer()]));
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(blocks.length, 1, "the code is printed in one preformatted block");
+  assert.equal(ui.textOf(blocks[0]), CODE_SOURCE, "the source is printed as it was written");
+  // The prose branch cannot print it as well.
+  assert.equal(ui.nodes().filter((node) => node.type === "p" && ui.textOf(node) === CODE_SOURCE).length, 0);
+  assert.match(ui.text(), /python/, "the language the author picked is named");
+  assert.match(ui.text(), /Coding/, "the sixth type is named as the others are");
+  ui.unmount();
+});
+
+test("a code answer with no language is printed without a label", async () => {
+  const ui = await desk(paper([codeAnswer({ language: null })]));
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(blocks.length, 1);
+  assert.equal(ui.textOf(blocks[0]), CODE_SOURCE);
+  assert.doesNotMatch(ui.text(), /\bnull\b/, "a missing language must not print the word null");
+  ui.unmount();
+});
+
+test("a withheld reviewer still reads the code, and still no mark", async () => {
+  const ui = await desk(paper([codeAnswer({ score: null, max_score: null })], { scores_masked: true }));
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(blocks.length, 1);
+  assert.equal(ui.textOf(blocks[0]), CODE_SOURCE);
+  assert.match(ui.text(), /Hidden/, "the mark stays hidden");
+  ui.unmount();
+});
+
 /* -------------------------------------------------------------------------- */
 /* 2. The comparison table                                                     */
 /* -------------------------------------------------------------------------- */
@@ -553,6 +591,32 @@ test("a withheld column keeps the criterion names and quotes but not the points"
 test("a paper without a scheme leaves the cell as it was", async () => {
   const ui = await compared(paper([answer({ criteria: [] })]), otherPaper([answer({ criteria: [] })]));
   assert.doesNotMatch(ui.text(), /Criterion marks/);
+  ui.unmount();
+});
+
+test("the comparison prints a code answer as the source it was written in", async () => {
+  const ui = await compared(
+    paper([codeAnswer()]),
+    otherPaper([codeAnswer()])
+  );
+  const blocks = ui.nodes().filter((node) => node.type === "pre");
+  assert.equal(blocks.length, 2, "one preformatted block per column");
+  for (const block of blocks) {
+    assert.equal(ui.textOf(block), CODE_SOURCE, "the source is printed as it was written");
+  }
+  // The prose branch cannot print it as well.
+  assert.equal(ui.nodes().filter((node) => node.type === "p" && ui.textOf(node) === CODE_SOURCE).length, 0);
+  assert.match(ui.text(), /Python/, "the language the author picked is named");
+  ui.unmount();
+});
+
+test("a code answer with no language is printed without a label", async () => {
+  const ui = await compared(
+    paper([codeAnswer({ language: null })]),
+    otherPaper([codeAnswer({ language: null })])
+  );
+  assert.equal(ui.nodes().filter((node) => node.type === "pre").length, 2);
+  assert.doesNotMatch(ui.text(), /\bnull\b/, "a missing language must not print the word null");
   ui.unmount();
 });
 

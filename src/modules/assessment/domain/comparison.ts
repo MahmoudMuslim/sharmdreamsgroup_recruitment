@@ -10,7 +10,8 @@ export interface ComparisonSelection {
 export type ComparisonAnswer = Pick<AttemptAnswer,
   "question_id" | "title" | "prompt" | "question_type" | "answered" |
   "answer_text" | "chosen_text" | "cells" | "video_url" | "transcript" |
-  "score" | "max_score" | "rationale" | "strengths" | "improvements" | "criteria"
+  "score" | "max_score" | "rationale" | "strengths" | "improvements" | "criteria" |
+  "language"
 >;
 
 export type ComparisonPaper = Pick<AttemptAnswers,
@@ -57,6 +58,9 @@ export function comparisonPaper(paper: AttemptAnswers): ComparisonPaper {
       cells: answer.cells,
       video_url: answer.video_url,
       transcript: answer.transcript,
+      // The language a code answer was written in, so the drawer can label it.
+      // It is a label, not a mark: it survives a masked paper unchanged.
+      language: answer.language,
       score: paper.scores_masked ? null : answer.score,
       max_score: paper.scores_masked ? null : answer.max_score,
       rationale: answer.rationale,

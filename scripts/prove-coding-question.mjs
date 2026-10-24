@@ -625,6 +625,123 @@ check(
   credentialCopy
 );
 
+// ---------------------------------------------------------------------------
+// Every surface that shows a code answer shows it as text.
+// ---------------------------------------------------------------------------
+sourceHas("the answer shape carries a language", "src/modules/assessment/domain/attemptAnswers.ts", [
+  "language",
+]);
+sourceHas("the comparison carries a language", "src/modules/assessment/domain/comparison.ts", [
+  "language",
+]);
+sourceHas("the reading desk prints code preformatted", "src/app/(admin)/assessments/IssuedLinksBoard.tsx", [
+  "<pre",
+  "codingFenceTag",
+]);
+sourceHas("the comparison drawer prints code preformatted", "src/app/(admin)/assessments/ComparisonDrawer.tsx", [
+  "<pre",
+  "language",
+]);
+check(
+  "no review surface renders an answer as HTML",
+  !/dangerouslySetInnerHTML/.test(
+    read("src/app/(admin)/assessments/IssuedLinksBoard.tsx") +
+      read("src/app/(admin)/assessments/ComparisonDrawer.tsx")
+  ),
+  "an answer is text and must be rendered as text"
+);
+
+// The two reading surfaces name the sixth type the way they name the other
+// five, and each prints the answer in one block: a code answer is never
+// printed twice, and the prose branch can never print it at all.
+const deskSource = read("src/app/(admin)/assessments/IssuedLinksBoard.tsx");
+const drawerSource = read("src/app/(admin)/assessments/ComparisonDrawer.tsx");
+sourceHas("the reading desk names the sixth type", "src/app/(admin)/assessments/IssuedLinksBoard.tsx", [
+  "CODING: { word:",
+]);
+check(
+  "the desk prints a code answer in one block, not two",
+  (deskSource.match(/<pre/g) ?? []).length === 1 &&
+    deskSource.includes('answer.question_type === "CODING"'),
+  "one preformatted block, and the prose branch cannot print a code answer"
+);
+check(
+  "the drawer prints a code answer in one block, not two",
+  (drawerSource.match(/<pre/g) ?? []).length === 1 &&
+    drawerSource.includes('answer.question_type === "CODING"'),
+  "one preformatted block, and the prose branch cannot print a code answer"
+);
+// A code answer whose question carries no language must read as plain text:
+// no label, and never the word "null".
+check(
+  "the desk prints no language label when there is no language",
+  /answer\.language\s*\?/.test(deskSource),
+  "a null language must leave the block unlabelled rather than print null"
+);
+check(
+  "the drawer prints no language label when there is no language",
+  /answer\.language\s*\?/.test(drawerSource),
+  "a null language must leave the block unlabelled rather than print null"
+);
+
+// The comparison mapping is pure, so it can be asked what it carries.
+const { comparisonPaper } = await import(
+  pathToFileURL(path.join(root, "src/modules/assessment/domain/comparison.ts")).href
+);
+const CODE_ANSWER = "def flatten(xs):\n    return [x for x in xs]";
+const codingPaper = {
+  attempt_id: "attempt-1",
+  candidate_name: "Candidate 1",
+  identity_blind: false,
+  job_title: "Front office",
+  template_name: "Front office",
+  status: "GRADED",
+  scores_masked: false,
+  score: 8,
+  max_score: 10,
+  answers: [{
+    question_id: "q-code",
+    title: "Flatten a list",
+    prompt: "Write the function.",
+    question_type: "CODING",
+    answered: true,
+    answer_text: CODE_ANSWER,
+    language: "Python",
+    chosen_text: null,
+    cells: [],
+    video_url: null,
+    transcript: null,
+    score: 8,
+    max_score: 10,
+    rationale: null,
+    strengths: [],
+    improvements: [],
+    criteria: [],
+  }],
+};
+{
+  const mapped = comparisonPaper(codingPaper).answers[0];
+  check(
+    "the comparison carries a code answer as it was written",
+    mapped.answer_text === CODE_ANSWER,
+    String(mapped.answer_text)
+  );
+  check(
+    "the comparison carries the language the author picked",
+    mapped.language === "Python",
+    String(mapped.language)
+  );
+  const unlabelled = comparisonPaper({
+    ...codingPaper,
+    answers: [{ ...codingPaper.answers[0], language: null }],
+  }).answers[0];
+  check(
+    "a code answer with no language carries none, not the word null",
+    unlabelled.language === null,
+    String(unlabelled.language)
+  );
+}
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);

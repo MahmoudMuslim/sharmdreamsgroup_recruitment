@@ -7,6 +7,7 @@ import {
   Check,
   CircleDot,
   Clock,
+  FileCode2,
   FileText,
   Loader2,
   Play,
@@ -44,6 +45,7 @@ import {
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
 import { blindMarkingNote } from "@/modules/assessment/domain/blindMarking";
+import { codingFenceTag } from "@/modules/assessment/domain/coding";
 import { comparisonSelectionIssue } from "@/modules/assessment/domain/comparison";
 import {
   rollUpSkillEvidence,
@@ -58,6 +60,7 @@ const TYPE_META: Record<string, { word: string; icon: LucideIcon }> = {
   EXCEL_MODEL: { word: "Spreadsheet model", icon: Table2 },
   VIDEO_PITCH: { word: "Video pitch", icon: Video },
   SITUATIONAL_JUDGMENT: { word: "Judgment scene", icon: Scale },
+  CODING: { word: "Coding", icon: FileCode2 },
 };
 
 function statusTone(status: string): "neutral" | "gold" | "success" | "danger" | "info" {
@@ -831,9 +834,25 @@ function AnswerCard({
 
         {answer.answer_text && (
           <div className="mt-2 rounded-lg border border-brand-line bg-white p-3">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-brand-ink/80">
-              {answer.answer_text}
-            </p>
+            {answer.question_type === "CODING" ? (
+              <>
+                {/* A code answer is read, never run: it is printed as the text
+                    the candidate wrote, in a block that keeps its own line
+                    breaks, and never as markup. */}
+                {answer.language ? (
+                  <p className="text-[11px] font-medium text-brand-ink/45">
+                    {codingFenceTag(answer.language)}
+                  </p>
+                ) : null}
+                <pre className="mt-1 whitespace-pre-wrap font-mono text-sm leading-relaxed text-brand-ink/80">
+                  {answer.answer_text}
+                </pre>
+              </>
+            ) : (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-brand-ink/80">
+                {answer.answer_text}
+              </p>
+            )}
             {answer.words !== null && (
               <p className="mt-2 text-[11px] text-brand-ink/45">
                 {answer.words} word{answer.words === 1 ? "" : "s"}

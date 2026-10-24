@@ -94,6 +94,14 @@ export interface AttemptAnswer {
   min_words: number | null;
   words: number | null;
 
+  /**
+   * CODING only: the language the author picked, for the fence label.
+   *
+   * Null when the question carries no language — a code answer then reads as
+   * plain text, with no label rather than a guess.
+   */
+  language: string | null;
+
   video_url: string | null;
   duration_seconds: number | null;
   /** The whole transcript, unclipped. */
