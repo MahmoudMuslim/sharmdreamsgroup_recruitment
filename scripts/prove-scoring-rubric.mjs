@@ -366,6 +366,55 @@ test("a coding question reaches the runner with its language and starter, and no
   });
 });
 
+test("a reloaded code answer lands in its own map, not among the case answers", async () => {
+  const codingRow = {
+    id: "q-code",
+    template_id: "suite-1",
+    question_type: "CODING",
+    title: "Flatten a nested list",
+    prompt: "Write a function that flattens arbitrary nesting.",
+    points: 10,
+    position: 1,
+    config: { language: "Python", starter_code: "def flatten(x):" },
+  };
+  const { get } = harness(
+    {
+      candidate_attempts: [attemptRow],
+      assessment_templates: [{ id: "suite-1", name: "Front office" }],
+      assessment_questions: [paperRows[0], codingRow],
+      candidate_responses: [
+        {
+          id: "r-case",
+          attempt_id: "attempt-1",
+          question_id: "q-case",
+          answer_text: "The competitor took the conference contract.",
+          spreadsheet_state: null,
+          video_path: null,
+        },
+        {
+          id: "r-code",
+          attempt_id: "attempt-1",
+          question_id: "q-code",
+          answer_text: "def flatten(x): return []",
+          spreadsheet_state: null,
+          video_path: null,
+        },
+      ],
+    },
+    { questionOrder: ["q-case", "q-code"] }
+  );
+  const response = await get("token-1");
+  assert.equal(response.status, 200);
+  // The case map must not carry the code answer, and the code map must not
+  // carry the case answer: a merged or swapped split fails both.
+  assert.deepEqual({ ...response.body.draft.case_study_answers_map }, {
+    "q-case": "The competitor took the conference contract.",
+  });
+  assert.deepEqual({ ...response.body.draft.code_answers_map }, {
+    "q-code": "def flatten(x): return []",
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 2. What an author may save
 // ---------------------------------------------------------------------------

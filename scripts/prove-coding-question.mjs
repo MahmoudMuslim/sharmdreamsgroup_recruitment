@@ -383,16 +383,42 @@ check("a drafted coding row leaves the preserved config alone", codingRow.preser
 // The store keeps the two written maps apart.
 // ---------------------------------------------------------------------------
 const storeSource = read("src/stores/useAssessmentStore.ts");
+
+// A pin on the whole file passes on an identifier the import alone supplies, so
+// each claim below is read out of the one method it is about.
+function between(source, start, end) {
+  const from = source.indexOf(start);
+  if (from === -1) return "";
+  const to = source.indexOf(end, from + start.length);
+  return to === -1 ? source.slice(from) : source.slice(from, to);
+}
+
+const syncDraftBody = between(storeSource, "async syncDraft()", "async submitAttempt()");
 check(
-  "the store saves the two maps in one request",
-  /case_study_answers_map/.test(storeSource) && /code_answers_map/.test(storeSource),
-  "both maps must travel in syncDraft"
+  "the store saves the two maps in syncDraft's one request",
+  syncDraftBody.includes("case_study_answers_map: state.caseStudyAnswersMap") &&
+    syncDraftBody.includes("code_answers_map: state.codeAnswersMap"),
+  "syncDraft must put code_answers_map: state.codeAnswersMap beside the case map"
 );
-check(
-  "the store refuses an over-cap answer before the network",
-  /codeAnswersOverCap|codeAnswerOverCap/.test(storeSource),
-  "submitAttempt must refuse locally"
-);
+
+const submitBody = between(storeSource, "async submitAttempt()", "}));");
+{
+  // The refusal must sit inside submitAttempt, after the early return it shares
+  // with every other method, and before anything leaves the browser: the
+  // isSubmitting latch and the video uploads.
+  const guard = submitBody.indexOf("submittedAt) return;");
+  const detection = submitBody.indexOf("codeAnswersOverCap(");
+  const refusal = submitBody.indexOf("codeAnswerOverCapMessage(overCap)");
+  const latch = submitBody.indexOf("isSubmitting: true");
+  const upload = submitBody.indexOf("/video?questionId");
+  check(
+    "the store refuses an over-cap answer before the network",
+    guard !== -1 && detection !== -1 && refusal !== -1 && latch !== -1 && upload !== -1 &&
+      guard < detection && detection < latch && detection < upload &&
+      refusal < latch && refusal < upload,
+    `guard=${guard} detection=${detection} refusal=${refusal} isSubmitting=${latch} video=${upload}`
+  );
+}
 check(
   "the store does not merge code into the case map",
   !/case_study_answers_map:\s*\{[^}]*code_answers_map/s.test(storeSource),
