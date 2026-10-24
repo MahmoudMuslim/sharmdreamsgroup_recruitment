@@ -2317,6 +2317,31 @@ test("the suite read names the marking scheme among what it returns", () => {
   assert.match(registryHarness().suiteDescription, /marking scheme|criteria|rubric/i);
 });
 
+test("the chat passes a criterion's skill id through to the write door", async () => {
+  const h = registryHarness();
+  const result = await h.saveQuestion({
+    rubric: [
+      { label: "Diagnoses the cause", weight: 40, skill_id: "s-fin" },
+      { label: "Structure", weight: 60 },
+    ],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(h.saved[0].rubric[0].skill_id, "s-fin");
+  assert.equal("skill_name" in h.saved[0].rubric[0], false);
+});
+
+test("the argument copy names the optional skill tag", () => {
+  const words = registryHarness().questionArgs.rubric;
+  assert.match(words, /skill_id/);
+  assert.match(words, /catalogue/i);
+});
+
+test("the Guide says a percentage is not a proficiency level", () => {
+  const guide = read("src/modules/shell/domain/pageGuide.ts");
+  assert.match(guide, /not a proficiency level|never a 1–5 level/);
+  assert.match(guide, /skill tag|tied to a skill|names one skill/i);
+});
+
 // ---------------------------------------------------------------------------
 // 12. Carrying a criterion's skill tag
 //

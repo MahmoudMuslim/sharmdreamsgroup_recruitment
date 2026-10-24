@@ -93,7 +93,7 @@ export const authoring: readonly AssistantTool[] = [
     name: "save_question",
     label: "Saving a question",
     description:
-      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct. A CASE_STUDY or VIDEO_PITCH can carry a marking scheme — the named criteria its answer is marked against, which the grader scores one by one and reports with the evidence it quoted.",
+      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct. A CASE_STUDY or VIDEO_PITCH can carry a marking scheme — the named criteria its answer is marked against, which the grader scores one by one and reports with the evidence it quoted. A criterion may name one skill from the catalogue; the assessment report then totals the marks each skill earned across the paper.",
     args: {
       id: "string — optional, the question being edited",
       template_id: "string — suite id",
@@ -112,7 +112,7 @@ export const authoring: readonly AssistantTool[] = [
       min_duration_seconds: "number — optional, video pitch minimum",
       max_duration_seconds: "number — optional, video pitch maximum",
       rubric:
-        "object[] — CASE_STUDY and VIDEO_PITCH only: the marking scheme, [{\"label\":\"Diagnoses the cause\",\"weight\":40,\"description\":\"Names the driver before proposing anything\"}, …]. Two to six criteria, and their weights are shares of the question's marks adding to 100. Leave it out to keep the scheme already stored; send [] to retire it.",
+        "object[] — CASE_STUDY and VIDEO_PITCH only: the marking scheme, [{\"label\":\"Diagnoses the cause\",\"weight\":40,\"description\":\"Names the driver before proposing anything\",\"skill_id\":\"optional catalogue skill id\"}, …]. Two to six criteria, and their weights are shares of the question's marks adding to 100. A criterion may name one skill from the skills catalogue by id; the write door checks the id and stores the catalogue's own spelling. An untagged criterion contributes to no skill's report. Leave the rubric out to keep the scheme already stored; send [] to retire it.",
       preserve_config: "object — optional, the config object exactly as read back",
     },
     run: async (args) => report(await saveQuestion(questionDraftFrom(args))),

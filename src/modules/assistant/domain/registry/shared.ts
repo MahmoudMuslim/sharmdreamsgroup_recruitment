@@ -659,6 +659,9 @@ function rubricDrafts(args: ToolArgs): RubricDraftRow[] {
     label: textField(row, "label"),
     weight: numberField(row.weight),
     description: textField(row, "description"),
+    // The id only: the write door resolves the catalogue's spelling, so a chat
+    // model cannot name a skill the catalogue does not hold.
+    skill_id: textField(row, "skill_id"),
   }));
 }
 
