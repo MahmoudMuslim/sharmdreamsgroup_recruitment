@@ -21,6 +21,7 @@ import {
   type AuthoringBrief,
   type SuiteSeedingContext,
 } from "@/modules/assessment/domain/aiAuthoring";
+import { readDemonstratedSkills, type CatalogueSkill } from "@/modules/jobs/domain/openingSkills";
 import type {
   CvScreeningResult,
   RubricCriterion,
@@ -65,12 +66,18 @@ function anonymizeCvText(text: string): { text: string; anonymized: boolean } {
  * `anonymize` carries the `ai.bias_reduction` setting. When it is off the model
  * receives the CV exactly as the candidate submitted it, and the prompt labels
  * the block accordingly rather than still calling it anonymized.
+ *
+ * `skills` is the live catalogue, and it is the only vocabulary the answer is
+ * read in. The model is shown the names and answers with names, because it has
+ * no business inventing a uuid; the domain turns each answer back into its row
+ * and drops what the catalogue does not hold. With an empty list nothing is asked
+ * and nothing is returned — a screener with no vocabulary must not improvise one.
  */
 export async function screenCandidateCv(
   jobTitle: string,
   jobRequirements: string[],
   cvText: string,
-  { anonymize }: { anonymize: boolean }
+  { anonymize, skills = [] }: { anonymize: boolean; skills?: readonly CatalogueSkill[] }
 ): Promise<CvScreeningResult> {
   const { text: cvSection, anonymized } = anonymize
     ? anonymizeCvText(cvText)
@@ -80,12 +87,24 @@ export async function screenCandidateCv(
 Return ONLY valid JSON matching the CvScreeningResult schema. No markdown, no commentary.
 Be objective, focus on skills and experience. Ignore demographic information.`;
 
+  const skillsBlock =
+    skills.length > 0
+      ? `
+
+SKILLS THE PORTAL KEEPS (this is the whole list — quote a name from it exactly, and never invent one):
+${skills.map((skill) => `- ${skill.name}`).join("\n")}
+
+For each skill the CV actually evidences, add "demonstrated_skills": [{"skill": "<name from the list>", "level": number}].
+Level is 1 (novice) to 5 (expert). Leave a skill out when the CV says nothing about it — absence is not a low level.`
+      : "";
+
   const userPrompt = `JOB TITLE: ${jobTitle}
 REQUIREMENTS:
 ${jobRequirements.map((r) => `- ${r}`).join("\n")}
 
 CANDIDATE CV${anonymize ? " (ANONYMIZED)" : ""}:
 ${cvSection}
+${skillsBlock}
 
 Evaluate and return:
 {
@@ -95,7 +114,7 @@ Evaluate and return:
   "key_competencies": string[],
   "strengths": string[],
   "gaps": string[],
-  "anonymization_applied": boolean,
+${skills.length > 0 ? '  "demonstrated_skills": [{"skill": "string", "level": number}],\n' : ""}  "anonymization_applied": boolean,
   "model_used": string
 }`;
 
@@ -112,7 +131,12 @@ Evaluate and return:
 
   const result = await complete(request);
   const parsed = parseJsonResponse<CvScreeningResult>(result.content, { truncated: result.truncated });
-  return { ...parsed, anonymization_applied: anonymized, model_used: result.model };
+  return {
+    ...parsed,
+    demonstrated_skills: readDemonstratedSkills(parsed.demonstrated_skills, skills),
+    anonymization_applied: anonymized,
+    model_used: result.model,
+  };
 }
 
 /**

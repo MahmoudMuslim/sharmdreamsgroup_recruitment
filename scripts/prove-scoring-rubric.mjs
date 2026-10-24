@@ -1601,12 +1601,33 @@ const screeningCompiled = ts.transpileModule(
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }
 ).outputText;
 
+/**
+ * The skills domain, loaded from source rather than stubbed.
+ *
+ * The same engine that asks for the rubric bands asks what a CV demonstrated,
+ * and the module that decides which catalogue names may be recorded is that
+ * domain's own rule. Stubbing it would test the stub; it imports nothing, so it
+ * loads with no boundaries at all.
+ */
+const skillsDomain = (() => {
+  const output = ts.transpileModule(read("src/modules/jobs/domain/openingSkills.ts"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const loaded = {};
+  new Script(output).runInNewContext(
+    { exports: loaded, require: (name) => { throw new Error(`the skills domain should not require ${name}`); } },
+    { timeout: 5000 }
+  );
+  return loaded;
+})();
+
 function engineHarness(response = { bands: [] }) {
   const requests = [];
   const exports = {};
   const context = {
     exports,
     require: (name) => {
+      if (name === "@/modules/jobs/domain/openingSkills") return skillsDomain;
       if (name === "@/modules/screening/infrastructure/aiGateway") {
         return {
           complete: async (request) => {

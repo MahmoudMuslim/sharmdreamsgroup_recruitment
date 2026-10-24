@@ -4,6 +4,7 @@
  */
 
 import type { GateAnswer } from "@/modules/careers/gate-questions";
+import type { DemonstratedSkill } from "@/modules/jobs/domain/openingSkills";
 
 // ---------------------------------------------------------------------------
 // Enums (mirrored in db/schema.sql)
@@ -349,6 +350,13 @@ export interface CvScreeningResult {
   gaps: string[];
   anonymization_applied: boolean;
   model_used: string;
+  /**
+   * What the CV showed, in the portal's own catalogue ids.
+   *
+   * Only ever a skill the `skills` master list holds, at a level on the 1..5
+   * scale — the shape `candidate_skills` stores and the applicants drawer reads.
+   */
+  demonstrated_skills?: DemonstratedSkill[];
 }
 
 export interface SentimentAnalysisResult {

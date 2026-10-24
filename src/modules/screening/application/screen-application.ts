@@ -11,6 +11,8 @@ import {
 } from "@/modules/settings/infrastructure/settingsReader";
 import { notifyStageChange } from "@/modules/omnichannel/application/candidate-notifications";
 import { humanizeStage } from "@/modules/settings/domain/templates";
+import { getSkillsCatalogue } from "@/modules/jobs/application/openingSkillsRead";
+import type { DemonstratedSkill } from "@/modules/jobs/domain/openingSkills";
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
 import { TruncatedJsonResponseError } from "@/modules/screening/infrastructure/aiGateway";
 import {
@@ -223,7 +225,8 @@ async function cvTextFromStorage(path: string): Promise<string> {
 /**
  * Runs the bias-reduced CV screening engine on one application and persists
  * the result. A NEW application moves to AI_SCREENING; later stages are left
- * alone so a re-screen never rewinds the pipeline.
+ * alone so a re-screen never rewinds the pipeline. The skills the master list
+ * recognised in the CV are recorded against the application as evidence.
  */
 export async function screenApplicationById(applicationId: string): Promise<ScreeningOutcome> {
   if (!hasAiProvider()) {
@@ -272,9 +275,16 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
   // be able to answer after the fact.
   const anonymize = await getBoolSetting("ai.bias_reduction", true);
 
+  // The engine answers in names, so it is shown only the names the catalogue
+  // actually holds: a skill the master-data console struck off must not come back
+  // onto a candidate's record. A read that fails costs the skills and nothing
+  // else — the score, the summary and the stage move are the screening result.
+  const catalogue = await getSkillsCatalogue(restClient);
+  const offered = catalogue.available ? catalogue.skills : [];
+
   let result: CvScreeningResult;
   try {
-    result = await screenCandidateCv(jobTitle, requirements, cvText, { anonymize });
+    result = await screenCandidateCv(jobTitle, requirements, cvText, { anonymize, skills: offered });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown model error";
     return { ok: false, error: `Screening failed: ${detail.slice(0, 200)}` };
@@ -295,9 +305,44 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
 
   if (updateError) return { ok: false, error: updateError.message };
 
+  // What the CV showed, recorded against the application. Until now the only
+  // writer of `candidate_skills` was the sourcing convert, which stores a skill
+  // with no level at all, so the applicants drawer could only ever answer
+  // "no evidence" beside a requirement. Supplementary by design — a row the
+  // database refuses costs the evidence, never the screening the recruiter
+  // already spent a model call on.
+  const demonstrated: DemonstratedSkill[] = result.demonstrated_skills ?? [];
+  const recorded: DemonstratedSkill[] = [];
+  let skillsError: string | null = null;
+  if (demonstrated.length > 0) {
+    const { error } = await restClient
+      .from("candidate_skills")
+      .upsert(
+        demonstrated.map((skill) => ({
+          application_id: applicationId,
+          skill_id: skill.skill_id,
+          proficiency: skill.proficiency,
+          source: "AI_SCREENING",
+        })),
+        // The table's own primary key: one row per candidate per skill, so a
+        // re-screen replaces the level it recorded last time instead of clashing
+        // with it — and a skill the convert copied off a sourced profile takes
+        // the CV's level and this engine's source, since the row can only carry
+        // whoever read it most recently.
+        { onConflict: "application_id,skill_id" }
+      );
+    if (error) skillsError = error.message;
+    else recorded.push(...demonstrated);
+  }
+
   const actor = await screeningActor();
   const candidateName = application.full_name ?? "The candidate";
   const startedAtNew = application.stage === "NEW";
+  const names = new Map(offered.map((skill) => [skill.id, skill.name]));
+  const recordedClause =
+    recorded.length === 0
+      ? ""
+      : `, recorded ${recorded.length} ${recorded.length === 1 ? "skill" : "skills"} the catalogue names`;
 
   await recordActivity({
     ...actor,
@@ -305,7 +350,7 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
     action: "cv_screened",
     entity: "application",
     entityId: applicationId,
-    summary: `Screened ${candidateName}'s CV for ${jobTitle}: ${score}% match, read as ${DECISION_WORDS[result.decision]}${startedAtNew ? ", so the application moved to AI screening" : ""}`,
+    summary: `Screened ${candidateName}'s CV for ${jobTitle}: ${score}% match, read as ${DECISION_WORDS[result.decision]}${recordedClause}${startedAtNew ? ", so the application moved to AI screening" : ""}`,
     detail: {
       score,
       decision: result.decision,
@@ -316,6 +361,11 @@ export async function screenApplicationById(applicationId: string): Promise<Scre
       cv_characters: cvText.length,
       strengths: result.strengths.length,
       gaps: result.gaps.length,
+      demonstrated_skills: recorded.map((skill) => ({
+        skill: names.get(skill.skill_id) ?? skill.skill_id,
+        level: skill.proficiency,
+      })),
+      ...(skillsError ? { skills_write_failed: skillsError.slice(0, 200) } : {}),
     },
   });
 
