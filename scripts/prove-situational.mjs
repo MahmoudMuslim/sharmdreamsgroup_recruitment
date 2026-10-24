@@ -551,7 +551,14 @@ check(
 // ---------------------------------------------------------------------------
 function sourceHas(label, rel, needles) {
   const text = read(rel);
-  const missing = needles.filter((needle) => !text.includes(needle));
+  // A needle may be prose that the source wraps across lines, and a comment
+  // that is rewrapped must not read as a missing behaviour. Joining wrapped
+  // lines — dropping the comment markers between them — keeps the pin about
+  // the words rather than about where the editor put the newline.
+  const flat = text.replace(/\r\n/g, "\n").replace(/\n\s*\*+\s?/g, " ").replace(/\s+/g, " ");
+  const missing = needles.filter(
+    (needle) => !text.includes(needle) && !flat.includes(needle.replace(/\s+/g, " "))
+  );
   check(
     label,
     missing.length === 0,
