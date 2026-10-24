@@ -7,6 +7,7 @@ interface DraftBody {
   time_remaining_seconds?: number;
   spreadsheet_data_map?: Record<string, Record<string, SpreadsheetCellData>>;
   case_study_answers_map?: Record<string, string>;
+  code_answers_map?: Record<string, string>;
   choice_answers_map?: Record<string, string>;
   video_paths_map?: Record<string, string>;
 }
@@ -53,11 +54,22 @@ export async function PUT(request: Request, { params }: { params: Promise<{ toke
   }
   for (const [questionId, text] of Object.entries(body.case_study_answers_map ?? {})) {
     const question = questionById.get(questionId);
-    if (!question) continue;
+    if (!question || question.question_type !== "CASE_STUDY") continue;
     upserts.push({
       attempt_id: attempt.id,
       question_id: questionId,
       answer_text: text,
+      max_score: question.points,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  for (const [questionId, answerText] of Object.entries(body.code_answers_map ?? {})) {
+    const question = questionById.get(questionId);
+    if (!question || question.question_type !== "CODING") continue;
+    upserts.push({
+      attempt_id: attempt.id,
+      question_id: questionId,
+      answer_text: answerText,
       max_score: question.points,
       updated_at: new Date().toISOString(),
     });

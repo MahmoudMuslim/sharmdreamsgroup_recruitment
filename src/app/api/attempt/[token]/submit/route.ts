@@ -5,11 +5,13 @@ import { recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import { NextResponse } from "next/server";
 import { judgeChoice } from "@/modules/assessment/domain/situational";
+import { codeAnswerOverCapMessage, codeAnswersOverCap } from "@/modules/assessment/domain/coding";
 import type { QuestionConfig, SpreadsheetCellData } from "@/types";
 
 interface SubmitBody {
   spreadsheet_data_map?: Record<string, Record<string, SpreadsheetCellData>>;
   case_study_answers_map?: Record<string, string>;
+  code_answers_map?: Record<string, string>;
   choice_answers_map?: Record<string, string>;
   video_paths_map?: Record<string, string>;
   time_remaining_seconds?: number;
@@ -38,9 +40,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 
   const { data: questions } = await restClient
     .from("assessment_questions")
-    .select("id, question_type, points, config")
+    .select("id, question_type, points, title, config")
     .eq("template_id", attempt.template_id);
   const questionById = new Map((questions ?? []).map((q) => [q.id, q]));
+
+  // The store refuses an over-cap answer before it leaves the browser, but a
+  // stale client must not be trusted: the refusal is repeated before any write.
+  const overCapTitle = codeAnswersOverCap(
+    body.code_answers_map ?? {},
+    new Map((questions ?? []).map((q) => [q.id, q.title]))
+  );
+  if (overCapTitle) {
+    return NextResponse.json({ error: codeAnswerOverCapMessage(overCapTitle) }, { status: 400 });
+  }
 
   const responseRows: Record<string, unknown>[] = [];
   let totalScore = 0;
@@ -75,12 +87,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 
   for (const [questionId, text] of Object.entries(body.case_study_answers_map ?? {})) {
     const question = questionById.get(questionId);
-    if (!question || handled.has(questionId)) continue;
+    if (!question || question.question_type !== "CASE_STUDY" || handled.has(questionId)) continue;
     maxScore += question.points;
     responseRows.push({
       attempt_id: attempt.id,
       question_id: questionId,
       answer_text: text,
+      max_score: question.points,
+      updated_at: new Date().toISOString(),
+    });
+    handled.add(questionId);
+  }
+
+  for (const [questionId, answerText] of Object.entries(body.code_answers_map ?? {})) {
+    const question = questionById.get(questionId);
+    if (!question || question.question_type !== "CODING" || handled.has(questionId)) continue;
+    maxScore += question.points;
+    responseRows.push({
+      attempt_id: attempt.id,
+      question_id: questionId,
+      answer_text: answerText,
       max_score: question.points,
       updated_at: new Date().toISOString(),
     });

@@ -416,6 +416,220 @@ test("a reloaded code answer lands in its own map, not among the case answers", 
 });
 
 // ---------------------------------------------------------------------------
+// 1b. The write doors — a code answer is stored as written prose
+//
+// The draft (`PUT`) and submit (`POST`) routes are run against the same kind of
+// synthetic database the GET harness uses. `upsert` is the call that stores an
+// answer, so it is captured with exactly what the route asked it to write.
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs the real draft (`PUT`) or submit (`POST`) route against a synthetic
+ * database. The fake client is a thenable chain like the GET harness above;
+ * `upsert` resolves immediately and records exactly what the route asked the
+ * database to store, so the assertions are about rows, not source shape.
+ */
+function writeHarness(tables, method) {
+  const upserts = [];
+  const updates = [];
+  const responses = [];
+  const rows = {
+    candidate_attempts: [],
+    assessment_questions: [],
+    candidate_responses: [],
+    applications: [],
+    ...tables,
+  };
+
+  const client = {
+    from(table) {
+      const query = { table, filters: [] };
+      const builder = {
+        select() {
+          return this;
+        },
+        eq(column, value) {
+          query.filters.push([column, value]);
+          return this;
+        },
+        update(values) {
+          query.values = values;
+          return this;
+        },
+        upsert(values, config) {
+          upserts.push({ table, values, config });
+          return Promise.resolve({ data: null, error: null });
+        },
+        single() {
+          query.single = true;
+          return this;
+        },
+        maybeSingle() {
+          query.single = true;
+          return this;
+        },
+        then(resolve, reject) {
+          let found = [...(rows[table] ?? [])];
+          for (const [column, value] of query.filters) {
+            found = found.filter((row) => row[column] === value);
+          }
+          if (query.values) {
+            updates.push({ table, values: query.values });
+            return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+          }
+          return Promise.resolve({
+            data: query.single ? (found[0] ?? null) : found,
+            error: null,
+          }).then(resolve, reject);
+        },
+      };
+      return builder;
+    },
+  };
+
+  const bindings = {
+    "@/lib/data-api/service": { getServiceRestClient: () => client },
+    "@/modules/assessment/application/gradeAttempt": { gradeAttemptResponses: async () => ({}) },
+    "@/modules/activity/application/record": { recordActivity: async () => ({}) },
+    "@/modules/assessment/application/runner-trail": {
+      APPLICATION_EMBED: "applications ( id, stage, full_name, job_openings ( title ) )",
+      attemptContext: () => ({
+        applicationId: "app-1",
+        applicationStage: "SCREENING",
+        candidateName: "Salma Abdelrahim",
+        jobTitle: "Front office agent",
+      }),
+      runnerActor: (label) => ({ actorKind: "CANDIDATE", actorLabel: label, via: "assessment runner" }),
+    },
+    "@/modules/assessment/domain/situational": {
+      judgeChoice: () => ({ score: 0, rationale: "", strengths: [], improvements: [] }),
+    },
+    "@/modules/assessment/domain/coding": codingDomain,
+    "next/server": {
+      after: () => {},
+      NextResponse: {
+        json: (body, init) => {
+          const result = { body, status: init?.status ?? 200 };
+          responses.push(result);
+          return result;
+        },
+      },
+    },
+  };
+
+  const file =
+    method === "PUT"
+      ? "src/app/api/attempt/[token]/draft/route.ts"
+      : "src/app/api/attempt/[token]/submit/route.ts";
+  const compiled = ts.transpileModule(read(file), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const exports = {};
+  const context = {
+    exports,
+    require: (name) => {
+      if (!(name in bindings)) throw new Error(`Unmocked boundary: ${name}`);
+      return bindings[name];
+    },
+  };
+  new Script(compiled).runInNewContext(context, { timeout: 5000 });
+
+  return {
+    send: (body) =>
+      exports[method]({ json: async () => body }, { params: Promise.resolve({ token: "token-1" }) }),
+    upserts,
+    updates,
+    responses,
+  };
+}
+
+const codingAttempt = { ...attemptRow, application_id: "app-1" };
+const codingPaper = [
+  {
+    id: "q-code",
+    template_id: "suite-1",
+    question_type: "CODING",
+    title: "Flatten",
+    prompt: "Write it.",
+    points: 10,
+    position: 0,
+    config: { language: "Python" },
+  },
+  {
+    id: "q-case",
+    template_id: "suite-1",
+    question_type: "CASE_STUDY",
+    title: "Diagnose",
+    prompt: "Diagnose it.",
+    points: 10,
+    position: 1,
+    config: {},
+  },
+];
+const codingTables = () => ({
+  candidate_attempts: [codingAttempt],
+  assessment_questions: codingPaper,
+});
+
+test("the submit route stores a code answer as text", async () => {
+  const h = writeHarness(codingTables(), "POST");
+  const response = await h.send({
+    case_study_answers_map: { "q-case": "a case answer" },
+    code_answers_map: { "q-code": "print(1)" },
+  });
+  assert.notEqual(response.status, 400);
+  const written = h.upserts.find((entry) => entry.table === "candidate_responses");
+  assert.equal(written.values.length, 2);
+  // The rows were built inside the VM, so their arrays carry that realm's
+  // prototypes; serialising brings them home for a strict deep-equal.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(written.values.map((row) => [row.question_id, row.answer_text]).sort())),
+    [
+      ["q-case", "a case answer"],
+      ["q-code", "print(1)"],
+    ]
+  );
+});
+
+test("the submit route will not store a coding answer through the case door", async () => {
+  const h = writeHarness(codingTables(), "POST");
+  await h.send({ case_study_answers_map: { "q-code": "print(1)" } });
+  assert.equal(h.upserts.find((entry) => entry.table === "candidate_responses"), undefined);
+});
+
+test("the submit route will not store a case answer through the code door", async () => {
+  const h = writeHarness(codingTables(), "POST");
+  await h.send({ code_answers_map: { "q-case": "a case answer" } });
+  assert.equal(h.upserts.find((entry) => entry.table === "candidate_responses"), undefined);
+});
+
+test("an over-cap submission is refused by name and writes nothing", async () => {
+  const h = writeHarness(codingTables(), "POST");
+  const response = await h.send({
+    code_answers_map: { "q-code": "x".repeat(codingDomain.CODE_ANSWER_CAP + 1) },
+  });
+  assert.equal(response.status, 400);
+  assert.match(JSON.stringify(response.body), /Flatten/);
+  assert.deepEqual(h.upserts, []);
+  assert.deepEqual(h.updates, []);
+});
+
+test("the draft route saves a code answer under its own key", async () => {
+  const h = writeHarness(codingTables(), "PUT");
+  const response = await h.send({ code_answers_map: { "q-code": "print(1)" } });
+  assert.equal(response.status, 200);
+  const written = h.upserts.find((entry) => entry.table === "candidate_responses");
+  assert.equal(written.values.length, 1);
+  assert.equal(written.values[0].answer_text, "print(1)");
+});
+
+test("the draft route will not save a coding answer through the case door", async () => {
+  const h = writeHarness(codingTables(), "PUT");
+  await h.send({ case_study_answers_map: { "q-code": "print(1)" } });
+  assert.deepEqual(h.upserts, []);
+});
+
+// ---------------------------------------------------------------------------
 // 2. What an author may save
 // ---------------------------------------------------------------------------
 const threeCriteria = [

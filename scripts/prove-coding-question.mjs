@@ -427,6 +427,16 @@ check(
 sourceHas("the GET route splits by question type", "src/app/api/attempt/[token]/route.ts", [
   "splitCodingAnswers",
 ]);
+sourceHas("the draft route accepts the code map and guards both doors", "src/app/api/attempt/[token]/draft/route.ts", [
+  "code_answers_map",
+  'question_type !== "CASE_STUDY"',
+  'question_type !== "CODING"',
+]);
+sourceHas("the submit route selects the title its refusal names", "src/app/api/attempt/[token]/submit/route.ts", [
+  "code_answers_map",
+  "codeAnswerOverCapMessage",
+  '"id, question_type, points, title, config"',
+]);
 
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
