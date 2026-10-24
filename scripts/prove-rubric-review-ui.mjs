@@ -864,7 +864,15 @@ test("the language and starter travel with the save", () => {
   ui.unmount();
 });
 
-test("with 039 absent the drawer says so and cannot send the question", () => {
+test("an edit that leaves the starter untouched sends it back", () => {
+  const ui = harness("editor", { question: codeQuestion() });
+  ui.submit();
+  assert.equal(ui.saves[0].language, "Python");
+  assert.equal(ui.saves[0].starter_code, "def flatten(x):");
+  ui.unmount();
+});
+
+test("with 039 absent the drawer says so and disables the save", () => {
   const ui = harness("editor", {
     question: codeQuestion(),
     codingAvailable: false,

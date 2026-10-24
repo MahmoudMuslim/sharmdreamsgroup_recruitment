@@ -1,5 +1,9 @@
 import { CODING, CODING_WRITE_REFUSAL } from "@/modules/assessment/domain/coding";
-import { isMissingQuestionTypeError } from "@/modules/assessment/domain/situational";
+import {
+  SITUATIONAL_JUDGMENT,
+  SITUATIONAL_WRITE_REFUSAL,
+  isMissingQuestionTypeError,
+} from "@/modules/assessment/domain/situational";
 
 /**
  * A question write failed. Say the useful thing.
@@ -14,5 +18,8 @@ export function questionWriteError(
   error: { code?: string | null; message: string }
 ): string {
   if (questionType === CODING && isMissingQuestionTypeError(error)) return CODING_WRITE_REFUSAL;
+  if (questionType === SITUATIONAL_JUDGMENT && isMissingQuestionTypeError(error)) {
+    return SITUATIONAL_WRITE_REFUSAL;
+  }
   return error.message;
 }

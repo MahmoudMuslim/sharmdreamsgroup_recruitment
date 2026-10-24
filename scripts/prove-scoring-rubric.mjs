@@ -1025,6 +1025,8 @@ test("an oversized starter is refused by its length", async () => {
   assert.match(result.error, /10,000/);
   assert.equal(h.inserts.length, 0);
 });
+
+/** An edit of a case study that already carries a rubric. */
 const storedCase = (overrides) => ({
   id: "q-1",
   template_id: "suite-1",

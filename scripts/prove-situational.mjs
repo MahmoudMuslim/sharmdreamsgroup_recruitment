@@ -64,6 +64,9 @@ registerHooks({
 });
 
 const bank = await import("../src/modules/questions/bank.ts");
+const { questionWriteError } = await import(
+  pathToFileURL(path.join(root, "src/modules/assessment/domain/questionWriteErrors.ts")).href
+);
 
 const results = [];
 function check(name, pass, detail = "") {
@@ -664,6 +667,13 @@ sourceHas("the question writer validates through the domain", "src/app/(admin)/a
   "questionWriteError(draft.question_type, error)",
   'draft.question_type === "MULTIPLE_CHOICE" || draft.question_type === "SITUATIONAL_JUDGMENT"',
 ]);
+check(
+  "the shared write-error helper still answers a missing 034 with the migration that adds it",
+  questionWriteError(SITUATIONAL_JUDGMENT, {
+    code: "22P02",
+    message: 'invalid input value for enum public.question_type: "SITUATIONAL_JUDGMENT"',
+  }) === SITUATIONAL_WRITE_REFUSAL
+);
 
 sourceHas("the review desk reads response percentages", "src/app/(admin)/assessments/actions.ts", [
   'question.question_type === "SITUATIONAL_JUDGMENT"',
