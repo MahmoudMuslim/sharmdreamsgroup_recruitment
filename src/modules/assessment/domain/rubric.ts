@@ -69,6 +69,9 @@ export interface RubricDraftRow {
   label?: unknown;
   weight?: unknown;
   description?: unknown;
+  skill_id?: unknown;
+  /** Read only from stored config; a browser's name is ignored. */
+  skill_name?: unknown;
 }
 
 /** What an author may save, or the sentence saying they may not. */
@@ -135,9 +138,13 @@ export function readRubricDraft(
       };
     }
     const description = text(row.description);
-    criteria.push(
-      description ? { label, weight, description } : { label, weight }
-    );
+    const skillId = text(row.skill_id);
+    criteria.push({
+      label,
+      weight,
+      ...(description ? { description } : {}),
+      ...(skillId ? { skill_id: skillId } : {}),
+    });
   }
 
   const total = criteria.reduce((sum, criterion) => sum + criterion.weight, 0);
@@ -178,7 +185,15 @@ export function rubricCriteriaOf(
     const weight = readWeight(row.weight);
     if (!label || weight === null) continue;
     const description = text(row.description);
-    criteria.push(description ? { label, weight, description } : { label, weight });
+    const skillId = text(row.skill_id);
+    const skillName = text(row.skill_name);
+    criteria.push({
+      label,
+      weight,
+      ...(description ? { description } : {}),
+      ...(skillId ? { skill_id: skillId } : {}),
+      ...(skillId && skillName ? { skill_name: skillName } : {}),
+    });
   }
   return criteria;
 }
@@ -320,6 +335,8 @@ export function scoreRubric(
       marks: Math.round((allowance * band.percent) / RUBRIC_WEIGHT_TOTAL),
       evidence: band.evidence,
       ...(criterion.description ? { description: criterion.description } : {}),
+      ...(criterion.skill_id ? { skill_id: criterion.skill_id } : {}),
+      ...(criterion.skill_name ? { skill_name: criterion.skill_name } : {}),
     };
   });
 

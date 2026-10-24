@@ -1874,6 +1874,8 @@ const CASE_LINES = [
     percent: 80,
     evidence: "Named the occupancy driver before pricing.",
     description: "Names the occupancy driver before proposing anything.",
+    skill_id: null,
+    skill_name: null,
   },
   {
     label: "Feasible in this resort",
@@ -1882,6 +1884,8 @@ const CASE_LINES = [
     percent: 100,
     evidence: null,
     description: null,
+    skill_id: null,
+    skill_name: null,
   },
   {
     label: "Structure",
@@ -1890,6 +1894,8 @@ const CASE_LINES = [
     percent: 40,
     evidence: "The plan is listed but not ordered.",
     description: null,
+    skill_id: null,
+    skill_name: null,
   },
 ];
 const FEEBLE_LINES = [
@@ -1900,8 +1906,19 @@ const FEEBLE_LINES = [
     percent: 20,
     evidence: "Jumped straight to a discount.",
     description: "Names the occupancy driver before proposing anything.",
+    skill_id: null,
+    skill_name: null,
   },
-  { label: "Feasible in this resort", marks: 0, allowance: 7, percent: 0, evidence: null, description: null },
+  {
+    label: "Feasible in this resort",
+    marks: 0,
+    allowance: 7,
+    percent: 0,
+    evidence: null,
+    description: null,
+    skill_id: null,
+    skill_name: null,
+  },
   {
     label: "Structure",
     marks: 3,
@@ -1909,6 +1926,8 @@ const FEEBLE_LINES = [
     percent: 60,
     evidence: "Three steps, out of order.",
     description: null,
+    skill_id: null,
+    skill_name: null,
   },
 ];
 /** A withheld reviewer sees which criteria were graded, and never what they paid. */
@@ -2278,4 +2297,65 @@ test("the suite read still returns the stored marking scheme", async () => {
 
 test("the suite read names the marking scheme among what it returns", () => {
   assert.match(registryHarness().suiteDescription, /marking scheme|criteria|rubric/i);
+});
+
+// ---------------------------------------------------------------------------
+// 12. Carrying a criterion's skill tag
+//
+// A rubric criterion may point at one row of the skills catalogue. The tag has
+// to survive both doors it passes through: the author's draft (where only the
+// stored side owns the name, so a browser cannot forge one) and the snapshot
+// written beside the mark (where the catalogue's spelling at authoring time is
+// what a later rename must not overwrite).
+// ---------------------------------------------------------------------------
+test("a rubric criterion keeps its skill tag through authoring and the snapshot", () => {
+  const read = readRubricDraft([
+    {
+      label: "Diagnoses the cause",
+      weight: 60,
+      skill_id: "skill-finance",
+      // A browser or a chat model may send a name; the write door owns it.
+      skill_name: "Forged name",
+    },
+    { label: "Protects the guest", weight: 40 },
+  ]);
+  assert.equal(read.ok, true);
+  assert.equal(read.criteria[0].skill_id, "skill-finance");
+  assert.equal("skill_name" in read.criteria[0], false);
+
+  const scored = scoreRubric(20, read.criteria, [
+    { criterion: "Diagnoses the cause", percent: 50, evidence: "names occupancy first" },
+    { criterion: "Protects the guest", percent: 100 },
+  ]);
+  assert.equal(scored.ok, true);
+  assert.equal(scored.lines[0].skill_id, "skill-finance");
+  assert.equal(scored.lines[0].marks, 6);
+
+  const readBack = attemptAnswersDomain.awardedCriteriaOf(
+    { criteria: scored.lines },
+    false
+  );
+  assert.equal(readBack[0].skill_id, "skill-finance");
+  assert.equal(readBack[0].skill_name, null);
+  const withheld = attemptAnswersDomain.awardedCriteriaOf(
+    { criteria: scored.lines },
+    true
+  );
+  assert.equal(withheld[0].skill_id, "skill-finance");
+  assert.equal(withheld[0].marks, null);
+});
+
+test("a stored rubric keeps the catalogue's own spelling of the skill", () => {
+  const criteria = rubricCriteriaOf({
+    rubric: [
+      {
+        label: "Models the downside",
+        weight: 100,
+        skill_id: "skill-finance",
+        skill_name: "Financial modelling",
+      },
+    ],
+  });
+  assert.equal(criteria[0].skill_id, "skill-finance");
+  assert.equal(criteria[0].skill_name, "Financial modelling");
 });

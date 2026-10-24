@@ -59,6 +59,10 @@ export interface AnswerCriterion {
   evidence: string | null;
   /** What a strong answer shows for this criterion, as the author wrote it. */
   description: string | null;
+  /** The catalogue row this criterion was evidence of, or null when untagged. */
+  skill_id: string | null;
+  /** The catalogue spelling stored with the mark, or null when untagged. */
+  skill_name: string | null;
 }
 
 export interface AttemptAnswer {
@@ -191,6 +195,8 @@ export function awardedCriteriaOf(
       percent: figure(record.percent),
       evidence: prose(record.evidence),
       description: prose(record.description),
+      skill_id: prose(record.skill_id),
+      skill_name: prose(record.skill_name),
     });
   }
   return masked ? maskCriterionMarks(lines) : lines;

@@ -188,6 +188,10 @@ export interface RubricCriterion {
   weight: number;
   /** What a strong answer shows, in the author's words. Optional. */
   description?: string;
+  /** The `skills` catalogue row this criterion is evidence of. */
+  skill_id?: string;
+  /** The catalogue spelling at authoring time, so a later rename does not relabel a mark. */
+  skill_name?: string;
 }
 
 /**
@@ -212,6 +216,8 @@ export interface RubricLine {
   evidence: string | null;
   /** What the criterion asks for, as the author wrote it, when they said. */
   description?: string;
+  skill_id?: string;
+  skill_name?: string;
 }
 
 export interface QuestionConfig {
