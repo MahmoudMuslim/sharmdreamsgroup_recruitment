@@ -137,6 +137,11 @@ test("the coverage sentence names the tagged criteria and the questions they cam
   ]);
   assert.match(sentence, /From 2 tagged criteria on 2 questions/);
   assert.match(sentence, /not a proficiency level/);
+  // One sitting per question: naming sittings here would imply a retake that never happened.
+  assert.equal(
+    sentence,
+    "From 2 tagged criteria on 2 questions. A percentage is evidence from this paper, not a proficiency level."
+  );
 });
 
 test("the applicant sentence puts the test figure beside the CV levels", () => {

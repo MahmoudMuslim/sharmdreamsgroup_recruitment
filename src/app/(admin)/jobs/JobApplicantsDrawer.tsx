@@ -429,7 +429,7 @@ function ApplicantDetail({
           <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
             Against the requisition’s skills
           </h4>
-          <RequiredSkillLines lines={skillLines} masked={applicant.scores_masked} compact={false} />
+          <RequiredSkillLines lines={skillLines} masked={withheld} compact={false} />
         </section>
       )}
 
@@ -523,7 +523,7 @@ function ApplicantDetail({
         <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
           AI screening
         </h4>
-        {applicant.scores_masked ? (
+        {withheld ? (
           <p className="mt-2 text-xs text-brand-ink/50">
             Hidden — your role is not granted &ldquo;View unmasked scores&rdquo;.
           </p>
@@ -706,6 +706,9 @@ export function JobApplicantsDrawer({
         <ul className="divide-y divide-brand-line rounded-xl border border-brand-line bg-white">
           {applicants.map((applicant) => {
             const expanded = openId === applicant.id;
+            // Same rule as the detail panel: a stale list row must not out-vote a masked submission read.
+            const masked =
+              applicant.scores_masked || (submissions[applicant.id]?.skill_evidence_masked ?? false);
             const skillLines = matchRequiredSkills(
               job.required_skills,
               applicant.demonstrated,
@@ -734,7 +737,7 @@ export function JobApplicantsDrawer({
                     </span>
                     <RequiredSkillLines
                       lines={skillLines}
-                      masked={applicant.scores_masked}
+                      masked={masked}
                       compact
                     />
                   </span>

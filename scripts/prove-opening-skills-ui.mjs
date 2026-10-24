@@ -882,7 +882,13 @@ test("an unmasked paper with no mark says so instead of claiming it was withheld
 test("a submission read that says masked hides the figure even when the list row does not", async () => {
   const ui = await desk(
     [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
-    [applicant({ scores_masked: false, demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+    [
+      applicant({
+        scores_masked: false,
+        ai_match_score: 62,
+        demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }],
+      }),
+    ]
   );
   await opened(ui, {
     ...submission,
@@ -894,6 +900,20 @@ test("a submission read that says masked hides the figure even when the list row
   assert.doesNotMatch(text, /80%/);
   assert.doesNotMatch(text, /shown 3/);
   assert.doesNotMatch(ui.text(), /80%/);
+
+  // The whole drawer, not only the evidence line: the stale list read must not
+  // leak the requisition's level, the collapsed row's level or the match figure.
+  const drawer = ui.textOf(ui.nodes());
+  assert.doesNotMatch(drawer, /shown 3/);
+  assert.doesNotMatch(drawer, /62%/);
+  const screening = ui.nodes().find(
+    (node) =>
+      node.type === "section" &&
+      node.props.role !== "dialog" &&
+      ui.textOf(node).includes("AI screening")
+  );
+  assert.ok(screening, "the AI screening section is on screen");
+  assert.match(ui.textOf(screening), /Hidden — your role is not granted “View unmasked scores”\./);
   ui.unmount();
 });
 
