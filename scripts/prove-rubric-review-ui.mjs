@@ -415,9 +415,12 @@ test("a tagged paper totals its marks per skill and keeps the contributing quest
   assert.match(ui.text(), /16 of 20 marks/);
   assert.match(ui.text(), /80%/);
   // Two criteria on one question are one contributing question, not two.
-  assert.match(ui.text(), /1 contributing question/);
-  assert.match(ui.text(), /From 2 tagged criteria on 1 question/);
-  const contributions = ui.nodes().find((node) => node.type === "details");
+  assert.match(ui.text(), /1 contributing question(?!s)/);
+  assert.match(ui.text(), /From 2 tagged criteria on 1 question(?!s)/);
+  const contributions = ui.nodes().find(
+    (node) => node.type === "details" && /contributing question/.test(ui.textOf(node))
+  );
+  assert.ok(contributions, "the contribution list exists");
   assert.match(ui.textOf(contributions), /Diagnoses the cause/);
   assert.match(ui.textOf(contributions), /Protects the guest/);
   ui.unmount();
@@ -440,6 +443,21 @@ test("two questions contributing to one skill are counted as two", async () => {
   ui.unmount();
 });
 
+/**
+ * The skill-evidence block itself.
+ *
+ * The drawer is a `<section role="dialog">` that contains the block, so a plain
+ * "section whose text mentions Skill evidence" would match the whole drawer and
+ * let a whole-text assertion pose as a section-scoped one.
+ */
+const skillSection = (ui) =>
+  ui.nodes().find(
+    (node) =>
+      node.type === "section" &&
+      node.props.role !== "dialog" &&
+      ui.textOf(node).includes("Skill evidence")
+  );
+
 test("a withheld reviewer sees the skill name and count but no figures", async () => {
   const tagged = WITHHELD.map((row) => ({
     ...row,
@@ -447,15 +465,42 @@ test("a withheld reviewer sees the skill name and count but no figures", async (
     skill_name: "Financial modelling",
   }));
   const ui = await desk(paper([answer({ criteria: tagged })], { scores_masked: true }));
-  assert.match(ui.text(), /Financial modelling/);
-  assert.match(ui.text(), /Hidden/);
-  assert.doesNotMatch(ui.text(), /80%/);
-  assert.doesNotMatch(ui.text(), /16 of 20/);
+  const section = skillSection(ui);
+  assert.ok(section, "the skill evidence section exists");
+  const text = ui.textOf(section);
+  assert.match(text, /Financial modelling · Hidden/);
+  assert.match(text, /1 contributing question(?!s)/);
+  assert.doesNotMatch(text, /\d+%|\d+ of \d+|null|undefined|NaN/);
+  ui.unmount();
+});
+
+test("an unreadable mark on an unmasked paper reads No mark on file, not Hidden", async () => {
+  const ui = await desk(
+    paper([
+      answer({
+        criteria: [
+          {
+            ...MARKED[0],
+            skill_id: "s-fin",
+            skill_name: "Financial modelling",
+            marks: null,
+            allowance: null,
+            percent: null,
+          },
+        ],
+      }),
+    ])
+  );
+  const section = skillSection(ui);
+  assert.ok(section, "the skill evidence section exists");
+  assert.match(ui.textOf(section), /Financial modelling · No mark on file/);
+  assert.doesNotMatch(ui.textOf(section), /Hidden/);
   ui.unmount();
 });
 
 test("an untagged paper prints no skill block", async () => {
   const ui = await desk(paper([answer({ criteria: MARKED })]));
+  assert.match(ui.text(), /Criterion marks/);
   assert.doesNotMatch(ui.text(), /Skill evidence/);
   ui.unmount();
 });

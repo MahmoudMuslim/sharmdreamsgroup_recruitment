@@ -546,17 +546,25 @@ export function AnswersDrawer({
               </h3>
               <ul className="mt-2 space-y-2">
                 {skillEvidence.map((line) => {
-                  // Two criteria on one question are one contributing question:
-                  // counting contribution rows would overstate the paper.
-                  const questionCount = new Set(
-                    line.contributions.map((contribution) => contribution.question_title)
-                  ).size;
+                  // `skillPapers` holds one entry per question, so counting the
+                  // papers that contributed matches the coverage line below and
+                  // counts criteria on one question once. A title is not an
+                  // identity: two questions may share one.
+                  const questionCount = skillPapers.filter((p) =>
+                    p.criteria.some(
+                      (c) => typeof c.skill_id === "string" && c.skill_id.trim() === line.skill_id
+                    )
+                  ).length;
                   return (
                     <li key={line.skill_id} className="text-xs leading-relaxed">
                       <p className="font-semibold">
                         {line.skill_name}
                         {" · "}
-                        {line.percent === null ? "Hidden" : `${line.percent}%`}
+                        {paper.scores_masked
+                          ? "Hidden"
+                          : line.percent === null
+                            ? "No mark on file"
+                            : `${line.percent}%`}
                         {line.awarded !== null && line.allowance !== null
                           ? ` (${line.awarded} of ${line.allowance} marks)`
                           : ""}
