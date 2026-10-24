@@ -46,6 +46,7 @@ import { ItemStatsDrawer } from "./ItemStatsDrawer";
 import { QuestionEditorDrawer, type EditableQuestion } from "./QuestionEditorDrawer";
 import { SuiteAuthoringDrawer } from "./SuiteAuthoringDrawer";
 import { TestRecommendationDrawer } from "./TestRecommendationDrawer";
+import type { SkillOption } from "@/modules/assessment/domain/skillTags";
 import { Badge, Card, EmptyState, StatTile } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
 
@@ -899,6 +900,8 @@ export function AssessmentGrid({
   timeZone,
   situational,
   followUps,
+  skillOptions,
+  skillsNote,
 }: {
   templates: TemplateSummary[];
   candidates: AssignableCandidate[];
@@ -914,6 +917,10 @@ export function AssessmentGrid({
   situational: { situational: boolean; note: string | null };
   /** Second-test rules, or the reason they cannot be read or routed. */
   followUps: FollowUpRulesRead;
+  /** Active catalogue skills the rubric editor may tag; empty closes tagging. */
+  skillOptions: SkillOption[];
+  /** Why the list is empty, printed where the select would be. */
+  skillsNote: string | null;
 }) {
   // Both tables migration 035 adds have to be present for a rule to be worth
   // writing: columns without the attempt link would save a rule nothing can
@@ -1241,6 +1248,8 @@ export function AssessmentGrid({
           editable={canEdit}
           situationalAvailable={situational.situational}
           situationalNote={situational.note}
+          skillOptions={skillOptions}
+          skillsNote={skillsNote}
           onChanged={router.refresh}
         />
       )}

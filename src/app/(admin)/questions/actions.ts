@@ -25,6 +25,10 @@ import {
   readQuestionTypeAvailability,
   type QuestionTypeAvailability,
 } from "@/modules/assessment/application/questionTypeAvailability";
+import {
+  getSkillsCatalogue,
+  type SkillsCatalogue,
+} from "@/modules/jobs/application/openingSkillsRead";
 import { readJudgmentScore } from "@/modules/assessment/domain/situational";
 import {
   deleteQuestion,
@@ -103,6 +107,8 @@ export interface BankData {
   can: { form: boolean; suites: boolean };
   /** Whether this database's enum knows the situational judgment type yet. */
   situational: QuestionTypeAvailability;
+  /** Active skills the suite editor may tag, and why the list may be empty. */
+  skills: SkillsCatalogue;
 }
 
 export async function getQuestionBankData(): Promise<BankData> {
@@ -117,6 +123,7 @@ export async function getQuestionBankData(): Promise<BankData> {
     templateResult,
     openingResult,
     situational,
+    skills,
   ] = await Promise.all([
     hasPermissionForUser("jobs.manage"),
     hasPermissionForUser("assessments.create"),
@@ -129,6 +136,8 @@ export async function getQuestionBankData(): Promise<BankData> {
     // Asked beside the rows, not through them: while migration 034 is unapplied
     // the enum refuses the label and the board must hide the type it cannot save.
     readQuestionTypeAvailability(restClient),
+    // The rubric's tagging vocabulary, read once for the editor this board mounts.
+    getSkillsCatalogue(restClient),
   ]);
 
   const places: BankPlaceRow[] = [
@@ -167,6 +176,7 @@ export async function getQuestionBankData(): Promise<BankData> {
     places,
     can: { form: canForm, suites: canSuites },
     situational,
+    skills,
   };
 }
 

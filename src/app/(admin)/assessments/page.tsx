@@ -5,6 +5,7 @@ import {
   getIssuedLinks,
   getQuestionTypeAvailability,
   getFollowUpRules,
+  getSkillTagOptions,
 } from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
@@ -33,6 +34,7 @@ async function loadTemplates() {
     timeZone,
     situational,
     followUps,
+    skills,
   ] = await Promise.all([
     getTemplates(),
     getAssignableCandidates(),
@@ -42,6 +44,7 @@ async function loadTemplates() {
     getOrganisationTimeZone(),
     getQuestionTypeAvailability(),
     getFollowUpRules(),
+    getSkillTagOptions(),
   ]);
 
   return {
@@ -53,6 +56,7 @@ async function loadTemplates() {
     timeZone,
     situational,
     followUps,
+    skills,
   };
 }
 
@@ -74,6 +78,7 @@ export default async function AssessmentsBuilderPage() {
     timeZone,
     situational,
     followUps,
+    skills,
   } = await loadTemplates();
   const canEdit = await hasPermissionForUser("assessments.create");
   const defaultDurationMinutes = await getNumberSetting(
@@ -106,6 +111,8 @@ export default async function AssessmentsBuilderPage() {
         timeZone={timeZone}
         situational={situational}
         followUps={followUps}
+        skillOptions={skills.skills}
+        skillsNote={skills.note}
       />
     </PageTransition>
   );

@@ -681,6 +681,8 @@ export function BankBoard({ data }: { data: BankData }) {
           editable={data.can.suites}
           situationalAvailable={data.situational.situational}
           situationalNote={data.situational.note}
+          skillOptions={data.skills.skills}
+          skillsNote={data.skills.note}
           onChanged={() => router.refresh()}
           openAtId={suiteEditor.openAtId ?? undefined}
         />

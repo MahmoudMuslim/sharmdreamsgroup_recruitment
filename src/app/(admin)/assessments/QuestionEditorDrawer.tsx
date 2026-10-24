@@ -50,6 +50,7 @@ import {
   saveQuestion,
   type ChoiceDraft,
 } from "./question-actions";
+import type { SkillOption } from "@/modules/assessment/domain/skillTags";
 
 /**
  * Question editor.
@@ -128,10 +129,20 @@ interface RubricRow {
   label: string;
   weight: string;
   description: string;
+  /** The catalogue id, or "" for a criterion tied to no skill. */
+  skill_id: string;
+  /** The stored spelling, kept only so a retired tag can still be read. */
+  skill_name: string;
 }
 
 const blankRubricRows = (): RubricRow[] =>
-  Array.from({ length: MIN_RUBRIC_CRITERIA }, () => ({ label: "", weight: "", description: "" }));
+  Array.from({ length: MIN_RUBRIC_CRITERIA }, () => ({
+    label: "",
+    weight: "",
+    description: "",
+    skill_id: "",
+    skill_name: "",
+  }));
 
 /**
  * The stored scheme, back in the panel that wrote it.
@@ -147,6 +158,8 @@ function rubricRowsFrom(rows: RubricCriterion[] | undefined): RubricRow[] {
     label: criterion.label,
     weight: String(criterion.weight),
     description: criterion.description ?? "",
+    skill_id: criterion.skill_id ?? "",
+    skill_name: criterion.skill_name ?? "",
   }));
 }
 
@@ -232,6 +245,8 @@ export function QuestionEditorDrawer({
   openAtId,
   situationalAvailable = true,
   situationalNote = null,
+  skillOptions = [],
+  skillsNote = null,
 }: {
   open: boolean;
   onClose: () => void;
@@ -261,6 +276,10 @@ export function QuestionEditorDrawer({
   situationalAvailable?: boolean;
   /** Why it does not, shown where the type would otherwise be offered. */
   situationalNote?: string | null;
+  /** Active catalogue skills a rubric criterion may name. */
+  skillOptions?: SkillOption[];
+  /** Why the list is empty, printed beside the rubric rows. */
+  skillsNote?: string | null;
 }) {
   const [editing, setEditing] = useState<Draft | null>(() => {
     if (!openAtId) return null;
@@ -415,6 +434,7 @@ export function QuestionEditorDrawer({
                 label: row.label,
                 weight: weightNumber(row.weight),
                 description: row.description,
+                skill_id: row.skill_id || undefined,
               })),
             }
           : {}),
@@ -807,6 +827,8 @@ export function QuestionEditorDrawer({
             <RubricFieldset
               rows={editing.rubric}
               note={RUBRIC_NOTES[editing.question_type]}
+              skillOptions={skillOptions}
+              skillsNote={skillsNote}
               onChange={(rubric) => patch({ rubric })}
             />
           )}
@@ -1156,10 +1178,14 @@ export function QuestionEditorDrawer({
 function RubricFieldset({
   rows,
   note,
+  skillOptions,
+  skillsNote,
   onChange,
 }: {
   rows: RubricRow[];
   note: string;
+  skillOptions: SkillOption[];
+  skillsNote: string | null;
   onChange: (rows: RubricRow[]) => void;
 }) {
   const write = (index: number, next: Partial<RubricRow>) =>
@@ -1210,13 +1236,44 @@ function RubricFieldset({
               placeholder="What a strong answer shows (optional)"
               aria-label={`What a strong answer shows for criterion ${index + 1}`}
             />
+            {skillOptions.length > 0 ? (
+              <select
+                value={row.skill_id}
+                onChange={(e) => write(index, { skill_id: e.target.value })}
+                aria-label={`Skill of criterion ${index + 1}`}
+                className="w-full rounded-xl border border-brand-line bg-white px-3 py-2 text-sm text-brand-ink"
+              >
+                <option value="">Not tied to a skill</option>
+                {row.skill_id &&
+                  !skillOptions.some((skill) => skill.id === row.skill_id) && (
+                    <option value={row.skill_id} disabled>
+                      {row.skill_name || "Retired skill"}
+                    </option>
+                  )}
+                {skillOptions.map((skill) => (
+                  <option key={skill.id} value={skill.id}>
+                    {skill.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-[11px] leading-relaxed text-brand-ink/45">
+                {skillsNote ??
+                  "Skill tagging is unavailable because no active skills are on file. Every criterion still saves untagged."}
+              </p>
+            )}
           </li>
         ))}
       </ul>
 
       <button
         type="button"
-        onClick={() => onChange([...rows, { label: "", weight: "", description: "" }])}
+        onClick={() =>
+          onChange([
+            ...rows,
+            { label: "", weight: "", description: "", skill_id: "", skill_name: "" },
+          ])
+        }
         disabled={rows.length >= MAX_RUBRIC_CRITERIA}
         className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark disabled:cursor-not-allowed disabled:opacity-40"
       >

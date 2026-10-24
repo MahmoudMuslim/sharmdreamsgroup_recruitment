@@ -25,6 +25,7 @@ import {
   readQuestionTypeAvailability,
   type QuestionTypeAvailability,
 } from "@/modules/assessment/application/questionTypeAvailability";
+import { getSkillsCatalogue } from "@/modules/jobs/application/openingSkillsRead";
 import { LINKS_LIMIT, type IssuedLink } from "@/modules/assessment/domain/issuedLinks";
 import type { EditableQuestion } from "./QuestionEditorDrawer";
 import { readFollowUpAvailability } from "@/modules/assessment/application/followUpAvailability";
@@ -217,6 +218,19 @@ export async function getQuestionsForEditor(): Promise<
 export async function getQuestionTypeAvailability(): Promise<QuestionTypeAvailability> {
   await requireStaff("/assessments");
   return readQuestionTypeAvailability(await createServerRestClient());
+}
+
+/**
+ * The active skills the rubric editor may tag, read once per page render.
+ *
+ * The catalogue is an authoring vocabulary, not a score: a read failure leaves
+ * every rubric saveable untagged. The editor receives the active list and the
+ * sentence that explains an empty one.
+ */
+export async function getSkillTagOptions() {
+  await requireStaff("/assessments");
+  const restClient = await createServerRestClient();
+  return getSkillsCatalogue(restClient);
 }
 
 /* -------------------------------------------------------------------------- */

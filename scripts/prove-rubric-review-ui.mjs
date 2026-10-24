@@ -196,6 +196,11 @@ function harness(which, options = {}) {
       openAtId: options.openAtId === undefined ? (options.question ?? rubricQuestion()).id : options.openAtId,
       situationalAvailable: true,
       situationalNote: null,
+      skillOptions: options.skillOptions ?? [
+        { id: "s-fin", name: "Financial modelling" },
+        { id: "s-neg", name: "Negotiation" },
+      ],
+      skillsNote: options.skillsNote ?? null,
     };
   }
 
@@ -472,8 +477,8 @@ test("an author's weights leave as numbers, in the order on screen", async () =>
   ui.submit();
   await ui.settle();
   assert.deepEqual(ui.saves[0].rubric, [
-    { label: "Diagnoses the cause", weight: 70, description: "Names the real driver before recommending anything" },
-    { label: "Protects the guest", weight: 30, description: "Keeps the guest whole" },
+    { label: "Diagnoses the cause", weight: 70, description: "Names the real driver before recommending anything", skill_id: undefined },
+    { label: "Protects the guest", weight: 30, description: "Keeps the guest whole", skill_id: undefined },
   ]);
   assert.equal(typeof ui.saves[0].rubric[0].weight, "number");
   ui.unmount();
@@ -484,7 +489,7 @@ test("a new criterion is written with a blank weight, never a zero", () => {
   ui.click("Add criterion");
   ui.type("Name of criterion 3", "Follows up");
   ui.submit();
-  assert.deepEqual(ui.saves[0].rubric[2], { label: "Follows up", weight: undefined, description: "" });
+  assert.deepEqual(ui.saves[0].rubric[2], { label: "Follows up", weight: undefined, description: "", skill_id: undefined });
   ui.unmount();
 });
 
@@ -573,6 +578,76 @@ test("a refused scheme keeps the panel and prints the reason", async () => {
   assert.match(ui.text(), /add up to 90/);
   // The draft the author typed is still on the desk, not silently dropped.
   assert.equal(ui.value("Name of criterion 1"), "Diagnoses the cause");
+  ui.unmount();
+});
+
+const skillSelect = (ui, index = 1) =>
+  ui.find(
+    (node) =>
+      node.type === "select" &&
+      node.props["aria-label"] === `Skill of criterion ${index}`
+  );
+
+test("a stored skill tag comes back selected in the editor", () => {
+  const question = rubricQuestion({
+    config: {
+      rubric: [
+        { label: "Diagnoses the cause", weight: 60, description: "Names the real driver before recommending anything", skill_id: "s-fin", skill_name: "Financial modelling" },
+        { label: "Protects the guest", weight: 40 },
+      ],
+    },
+  });
+  const ui = harness("editor", { question });
+  assert.equal(skillSelect(ui, 1).props.value, "s-fin");
+  assert.equal(skillSelect(ui, 2).props.value, "");
+  ui.unmount();
+});
+
+test("choosing a skill sends its id and never a name", async () => {
+  const ui = harness("editor");
+  const select = skillSelect(ui, 1);
+  select.props.onChange({ target: { value: "s-neg" } });
+  ui.render();
+  ui.type("Name of criterion 1", "Negotiates the rebooking");
+  ui.type("Weight of criterion 1", "60");
+  ui.type("What a strong answer shows for criterion 1", "Keeps the guest whole");
+  ui.type("Name of criterion 2", "Protects the rate");
+  ui.type("Weight of criterion 2", "40");
+  ui.submit();
+  await ui.settle();
+  const [payload] = ui.saves;
+  assert.equal(payload.rubric[0].skill_id, "s-neg");
+  assert.equal("skill_name" in payload.rubric[0], false);
+  ui.unmount();
+});
+
+test("a retired tag still reads, and is marked as one the catalogue no longer offers", () => {
+  const question = rubricQuestion({
+    config: {
+      rubric: [
+        { label: "Diagnoses the cause", weight: 100, skill_id: "s-old", skill_name: "Legacy tooling" },
+      ],
+    },
+  });
+  const ui = harness("editor", { question });
+  const select = skillSelect(ui, 1);
+  assert.equal(select.props.value, "s-old");
+  assert.match(ui.textOf(select), /Legacy tooling/);
+  ui.unmount();
+});
+
+test("an empty catalogue says tagging is unavailable and offers no select", () => {
+  const ui = harness("editor", {
+    skillOptions: [],
+    skillsNote: "No active skills are on file, so every criterion saves untagged.",
+  });
+  assert.equal(
+    ui.nodes().some(
+      (node) => node.type === "select" && node.props["aria-label"] === "Skill of criterion 1"
+    ),
+    false
+  );
+  assert.match(ui.text(), /No active skills are on file/);
   ui.unmount();
 });
 
