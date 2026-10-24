@@ -484,11 +484,15 @@ check(
     read("src/modules/assessment/presentation/components/CodingRunner.tsx").includes("CODE_ANSWER_CAP"),
   "no maxLength; show the count against CODE_ANSWER_CAP instead"
 );
+// The strict comparison is what makes a paste at exactly the cap pass and one
+// character over fail; a `>=` or a maxLength would move the boundary.
 check(
   "the coding runner warns when the answer is over the cap",
-  /text-rose-700/.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")) &&
+  read("src/modules/assessment/presentation/components/CodingRunner.tsx").includes("code.length > CODE_ANSWER_CAP") &&
+    read("src/modules/assessment/presentation/components/CodingRunner.tsx").includes("overCap ?") &&
+    /text-rose-700/.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")) &&
     /over the character limit/i.test(read("src/modules/assessment/presentation/components/CodingRunner.tsx")),
-  "an over-cap answer must be visibly flagged so it can be trimmed"
+  "an over-cap answer must be flagged by `code.length > CODE_ANSWER_CAP` and `overCap ?`, so it can be trimmed"
 );
 
 if (failures.length > 0) {

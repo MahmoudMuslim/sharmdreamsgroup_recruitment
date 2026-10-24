@@ -23,13 +23,21 @@ export function CodingRunner({ question }: CodingRunnerProps) {
   const code = useAssessmentStore((state) => state.codeAnswersMap[question.id] ?? "");
   const setCodeAnswer = useAssessmentStore((state) => state.setCodeAnswer);
   const syncDraft = useAssessmentStore((state) => state.syncDraft);
+  const draftSavedAt = useAssessmentStore((state) => state.draftSavedAt);
+  const isSyncingDraft = useAssessmentStore((state) => state.isSyncingDraft);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Navigating with the question strip unmounts the box without calling
+  // `syncDraft`, so a pending debounce is flushed here rather than dropped.
+  // `syncDraft` early-returns once submitted, so this cannot double-submit.
   useEffect(() => {
     return () => {
-      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        void syncDraft();
+      }
     };
-  }, []);
+  }, [syncDraft]);
 
   const language = codingLanguageOf(question.config);
   const starter = question.config.starter_code?.trim() ? question.config.starter_code : null;
@@ -44,7 +52,11 @@ export function CodingRunner({ question }: CodingRunnerProps) {
           <p className="text-xs font-semibold text-brand-ink/60">
             Starter code — shown for reference, not part of your answer.
           </p>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl border border-brand-line bg-brand-cream px-4 py-3 font-mono text-xs leading-relaxed text-brand-ink/80">
+          <pre
+            tabIndex={0}
+            aria-label="Starter code"
+            className="max-h-64 overflow-auto whitespace-pre-wrap rounded-xl border border-brand-line bg-brand-cream px-4 py-3 font-mono text-xs leading-relaxed text-brand-ink/80"
+          >
             {starter}
           </pre>
         </div>
@@ -67,7 +79,7 @@ export function CodingRunner({ question }: CodingRunnerProps) {
           autoCapitalize="off"
           autoCorrect="off"
           placeholder="Write your answer in plain text. Use spaces to indent."
-          className="w-full rounded-xl border border-brand-line bg-brand-cream p-4 font-mono text-sm leading-relaxed text-brand-ink placeholder:text-brand-ink/35 focus:border-brand-gold focus:bg-white focus:outline-none"
+          className="w-full rounded-xl border border-brand-line bg-brand-cream p-4 font-mono text-sm leading-relaxed text-brand-ink placeholder:text-brand-ink/35 focus:border-brand-gold focus:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold focus-visible:ring-offset-2"
         />
       </div>
 
@@ -75,16 +87,22 @@ export function CodingRunner({ question }: CodingRunnerProps) {
         <span
           className={cn(
             "font-semibold tabular-nums",
-            overCap ? "text-rose-700" : "text-brand-ink/50"
+            overCap ? "text-rose-700" : "text-brand-ink/70"
           )}
         >
           {language ? `${language} · ` : ""}
           {code.length.toLocaleString("en-US")} of{" "}
           {CODE_ANSWER_CAP.toLocaleString("en-US")} characters
         </span>
-        <span className="flex items-center gap-1.5 text-brand-ink/45">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
-          Autosaved
+        <span className="flex items-center gap-1.5 text-brand-ink/70">
+          <span
+            className={cn(
+              "h-1.5 w-1.5 rounded-full",
+              draftSavedAt || isSyncingDraft ? "bg-emerald-500" : "bg-brand-ink/25"
+            )}
+            aria-hidden
+          />
+          {isSyncingDraft ? "Saving…" : draftSavedAt ? "Autosaved" : "Autosave on"}
         </span>
       </div>
 
@@ -98,8 +116,8 @@ export function CodingRunner({ question }: CodingRunnerProps) {
       )}
 
       <p className="text-xs leading-relaxed text-brand-ink/50">
-        Your answer is reviewed by a person; it is not run. Tab moves to the next
-        field, so type or paste spaces to indent.
+        Your answer is reviewed by a person and the AI; it is not run. Tab moves
+        to the next field, so type or paste spaces to indent.
       </p>
     </div>
   );
