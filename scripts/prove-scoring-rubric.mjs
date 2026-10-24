@@ -2340,6 +2340,8 @@ test("the Guide says a percentage is not a proficiency level", () => {
   const guide = read("src/modules/shell/domain/pageGuide.ts");
   assert.match(guide, /not a proficiency level|never a 1–5 level/);
   assert.match(guide, /skill tag|tied to a skill|names one skill/i);
+  assert.match(guide, /500 most recent graded responses/);
+  assert.match(guide, /summed, never averaged/);
 });
 
 // ---------------------------------------------------------------------------

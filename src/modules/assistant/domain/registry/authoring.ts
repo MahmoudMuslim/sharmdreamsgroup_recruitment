@@ -93,7 +93,7 @@ export const authoring: readonly AssistantTool[] = [
     name: "save_question",
     label: "Saving a question",
     description:
-      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct. A CASE_STUDY or VIDEO_PITCH can carry a marking scheme — the named criteria its answer is marked against, which the grader scores one by one and reports with the evidence it quoted. A criterion may name one skill from the catalogue; the assessment report then totals the marks each skill earned across the paper.",
+      "Add a question to a suite, or rewrite one when id is given. Read the suite with get_assessment_suite first: a save writes the whole question, and an EXCEL_MODEL question must come back with its config in preserve_config or the spreadsheet definition is lost. A SITUATIONAL_JUDGMENT scene puts the workplace scenario in prompt and rates each response 0–100; no response is marked correct. A CASE_STUDY or VIDEO_PITCH can carry a marking scheme — the named criteria its answer is marked against, which the grader scores one by one and reports with the evidence it quoted. A criterion may name one skill from the catalogue; the paper's answers drawer then totals the marks each skill earned across the paper.",
     args: {
       id: "string — optional, the question being edited",
       template_id: "string — suite id",
