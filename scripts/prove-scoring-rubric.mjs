@@ -41,6 +41,7 @@ import * as situational from "../src/modules/assessment/domain/situational.ts";
 import * as trail from "../src/modules/activity/domain/trail.ts";
 import * as attemptTotals from "../src/modules/assessment/domain/attemptTotals.ts";
 import * as sweepSelection from "../src/modules/assessment/domain/sweepSelection.ts";
+import * as skillTags from "../src/modules/assessment/domain/skillTags.ts";
 
 import {
   MAX_RUBRIC_CRITERIA,
@@ -883,6 +884,7 @@ function authoringHarness(options = {}) {
       if (name === "@/modules/activity/domain/trail") return trail;
       if (name === "@/modules/assessment/domain/situational") return situational;
       if (name === "@/modules/assessment/domain/rubric") return rubricDomain;
+      if (name === "@/modules/assessment/domain/skillTags") return skillTags;
       throw new Error(`Unmocked boundary: ${name}`);
     },
   };
@@ -1121,6 +1123,22 @@ test("a refused rubric is refused before the permission read is acted on", async
   assert.equal(result.ok, false);
   assert.match(result.error, /permission/i);
   assert.equal(h.reads.length, 0);
+});
+
+test("an unknown skill tag is refused by the real catalogue check", async () => {
+  const h = authoringHarness();
+  const result = await h.save(
+    draftOf({
+      rubric: [
+        { label: "Structure", weight: 60, skill_id: "s-gone" },
+        { label: "Evidence", weight: 40 },
+      ],
+    })
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Structure/);
+  assert.match(result.error, /does not hold/);
+  assert.equal(h.inserts.length, 0, "a rejected tag still inserted a question");
 });
 
 // ---------------------------------------------------------------------------
