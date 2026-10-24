@@ -556,7 +556,7 @@ function ApplicantDetail({
               </Badge>
               <span className="text-xs text-brand-ink/55">
                 {applicant.template_name ?? "Assessment"}
-                {applicant.attempt_score !== null
+                {!withheld && applicant.attempt_score !== null
                   ? ` · ${applicant.attempt_score}/${applicant.attempt_max ?? "?"}`
                   : ""}
               </span>

@@ -761,7 +761,15 @@ test("a reviewer whose scores are masked reads the ask without the candidate's l
 test("the expanded applicant shows test evidence beside the CV level", async () => {
   const ui = await desk(
     [{ skill_id: "s-revenue", required_level: 4, source: "RECRUITER" }],
-    [applicant({ demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }] })]
+    [
+      applicant({
+        attempt_token: "tok-1",
+        attempt_status: "SUBMITTED",
+        attempt_score: 52,
+        attempt_max: 70,
+        demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }],
+      }),
+    ]
   );
   await opened(ui, {
     ...submission,
@@ -776,6 +784,16 @@ test("the expanded applicant shows test evidence beside the CV level", async () 
   // required skill, so the exact sentence is the claim, not a word that happens to
   // appear somewhere in the drawer.
   assert.match(ui.text(), /Meets 0 of 1, below 1, no evidence for 0\./);
+  // An unmasked reviewer keeps the figure: the attempt gate must not hide a real score.
+  assert.match(ui.textOf(ui.nodes()), /52\/70/);
+  const screening = ui.nodes().find(
+    (node) =>
+      node.type === "section" &&
+      node.props.role !== "dialog" &&
+      ui.textOf(node).includes("AI screening")
+  );
+  assert.ok(screening, "the AI screening section is on screen");
+  assert.match(ui.textOf(screening), /62%/);
   ui.unmount();
 });
 
@@ -886,6 +904,10 @@ test("a submission read that says masked hides the figure even when the list row
       applicant({
         scores_masked: false,
         ai_match_score: 62,
+        attempt_token: "tok-1",
+        attempt_status: "SUBMITTED",
+        attempt_score: 52,
+        attempt_max: 70,
         demonstrated: [{ skill_id: "s-revenue", proficiency: 3 }],
       }),
     ]
@@ -906,6 +928,7 @@ test("a submission read that says masked hides the figure even when the list row
   const drawer = ui.textOf(ui.nodes());
   assert.doesNotMatch(drawer, /shown 3/);
   assert.doesNotMatch(drawer, /62%/);
+  assert.doesNotMatch(drawer, /52\/70/);
   const screening = ui.nodes().find(
     (node) =>
       node.type === "section" &&
