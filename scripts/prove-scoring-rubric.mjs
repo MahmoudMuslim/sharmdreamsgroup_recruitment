@@ -577,7 +577,7 @@ test("the submit route stores a code answer as text", async () => {
     case_study_answers_map: { "q-case": "a case answer" },
     code_answers_map: { "q-code": "print(1)" },
   });
-  assert.notEqual(response.status, 400);
+  assert.equal(response.status, 200);
   const written = h.upserts.find((entry) => entry.table === "candidate_responses");
   assert.equal(written.values.length, 2);
   // The rows were built inside the VM, so their arrays carry that realm's
@@ -627,6 +627,21 @@ test("the draft route will not save a coding answer through the case door", asyn
   const h = writeHarness(codingTables(), "PUT");
   await h.send({ case_study_answers_map: { "q-code": "print(1)" } });
   assert.deepEqual(h.upserts, []);
+});
+
+test("the draft route will not save a case answer through the code door", async () => {
+  const h = writeHarness(codingTables(), "PUT");
+  await h.send({ code_answers_map: { "q-case": "a case answer" } });
+  assert.deepEqual(h.upserts, []);
+});
+
+test("the draft route still saves an over-cap answer so nothing is lost", async () => {
+  const h = writeHarness(codingTables(), "PUT");
+  const response = await h.send({ code_answers_map: { "q-code": "x".repeat(codingDomain.CODE_ANSWER_CAP + 1) } });
+  assert.equal(response.status, 200);
+  const written = h.upserts.find((entry) => entry.table === "candidate_responses");
+  assert.equal(written.values.length, 1);
+  assert.equal(written.values[0].answer_text.length, codingDomain.CODE_ANSWER_CAP + 1);
 });
 
 // ---------------------------------------------------------------------------

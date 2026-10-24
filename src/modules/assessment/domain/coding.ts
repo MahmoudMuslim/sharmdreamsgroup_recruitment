@@ -73,6 +73,7 @@ export function codeAnswersOverCap(
   titles: ReadonlyMap<string, string>
 ): string | null {
   for (const [questionId, code] of Object.entries(answers)) {
+    if (typeof code !== "string") continue;
     if (codeAnswerOverCap(code)) return titles.get(questionId) ?? questionId;
   }
   return null;

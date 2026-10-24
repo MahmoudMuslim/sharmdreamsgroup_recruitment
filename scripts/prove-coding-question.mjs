@@ -105,6 +105,17 @@ check("the first over-cap answer names its question", over === "Two-sum warm-up"
 check("a map inside the caps names nothing", codeAnswersOverCap({ q1: "print(1)" }, titles) === null);
 check("a question with no title still names something", /q9/.test(codeAnswersOverCap({ q9: "x".repeat(CODE_ANSWER_CAP + 1) }, titles) ?? ""));
 check(
+  "a malformed answer is skipped, not measured",
+  codeAnswersOverCap({ "q-code": null }, new Map([["q-code", "Flatten"]])) === null
+);
+check(
+  "a malformed answer does not hide a genuine over-cap one",
+  codeAnswersOverCap(
+    { "q-bad": 7, "q-code": "x".repeat(20_001) },
+    new Map([["q-code", "Flatten"]])
+  ) === "Flatten"
+);
+check(
   "the refusal message names the question and the cap",
   /Two-sum warm-up/.test(codeAnswerOverCapMessage("Two-sum warm-up")) &&
     /20,000/.test(codeAnswerOverCapMessage("Two-sum warm-up"))
