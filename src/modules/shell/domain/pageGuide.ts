@@ -265,7 +265,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
     use: [
       "New template names the suite, its role family, duration and company; Add question builds it.",
-      "Six question types: Multiple choice with one correct option, Situational judgment (a workplace scene whose responses each earn a 0–100 percentage, with no single right one), Case study, Spreadsheet model, Video pitch and Coding (a plain text box for one language's code, with nothing run or tested), each with its own fields.",
+      "Six question types: Multiple choice with one correct option, Situational judgment (a workplace scene whose responses each earn a 0–100 percentage, with no single right one), Case study, Spreadsheet model, Video pitch and Coding, each with its own fields.",
       "A coding question fixes one language for the answer — JavaScript, TypeScript, Python, Java, C#, Go, SQL, PHP, Ruby, C++ — and the candidate writes in a plain text box.",
       "A coding answer holds at most 20,000 characters, and the starter is optional and holds at most 10,000 characters.",
       "A coding answer is never compiled, run or tested: the code is stored as text, and a reviewer reads exactly what the candidate wrote.",

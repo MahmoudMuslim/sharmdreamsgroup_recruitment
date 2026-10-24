@@ -761,6 +761,7 @@ sourceHas("the Guide states the coding rules in the same voice as the rest", "sr
   "A coding answer holds at most",
   "never compiled",
   "039_coding_questions.sql",
+  "video pitch and coding carry a Marking scheme",
 ]);
 check(
   "the Guide names every language the picker offers, in order",
