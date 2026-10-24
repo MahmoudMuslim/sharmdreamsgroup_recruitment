@@ -269,9 +269,9 @@ sourceHas("the GET allow-list carries the two new config keys", "src/app/api/att
   "source.starter_code",
 ]);
 check(
-  "the manual type picker still hides CODING",
-  !/QUESTION_TYPES[^=]*=\s*\[[^\]]*"CODING"/s.test(read("src/app/(admin)/assessments/question-actions.ts")),
-  "question-actions QUESTION_TYPES should not include CODING until Task 4"
+  "the save door now accepts CODING",
+  /QUESTION_TYPES[^=]*=\s*\[[^\]]*"CODING"/s.test(read("src/app/(admin)/assessments/question-actions.ts")),
+  "question-actions QUESTION_TYPES should include CODING after Task 4"
 );
 
 sourceHas("the suite drafting drawer still hides CODING", "src/app/(admin)/assessments/SuiteAuthoringDrawer.tsx", [

@@ -196,6 +196,8 @@ function harness(which, options = {}) {
       openAtId: options.openAtId === undefined ? (options.question ?? rubricQuestion()).id : options.openAtId,
       situationalAvailable: true,
       situationalNote: null,
+      codingAvailable: options.codingAvailable ?? true,
+      codingNote: options.codingNote ?? null,
       skillOptions: options.skillOptions ?? [
         { id: "s-fin", name: "Financial modelling" },
         { id: "s-neg", name: "Negotiation" },
@@ -307,7 +309,7 @@ function harness(which, options = {}) {
   function render() { let count = 0; while (dirty && mounted) { assert.ok(count++ < 40); dirty = false; cursor = 0; tree = expand(Component(props)); effects.splice(0).forEach((effect) => effect()); } }
   function find(predicate) { render(); const node = nodes(tree).find(predicate); assert.ok(node, "control exists"); return node; }
 
-  const labelled = (name) => find((node) => (node.type === "input" || node.type === "textarea") && node.props["aria-label"] === name);
+  const labelled = (name) => find((node) => (node.type === "input" || node.type === "textarea" || node.type === "select") && node.props["aria-label"] === name);
 
   const ui = {
     requests, saves,
@@ -825,7 +827,57 @@ test("a stored tag is clearable even when the catalogue is empty", async () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* 4. The Guide                                                                */
+/* 4. The coding question's desk                                              */
+/* -------------------------------------------------------------------------- */
+
+/** A coding question as the drawer receives it from the suite. */
+const codeQuestion = (overrides = {}) => ({
+  id: "q-code",
+  template_id: "suite-a",
+  question_type: "CODING",
+  title: "Flatten a nested list",
+  prompt: "Write a function that flattens arbitrary nesting.",
+  instructions: null,
+  config: { language: "Python", starter_code: "def flatten(x):" },
+  points: 10,
+  position: 0,
+  time_limit_minutes: null,
+  shuffle_options: false,
+  ...overrides,
+});
+
+test("a coding question opens with its language and starter on the desk", () => {
+  const ui = harness("editor", { question: codeQuestion() });
+  assert.equal(ui.value("Language"), "Python");
+  assert.equal(ui.value("Starter code"), "def flatten(x):");
+  assert.match(ui.text(), /never graded/i);
+  ui.unmount();
+});
+
+test("the language and starter travel with the save", () => {
+  const ui = harness("editor", { question: codeQuestion() });
+  ui.type("Language", "Go");
+  ui.type("Starter code", "func flatten(x []int) {}");
+  ui.submit();
+  assert.equal(ui.saves[0].language, "Go");
+  assert.equal(ui.saves[0].starter_code, "func flatten(x []int) {}");
+  ui.unmount();
+});
+
+test("with 039 absent the drawer says so and cannot send the question", () => {
+  const ui = harness("editor", {
+    question: codeQuestion(),
+    codingAvailable: false,
+    codingNote:
+      "Coding questions need migration 039 (db/migrations/039_coding_questions.sql) to be applied before they can be saved. Nothing was saved.",
+  });
+  assert.match(ui.text(), /039_coding_questions\.sql/);
+  assert.equal(ui.button("Save question").props.disabled, true);
+  ui.unmount();
+});
+
+/* -------------------------------------------------------------------------- */
+/* 5. The Guide                                                                */
 /* -------------------------------------------------------------------------- */
 
 function sourceHas(name, relative, needles) {

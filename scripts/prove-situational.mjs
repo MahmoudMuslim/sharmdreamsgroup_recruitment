@@ -660,8 +660,8 @@ sourceHas("the suite grid passes the probe to the editor", "src/app/(admin)/asse
 sourceHas("the question writer validates through the domain", "src/app/(admin)/assessments/question-actions.ts", [
   "readJudgmentDraft(",
   "judgmentStoredOptions(judgment)",
-  "SITUATIONAL_WRITE_REFUSAL",
-  "isMissingQuestionTypeError(error) ? SITUATIONAL_WRITE_REFUSAL : error.message",
+  'import { questionWriteError } from "@/modules/assessment/domain/questionWriteErrors";',
+  "questionWriteError(draft.question_type, error)",
   'draft.question_type === "MULTIPLE_CHOICE" || draft.question_type === "SITUATIONAL_JUDGMENT"',
 ]);
 
@@ -731,10 +731,12 @@ sourceHas("the runner's store knows the fifth type", "src/stores/useAssessmentSt
   '| "SITUATIONAL_JUDGMENT"',
 ]);
 sourceHas("the Guide names the fifth type and the migration that adds it", "src/modules/shell/domain/pageGuide.ts", [
-  "Five question types:",
+  "Six question types:",
   "Situational judgment (a workplace scene",
   "034_situational_judgment.sql",
   "the type picker hides the fifth type",
+  "039_coding_questions.sql",
+  "the type picker hides the sixth type",
 ]);
 
 check(

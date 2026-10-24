@@ -38,6 +38,7 @@ import * as attemptAnswersDomain from "../src/modules/assessment/domain/attemptA
 import * as comparisonDomain from "../src/modules/assessment/domain/comparison.ts";
 import { createRestClient } from "../src/lib/rest/client.ts";
 import * as situational from "../src/modules/assessment/domain/situational.ts";
+import * as codingDomain from "../src/modules/assessment/domain/coding.ts";
 import * as trail from "../src/modules/activity/domain/trail.ts";
 import * as attemptTotals from "../src/modules/assessment/domain/attemptTotals.ts";
 import * as sweepSelection from "../src/modules/assessment/domain/sweepSelection.ts";
@@ -849,6 +850,18 @@ function authoringHarness(options = {}) {
               updates.push({ table, values: query.update, filters: [...query.filters] });
               return Promise.resolve({ data: null, error: null }).then(resolve, reject);
             }
+            if (
+              options.enumMissing &&
+              query.filters.some(([column, value]) => column === "question_type" && value === options.enumMissing)
+            ) {
+              return Promise.resolve({
+                data: null,
+                error: {
+                  code: "22P02",
+                  message: `invalid input value for enum public.question_type: "${options.enumMissing}"`,
+                },
+              }).then(resolve, reject);
+            }
             let found = [...(tables[table] ?? [])];
             for (const [column, value] of query.filters) {
               found = found.filter((row) => row[column] === value);
@@ -914,6 +927,16 @@ function authoringHarness(options = {}) {
       if (name === "@/modules/assessment/domain/situational") return situational;
       if (name === "@/modules/assessment/domain/rubric") return rubricDomain;
       if (name === "@/modules/assessment/domain/skillTags") return skillTags;
+      if (name === "@/modules/assessment/domain/coding") return codingDomain;
+      if (name === "@/modules/assessment/domain/questionWriteErrors") {
+        return loadModule(path.join(root, "src/modules/assessment/domain/questionWriteErrors.ts"), {});
+      }
+      if (name === "@/modules/assessment/application/questionTypeAvailability") {
+        return loadModule(
+          path.join(root, "src/modules/assessment/application/questionTypeAvailability.ts"),
+          {}
+        );
+      }
       throw new Error(`Unmocked boundary: ${name}`);
     },
   };
@@ -954,7 +977,54 @@ const draftOf = (overrides) => ({
   ...overrides,
 });
 
-/** An edit of a case study that already carries a rubric. */
+const codeDraftOf = (overrides) =>
+  draftOf({
+    question_type: "CODING",
+    title: "Flatten a nested list",
+    prompt: "Write a function that flattens arbitrary nesting.",
+    context: "",
+    min_words: null,
+    language: "Python",
+    starter_code: "def flatten(x):",
+    ...overrides,
+  });
+
+test("a coding question is saved with its language and starter", async () => {
+  const h = authoringHarness();
+  const result = await h.save(codeDraftOf());
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(h.insertedRow().question_type, "CODING");
+  // The row is built inside the VM, so its prototype is the VM's; serialising
+  // compares the stored values across the two realms.
+  assert.deepEqual(JSON.parse(JSON.stringify(h.insertedRow().config)), {
+    language: "Python",
+    starter_code: "def flatten(x):",
+  });
+});
+
+test("a coding question with no language is refused before the insert", async () => {
+  const h = authoringHarness();
+  const result = await h.save(codeDraftOf({ language: "" }));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /language/i);
+  assert.equal(h.inserts.length, 0);
+});
+
+test("a coding question whose enum 039 has not added is refused with the migration named", async () => {
+  const h = authoringHarness({ enumMissing: "CODING" });
+  const result = await h.save(codeDraftOf());
+  assert.equal(result.ok, false);
+  assert.match(result.error, /039/);
+  assert.equal(h.inserts.length, 0);
+});
+
+test("an oversized starter is refused by its length", async () => {
+  const h = authoringHarness();
+  const result = await h.save(codeDraftOf({ starter_code: "x".repeat(10_001) }));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /10,000/);
+  assert.equal(h.inserts.length, 0);
+});
 const storedCase = (overrides) => ({
   id: "q-1",
   template_id: "suite-1",

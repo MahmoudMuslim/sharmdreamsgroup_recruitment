@@ -24,12 +24,18 @@ import {
   type GeneratedQuestion,
 } from "@/modules/assessment/domain/aiAuthoring";
 import {
-  SITUATIONAL_WRITE_REFUSAL,
-  isMissingQuestionTypeError,
   judgmentStoredOptions,
   readJudgmentDraft,
   type JudgmentDraft,
 } from "@/modules/assessment/domain/situational";
+import {
+  CODING,
+  CODING_SCHEMA_NOTE,
+  readCodingLanguage,
+  starterCodeIssue,
+} from "@/modules/assessment/domain/coding";
+import { readQuestionTypeAvailability } from "@/modules/assessment/application/questionTypeAvailability";
+import { questionWriteError } from "@/modules/assessment/domain/questionWriteErrors";
 import {
   RUBRIC_WEIGHT_TOTAL,
   isRubricType,
@@ -67,6 +73,7 @@ const QUESTION_TYPES: QuestionType[] = [
   "EXCEL_MODEL",
   "VIDEO_PITCH",
   "SITUATIONAL_JUDGMENT",
+  "CODING",
 ];
 
 export interface ChoiceDraft {
@@ -97,6 +104,10 @@ export interface QuestionDraft {
   /** CASE_STUDY only. */
   context: string;
   min_words: number | null;
+  /** CODING only: one of CODING_LANGUAGES, checked before the client opens. */
+  language?: string;
+  /** CODING only: the optional snippet shown beside the prompt. */
+  starter_code?: string;
   /** VIDEO_PITCH only. */
   min_duration_seconds: number | null;
   max_duration_seconds: number | null;
@@ -122,18 +133,8 @@ async function requireAssessmentEditor(): Promise<string | null> {
 }
 
 /**
- * The sentence a refused question write is shown.
- *
- * Postgres reports a missing enum label as 22P02 with nothing the author can
- * act on, so a write naming SITUATIONAL_JUDGMENT while 034 is unapplied is
- * answered with the migration that would make it work. Every other error is the
- * database's own message, unchanged.
+ * What a draft means for the question's marking scheme.
  */
-function questionWriteError(error: { code?: string | null; message: string }): string {
-  return isMissingQuestionTypeError(error) ? SITUATIONAL_WRITE_REFUSAL : error.message;
-}
-
-/** What a draft means for the question's marking scheme. */
 type RubricChange =
   | { kind: "keep" }
   | { kind: "clear" }
@@ -245,6 +246,19 @@ function buildConfig(
       return config;
     }
 
+    case "CODING": {
+      const config: QuestionConfig = { ...(preserve ?? {}) };
+      const language = readCodingLanguage(draft.language);
+      if (!language) throw new Error("A coding question must name its language.");
+      config.language = language;
+      if (draft.starter_code?.trim()) config.starter_code = draft.starter_code;
+      else delete config.starter_code;
+      // A no-op until Task 9 makes CODING a rubric type; kept here so that
+      // change needs no second edit to the save door.
+      applyRubricChange(config, rubric);
+      return config;
+    }
+
     // EXCEL_MODEL is not editable through this form; keep the original bytes.
     case "EXCEL_MODEL":
     default:
@@ -343,7 +357,22 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
   let rubric = resolveRubricChange(draft);
   if (rubric.kind === "refuse") return { ok: false, error: rubric.error };
 
+  if (draft.question_type === CODING) {
+    if (!readCodingLanguage(draft.language)) {
+      return { ok: false, error: "Pick the language the candidate should write in." };
+    }
+    const starterIssue = starterCodeIssue(draft.starter_code);
+    if (starterIssue) return { ok: false, error: starterIssue };
+  }
+
   const restClient = await createServerRestClient();
+
+  if (draft.question_type === CODING) {
+    const availability = await readQuestionTypeAvailability(restClient);
+    if (!availability.coding) {
+      return { ok: false, error: availability.codingNote ?? CODING_SCHEMA_NOTE };
+    }
+  }
 
   // A tag is a claim about a catalogue row, so it is resolved against the
   // catalogue before anything is written. An unknown or retired id is refused
@@ -427,7 +456,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
       .insert(row)
       .select("id")
       .single();
-    if (error) return { ok: false, error: questionWriteError(error) };
+    if (error) return { ok: false, error: questionWriteError(draft.question_type, error) };
 
     const renumberError = await renumberSuite(restClient, draft.template_id);
     if (renumberError) return { ok: false, error: renumberError };
@@ -467,7 +496,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     .eq("id", draft.id)
     .eq("template_id", draft.template_id);
 
-  if (error) return { ok: false, error: questionWriteError(error) };
+  if (error) return { ok: false, error: questionWriteError(draft.question_type, error) };
 
   const renumberError = await renumberSuite(restClient, draft.template_id);
   if (renumberError) return { ok: false, error: renumberError };

@@ -43,6 +43,10 @@ import {
   type RubricType,
 } from "@/modules/assessment/domain/rubric";
 import {
+  CODE_STARTER_CAP,
+  CODING_LANGUAGES,
+} from "@/modules/assessment/domain/coding";
+import {
   addDraftedQuestions,
   deleteQuestion,
   draftQuestions,
@@ -122,6 +126,8 @@ interface Draft {
   min_words: string;
   min_duration_seconds: string;
   max_duration_seconds: string;
+  language: string;
+  starter_code: string;
   rubric: RubricRow[];
   preserve_config: QuestionConfig | null;
 }
@@ -199,6 +205,8 @@ function toDraft(question: EditableQuestion | null): Draft {
       min_words: "",
       min_duration_seconds: "",
       max_duration_seconds: "120",
+      language: "",
+      starter_code: "",
       rubric: blankRubricRows(),
       preserve_config: null,
     };
@@ -227,6 +235,8 @@ function toDraft(question: EditableQuestion | null): Draft {
     max_duration_seconds: config.max_duration_seconds
       ? String(config.max_duration_seconds)
       : "120",
+    language: config.language ?? "",
+    starter_code: config.starter_code ?? "",
     rubric: rubricRowsFrom(config.rubric),
     // Handed back untouched so EXCEL_MODEL workbooks survive an edit.
     preserve_config: config,
@@ -247,6 +257,8 @@ export function QuestionEditorDrawer({
   openAtId,
   situationalAvailable = true,
   situationalNote = null,
+  codingAvailable = true,
+  codingNote = null,
   skillOptions = [],
   skillsNote = null,
 }: {
@@ -278,6 +290,10 @@ export function QuestionEditorDrawer({
   situationalAvailable?: boolean;
   /** Why it does not, shown where the type would otherwise be offered. */
   situationalNote?: string | null;
+  /** Whether `public.question_type` carries CODING yet (039). */
+  codingAvailable?: boolean;
+  /** Why it does not, shown where the type would otherwise be saved. */
+  codingNote?: string | null;
   /** Active catalogue skills a rubric criterion may name. */
   skillOptions?: SkillOption[];
   /** Why the list is empty, printed beside the rubric rows. */
@@ -427,6 +443,11 @@ export function QuestionEditorDrawer({
         min_words: numberOrNull(editing.min_words),
         min_duration_seconds: numberOrNull(editing.min_duration_seconds),
         max_duration_seconds: numberOrNull(editing.max_duration_seconds),
+        // Only a coding question names a language or offers a starter; an
+        // absent key on any other type means the same as it always did.
+        ...(editing.question_type === "CODING"
+          ? { language: editing.language, starter_code: editing.starter_code }
+          : {}),
         // Only a type with a panel speaks of a marking scheme: an absent key
         // means "keep what is stored", which is what a quiz or a workbook draft
         // must mean, since neither ever read one.
@@ -505,6 +526,7 @@ export function QuestionEditorDrawer({
             onCancel={() => setEditing(null)}
             submitLabel={editing.id === null ? "Add question" : "Save question"}
             pending={pending}
+            disabled={editing.question_type === "CODING" && !codingAvailable}
             note="Changes apply to attempts that start after this point."
           />
         }
@@ -519,9 +541,11 @@ export function QuestionEditorDrawer({
               }
             >
               {(Object.keys(TYPE_LABELS) as QuestionType[])
-                .filter((type) => type !== "SITUATIONAL_JUDGMENT" || situationalAvailable)
-                // CODING has words but no editor or drafting rules yet.
-                .filter((type) => type !== "CODING")
+                .filter(
+                  (type) =>
+                    (type !== "SITUATIONAL_JUDGMENT" || situationalAvailable) &&
+                    (type !== "CODING" || codingAvailable)
+                )
                 .map((type) => (
                   <option key={type} value={type}>
                     {TYPE_LABELS[type]}
@@ -529,6 +553,12 @@ export function QuestionEditorDrawer({
                 ))}
             </Select>
           </Field>
+
+          {editing.question_type === "CODING" && !codingAvailable && codingNote ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-900">
+              {codingNote}
+            </p>
+          ) : null}
 
           <Field label="Short title" htmlFor="q-title" required hint="Shown in the candidate's contents list.">
             <TextInput
@@ -794,6 +824,56 @@ export function QuestionEditorDrawer({
                   placeholder="150"
                 />
               </Field>
+            </div>
+          )}
+
+          {editing.question_type === "CODING" && (
+            <div className="space-y-4">
+              <Field
+                label="Language"
+                htmlFor="q-language"
+                required
+                hint="The language the candidate writes in. Nothing runs their code."
+              >
+                <Select
+                  id="q-language"
+                  name="language"
+                  aria-label="Language"
+                  value={editing.language}
+                  onChange={(e) => patch({ language: e.target.value })}
+                  required
+                >
+                  <option value="">Pick a language</option>
+                  {CODING_LANGUAGES.map((language) => (
+                    <option key={language} value={language}>
+                      {language}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Starter code"
+                htmlFor="q-starter"
+                hint="Shown beside the prompt and never graded. Blank means no starter."
+              >
+                <TextArea
+                  id="q-starter"
+                  name="starter_code"
+                  aria-label="Starter code"
+                  rows={6}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  maxLength={CODE_STARTER_CAP}
+                  className="font-mono"
+                  value={editing.starter_code}
+                  onChange={(e) => patch({ starter_code: e.target.value })}
+                />
+              </Field>
+              <p className="text-xs text-brand-ink/45">
+                {editing.starter_code.length.toLocaleString("en-US")} of{" "}
+                {CODE_STARTER_CAP.toLocaleString("en-US")} starter characters.
+              </p>
             </div>
           )}
 

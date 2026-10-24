@@ -1249,6 +1249,8 @@ export function AssessmentGrid({
           editable={canEdit}
           situationalAvailable={situational.situational}
           situationalNote={situational.note}
+          codingAvailable={situational.coding}
+          codingNote={situational.codingNote}
           skillOptions={skillOptions}
           skillsNote={skillsNote}
           onChanged={router.refresh}
