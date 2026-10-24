@@ -7,6 +7,11 @@ import {
 } from "@/modules/jobs/domain/hireable";
 import { HIRED_STAGE, IN_PIPELINE_STAGES } from "@/modules/jobs/domain/hiringDemand";
 import { getOpeningTermsByIds } from "@/modules/jobs/application/openingTermsRead";
+import {
+  getOpeningsRequiredSkills,
+  getSkillsCatalogue,
+} from "@/modules/jobs/application/openingSkillsRead";
+import type { RequiredSkill } from "@/modules/jobs/domain/openingSkills";
 
 /**
  * Read queries the assistant needs that no screen action already exposes.
@@ -157,10 +162,31 @@ export interface AssistantJobRead {
   termsNote: string | null;
 }
 
+/**
+ * One requirement row with the catalogue's word for it.
+ *
+ * The id travels because a chat edit sends the list back, and the name because a
+ * uuid in a spoken answer is not a skill anyone can read. `name` is null only
+ * when the catalogue itself could not be read — a stored row's foreign key means
+ * the skills table has the row, retired or not.
+ */
+export type AssistantRequiredSkill = RequiredSkill & { name: string | null };
+
 /** One opening with the same schema honesty the list carries. */
 export interface AssistantJobDetail {
   job: AssistantJobRow;
   termsNote: string | null;
+  /** The requisition's skill list, or empty when it asks for nothing. */
+  requiredSkills: AssistantRequiredSkill[];
+  /**
+   * Why the list is empty when it is empty for a reason other than the opening.
+   *
+   * `job_opening_skills` ships ahead of its ALTER (037 is authored, not applied),
+   * so on this database an empty list and a table that cannot be read look alike
+   * to everything above. The note says which of the two the recruiter is being
+   * told about; null when the read worked.
+   */
+  skillsNote: string | null;
 }
 
 /**
@@ -290,8 +316,25 @@ export async function getJobOpening(jobId: string): Promise<AssistantJobDetail |
   if (!data) return null;
 
   const terms = await getOpeningTermsByIds(restClient, [jobId]);
+  // The skill list is a third degradable read, for the third unapplied file. It
+  // is asked for by this opening's id, the same way the level is, so nothing here
+  // can describe a different window of openings.
+  const skills = await getOpeningsRequiredSkills(restClient, [jobId]);
+  const rows = skills.requiredById.get(jobId) ?? [];
+  // The catalogue is only worth a query when there is something to name: an
+  // opening that asks for nothing has no ids to translate.
+  const catalogue = rows.length > 0 ? await getSkillsCatalogue(restClient) : null;
+  const names = new Map((catalogue?.all ?? []).map((skill) => [skill.id, skill.name]));
+
   return {
     job: toJob(data as unknown as RawJobRow, terms.experienceById.get(jobId) ?? null),
     termsNote: terms.note,
+    requiredSkills: rows.map((row) => ({
+      skill_id: row.skill_id,
+      name: names.get(row.skill_id) ?? null,
+      required_level: row.required_level,
+      source: row.source,
+    })),
+    skillsNote: skills.note ?? catalogue?.note ?? null,
   };
 }

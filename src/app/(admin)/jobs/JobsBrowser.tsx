@@ -583,6 +583,9 @@ export function JobsBrowser({
           key={applicantsJob.id}
           job={applicantsJob}
           canDecide={canDecide}
+          // The catalogue the match lines are named from — the same vocabulary the
+          // editor's picker uses, so a skill reads the same in both drawers.
+          skillLabels={options.skillLabels}
           onClose={() => setApplicantsJob(null)}
         />
       )}

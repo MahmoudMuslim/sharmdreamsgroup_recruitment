@@ -4,6 +4,7 @@ import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
+import type { DemonstratedSkill } from "@/modules/jobs/domain/openingSkills";
 
 /**
  * Applicants of one job opening, and what each of them actually submitted.
@@ -37,6 +38,15 @@ export interface JobApplicant {
   template_name: string | null;
   /** True when `security.mask_scores_for_reviewers` hid the two scores above. */
   scores_masked: boolean;
+  /**
+   * What this application's record names, one row per catalogue skill.
+   *
+   * Returned whole even when `scores_masked` is true, because a level the reader
+   * cannot see is still a level that was recorded: nulling it here would make the
+   * drawer say "no evidence" about evidence that exists. The drawer is where the
+   * grant changes what is printed.
+   */
+  demonstrated: DemonstratedSkill[];
 }
 
 /** The bulk of one application: the CV as submitted and the AI screening report. */
@@ -64,6 +74,24 @@ function attemptTemplate(attempt: Record<string, unknown> | null): string | null
   return null;
 }
 
+/**
+ * The `candidate_skills` rows the list embed carried.
+ *
+ * Only the pair the matcher reads is kept, and a row whose proficiency is not a
+ * number is dropped rather than guessed at — `matchRequiredSkills` answers "no
+ * evidence" for a skill with no usable level, which is the truth about the record.
+ */
+function demonstratedSkills(value: unknown): DemonstratedSkill[] {
+  const rows = Array.isArray(value) ? value : [];
+  return rows
+    .map((row) => (row && typeof row === "object" ? (row as Record<string, unknown>) : null))
+    .filter((row): row is Record<string, unknown> => row !== null && typeof row.skill_id === "string")
+    .map((row) => ({
+      skill_id: String(row.skill_id),
+      proficiency: typeof row.proficiency === "number" ? row.proficiency : Number(row.proficiency),
+    }));
+}
+
 export async function getJobApplicants(jobId: string): Promise<ApplicantsResult> {
   await requireStaff("/jobs");
   const [restClient, masked] = await Promise.all([
@@ -74,7 +102,7 @@ export async function getJobApplicants(jobId: string): Promise<ApplicantsResult>
   const { data, error } = await restClient
     .from("applications")
     .select(
-      "id, full_name, email, phone, tracking_code, stage, source, created_at, cv_file_path, ai_match_score, candidate_attempts(access_token, status, total_score, max_score, assessment_templates(name))"
+      "id, full_name, email, phone, tracking_code, stage, source, created_at, cv_file_path, ai_match_score, candidate_attempts(access_token, status, total_score, max_score, assessment_templates(name)), candidate_skills(skill_id, proficiency)"
     )
     .eq("job_id", jobId)
     .is("archived_at", null)
@@ -112,6 +140,7 @@ export async function getJobApplicants(jobId: string): Promise<ApplicantsResult>
         attempt_max: attempt?.max_score == null ? null : Number(attempt.max_score),
         template_name: attemptTemplate(attempt),
         scores_masked: masked,
+        demonstrated: demonstratedSkills(row.candidate_skills),
       } satisfies JobApplicant;
     }
   );

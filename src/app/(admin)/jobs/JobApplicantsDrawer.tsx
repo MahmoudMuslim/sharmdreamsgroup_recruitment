@@ -23,6 +23,13 @@ import {
 } from "@/app/(admin)/candidates/candidate-actions";
 import { formatDateTime, sourceLabel, cn } from "@/lib/utils";
 import {
+  matchRequiredSkills,
+  skillMatchSentence,
+  type CatalogueSkill,
+  type RequiredSkill,
+  type SkillMatchLine,
+} from "@/modules/jobs/domain/openingSkills";
+import {
   getApplicantSubmission,
   getJobApplicants,
   type ApplicantSubmission,
@@ -55,6 +62,80 @@ function Detail({ label, value }: { label: string; value: string }) {
       </dd>
     </div>
   );
+}
+
+/**
+ * One required skill beside what this record shows of it.
+ *
+ * A skill nobody recorded says "no evidence", never a level and never a missing
+ * skill: `candidate_skills` is only filled when screening reads a level out of the
+ * CV, so an absent row is a fact about the record, not about the person.
+ */
+function matchLine(line: SkillMatchLine): string {
+  const shown = line.evidence === "no_evidence" ? "no evidence" : `shown ${line.demonstrated_level}`;
+  return `${line.name} · required ${line.required_level} · ${shown}`;
+}
+
+/** The same ask with the candidate's level left off — what a masked reviewer is granted. */
+function askLine(line: SkillMatchLine): string {
+  return `${line.name} · required ${line.required_level}`;
+}
+
+/**
+ * The requisition's skill list, printed against one applicant.
+ *
+ * Quiet when the opening requires nothing: an empty list is not a candidate who
+ * fails on every skill, and a drawer that said "0 of 0" would be inventing a
+ * verdict out of an unset field.
+ */
+function RequiredSkillLines({
+  lines,
+  masked,
+  compact,
+}: {
+  lines: readonly SkillMatchLine[];
+  masked: boolean;
+  /** The collapsed row, which is inside a `<button>` and so takes spans, not blocks. */
+  compact: boolean;
+}) {
+  if (lines.length === 0) return null;
+
+  const say = masked
+    ? `${skillAskHeadline(lines.length)} — the levels applicants demonstrated are not granted to your role.`
+    : skillMatchSentence(lines);
+  const item = (line: SkillMatchLine) => (masked ? askLine(line) : matchLine(line));
+  const size = compact ? "text-[11px]" : "text-xs";
+
+  if (compact) {
+    return (
+      <span className="mt-1 block space-y-0.5">
+        <span className={`block truncate font-semibold text-brand-ink/60 ${size}`}>{say}</span>
+        {lines.map((line) => (
+          <span key={line.skill_id} className={`block truncate text-brand-ink/55 ${size}`}>
+            {item(line)}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <p className={`font-semibold text-brand-ink/60 ${size}`}>{say}</p>
+      <ul className="space-y-1">
+        {lines.map((line) => (
+          <li key={line.skill_id} className={`truncate text-brand-ink/55 ${size}`}>
+            {item(line)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Counting sentence for the masked branch, which cannot report what is met. */
+function skillAskHeadline(required: number): string {
+  return `This opening lists ${required} required ${required === 1 ? "skill" : "skills"}`;
 }
 
 /**
@@ -256,12 +337,15 @@ function ApplicantDetail({
   submission,
   error,
   canDecide,
+  skillLines,
   onMoved,
 }: {
   applicant: JobApplicant;
   submission: ApplicantSubmission | null;
   error: string | null;
   canDecide: boolean;
+  /** The requisition's requirements beside this record, mapped once for the whole row. */
+  skillLines: readonly SkillMatchLine[];
   onMoved: (applicationId: string, stage: PipelineStage) => void;
 }) {
   // A decision never waits on the CV: the stage lives on the application row,
@@ -309,6 +393,19 @@ function ApplicantDetail({
           <Detail label="Applied on" value={formatDateTime(applicant.applied_at)} />
         </dl>
       </section>
+
+      {/* Named against the requisition, not against prose: `ai_gaps` used to be the
+          only thing this drawer said about skills, and it was a sentence nobody
+          could check. These lines are the opening's own rows beside the levels this
+          record carries. */}
+      {skillLines.length > 0 && (
+        <section>
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+            Against the requisition’s skills
+          </h4>
+          <RequiredSkillLines lines={skillLines} masked={applicant.scores_masked} compact={false} />
+        </section>
+      )}
 
       <section>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -430,11 +527,14 @@ function ApplicantDetail({
 export function JobApplicantsDrawer({
   job,
   canDecide,
+  skillLabels,
   onClose,
 }: {
-  job: { id: string; title: string; status: string };
+  job: { id: string; title: string; status: string; required_skills: RequiredSkill[] };
   /** `candidates.write` — the grant the stage writer re-checks on the server. */
   canDecide: boolean;
+  /** The catalogue with its retired rows, so a required skill is named rather than shown as an id. */
+  skillLabels: CatalogueSkill[];
   onClose: () => void;
 }) {
   const [applicants, setApplicants] = useState<JobApplicant[] | null>(null);
@@ -546,6 +646,11 @@ export function JobApplicantsDrawer({
         <ul className="divide-y divide-brand-line rounded-xl border border-brand-line bg-white">
           {applicants.map((applicant) => {
             const expanded = openId === applicant.id;
+            const skillLines = matchRequiredSkills(
+              job.required_skills,
+              applicant.demonstrated,
+              skillLabels
+            );
             return (
               <li key={applicant.id}>
                 <button
@@ -567,6 +672,11 @@ export function JobApplicantsDrawer({
                     <span className="mt-0.5 block truncate text-xs text-brand-ink/55">
                       {applicant.email} · applied {formatDateTime(applicant.applied_at)}
                     </span>
+                    <RequiredSkillLines
+                      lines={skillLines}
+                      masked={applicant.scores_masked}
+                      compact
+                    />
                   </span>
 
                   <span className="flex shrink-0 items-center gap-2">
@@ -585,6 +695,7 @@ export function JobApplicantsDrawer({
                     submission={submissions[applicant.id] ?? null}
                     error={detailErrors[applicant.id] ?? null}
                     canDecide={canDecide}
+                    skillLines={skillLines}
                     onMoved={markMoved}
                   />
                 )}

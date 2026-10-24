@@ -7,7 +7,12 @@ import { getMasterOptions } from "@/modules/settings/application/master-data-act
 import { getFilingVocabularies } from "@/modules/jobs/application/filingVocabularies";
 import { getOpeningsHeadcount } from "@/modules/jobs/application/hiringDemand";
 import { getOpeningsTerms } from "@/modules/jobs/application/openingTermsRead";
+import {
+  getOpeningsRequiredSkills,
+  getSkillsCatalogue,
+} from "@/modules/jobs/application/openingSkillsRead";
 import { GRID_ROW_LIMIT } from "@/modules/jobs/domain/hireable";
+import { OPENING_SKILLS_SCHEMA_NOTE } from "@/modules/jobs/domain/openingSkills";
 import { HIRED_STAGE, IN_PIPELINE_STAGES } from "@/modules/jobs/domain/hiringDemand";
 import { NewJobDrawer, type JobFormOptions } from "./JobFormDrawer";
 import { JobsBrowser, type JobRow } from "./JobsBrowser";
@@ -26,7 +31,7 @@ export default async function JobsPage() {
   await requireStaff("/jobs");
   const restClient = await createServerRestClient();
 
-  const [result, headcount, terms, canManage, canDecide, filing] = await Promise.all([
+  const [result, headcount, terms, catalogue, canManage, canDecide, filing] = await Promise.all([
     restClient
       .from("job_openings")
       .select(
@@ -58,12 +63,24 @@ export default async function JobsPage() {
     // The same separation for seniority: 033 is authored but not applied, and a
     // missing column must cost the level, not the openings page.
     getOpeningsTerms(restClient),
+    // The master list a requisition picks from, read apart from the rows so a
+    // failed catalogue costs the picker and not the page. Its retired rows come
+    // along too: a skill required before it was struck off still has to be named.
+    getSkillsCatalogue(restClient),
     hasPermissionForUser("jobs.manage"),
     hasPermissionForUser("candidates.write"),
     getFilingVocabularies(restClient).then((read) => read.vocabularies),
   ]);
 
   const master = await getMasterOptions();
+  // The requisition skill rows for exactly the openings this grid is showing. It
+  // has to follow the grid read because it is keyed on those ids, and it is a
+  // separate query because `job_opening_skills` is 037 — authored, not applied —
+  // and naming it inside the row select would take the whole page down with it.
+  const skillRows = await getOpeningsRequiredSkills(
+    restClient,
+    ((result.data ?? []) as { id: string }[]).map((row) => String(row.id))
+  );
   const options: JobFormOptions = {
     companies: master.companies,
     departments: master.departments,
@@ -80,14 +97,28 @@ export default async function JobsPage() {
     // False while `experience_level` and the widened employment check are not on
     // the database: the drawer then offers the four original types and no level.
     termsAvailable: terms.available,
+    skills: catalogue.skills,
+    skillLabels: catalogue.all,
+    // What the picker says instead of checkboxes. The missing table outranks a
+    // failed catalogue: with no `job_opening_skills` there is nothing to offer and
+    // nothing to write, so the migration is the whole answer.
+    skillsNote: skillRows.available
+      ? catalogue.available
+        ? null
+        : (catalogue.note ?? "The skills catalogue could not be read.")
+      : (skillRows.note ?? OPENING_SKILLS_SCHEMA_NOTE),
   };
   const jobs: JobRow[] = ((result.data ?? []) as unknown as Omit<
     JobRow,
-    "positions_needed" | "experience_level"
+    "positions_needed" | "experience_level" | "required_skills"
   >[]).map((row) => ({
     ...row,
     positions_needed: headcount.neededById.get(row.id) ?? null,
     experience_level: terms.experienceById.get(row.id) ?? null,
+    // An opening the read did not reach prints as requiring nothing, which is
+    // what the bounded read means: the table is either whole for these ids or it
+    // is not there at all, and the note on the picker says which.
+    required_skills: skillRows.requiredById.get(row.id) ?? [],
   }));
 
   return (

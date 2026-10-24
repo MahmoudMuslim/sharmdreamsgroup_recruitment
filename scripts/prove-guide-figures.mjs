@@ -214,6 +214,31 @@ const FIGURES = [
     ],
   },
   {
+    // Not a window or a ceiling: the total a rubric's weights must reach, which
+    // the author is refused until they hit. The Guide prints it, the validator
+    // compares against it, so the pair drifts the same way a row limit does.
+    route: "/assessments",
+    want: "the rubric weight total",
+    guide: /the weights are shares of that question's marks, so they must add up to ([\d,]+)/,
+    sources: [
+      {
+        rel: "src/modules/assessment/domain/rubric.ts",
+        pattern: /export const RUBRIC_WEIGHT_TOTAL = ([\d_]+);/,
+      },
+    ],
+  },
+  {
+    route: "/jobs",
+    want: "the requisition's skill ceiling",
+    guide: /A requisition lists at most ([\d,]+) skills/,
+    sources: [
+      {
+        rel: "src/modules/jobs/domain/openingSkills.ts",
+        pattern: /export const MAX_REQUIRED_SKILLS = ([\d_]+);/,
+      },
+    ],
+  },
+  {
     route: "/files",
     want: "a folder's listing",
     guide: /A folder lists its first ([\d,]+) items/,

@@ -67,6 +67,14 @@ import {
   isExperienceLevel,
 } from "@/modules/jobs/domain/openingTerms";
 import {
+  DEFAULT_REQUIRED_LEVEL,
+  MAX_REQUIRED_SKILLS,
+  MAX_SKILL_LEVEL,
+  MIN_SKILL_LEVEL,
+  OPENING_SKILLS_MIGRATION,
+  SKILL_SOURCES,
+} from "@/modules/jobs/domain/openingSkills";
+import {
   APPLICATION_SOURCES,
   PIPELINE_STAGES,
   candidateScopeNote,
@@ -163,6 +171,7 @@ import {
   type JobDraft,
   getApplicantSubmission,
   getJobApplicants,
+  saveOpeningSkills,
   deleteProspect,
   getProspectPool,
   importProspects,
@@ -651,6 +660,27 @@ function numberField(value: unknown): number | undefined {
   return typeof parsed === "number" && Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/**
+ * `[{ skill_id, required_level?, source? }, …]` as the requisition's skill list.
+ *
+ * A chat model quotes a level as `"4"` as often as it sends `4`, so a numeric
+ * string is read as the number it stands for. A level that is not a number is
+ * passed through as something the save will refuse, never as nothing: an absent
+ * key there means "take the column's default", so a reader that turned
+ * `"advanced"` into `undefined` would store a level 3 nobody chose and print it
+ * back to the recruiter as theirs. `readRequiredSkills` owns the rule.
+ */
+function requiredSkillDrafts(args: ToolArgs): Record<string, unknown>[] {
+  return objArray(args, "skills").map((row) => {
+    const given = row.required_level;
+    return {
+      skill_id: row.skill_id,
+      required_level: typeof given === "string" ? Number(given) : given,
+      ...(row.source === undefined ? {} : { source: row.source }),
+    };
+  });
+}
+
 const QUESTION_TYPES: QuestionType[] = [
   "MULTIPLE_CHOICE",
   "SITUATIONAL_JUDGMENT",
@@ -859,7 +889,7 @@ export function questionAsReply(ask: AssistantQuestion): string {
     .join("\n")}`;
 }
 
-export { ANSWER_ROWS, ACTIVITY_TRAIL_ROWS, DOSSIER_ALERT_ROWS, FOLDER_FILE_ROWS, GATE_JOB_ROWS, INTERVIEW_OUTCOMES, ITEM_STAT_ROWS, MASTER_ENTITIES, MAX_OPTIONS, MAX_OPTION_CHARS, MODEL_ROWS, QUESTION_TYPES, ROOT_FILE_ROWS, STAFF_ROLES, ToolArgumentError, UNPLANNED_HIRE_ROWS, UUID_SHAPE, bool, choiceDrafts, clip, filedEntity, flagField, gateOptions, isoDateTime, jobDraft, listingCapNote, masterEntity, num, objArray, openingScopeWords, optionalChoice, optionalId, optionalStr, optionalWord, questionDraftFrom, questionType, report, str, strArray, textField };
+export { ANSWER_ROWS, ACTIVITY_TRAIL_ROWS, DOSSIER_ALERT_ROWS, FOLDER_FILE_ROWS, GATE_JOB_ROWS, INTERVIEW_OUTCOMES, ITEM_STAT_ROWS, MASTER_ENTITIES, MAX_OPTIONS, MAX_OPTION_CHARS, MODEL_ROWS, QUESTION_TYPES, ROOT_FILE_ROWS, STAFF_ROLES, ToolArgumentError, UNPLANNED_HIRE_ROWS, UUID_SHAPE, bool, choiceDrafts, clip, filedEntity, flagField, gateOptions, isoDateTime, jobDraft, listingCapNote, masterEntity, num, objArray, openingScopeWords, optionalChoice, optionalId, optionalStr, optionalWord, questionDraftFrom, questionType, report, requiredSkillDrafts, str, strArray, textField };
 
 export { ACTIVITY_AREAS };
 export { ACTIVITY_ENTITIES };
@@ -888,6 +918,14 @@ export { MAX_FILE_LINES_PER_SECTION };
 export { MAX_FILE_ROWS_PER_SHEET };
 export { MAX_FILE_SECTIONS };
 export { MAX_FILE_SHEETS };
+export {
+  DEFAULT_REQUIRED_LEVEL,
+  MAX_REQUIRED_SKILLS,
+  MAX_SKILL_LEVEL,
+  MIN_SKILL_LEVEL,
+  OPENING_SKILLS_MIGRATION,
+  SKILL_SOURCES,
+};
 export { OUTBOX_BUCKETS };
 export { PIPELINE_STAGES };
 export { PROSPECT_STAGES };
@@ -1032,6 +1070,7 @@ export { saveCredential };
 export { saveGateQuestion };
 export { saveModelRouting };
 export { saveNotificationTemplate };
+export { saveOpeningSkills };
 export { saveProspect };
 export { saveQuestion };
 export { saveSettings };

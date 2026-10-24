@@ -281,7 +281,7 @@ export const reads: readonly AssistantTool[] = [
     name: "list_jobs",
     label: "Reading job openings",
     description:
-      "Job openings newest first, with their status, company, department, location, employment type, seniority level, salary band and applicant count split the way the openings grid splits it: `applicants` everyone live, `in_pipeline` who holds a stage still being worked, `hired` the hired ones. These three are populations at an instant — who sits where now — never a movement, conversion or rate, and no headcount target is claimed here. `experience_level` is null when none was recorded; when the database has no such column yet, `schema_note` says so, and a null then means the level has nowhere to be stored rather than that a recruiter left it blank. Employment types include REMOTE and HYBRID once db/migrations/033_opening_terms.sql is applied; before that, writes naming them are refused. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
+      "Job openings newest first, with their status, company, department, location, employment type, seniority level, salary band and applicant count split the way the openings grid splits it: `applicants` everyone live, `in_pipeline` who holds a stage still being worked, `hired` the hired ones. These three are populations at an instant — who sits where now — never a movement, conversion or rate, and no headcount target is claimed here. `experience_level` is null when none was recorded; when the database has no such column yet, `schema_note` says so, and a null then means the level has nowhere to be stored rather than that a recruiter left it blank. Employment types include REMOTE and HYBRID once db/migrations/033_opening_terms.sql is applied; before that, writes naming them are refused. An opening's required skills are not carried here — `get_job` answers them for one opening at a time, which is also how the drawer beside a card shows them. `status` and `company` are answered by the database, so `scope_note` counts that set; the search words are the openings grid's own box, matched over the rows this read carries. Quote `scope_note` whenever openings are counted or a role is reported missing — the read is a window into the set, and the note says what a search could reach.",
     args: {
       status: `string — optional, one of ${JOB_STATUSES.join(
         ", "
@@ -349,7 +349,7 @@ export const reads: readonly AssistantTool[] = [
     name: "get_job",
     label: "Reading one opening",
     description:
-      "One opening in full, including its description, requirement list, seniority level and the same live / in-pipeline / hired counts the grid shows beside its card (populations at an instant, not a movement, and no headcount target). `experience_level` is null when none was recorded; `schema_note` appears when the database has no level column yet. Read this before editing so unchanged fields are not lost.",
+      "One opening in full, including its description, requirement list, required skills, seniority level and the same live / in-pipeline / hired counts the grid shows beside its card (populations at an instant, not a movement, and no headcount target). `experience_level` is null when none was recorded; `schema_note` appears when the database has no level column yet. `required_skills` is the requisition's skill list — each row names the skill, the depth it is needed to from 1 to 5, and how it was chosen; an empty list means the opening asks for nothing, and `skills_note` replaces that reading when the list cannot be stored at all. This is the only openings tool that answers skills: `list_jobs` deliberately does not carry them. Read this before editing so unchanged fields are not lost.",
     args: { job_id: "string — the opening's id from list_jobs" },
     run: async (args) => {
       const found = await getJobOpening(str(args, "job_id"));
@@ -357,7 +357,9 @@ export const reads: readonly AssistantTool[] = [
       return {
         ok: true,
         job: found.job,
+        required_skills: found.requiredSkills,
         ...(found.termsNote ? { schema_note: found.termsNote } : {}),
+        ...(found.skillsNote ? { skills_note: found.skillsNote } : {}),
       };
     },
   },

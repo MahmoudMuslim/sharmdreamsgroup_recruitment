@@ -80,6 +80,10 @@ const MIGRATIONS = [
     asks:
       "select exists (select 1 from information_schema.columns where table_schema='public' and table_name='assessment_templates' and column_name='follow_up_template_id') as present",
   },
+  {
+    file: "037_opening_skills.sql",
+    asks: "select to_regclass('public.job_opening_skills') is not null as present",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -181,6 +185,7 @@ const STRICT_FILES = [
 
 const SOFT_FILES = [
   "src/modules/jobs/domain/openingTerms.ts",
+  "src/modules/jobs/domain/openingSkills.ts",
   "src/modules/jobs/domain/hiringDemand.ts",
   "src/modules/assessment/domain/situational.ts",
   "src/modules/assessment/domain/followUp.ts",

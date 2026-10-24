@@ -538,6 +538,7 @@ export function linkForTool(
       return id ? { href: `/jobs?job=${id}`, label: "View the opening" } : null;
     }
     case "set_job_status":
+    case "set_required_skills":
     case "get_job":
     case "get_job_applicants": {
       const id = fromArgs(args, "job_id");

@@ -13,11 +13,18 @@ import {
   TextInput,
 } from "@/modules/analytics/presentation/Form";
 import { createJobOpening, updateJobOpening, type JobDraft } from "./job-actions";
+import { saveOpeningSkills } from "./opening-skills-actions";
+import { JobSkillsField } from "./JobSkillsField";
 import {
   EMPLOYMENT_TYPES,
   EXPERIENCE_LEVELS,
   OPENING_TERMS_MIGRATION,
 } from "@/modules/jobs/domain/openingTerms";
+import {
+  sameRequiredSkills,
+  type CatalogueSkill,
+  type RequiredSkill,
+} from "@/modules/jobs/domain/openingSkills";
 import {
   filingGhostLabel,
   type FilingVocabularies,
@@ -42,6 +49,15 @@ export interface JobFormOptions {
    * database would refuse.
    */
   termsAvailable: boolean;
+  /**
+   * The skills a requisition may be pointed at — the live catalogue rows, in the
+   * master-data console's own order. Empty when the catalogue could not be read.
+   */
+  skills: CatalogueSkill[];
+  /** The same list with its retired rows, so a skill required before it was struck off is still named. */
+  skillLabels: CatalogueSkill[];
+  /** Non-null when `job_opening_skills` is not on this database: the picker is replaced by this sentence. */
+  skillsNote: string | null;
 }
 
 /** The stored row an edit starts from — only the fields this form can write. */
@@ -61,6 +77,13 @@ export interface JobForEdit {
   max_salary_usd: number | null;
   salary_currency: string;
   status: string;
+  /**
+   * The rows `job_opening_skills` already holds for this opening, read by the page
+   * beside the row. Empty when the list is empty *and* when 037 is unapplied — the
+   * picker's `note` is what tells the two apart, so an unapplied migration never
+   * reads as a recruiter who chose nothing.
+   */
+  required_skills: RequiredSkill[];
 }
 
 const STATUSES = [
@@ -171,6 +194,15 @@ export function JobFormDrawer({
   const [draft, setDraft] = useState<JobFormState>(() =>
     job ? editDraft(job) : createDraft(options)
   );
+  /**
+   * The skill list, held apart from `draft`.
+   *
+   * It is not a column of `job_openings` and cannot join the payload that writes
+   * one; it goes to its own action, against the id that payload returned. Keeping
+   * it out of `draft` is also what lets the save ask the honest question "did this
+   * list move?" instead of comparing a serialised form state.
+   */
+  const [skills, setSkills] = useState<RequiredSkill[]>(() => job?.required_skills ?? []);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, setPending] = useState(false);
@@ -279,19 +311,38 @@ export function JobFormDrawer({
       const result = job
         ? await updateJobOpening(job.id, payload)
         : await createJobOpening(payload);
-      if (result.ok) {
-        setSaved(true);
-        // The action already revalidated /jobs; refresh pulls the row back in.
-        // Done here rather than via a callback prop, because this component is
-        // rendered from a Server Component and functions cannot cross that
-        // boundary.
-        setTimeout(() => {
-          close();
-          router.refresh();
-        }, 600);
-      } else {
+      if (!result.ok) {
         setError(result.error ?? (job ? "Could not save the opening." : "Could not create the opening."));
+        return;
       }
+
+      // The skill list rides on its own write, against the id the opening write
+      // just returned — that is the only id a create has. Untouched means nothing
+      // goes on the wire: a recruiter who edited the description must not send a
+      // list, and must not be refused for a table they never touched.
+      const id = result.id ?? job?.id;
+      const untouched = sameRequiredSkills(job?.required_skills ?? [], skills);
+      if (!untouched && id) {
+        const saved = await saveOpeningSkills(id, skills);
+        if (!saved.ok) {
+          // The opening *is* saved. Saying only "could not save" would send the
+          // recruiter back over the whole form, and a drawer that closed would
+          // hide the half of the write that failed, so it stays open on both facts.
+          setError(`The opening itself saved. Its skill list did not: ${saved.error ?? "the required skills could not be written."}`);
+          return;
+        }
+        if (saved.skills) setSkills(saved.skills);
+      }
+
+      setSaved(true);
+      // The action already revalidated /jobs; refresh pulls the row back in.
+      // Done here rather than via a callback prop, because this component is
+      // rendered from a Server Component and functions cannot cross that
+      // boundary.
+      setTimeout(() => {
+        close();
+        router.refresh();
+      }, 600);
     } catch {
       setError("Something went wrong saving the opening.");
     } finally {
@@ -536,6 +587,26 @@ export function JobFormDrawer({
             placeholder={"5+ years FP&A experience\nIFRS reporting\nAdvanced Excel"}
           />
         </Field>
+
+        {/* Named skills, beside the lines they came from. The picker reads the
+            requirement text above it as it is typed, so a line that spells out a
+            catalogue skill can be accepted into the list the applicant is scored
+            against — and a list the recruiter edits is what the save writes. */}
+        <JobSkillsField
+          skills={options.skills}
+          labels={options.skillLabels}
+          required={skills}
+          requirements={draft.requirements
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)}
+          note={options.skillsNote}
+          onChange={(next) => {
+            setSkills(next);
+            if (error) setError(null);
+            if (saved) setSaved(false);
+          }}
+        />
 
         {/* Salary is a three-part value: an amount pair plus the currency they
             are denominated in. Labelling the inputs with the selected code

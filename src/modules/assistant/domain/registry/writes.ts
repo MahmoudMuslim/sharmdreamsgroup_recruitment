@@ -3,12 +3,18 @@
 import type { AssistantTool, PipelineStage } from "./shared";
 import {
   AI_CAPABILITIES,
+  DEFAULT_REQUIRED_LEVEL,
   EMPLOYMENT_TYPE_VALUES,
   EXPERIENCE_LEVEL_VALUES,
   JOB_STATUSES,
+  MAX_REQUIRED_SKILLS,
+  MAX_SKILL_LEVEL,
+  MIN_SKILL_LEVEL,
+  OPENING_SKILLS_MIGRATION,
   PIPELINE_STAGES,
   PROSPECT_STAGES,
   SECTORS,
+  SKILL_SOURCES,
   ToolArgumentError,
   assignTemplate,
   bool,
@@ -19,7 +25,9 @@ import {
   optionalStr,
   queueWhatsAppMessage,
   report,
+  requiredSkillDrafts,
   saveModelRouting,
+  saveOpeningSkills,
   saveProspect,
   saveSettings,
   screenApplication,
@@ -98,10 +106,22 @@ export const writes: readonly AssistantTool[] = [
       report(await setJobStatus(str(args, "job_id"), str(args, "status").toUpperCase())),
   },
   {
+    name: "set_required_skills",
+    label: "Recording a requisition's skills",
+    description:
+      `Replaces the required-skill list of one opening — the same list the job form's picker writes and the applicants drawer scores an applicant against, so a skill named here is a skill the drawer can quote back. Read the opening with get_job first and send the whole list: the call replaces what the opening carries, a row left out is removed, and an empty list clears the requisition. Each row is a skill id and the depth the role needs it to, ${MIN_SKILL_LEVEL} to ${MAX_SKILL_LEVEL}; a row that names no level is stored at ${DEFAULT_REQUIRED_LEVEL} and one that names no source as RECRUITER. An id the skills catalogue does not hold — a retired row included — a level off the scale, the same skill twice and more than ${MAX_REQUIRED_SKILLS} rows are each refused with nothing written. This is the drawer's own action, so it needs the Manage jobs permission and leaves an activity row naming the opening. The list lives in job_opening_skills, which ships ahead of its ALTER: while ${OPENING_SKILLS_MIGRATION} is authored but not applied on this database, every call is refused with that file's name rather than half-applying, and the opening's other fields stay editable through update_job.`,
+    args: {
+      job_id: "string — the opening's id",
+      skills: `array — every skill the role must have, each as { skill_id, required_level?, source? }. skill_id is a row's id from get_master_data (entity skills), not its name; required_level is a whole number ${MIN_SKILL_LEVEL} to ${MAX_SKILL_LEVEL}; source is one of ${SKILL_SOURCES.join(", ")}. At most ${MAX_REQUIRED_SKILLS} rows, none repeated. Send [] to clear the requisition — omitting the argument is refused rather than read as clearing.`,
+    },
+    run: async (args) =>
+      report(await saveOpeningSkills(str(args, "job_id"), requiredSkillDrafts(args))),
+  },
+  {
     name: "screen_candidate",
     label: "Running AI screening",
     description:
-      "Run the AI screening engine on one application now and store the score, decision, strengths and gaps.",
+      "Run the AI screening engine on one application now and store the score, decision, strengths, gaps and the catalogue skills it read out of the CV.",
     args: { application_id: "string" },
     run: async (args) => screenApplication(str(args, "application_id")),
   },
