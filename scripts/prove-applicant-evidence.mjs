@@ -216,6 +216,12 @@ test("a read at exactly 500 carries no cap note", async () => {
   assert.equal(submission.skill_evidence.length, 1);
   assert.ok(submission.skill_evidence_coverage, "the coverage sentence is present");
   assert.match(submission.skill_evidence_coverage, /From 500 tagged criteria on 500 questions/);
+  // The action read the applicant's whole application, not one paper.
+  assert.match(
+    submission.skill_evidence_coverage,
+    /A percentage is evidence from the graded answers read here, not a proficiency level\.$/
+  );
+  assert.doesNotMatch(submission.skill_evidence_coverage, /this paper/);
 });
 
 // ---------------------------------------------------------------------------

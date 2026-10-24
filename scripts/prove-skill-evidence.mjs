@@ -138,29 +138,35 @@ test("the coverage sentence names the tagged criteria and the questions they cam
   assert.match(sentence, /From 2 tagged criteria on 2 questions/);
   assert.match(sentence, /not a proficiency level/);
   // One sitting per question: naming sittings here would imply a retake that never happened.
-  // Two papers were read, so the noun is plural.
   assert.equal(
     sentence,
-    "From 2 tagged criteria on 2 questions. A percentage is evidence from these papers, not a proficiency level."
+    "From 2 tagged criteria on 2 questions. A percentage is evidence from this paper, not a proficiency level."
   );
 });
 
-test("the coverage sentence says this paper for one and these papers for several", () => {
-  const single = skillEvidenceCoverage([
+test("the coverage sentence names the source the caller read", () => {
+  const onePaper = [
     { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" })] },
-  ]);
+  ];
   assert.equal(
-    single,
+    skillEvidenceCoverage(onePaper),
     "From 1 tagged criterion on 1 question. A percentage is evidence from this paper, not a proficiency level."
   );
 
-  const several = skillEvidenceCoverage([
+  // One paper may hold several answers; two questions on one paper is still one paper.
+  const twoPapers = [
     { key: "q-1", title: "Case one", criteria: [criterion({ skill_id: "s1" })] },
     { key: "q-2", title: "Case two", criteria: [criterion({ skill_id: "s2" })] },
-  ]);
-  assert.match(
-    several,
-    /A percentage is evidence from these papers, not a proficiency level\.$/
+  ];
+  assert.equal(
+    skillEvidenceCoverage(twoPapers),
+    "From 2 tagged criteria on 2 questions. A percentage is evidence from this paper, not a proficiency level."
+  );
+
+  // The applicant read is not one paper, so the caller says what it read.
+  assert.equal(
+    skillEvidenceCoverage(twoPapers, "applicant"),
+    "From 2 tagged criteria on 2 questions. A percentage is evidence from the graded answers read here, not a proficiency level."
   );
 });
 

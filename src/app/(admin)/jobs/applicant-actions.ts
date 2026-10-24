@@ -261,7 +261,8 @@ export async function getApplicantSubmission(
       cv_download_url: links.cv_download_url,
       screening_summary: row.ai_screening_summary ? String(row.ai_screening_summary) : null,
       skill_evidence: skillEvidence,
-      skill_evidence_coverage: skillEvidence.length > 0 ? skillEvidenceCoverage(papers) : null,
+      skill_evidence_coverage:
+        skillEvidence.length > 0 ? skillEvidenceCoverage(papers, "applicant") : null,
       skill_evidence_note: evidenceNote,
       skill_evidence_masked: masked,
     },

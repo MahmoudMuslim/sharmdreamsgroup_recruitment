@@ -186,7 +186,10 @@ export function rollUpSkillEvidence(
 }
 
 /** What the block covers, printed beside it so a partial paper never looks whole. */
-export function skillEvidenceCoverage(papers: readonly SkillEvidencePaper[]): string {
+export function skillEvidenceCoverage(
+  papers: readonly SkillEvidencePaper[],
+  reading: "paper" | "applicant" = "paper"
+): string {
   let criteria = 0;
   const keys = new Set<string>();
   let keyless = 0;
@@ -205,12 +208,11 @@ export function skillEvidenceCoverage(papers: readonly SkillEvidencePaper[]): st
   }
   const questions = keys.size + keyless;
   const across = sittings > questions ? ` across ${sittings} sittings` : "";
-  // The applicant read aggregates several papers, so the noun follows the same
-  // sittings figure the sentence already counted.
-  const paper = sittings === 1 ? "this paper" : "these papers";
+  // The caller knows the scope: a paper with several answers is still one paper.
+  const source = reading === "applicant" ? "the graded answers read here" : "this paper";
   return `From ${criteria} tagged ${criteria === 1 ? "criterion" : "criteria"} on ${questions} ${
     questions === 1 ? "question" : "questions"
-  }${across}. A percentage is evidence from ${paper}, not a proficiency level.`;
+  }${across}. A percentage is evidence from ${source}, not a proficiency level.`;
 }
 
 /** The applicant line: the test figure is additive beside the CV's own levels. */
