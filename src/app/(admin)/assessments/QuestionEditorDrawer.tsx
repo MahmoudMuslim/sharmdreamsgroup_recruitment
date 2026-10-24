@@ -103,13 +103,15 @@ export const TYPE_HINTS: Record<QuestionType, string> = {
  *
  * A criterion the grader cannot read from the answer is a criterion whose marks
  * go nowhere, so the panel names the one thing each type puts in front of the
- * model: a case's words, a pitch's transcript.
+ * model: a case's words, a pitch's transcript, a coding answer's source.
  */
 const RUBRIC_NOTES: Record<RubricType, string> = {
   CASE_STUDY:
     "The grader reads the written answer against each criterion and gives it a share of that criterion's marks. The question's total is the sum of those marks, never a number the model chose.",
   VIDEO_PITCH:
     "A pitch is graded from its transcript, so name only what the transcript carries. Delivery, presence and anything off-camera stay with the human reviewer.",
+  CODING:
+    "The grader reads the submitted source as written against each criterion. Nothing is compiled or run; the code is judged as text.",
 };
 
 interface Draft {

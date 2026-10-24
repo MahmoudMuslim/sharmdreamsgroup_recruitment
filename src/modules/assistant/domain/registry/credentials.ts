@@ -463,7 +463,7 @@ export const credentials: readonly AssistantTool[] = [
     name: "get_assessment_suite",
     label: "Reading one assessment suite",
     description:
-      "One suite with every question in it — type, title, prompt, instructions, points, position, and the per-type config (options with their correct flags for multiple choice, responses with their effectiveness percentages for a situational judgment scene, context and word minimum for a case study, recording limits for a video pitch, and the marking scheme — the rubric of named criteria and their weights — a case study or video pitch is graded against). Read this before editing or deleting a question.",
+      "One suite with every question in it — type, title, prompt, instructions, points, position, and the per-type config (options with their correct flags for multiple choice, responses with their effectiveness percentages for a situational judgment scene, context and word minimum for a case study, recording limits for a video pitch, and the marking scheme — the rubric of named criteria and their weights — a case study, video pitch or coding question is graded against). Read this before editing or deleting a question.",
     args: { template_id: "string — suite id from list_assessment_suites" },
     run: async (args) => {
       const templateId = str(args, "template_id");

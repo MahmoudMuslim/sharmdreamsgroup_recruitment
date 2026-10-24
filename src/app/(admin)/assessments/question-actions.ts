@@ -253,8 +253,8 @@ function buildConfig(
       config.language = language;
       if (draft.starter_code?.trim()) config.starter_code = draft.starter_code;
       else delete config.starter_code;
-      // A no-op until Task 9 makes CODING a rubric type; kept here so that
-      // change needs no second edit to the save door.
+      // CODING is a rubric type, so a scheme the author keeps, edits or clears
+      // lands on the row exactly as it does for a case study.
       applyRubricChange(config, rubric);
       return config;
     }

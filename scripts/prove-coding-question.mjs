@@ -495,6 +495,88 @@ check(
   "an over-cap answer must be flagged by `code.length > CODE_ANSWER_CAP` and `overCap ?`, so it can be trimmed"
 );
 
+// ---------------------------------------------------------------------------
+// Grading reads the code. It never runs it.
+// ---------------------------------------------------------------------------
+const { isRubricType } = await import(
+  pathToFileURL(path.join(root, "src/modules/assessment/domain/rubric.ts")).href
+);
+check("coding can carry a rubric", isRubricType("CODING") === true);
+check("a quiz still cannot carry a rubric", isRubricType("MULTIPLE_CHOICE") === false);
+
+sourceHas("grading dispatches coding", "src/modules/assessment/application/gradeAttempt.ts", [
+  '"CODING"',
+  "evaluateCodeSubmission",
+  "gradeByRubric",
+]);
+sourceHas("the rubric prompt fences code with its language", "src/modules/screening/infrastructure/openRouterEngine.ts", [
+  "fencedCode",
+  "options.code",
+]);
+check(
+  "no grading path claims to compile or run the answer",
+  !/\b(compile|execute|run the tests?|sandbox)\b/i.test(
+    read("src/modules/screening/infrastructure/openRouterEngine.ts").slice(
+      read("src/modules/screening/infrastructure/openRouterEngine.ts").indexOf("evaluateCodeSubmission")
+    )
+  ),
+  "the code prompt must not promise execution"
+);
+check(
+  "nothing in the grading path spawns a process",
+  !/child_process|execSync|spawnSync|new Worker/.test(
+    read("src/modules/assessment/application/gradeAttempt.ts") +
+      read("src/modules/screening/infrastructure/openRouterEngine.ts")
+  )
+);
+
+const editorSource = read("src/app/(admin)/assessments/QuestionEditorDrawer.tsx");
+const rubricNotes = between(editorSource, "const RUBRIC_NOTES", "interface Draft");
+check(
+  "the scheme panel has a code note that promises no execution",
+  /CODING:\s*"/.test(rubricNotes) &&
+    /compiled or run/i.test(rubricNotes) &&
+    /judged as text/i.test(rubricNotes),
+  rubricNotes
+);
+check(
+  "the editor sends a rubric for every rubric type, coding included",
+  editorSource.includes("isRubricType(editing.question_type)") &&
+    editorSource.includes("rubric: editing.rubric.map"),
+  "the drawer must gate its rubric payload on isRubricType, not a list of types"
+);
+
+// ---------------------------------------------------------------------------
+// The assistant's live copy names the third type that carries a scheme.
+// ---------------------------------------------------------------------------
+const authoringRegistry = read("src/modules/assistant/domain/registry/authoring.ts");
+const rubricArgument = between(authoringRegistry, "rubric:", "preserve_config:");
+check(
+  "the assistant's rubric argument names CODING",
+  rubricArgument.includes("CODING"),
+  rubricArgument
+);
+check(
+  "the assistant no longer says only two types carry a scheme",
+  !/CASE_STUDY and VIDEO_PITCH only/i.test(authoringRegistry),
+  "the rubric argument still excludes coding with an 'only'"
+);
+check(
+  "the assistant's save description says coding can carry a marking scheme",
+  /A CASE_STUDY, VIDEO_PITCH or CODING question can carry a marking scheme/.test(authoringRegistry),
+  "the save_question description should name CODING among the scheme-carrying types"
+);
+const credentialCopy = between(
+  read("src/modules/assistant/domain/registry/credentials.ts"),
+  'name: "get_assessment_suite"',
+  "args:"
+);
+check(
+  "the suite read says a coding question is graded against the scheme",
+  /coding question is graded against/i.test(credentialCopy),
+  credentialCopy
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);

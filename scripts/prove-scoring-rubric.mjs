@@ -366,6 +366,32 @@ test("a coding question reaches the runner with its language and starter, and no
   });
 });
 
+test("a coding question's stored rubric never reaches the candidate", async () => {
+  const codingRow = {
+    id: "q-code",
+    template_id: "suite-1",
+    question_type: "CODING",
+    title: "Flatten a nested list",
+    prompt: "Write a function that flattens arbitrary nesting.",
+    points: 10,
+    position: 4,
+    config: {
+      language: "Python",
+      starter_code: "def flatten(x):",
+      rubric: CASE_RUBRIC,
+    },
+  };
+  const { get } = harness({
+    candidate_attempts: [attemptRow],
+    assessment_templates: [{ id: "suite-1", name: "Front office" }],
+    assessment_questions: [...paperRows, codingRow],
+  });
+  const response = await get("token-1");
+  assert.equal(configOf(response.body, "q-code").rubric, undefined);
+  assert.equal(configOf(response.body, "q-code").language, "Python");
+  assert.equal(configOf(response.body, "q-code").starter_code, "def flatten(x):");
+});
+
 test("a reloaded code answer lands in its own map, not among the case answers", async () => {
   const codingRow = {
     id: "q-code",
@@ -1584,6 +1610,54 @@ test("an active tag's stored name is the catalogue's spelling on the panel path"
   assert.equal(h.insertedRow().config.rubric[0].skill_name, "Financial analysis");
 });
 
+test("a coding save spreads a preserved config key its form cannot edit", async () => {
+  const h = authoringHarness();
+  const result = await h.save(
+    codeDraftOf({
+      preserve_config: {
+        language: "Python",
+        starter_code: "def flatten(x):",
+        hand_edited: { kept: true },
+      },
+    })
+  );
+  assert.equal(result.ok, true, result.error);
+  const config = JSON.parse(JSON.stringify(h.insertedRow().config));
+  assert.equal(config.language, "Python");
+  assert.deepEqual(config.hand_edited, { kept: true });
+});
+
+test("a coding save re-spells a preserved rubric's skill name like a case study", async () => {
+  const h = authoringHarness({
+    tables: { skills: [{ id: "s-live", name: "Financial analysis", is_active: true }] },
+  });
+  const result = await h.save(
+    codeDraftOf({
+      preserve_config: {
+        language: "Python",
+        rubric: [
+          {
+            label: "Structure",
+            weight: 60,
+            skill_id: "s-live",
+            skill_name: "Forged name",
+            description: "kept",
+          },
+          { label: "Evidence", weight: 40 },
+        ],
+      },
+    })
+  );
+  assert.equal(result.ok, true, result.error);
+  const stored = h.insertedRow().config.rubric;
+  assert.equal(stored.length, 2);
+  assert.equal(stored[0].skill_id, "s-live");
+  assert.equal(stored[0].skill_name, "Financial analysis");
+  assert.equal(stored[0].description, "kept");
+  assert.equal("skill_id" in stored[1], false);
+  assert.equal(h.insertedRow().config.language, "Python");
+});
+
 // ---------------------------------------------------------------------------
 // 8. Marking an answer with one — the real grading engine
 //
@@ -1603,7 +1677,7 @@ const gradingCompiled = ts.transpileModule(
 function gradingHarness(options = {}) {
   const updates = [];
   const activities = [];
-  const calls = { case: [], pitch: [], excel: [], rubric: [] };
+  const calls = { case: [], pitch: [], excel: [], rubric: [], code: [] };
   const counters = { downloads: 0, followUps: 0 };
   const tables = {
     candidate_attempts: [
@@ -1751,6 +1825,15 @@ function gradingHarness(options = {}) {
             calls.excel.push(args);
             return { score: 60, breakdown: [] };
           },
+          evaluateCodeSubmission: async (...args) => {
+            calls.code.push(args);
+            return {
+              score: 60,
+              rationale: "Legacy code verdict.",
+              strengths: ["Handled the empty list"],
+              improvements: ["Did not name the recursion depth"],
+            };
+          },
           gradeAgainstRubric: async (...args) => {
             calls.rubric.push(args);
             if (!options.bands) {
@@ -1764,6 +1847,7 @@ function gradingHarness(options = {}) {
       if (name === "@/modules/assessment/domain/attemptTotals") return attemptTotals;
       if (name === "@/modules/assessment/domain/sweepSelection") return sweepSelection;
       if (name === "@/modules/assessment/domain/rubric") return rubricDomain;
+      if (name === "@/modules/assessment/domain/coding") return codingDomain;
       throw new Error(`Unmocked boundary: ${name}`);
     },
   };
@@ -1823,6 +1907,31 @@ const pitchRow = (overrides) => ({
   spreadsheet_state: null,
   video_path: "att-1/pitch.webm",
   transcript: "Good evening — your boat waits two hours, so the day rate is wasted.",
+  score: null,
+  max_score: 10,
+  ai_evaluation: null,
+  ...overrides,
+});
+
+const codingQuestion = (overrides) => ({
+  id: "q-code",
+  question_type: "CODING",
+  title: "Flatten a nested list",
+  prompt: "Write a function that flattens arbitrary nesting.",
+  points: 10,
+  config: { language: "Python", starter_code: "def flatten(x):" },
+  ...overrides,
+});
+
+const codeRow = (overrides) => ({
+  id: "r-code",
+  attempt_id: "att-1",
+  question_id: "q-code",
+  answer_text:
+    "def flatten(x):\n    return [y for z in x for y in (flatten(z) if isinstance(z, list) else [z])]",
+  spreadsheet_state: null,
+  video_path: null,
+  transcript: null,
   score: null,
   max_score: 10,
   ai_evaluation: null,
@@ -1973,6 +2082,56 @@ test("a case study with no rubric is graded exactly as before rubrics", async ()
   });
 });
 
+test("a coding answer with a rubric is marked on the question's own criteria", async () => {
+  const h = gradingHarness({
+    tables: {
+      assessment_questions: [
+        codingQuestion({
+          config: {
+            language: "Python",
+            context: "The feed nests lists three deep.",
+            rubric: CASE_RUBRIC,
+          },
+        }),
+      ],
+      candidate_responses: [codeRow()],
+    },
+    bands: middlingBands(),
+  });
+  const result = await h.run();
+  jsonEqual(result, { graded: 1, failed: 0 });
+
+  assert.equal(h.calls.code.length, 0, "a rubric'd coding answer was graded by the fallback prompt");
+  assert.equal(h.calls.rubric.length, 1, "the rubric path never ran");
+  const [brief, material, criteria, callOptions] = h.calls.rubric[0];
+  assert.match(brief, /Flatten a nested list/);
+  assert.match(material, /def flatten/);
+  assert.deepEqual(criteria, CASE_RUBRIC);
+  assert.equal(callOptions.capability, "case_reasoning");
+  assert.equal(callOptions.code, true);
+  assert.equal(callOptions.language, "Python");
+  assert.equal(callOptions.context, "The feed nests lists three deep.");
+  assert.equal(h.written("r-code").score, 6);
+});
+
+test("a coding answer with no rubric falls back to the code reader", async () => {
+  const h = gradingHarness({
+    tables: { assessment_questions: [codingQuestion()], candidate_responses: [codeRow()] },
+  });
+  const result = await h.run();
+  jsonEqual(result, { graded: 1, failed: 0 });
+
+  assert.equal(h.calls.rubric.length, 0, "a paper with no marking scheme was routed to one");
+  assert.equal(h.calls.code.length, 1);
+  const [brief, language, answer] = h.calls.code[0];
+  assert.match(brief, /Flatten a nested list/);
+  assert.equal(language, "Python");
+  assert.match(answer, /def flatten/);
+  const values = h.written("r-code");
+  assert.equal(values.score, 6);
+  assert.equal(values.ai_evaluation.rationale, "Legacy code verdict.");
+});
+
 test("a rubric'd pitch is scored from the transcript and says what it could not see", async () => {
   const h = gradingHarness({
     tables: { assessment_questions: [rubricPitch()], candidate_responses: [pitchRow()] },
@@ -2089,6 +2248,7 @@ function engineHarness(response = { bands: [] }) {
     exports,
     require: (name) => {
       if (name === "@/modules/jobs/domain/openingSkills") return skillsDomain;
+      if (name === "@/modules/assessment/domain/coding") return codingDomain;
       if (name === "@/modules/screening/infrastructure/aiGateway") {
         return {
           complete: async (request) => {
@@ -2116,13 +2276,15 @@ function engineHarness(response = { bands: [] }) {
 
   return {
     requests,
-    ask: async (options = {}) =>
-      context.exports.gradeAgainstRubric(
+    ask: async (options = {}) => {
+      const { material, ...callOptions } = options;
+      return context.exports.gradeAgainstRubric(
         "The quiet season\n\nDescribe how you would respond.",
-        "We should reprice the shoulder weeks.",
+        material ?? "We should reprice the shoulder weeks.",
         options.criteria ?? CASE_RUBRIC,
-        { capability: "case_reasoning", ...options }
-      ),
+        { capability: "case_reasoning", ...callOptions }
+      );
+    },
     /** Everything the model is told, in one string. */
     words: (index = 0) => requests[index].messages.map((m) => m.content).join("\n"),
   };
@@ -2216,6 +2378,29 @@ test("the bands come back as the model wrote them, for the code to add up", asyn
   const h = engineHarness({ bands });
   const returned = await h.ask();
   assert.deepEqual(returned, bands);
+});
+
+test("a code-marking request fences the answer under its language and promises no run", async () => {
+  const h = engineHarness();
+  await h.ask({
+    material: "def flatten(x):\n    return x",
+    code: true,
+    language: "Python",
+  });
+  const words = h.words();
+  assert.match(words, /```python\n/);
+  assert.match(words, /def flatten\(x\):/);
+  assert.match(words, /CANDIDATE CODE/);
+  assert.match(words, /not been compiled, run or tested/i);
+});
+
+test("a written case is not fenced and is not told the answer is code", async () => {
+  const h = engineHarness();
+  await h.ask();
+  const words = h.words();
+  assert.doesNotMatch(words, /```/);
+  assert.doesNotMatch(words, /compiled|run or tested/i);
+  assert.match(words, /CANDIDATE ANSWER/);
 });
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ import {
 } from "@/modules/assessment/domain/sweepSelection";
 import {
   evaluateCaseStudy,
+  evaluateCodeSubmission,
   evaluateExcelModel,
   evaluateVideoPitch,
   gradeAgainstRubric,
@@ -31,6 +32,7 @@ import {
   rubricEvaluation,
   scoreRubric,
 } from "@/modules/assessment/domain/rubric";
+import { codingLanguageOf } from "@/modules/assessment/domain/coding";
 import {
   RecordingNotTranscribableError,
   TruncatedJsonResponseError,
@@ -45,10 +47,10 @@ import type {
 
 /**
  * Post-submission AI grading for the response types the submit route leaves
- * unscored: case-study essays, spreadsheet models and video pitches. Quizzes and
- * situational judgment scenes are scored inline by the submit route itself —
- * their response rows already carry a score, so the `score IS NULL` read below
- * never hands them to a model.
+ * unscored: case-study essays, spreadsheet models, video pitches and coding
+ * answers. Quizzes and situational judgment scenes are scored inline by the
+ * submit route itself — their response rows already carry a score, so the
+ * `score IS NULL` read below never hands them to a model.
  *
  * The finalize step runs even when AI is switched off or no provider is
  * configured: nothing is sent to a model, but a paper whose every answer was
@@ -62,11 +64,13 @@ import type {
  * failing the pass forever; the scheduled sweep leaves a parked answer alone,
  * while a recruiter asking again may re-offer it.
  *
- * A case study or pitch that carries a rubric is marked on the recruiter's own
- * criteria: the model is asked for one band per criterion, the domain module adds
- * up the marks, and the criteria travel with the response so editing them later
- * cannot reinterpret a mark already given. A question with no rubric keeps the
- * grading prompt's own judgement, exactly as it did before rubrics existed.
+ * A case study, pitch or coding answer that carries a rubric is marked on the
+ * recruiter's own criteria: the model is asked for one band per criterion, the
+ * domain module adds up the marks, and the criteria travel with the response so
+ * editing them later cannot reinterpret a mark already given. A question with no
+ * rubric keeps the grading prompt's own judgement, exactly as it did before
+ * rubrics existed; a coding answer without one is read as source text, never
+ * carried out.
  *
  * Failure-tolerant by design: the candidate's submission is already persisted
  * before grading runs, so an AI error just leaves that response ungraded and
@@ -84,6 +88,7 @@ interface QuestionRow {
     min_duration_seconds?: number;
     max_duration_seconds?: number;
     rubric?: RubricCriterion[];
+    language?: string;
     initial_sheet?: { data: (string | number | null)[][]; col_widths?: number[] };
     expected_outputs?: { cell: string; formula_hint?: string; description: string }[];
   } | null;
@@ -506,6 +511,35 @@ async function gradeResponse(
     };
   }
 
+  if (question.question_type === "CODING") {
+    const material = response.answer_text ?? "";
+    const language = codingLanguageOf(question.config);
+    const criteria = rubricCriteriaOf(question.config);
+    if (criteria.length > 0) {
+      return gradeByRubric(question, criteria, material, {
+        capability: "case_reasoning",
+        context: question.config?.context ?? "",
+        code: true,
+        language: language ?? undefined,
+      });
+    }
+
+    const result = await evaluateCodeSubmission(
+      `${question.title}\n\n${question.prompt}`,
+      language,
+      material
+    );
+    return {
+      status: "GRADED",
+      evaluation: {
+        score: clampPct(result.score),
+        rationale: result.rationale,
+        strengths: result.strengths ?? [],
+        improvements: result.improvements ?? [],
+      },
+    };
+  }
+
   if (question.question_type === "EXCEL_MODEL" && response.spreadsheet_state) {
     const candidateCells = Object.fromEntries(
       Object.entries(response.spreadsheet_state).map(([ref, cell]) => [ref, cell?.value ?? null])
@@ -600,6 +634,9 @@ async function gradeByRubric(
     transcriptOnly?: boolean;
     context?: string;
     limits?: { minDurationSeconds?: number; maxDurationSeconds?: number };
+    /** The material is source text, so the engine fences it under its language. */
+    code?: boolean;
+    language?: string;
   }
 ): Promise<GradeOutcome> {
   const bands = await gradeAgainstRubric(

@@ -1,12 +1,17 @@
 /**
  * What a scoring rubric is, and what one set of bands adds up to.
  *
- * A case study and a recorded pitch are the two types whose marks were always a
- * judgement call. Without a rubric the call is still the grading prompt's: it
- * scores a written answer against five fixed words (analytical rigour, structure,
- * domain knowledge, feasibility, communication) and asks the model for a total. A
- * recruiter who cares about *this* role's criterion could not say so, and the
- * total the model returned was stored as the mark.
+ * A case study, a recorded pitch and a coding answer are the types whose marks
+ * are a judgement call. Without a rubric the call is still the grading prompt's:
+ * it scores a written answer against five fixed words (analytical rigour,
+ * structure, domain knowledge, feasibility, communication) and asks the model
+ * for a total. A recruiter who cares about *this* role's criterion could not say
+ * so, and the total the model returned was stored as the mark.
+ *
+ * A coding answer is source text a person wrote: nothing in the platform
+ * compiles or runs it, and the grader reads it exactly as written. Its rubric
+ * works the same way a case study's does, and its material is fenced under the
+ * language so the model reads it as source rather than prose.
  *
  * A rubric moves both decisions to the person who set the question: named
  * criteria, the share of the question's marks each carries, and what a strong
@@ -42,15 +47,16 @@ export const MAX_RUBRIC_CRITERIA = 6;
 export const RUBRIC_WEIGHT_TOTAL = 100;
 
 /** A question whose marks an author splits across criteria of their own naming. */
-export type RubricType = Extract<QuestionType, "CASE_STUDY" | "VIDEO_PITCH">;
+export type RubricType = Extract<QuestionType, "CASE_STUDY" | "VIDEO_PITCH" | "CODING">;
 
 /**
  * The types whose marks a recruiter splits across their own criteria.
  *
  * A quiz has one right option and a scene a score per response, so both already
- * carry their whole marking scheme in their options.
+ * carry their whole marking scheme in their options. A coding answer has no
+ * options to carry one: its scheme is the recruiter's, read against the source.
  */
-const RUBRIC_TYPES: RubricType[] = ["CASE_STUDY", "VIDEO_PITCH"];
+const RUBRIC_TYPES: RubricType[] = ["CASE_STUDY", "VIDEO_PITCH", "CODING"];
 
 /**
  * Whether a type's marks are split across an author's own criteria.

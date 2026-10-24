@@ -10,6 +10,7 @@
  * - Assessment suite drafting from a job opening
  */
 import { complete, parseJsonResponse, type CompletionRequest } from "@/modules/screening/infrastructure/aiGateway";
+import { fencedCode } from "@/modules/assessment/domain/coding";
 import {
   DIFFICULTY_LABELS,
   GENERATED_JSON_SHAPE,
@@ -429,6 +430,60 @@ Evaluate and return:
 }
 
 /**
+ * A coding answer read as source text, with no compiler and no runner.
+ *
+ * The platform has no place to carry out a candidate's code, so this prompt asks
+ * the model for the only judgement it can honestly make: read the submission as
+ * written and assess correctness, edge cases and clarity from the source alone.
+ * It is told, in as many words, that the answer has not been compiled, run or
+ * tested, so a verdict cannot claim a result nobody observed. The improvements
+ * it names are the things a person would need to exercise, not a run it implies
+ * it performed.
+ */
+export async function evaluateCodeSubmission(
+  questionPrompt: string,
+  language: string | null,
+  candidateAnswer: string
+): Promise<{ score: number; rationale: string; strengths: string[]; improvements: string[] }> {
+  const systemPrompt = `You are a senior engineer marking a candidate's coding answer for a hospitality / finance leadership role.
+You are given source text a person wrote. It has not been compiled, run or tested. Never claim it works or fails, and never imply you observed an outcome.
+Assess correctness, edge cases and clarity from the source alone, and name what a person would need to exercise.
+Return ONLY valid JSON. No markdown.
+Score 0-100 for the answer as written.`;
+
+  const userPrompt = `CODE QUESTION:
+${questionPrompt}
+
+LANGUAGE:
+${language ?? "Not named"}
+
+CANDIDATE CODE:
+${fencedCode(language, candidateAnswer)}
+
+Evaluate and return:
+{
+  "score": number,
+  "rationale": "string (3-4 sentences explaining the score)",
+  "strengths": string[],
+  "improvements": string[]
+}`;
+
+  const request: CompletionRequest = {
+    capability: "case_reasoning",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.2,
+    maxTokens: 2000,
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  return parseJsonResponse<{ score: number; rationale: string; strengths: string[]; improvements: string[] }>(result.content, { truncated: result.truncated });
+}
+
+/**
  * Excel Model Evaluation: AI-examines the candidate's submitted cells against
  * the question's required outputs (cell, description, formula hint).
  * The pipeline may store formulas or computed values (Handsontable can
@@ -615,16 +670,24 @@ Evaluate and return:
  * A pitch's material is its transcript, and the prompt says so: what the model
  * cannot perceive must not be quietly scored, and presence, dress and delivery
  * stay with the reviewer who can play the recording.
+ *
+ * A coding answer's material is fenced source tagged with its language, and the
+ * prompt says it has not been compiled, run or tested: the code is judged as
+ * written, never as a result.
  */
 export async function gradeAgainstRubric(
   brief: string,
-  material: string,
+  rawMaterial: string,
   criteria: readonly RubricCriterion[],
   options: {
     capability: CompletionRequest["capability"];
     transcriptOnly?: boolean;
     context?: string;
     limits?: { minDurationSeconds?: number; maxDurationSeconds?: number };
+    /** The material is source text; it must be fenced and judged as written. */
+    code?: boolean;
+    /** The language the fence is tagged with. */
+    language?: string;
   }
 ): Promise<RubricBand[]> {
   const systemPrompt = options.transcriptOnly
@@ -633,7 +696,11 @@ You are given a verbatim transcript, NOT the video. Judge only what was said and
 Never score presence, dress, voice quality or camera delivery — you cannot perceive them, and a reviewer who can plays the recording.
 The pitch may be in any language; assess the argument, not the language choice.
 Return ONLY valid JSON. No markdown.`
-    : `You are a domain expert evaluating a candidate's written case-study response for a hospitality / finance leadership role.
+    : options.code
+      ? `You are a senior engineer marking a candidate's coding answer for a hospitality / finance leadership role.
+The material is source text a person wrote. It has not been compiled, run or tested. Do not claim it works or fails; judge it as written and name what a person would need to exercise.
+Return ONLY valid JSON. No markdown.`
+      : `You are a domain expert evaluating a candidate's written case-study response for a hospitality / finance leadership role.
 Judge the answer for what it says, not for its length or fluency.
 Return ONLY valid JSON. No markdown.`;
 
@@ -652,9 +719,15 @@ Return ONLY valid JSON. No markdown.`;
       ? `TIME ALLOWED: ${durations.minDurationSeconds ?? 0}-${durations.maxDurationSeconds ?? 120} seconds.`
       : "";
 
+  const material = options.code
+    ? `The candidate's submitted code:\n\n${fencedCode(options.language, rawMaterial)}`
+    : rawMaterial;
+
   const materialLabel = options.transcriptOnly
-    ? `TRANSCRIPT (${material.split(/\s+/).filter(Boolean).length} words)`
-    : "CANDIDATE ANSWER";
+    ? `TRANSCRIPT (${rawMaterial.split(/\s+/).filter(Boolean).length} words)`
+    : options.code
+      ? "CANDIDATE CODE"
+      : "CANDIDATE ANSWER";
 
   const userPrompt = `BRIEF GIVEN TO THE CANDIDATE:
 ${brief}
@@ -666,7 +739,7 @@ ${material}
 
 MARKING SCHEME — judge each criterion on its own:
 ${scheme}
-
+${options.code ? "\nThe material is source text a person wrote. It has not been compiled, run or tested: judge it as written and do not claim it works or fails.\n" : ""}
 Return:
 {
   "bands": [
