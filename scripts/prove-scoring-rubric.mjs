@@ -151,6 +151,7 @@ function harness(tables, options = {}) {
       attemptContext: () => ({ candidateName: "Candidate", jobTitle: "Front office agent" }),
       runnerActor: (label) => ({ actorLabel: label, actorId: null }),
     },
+    "@/modules/assessment/domain/coding": codingDomain,
     "next/server": {
       NextResponse: {
         json: (body, init) => {

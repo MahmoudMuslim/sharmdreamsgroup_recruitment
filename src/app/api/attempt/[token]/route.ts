@@ -4,6 +4,7 @@ import { getAttemptSettings } from "@/modules/assessment/application/attemptSett
 import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
 import { recordActivity } from "@/modules/activity/application/record";
 import { attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
+import { splitCodingAnswers } from "@/modules/assessment/domain/coding";
 import type { AttemptPayload } from "@/stores/useAssessmentStore";
 import type { QuestionConfig } from "@/types";
 import { NextResponse } from "next/server";
@@ -173,6 +174,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     ? applicationRow.job_openings[0]?.title
     : applicationRow?.job_openings?.title;
 
+  const answeredWritten = Object.fromEntries(
+    (responses ?? [])
+      .filter((r) => r.answer_text)
+      .map((r) => [r.question_id, r.answer_text as string])
+  );
+  const split = splitCodingAnswers(
+    answeredWritten,
+    new Map(sanitizedQuestions.map((question) => [question.id, question.question_type] as const))
+  );
+
   const draft =
     attempt.status === "IN_PROGRESS" && (responses ?? []).length > 0
       ? {
@@ -188,11 +199,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
               .filter((r) => r.spreadsheet_state)
               .map((r) => [r.question_id, r.spreadsheet_state as Record<string, { value: string | number | null }>])
           ),
-          case_study_answers_map: Object.fromEntries(
-            (responses ?? [])
-              .filter((r) => r.answer_text)
-              .map((r) => [r.question_id, r.answer_text as string])
-          ),
+          case_study_answers_map: split.cases,
+          code_answers_map: split.code,
           choice_answers_map: {},
           video_paths_map: Object.fromEntries(
             (responses ?? [])

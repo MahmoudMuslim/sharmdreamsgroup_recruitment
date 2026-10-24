@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import type { SpreadsheetCellData } from "@/types";
+import { codeAnswerOverCapMessage, codeAnswersOverCap } from "@/modules/assessment/domain/coding";
 
 export interface AttemptQuestionClient {
   id: string;
@@ -64,6 +65,7 @@ export interface AttemptDraftClient {
   time_remaining_seconds: number;
   spreadsheet_data_map: Record<string, Record<string, SpreadsheetCellData>>;
   case_study_answers_map: Record<string, string>;
+  code_answers_map: Record<string, string>;
   choice_answers_map: Record<string, string>;
   video_paths_map: Record<string, string>;
 }
@@ -79,6 +81,7 @@ interface AssessmentState {
   videoBlobMap: Record<string, Blob>;
   videoPathsMap: Record<string, string>;
   caseStudyAnswersMap: Record<string, string>;
+  codeAnswersMap: Record<string, string>;
   choiceAnswersMap: Record<string, string>;
   isRecordingVideo: boolean;
   isSubmitting: boolean;
@@ -98,6 +101,7 @@ interface AssessmentState {
   clearVideoBlob: (questionId: string) => void;
   setVideoPath: (questionId: string, path: string) => void;
   setCaseStudyAnswer: (questionId: string, text: string) => void;
+  setCodeAnswer: (questionId: string, code: string) => void;
   setChoiceAnswer: (questionId: string, label: string) => void;
   setRecordingVideo: (recording: boolean) => void;
   decrementTimer: () => void;
@@ -117,6 +121,7 @@ function initialState() {
     videoBlobMap: {},
     videoPathsMap: {},
     caseStudyAnswersMap: {},
+    codeAnswersMap: {},
     choiceAnswersMap: {},
     isRecordingVideo: false,
     isSubmitting: false,
@@ -151,6 +156,7 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
         spreadsheetDataMap: draft?.spreadsheet_data_map ?? {},
         videoPathsMap: draft?.video_paths_map ?? {},
         caseStudyAnswersMap: draft?.case_study_answers_map ?? {},
+        codeAnswersMap: draft?.code_answers_map ?? {},
         choiceAnswersMap: draft?.choice_answers_map ?? {},
         submittedAt: payload.attempt.submitted_at ? new Date(payload.attempt.submitted_at) : null,
         draftSavedAt: payload.attempt.draft_saved_at ? new Date(payload.attempt.draft_saved_at) : null,
@@ -225,6 +231,10 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
     set((state) => ({ caseStudyAnswersMap: { ...state.caseStudyAnswersMap, [questionId]: text } }));
   },
 
+  setCodeAnswer(questionId, code) {
+    set((state) => ({ codeAnswersMap: { ...state.codeAnswersMap, [questionId]: code } }));
+  },
+
   setChoiceAnswer(questionId, label) {
     set((state) => ({ choiceAnswersMap: { ...state.choiceAnswersMap, [questionId]: label } }));
   },
@@ -260,6 +270,7 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
           time_remaining_seconds: state.timeRemainingSeconds,
           spreadsheet_data_map: state.spreadsheetDataMap,
           case_study_answers_map: state.caseStudyAnswersMap,
+          code_answers_map: state.codeAnswersMap,
           choice_answers_map: state.choiceAnswersMap,
           video_paths_map: state.videoPathsMap,
         }),
@@ -278,6 +289,17 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
     const state = get();
     const { attemptToken, payload, isSubmitting, submittedAt } = state;
     if (!attemptToken || !payload || isSubmitting || submittedAt) return;
+
+    // Refuse an over-cap answer here, before the video uploads and the submit
+    // request, so a refusal sends nothing at all.
+    const titles = new Map(
+      (state.payload?.questions ?? []).map((question) => [question.id, question.title] as const)
+    );
+    const overCap = codeAnswersOverCap(state.codeAnswersMap, titles);
+    if (overCap) {
+      set({ submitError: codeAnswerOverCapMessage(overCap) });
+      return;
+    }
 
     set({ isSubmitting: true, submitError: null });
     try {
@@ -303,6 +325,7 @@ export const useAssessmentStore = create<AssessmentState>((set, get) => ({
         body: JSON.stringify({
           spreadsheet_data_map: fresh.spreadsheetDataMap,
           case_study_answers_map: fresh.caseStudyAnswersMap,
+          code_answers_map: fresh.codeAnswersMap,
           choice_answers_map: fresh.choiceAnswersMap,
           video_paths_map: fresh.videoPathsMap,
           time_remaining_seconds: fresh.timeRemainingSeconds,

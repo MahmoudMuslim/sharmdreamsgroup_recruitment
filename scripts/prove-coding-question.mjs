@@ -379,6 +379,29 @@ check("a drafted coding row leaves the preserved config alone", codingRow.preser
   );
 }
 
+// ---------------------------------------------------------------------------
+// The store keeps the two written maps apart.
+// ---------------------------------------------------------------------------
+const storeSource = read("src/stores/useAssessmentStore.ts");
+check(
+  "the store saves the two maps in one request",
+  /case_study_answers_map/.test(storeSource) && /code_answers_map/.test(storeSource),
+  "both maps must travel in syncDraft"
+);
+check(
+  "the store refuses an over-cap answer before the network",
+  /codeAnswersOverCap|codeAnswerOverCap/.test(storeSource),
+  "submitAttempt must refuse locally"
+);
+check(
+  "the store does not merge code into the case map",
+  !/case_study_answers_map:\s*\{[^}]*code_answers_map/s.test(storeSource),
+  "a merged map would reload code as a case answer"
+);
+sourceHas("the GET route splits by question type", "src/app/api/attempt/[token]/route.ts", [
+  "splitCodingAnswers",
+]);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
