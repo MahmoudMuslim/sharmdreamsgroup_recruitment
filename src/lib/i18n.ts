@@ -255,6 +255,8 @@ const en: Dictionary = {
   "apply.source.site": "This careers site",
   "apply.source.board": "A job board",
   "apply.source.referral": "A referral",
+  "apply.source.referred":
+    "You arrived through a team member's link, so this application is credited to them.",
   "apply.optional": "Optional",
   "apply.linkedin": "LinkedIn profile",
   "apply.linkedinPlaceholder": "https://www.linkedin.com/in/your-name",
@@ -599,6 +601,8 @@ const ar: Dictionary = {
   "apply.source.site": "موقع التوظيف هذا",
   "apply.source.board": "موقع إعلانات وظيفية",
   "apply.source.referral": "ترشيح من شخص",
+  "apply.source.referred":
+    "لقد وصلت عبر رابط أحد أعضاء الفريق، لذا يُنسب هذا الطلب إليه.",
   "apply.optional": "اختياري",
   "apply.linkedin": "حساب لينكدإن",
   "apply.linkedinPlaceholder": "https://www.linkedin.com/in/your-name",

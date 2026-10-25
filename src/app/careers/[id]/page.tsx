@@ -17,6 +17,7 @@ import {
   type PublicCompany,
 } from "@/modules/careers/company-profile";
 import { starterKeys } from "@/modules/careers/chatbot/role-card";
+import { readReferralCode, referralApplyLink } from "@/modules/referrals/domain/referral";
 import { formatSalaryRange } from "@/lib/currency";
 import { CareersChat } from "../CareersChat";
 import { Badge } from "@/modules/analytics/presentation/ui";
@@ -178,7 +179,20 @@ function CompanyPanel({ company }: { company: PublicCompany }) {
  * they applied or not. What stays is the invitation and the button; the steps
  * live on their own page at `/careers/apply/[id]`, reached by one click.
  */
-function ApplyPanel({ jobId }: { jobId: string }) {
+function ApplyPanel({
+  jobId,
+  referralCode,
+}: {
+  jobId: string;
+  /** A staff member's code from the shared link, or null on a direct visit. */
+  referralCode: string | null;
+}) {
+  // The code travels one step further than the ad: the application is where it is
+  // recorded, so a referred applicant who clicks Apply must not lose it.
+  const href = referralCode
+    ? referralApplyLink("", jobId, referralCode)
+    : `/careers/apply/${jobId}`;
+
   return (
     <section className="rounded-2xl border border-brand-line bg-white p-6 shadow-soft sm:p-7">
       <h2 className="font-display text-xl font-bold">
@@ -189,7 +203,7 @@ function ApplyPanel({ jobId }: { jobId: string }) {
       </p>
 
       <Link
-        href={`/careers/apply/${jobId}`}
+        href={href}
         className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-ink px-6 py-3.5 text-sm font-bold text-brand-cream shadow-lift transition hover:bg-brand-ink/90"
       >
         <PublicText k="apply.ctaButton" />
@@ -219,8 +233,14 @@ function ApplyPanel({ jobId }: { jobId: string }) {
   );
 }
 
-export default async function CareerDetailPage({ params }: PageProps<"/careers/[id]">) {
-  const { id } = await params;
+export default async function CareerDetailPage({
+  params,
+  searchParams,
+}: PageProps<"/careers/[id]">) {
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  // A shared employee link arrives with `?ref=`; the code is only a hint here and
+  // is re-resolved against the database when the application is submitted.
+  const referralCode = readReferralCode(query.ref);
   const [job, jobs, companies] = await Promise.all([
     getPublicJob(id),
     getPublicJobs(),
@@ -394,7 +414,7 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
         {/* `panel-fold` — the film rule reads `.sticky`, which `lg:sticky` does not
             compile to, so a sidebar that only sticks from `lg` up names itself. */}
         <div className="panel-fold lg:sticky lg:top-24">
-          <ApplyPanel jobId={job.id} />
+          <ApplyPanel jobId={job.id} referralCode={referralCode} />
         </div>
       </div>
 

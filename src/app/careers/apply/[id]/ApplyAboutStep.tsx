@@ -20,6 +20,7 @@ export function AboutStep({
   linkedinUrl,
   aboutMe,
   source,
+  referred,
   writing,
   writeNote,
   hasFile,
@@ -40,6 +41,8 @@ export function AboutStep({
   linkedinUrl: string;
   aboutMe: string;
   source: string;
+  /** True when a staff member's code carried the applicant here. */
+  referred: boolean;
   writing: boolean;
   writeNote: { tone: "ok" | "bad"; text: string } | null;
   hasFile: boolean;
@@ -204,19 +207,32 @@ export function AboutStep({
         </div>
 
         <div className="sm:col-span-2">
-          <Label htmlFor="apply-source">{t("apply.source")}</Label>
-          <select
-            id="apply-source"
-            value={source}
-            onChange={(event) => onSource(event.target.value)}
-            className={FIELD}
-          >
-            {SOURCES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {t(option.key)}
-              </option>
-            ))}
-          </select>
+          {referred ? (
+            <div className="rounded-xl border border-brand-gold/30 bg-brand-gold/10 px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-gold-dark">
+                {t("apply.source.referral")}
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-brand-ink/65">
+                {t("apply.source.referred")}
+              </p>
+            </div>
+          ) : (
+            <>
+              <Label htmlFor="apply-source">{t("apply.source")}</Label>
+              <select
+                id="apply-source"
+                value={source}
+                onChange={(event) => onSource(event.target.value)}
+                className={FIELD}
+              >
+                {SOURCES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {t(option.key)}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
       </div>
     </div>

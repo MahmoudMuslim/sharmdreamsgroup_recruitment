@@ -36,6 +36,8 @@ const KEY_TO_ROUTE = {
   e: "/assessments",
   i: "/interviews",
   o: "/onboarding",
+  // `p` for the referral programme — the letter `r` is the reports console.
+  p: "/referrals",
   f: "/files",
   w: "/whatsapp",
   b: "/assistant",

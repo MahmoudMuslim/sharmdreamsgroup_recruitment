@@ -315,6 +315,39 @@ const FIGURES = [
       { rel: "src/app/(admin)/assistant/actions.ts", pattern: /const MAX_HISTORY = ([\d_]+);/ },
     ],
   },
+  {
+    route: "/referrals",
+    want: "the hand-entry note",
+    guide: /an optional note of up to ([\d,]+) characters/,
+    sources: [
+      {
+        rel: "src/modules/referrals/domain/referral.ts",
+        pattern: /export const REFERRAL_NOTE_MAX = ([\d_]+);/,
+      },
+    ],
+  },
+  {
+    route: "/referrals",
+    want: "the bonus note",
+    guide: /with a note of up to ([\d,]+) characters/,
+    sources: [
+      {
+        rel: "src/modules/referrals/domain/referral.ts",
+        pattern: /export const REFERRAL_BONUS_NOTE_MAX = ([\d_]+);/,
+      },
+    ],
+  },
+  {
+    route: "/referrals",
+    want: "the book's read",
+    guide: /The read is the newest ([\d,]+) claims/,
+    sources: [
+      {
+        rel: "src/modules/referrals/domain/referral.ts",
+        pattern: /export const REFERRAL_READ_LIMIT = ([\d_]+);/,
+      },
+    ],
+  },
 ];
 
 for (const figure of FIGURES) {

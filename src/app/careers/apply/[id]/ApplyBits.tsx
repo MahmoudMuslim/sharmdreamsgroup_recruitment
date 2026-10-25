@@ -4,12 +4,30 @@ import { type ReactNode } from "react";
 
 /* --------------------------------------------------------------------- steps */
 
-/** Candidate-set sources only — the action refuses anything else. */
+/**
+ * The sources an applicant may choose. REFERRAL is not one of them: it is earned
+ * by a staff member's code on the link and resolved by the submit action, so a
+ * person cannot declare themselves referred — or spare a referrer's claim — by
+ * changing a picker.
+ */
 export const SOURCES = [
   { value: "CAREER_SITE", key: "apply.source.site" },
   { value: "JOB_BOARD", key: "apply.source.board" },
-  { value: "REFERRAL", key: "apply.source.referral" },
 ] as const;
+
+/**
+ * How every source is named on the review step, including the one that was not
+ * chosen here. A code-earned referral still has to be printed in words.
+ */
+const SOURCE_KEYS: Record<string, string> = {
+  CAREER_SITE: "apply.source.site",
+  JOB_BOARD: "apply.source.board",
+  REFERRAL: "apply.source.referral",
+};
+
+export function sourceKey(source: string): string | null {
+  return SOURCE_KEYS[source] ?? null;
+}
 
 export type T = (key: string, vars?: Record<string, string | number>) => string;
 

@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
 import type { Locale } from "@/types";
-import { SOURCES, StepHead, type T } from "./ApplyBits";
+import { sourceKey, StepHead, type T } from "./ApplyBits";
 
 function ReviewRow({
   label,
@@ -67,7 +67,7 @@ export function ReviewStep({
   answers: Record<string, string>;
   onEdit: (index: number) => void;
 }) {
-  const sourceKey = SOURCES.find((option) => option.value === source)?.key;
+  const key = sourceKey(source);
   const written = cvText.trim().length;
 
   return (
@@ -101,7 +101,7 @@ export function ReviewStep({
         />
         <ReviewRow
           label={t("apply.reviewSource")}
-          value={sourceKey ? t(sourceKey) : source}
+          value={key ? t(key) : source}
           onEdit={() => onEdit(0)}
           editLabel={t("apply.edit")}
         />

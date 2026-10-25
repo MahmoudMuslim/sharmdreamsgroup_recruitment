@@ -366,6 +366,30 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
   },
 
+  "/referrals": {
+    purpose: "The employee referral book: who brought whom for which role, where each claim stands and what was decided.",
+    shows: [
+      "Seven tiles — claims, not applied yet, in the pipeline, hired, closed, bonus pending and bonus paid — then the leaderboard, then every claim with the person, the role, who is credited, their progress and the bonus decision.",
+      "A claim's progress is the linked application's stage, read when the page loads. No stage is copied onto the claim, so a move made on the candidates page shows here on the next load without a second write.",
+    ],
+    use: [
+      "Pick a role, then Copy link: the address is the role page with this person's own code on it. Open opens the same link in a new tab to check it.",
+      "Credit someone by hand with their email, optional name, the role and an optional note of up to 600 characters. The claim is filed under your name, never a profile id the browser sends.",
+      "Record the bonus decision — None, Pending, Paid or Declined — with a note of up to 400 characters. This is a decision record, not a payment: the portal stores the state, who decided it and when, and moves no money.",
+      "A recruiter or the owner can move a claim to another member of staff. That is the only door out of first-claim-wins, and the trail keeps both names.",
+    ],
+    edges: [
+      "Referrals arrive with db/migrations/040_referrals.sql, which is authored but not applied on this database, so no referral table exists yet and no code has been issued. The page says so, hides its board and refuses every write by naming the file; nothing else in the portal depends on it, and an application is never refused because its referral could not be credited.",
+      "The board is scoped by the database, not by the screen: a hiring manager reads the claims they made, while a recruiter and the owner read every claim. The page opens for any staff member.",
+      "First claim wins is a unique index on the lower-cased email and the role, so two staff members cannot both be credited for the same person on the same opening. A blocked second claim names who holds it rather than saying 'duplicate'.",
+      "A referral belongs to a member of staff. The public apply door resolves a code before it credits anything, and a candidate's own code is refused, so nobody can credit themselves.",
+      "The read is the newest 500 claims; the page says when it stopped, and the tiles then count the rows shown rather than the whole book.",
+      "The counts are populations — who sits where now — never moves or conversion rates. A bonus state counts the claims it was recorded on.",
+      "Reassigning moves only who is credited: the claim's email, role and linked application stay as they were. The hand-entry note is written once and has no editor here.",
+      "The bonus decision is one recorded state per claim, so a later decision replaces the state and its note — the change trail keeps what it replaced.",
+    ],
+  },
+
   "/files": {
     purpose: "What the portal has stored, which record owns each file, and what it weighs.",
     shows: [

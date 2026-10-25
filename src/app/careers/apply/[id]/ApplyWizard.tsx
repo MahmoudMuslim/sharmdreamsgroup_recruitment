@@ -76,7 +76,14 @@ function joinWords(locale: Locale, items: string[]): string {
   return `${head}${arabic ? " و" : " and "}${items[items.length - 1]}`;
 }
 
-export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
+export function ApplyWizard({
+  job,
+  referralCode,
+}: {
+  job: { id: string; title: string };
+  /** A staff member's code from the link, or null when the ad was opened directly. */
+  referralCode: string | null;
+}) {
   const locale = usePublicLocale();
   const t = (key: string, vars?: Record<string, string | number>) =>
     translate(locale, key, vars);
@@ -87,7 +94,10 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
   const [cvText, setCvText] = useState("");
   const [linkedinUrl, setLinkedinUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [source, setSource] = useState<string>("CAREER_SITE");
+  // A code on the link is the applicant's source, not a question: the server
+  // resolves it again and only a staff member's code earns REFERRAL, so the
+  // select is shown only when there is nothing to override it with.
+  const [source, setSource] = useState<string>(referralCode ? "REFERRAL" : "CAREER_SITE");
 
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ApplyResult | null>(null);
@@ -404,6 +414,7 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
         linkedinUrl,
         cvFilePath,
         source,
+        referralCode: referralCode ?? "",
         gateAnswers: answers,
       });
 
@@ -549,6 +560,7 @@ export function ApplyWizard({ job }: { job: { id: string; title: string } }) {
             linkedinUrl={linkedinUrl}
             aboutMe={cvText}
             source={source}
+            referred={referralCode !== null}
             writing={writing}
             writeNote={writeNote}
             hasFile={file !== null}

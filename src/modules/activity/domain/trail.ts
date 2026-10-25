@@ -60,6 +60,7 @@ export const ACTIVITY_AREAS = [
   "access",
   "master data",
   "career site",
+  "referrals",
   "system",
 ] as const;
 export type ActivityArea = (typeof ACTIVITY_AREAS)[number];
@@ -86,6 +87,7 @@ export const ACTIVITY_ENTITIES = [
   "onboarding task",
   "position",
   "prospect",
+  "referral",
   "role",
   "role family",
   "setting",
@@ -446,6 +448,7 @@ export function recordHref(
     "onboarding plan": { href: "/onboarding", label: "Onboarding" },
     "onboarding task": { href: "/onboarding", label: "Onboarding" },
     prospect: { href: "/sourcing", label: "Sourcing pool" },
+    referral: { href: "/referrals", label: "Referral book" },
     "gate question": { href: "/questions?store=gate", label: "Question bank — apply form" },
     attachment: { href: "/files", label: "File manager" },
     message: { href: "/whatsapp", label: "Outbox" },

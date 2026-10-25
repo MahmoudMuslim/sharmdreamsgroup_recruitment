@@ -204,7 +204,7 @@ const oldReads = allAreas.length * STAFF_ROUTES.length;
 
 check("no page reads the whole watch list", busiest < allAreas.length, `busiest ${busiest}`);
 check("the busiest page reads six tables", busiest === 6, `got ${busiest}`);
-check("three pages poll nothing at all", silent === 3, `got ${silent}`);
+check("four pages poll nothing at all", silent === 4, `got ${silent}`);
 check(
   "the average page reads at most a quarter of the old sweep",
   reads <= oldReads * 0.25,

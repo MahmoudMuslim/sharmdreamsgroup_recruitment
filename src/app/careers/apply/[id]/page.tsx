@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getPublicJob } from "../../actions";
+import { readReferralCode } from "@/modules/referrals/domain/referral";
 import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
 import { translate } from "@/lib/i18n";
 import { ApplyWizard } from "./ApplyWizard";
@@ -40,13 +41,21 @@ export const instant = false;
 
 export default async function ApplyPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { id } = await params;
+  const query = await searchParams;
   const job = await getPublicJob(id);
 
   if (!job) notFound();
 
-  return <ApplyWizard job={{ id: job.id, title: job.title }} />;
+  // The code is carried, not judged, here: a malformed or unknown code simply
+  // leaves the applicant with the normal source picker, and the submit action
+  // resolves the code again before it labels anything REFERRAL.
+  const referralCode = readReferralCode(query.ref);
+
+  return <ApplyWizard job={{ id: job.id, title: job.title }} referralCode={referralCode} />;
 }

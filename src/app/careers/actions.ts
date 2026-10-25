@@ -29,6 +29,8 @@ import {
   toPublicCompany,
   type PublicCompany,
 } from "@/modules/careers/company-profile";
+import { creditReferral, resolveReferralCode } from "@/modules/referrals/application/credit";
+import { readReferralCode } from "@/modules/referrals/domain/referral";
 
 /**
  * Public careers site.
@@ -262,6 +264,8 @@ export interface ApplyInput {
   /** Storage path of an uploaded CV, if one was attached. */
   cvFilePath: string | null;
   source: string;
+  /** The `?ref=` code on the link, if the applicant arrived through one. */
+  referralCode: string;
   /** Viability answers, keyed by question id. Scored against the stored options. */
   gateAnswers: Record<string, string>;
 }
@@ -348,8 +352,17 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
 
   // Candidate-set sources only. Anything else (LINKEDIN, ATS_IMPORT…) describes
   // how staff imported a record, and must not be forgeable from a public form.
-  const allowedSources = new Set(["CAREER_SITE", "JOB_BOARD", "REFERRAL"]);
-  const source = allowedSources.has(input.source) ? input.source : "CAREER_SITE";
+  // REFERRAL is deliberately absent: it is earned by a code that resolves to a
+  // member of staff, not asserted by the form. A code that names nobody, or names
+  // a candidate, leaves the source exactly as the applicant chose it.
+  const allowedSources = new Set(["CAREER_SITE", "JOB_BOARD"]);
+  const referralCode = readReferralCode(input.referralCode);
+  const claimant = referralCode ? await resolveReferralCode(referralCode) : null;
+  const source = claimant
+    ? "REFERRAL"
+    : allowedSources.has(input.source)
+      ? input.source
+      : "CAREER_SITE";
 
   // Viability gate: scored here, server-side, from the stored options rather
   // than from anything the browser asserts. A blank answer and an answer that
@@ -480,6 +493,20 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   const applicationId = created?.id ? String(created.id) : "";
   const trackingCode = created?.tracking_code ?? "";
 
+  // Best-effort, and after the row exists: the application is already stored, so
+  // an unapplied migration, an unknown code or a claim somebody else filed first
+  // changes what is recorded here and never whether the application stands.
+  const referral =
+    applicationId && referralCode
+      ? await creditReferral({
+          applicationId,
+          jobId: input.jobId,
+          email,
+          fullName,
+          code: referralCode,
+        })
+      : null;
+
   if (applicationId) {
     await recordActivity({
       actorKind: "CANDIDATE",
@@ -496,6 +523,8 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
       detail: {
         email,
         source,
+        referral_code: referralCode,
+        referral: referral?.reason ?? null,
         tracking_code: trackingCode,
         stage: filteredOut ? "REJECTED" : "NEW",
         cv_attached: Boolean(input.cvFilePath),
