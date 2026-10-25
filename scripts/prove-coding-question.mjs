@@ -186,12 +186,19 @@ const { readQuestionTypeAvailability } = await import(
 
 function fakeClient(failingType) {
   const queries = [];
+  const shapes = [];
   return {
     queries,
+    shapes,
     from(table) {
       let asked = null;
       const query = {
-        select() {
+        select(_columns, options) {
+          shapes.push({ head: options?.head === true, count: options?.count ?? null });
+          return query;
+        },
+        limit(value) {
+          shapes.push({ limitedTo: value });
           return query;
         },
         eq(column, value) {
@@ -211,6 +218,26 @@ function fakeClient(failingType) {
       return query;
     },
   };
+}
+
+/* The transport loses an error's body on a HEAD — measured on the local stack,
+ * where PostgREST answers a missing enum label 400 with the 22P02 document and
+ * `fetch` hands back zero bytes. A head-count probe therefore could never reach
+ * `isMissingQuestionTypeError`, and the author read "could not be checked" where
+ * the door means to name the migration file. So the probe is a bounded GET. */
+{
+  const client = fakeClient("CODING");
+  await readQuestionTypeAvailability(client);
+  check(
+    "no probe asks for a head count, because a HEAD error has no body to classify",
+    client.shapes.filter((s) => s.head === true).length === 0,
+    JSON.stringify(client.shapes)
+  );
+  check(
+    "every probe bounds its read to one row",
+    client.shapes.filter((s) => s.limitedTo === 1).length === 2,
+    JSON.stringify(client.shapes)
+  );
 }
 
 {

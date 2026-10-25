@@ -651,7 +651,8 @@ check(
 
 sourceHas("the availability probe names the enum directly", "src/modules/assessment/application/questionTypeAvailability.ts", [
   "probe(restClient, SITUATIONAL_JUDGMENT)",
-  '.eq("question_type", questionType);',
+  '.eq("question_type", questionType)',
+  ".limit(1);",
   "SITUATIONAL_SCHEMA_NOTE",
   "could not be checked on this database",
 ]);

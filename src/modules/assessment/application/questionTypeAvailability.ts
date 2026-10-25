@@ -18,7 +18,7 @@ export interface QuestionTypeAvailability {
  * Which of the newer question types this database's enum actually has.
  *
  * Both labels are newer than the deployed schema, so both are checked the same
- * way: a head-count query that fails with 22P02 until its migration runs. The
+ * way: a one-row read that fails with 22P02 until its migration runs. The
  * two probes are issued together, and each absence is reported separately — a
  * missing 039 must not hide an available 034.
  */
@@ -52,9 +52,16 @@ async function probe(
   restClient: RestClient,
   questionType: string
 ): Promise<{ code?: string | null; message: string } | null> {
+  /* Not a head count. A HEAD error response arrives with an empty body — on
+   * this stack PostgREST answers the missing enum label 400 with the 22P02
+   * document, and `fetch` discards it — so the transport can only report
+   * "Bad Request", `isMissingQuestionTypeError` says no, and the author reads
+   * "could not be checked" where the door means to name the migration file.
+   * The one-row GET carries the same verdict with the body intact. */
   const { error } = await restClient
     .from("assessment_questions")
-    .select("id", { count: "exact", head: true })
-    .eq("question_type", questionType);
+    .select("id", { count: "exact" })
+    .eq("question_type", questionType)
+    .limit(1);
   return error ?? null;
 }
