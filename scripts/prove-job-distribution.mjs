@@ -485,6 +485,36 @@ check(
   !read("src/app/careers/[id]/page.tsx").includes("JSON.stringify")
 );
 
+sourceHas("the sitemap is built from the board's own read", "src/app/sitemap.ts", [
+  'from "@/app/careers/actions"',
+  "getPublicJobs()",
+  "sitemapEntries",
+  "appConfig.url",
+  "${base}/careers",
+]);
+// The call, not the prose: the module's own docblock names `await connection()`,
+// so a needle over the raw file passed after the call was deleted.
+const sitemapCode = read("src/app/sitemap.ts")
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("//"))
+  .join("\n");
+check(
+  "the sitemap waits for a request before it reads",
+  /^\s*await connection\(\);/m.test(sitemapCode),
+  "the call must be code, not a comment"
+);
+check(
+  "the sitemap logs what it had to leave out",
+  read("src/app/sitemap.ts").includes("role without a date is not published")
+);
+check(
+  "the sitemap reaches no page a staff member works on",
+  !read("src/app/sitemap.ts").includes("(admin)") &&
+    !read("src/app/sitemap.ts").includes("/portal") &&
+    !read("src/app/sitemap.ts").includes("/api/")
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
