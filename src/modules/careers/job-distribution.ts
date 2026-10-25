@@ -128,3 +128,91 @@ export function jobsCsv(jobs: PublicJob[], baseUrl: string): string {
 
   return [CSV_HEADER.join(","), ...rows].join("\n");
 }
+
+/**
+ * Text, escaped in the one order that works: the ampersand first.
+ *
+ * Quotes are deliberately left alone. A text node has no delimiter to close
+ * early, so `"` carries no meaning here — escaping it would only make the title
+ * harder for a human reader of the feed to recognise. The one attribute this
+ * module writes is the literal `isPermaLink="true"`, so no role text ever lands
+ * where a quote could break it; if the feed gains an attribute that carries a
+ * role's words, that value needs its own escaper that adds `"` to `&`, `<`, `>`.
+ */
+function xmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * RFC 822, the form RSS 2.0 expects.
+ *
+ * `toUTCString` gives `Thu, 01 Oct 2026 00:00:00 GMT`. An unparseable date from a
+ * free-text column returns "" and the caller leaves the element out rather than
+ * publishing an epoch nobody meant.
+ */
+function rfc822(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const asDate = new Date(iso);
+  return Number.isNaN(asDate.getTime()) ? "" : asDate.toUTCString();
+}
+
+/**
+ * The board as an RSS 2.0 feed, for anyone who aggregates rather than crawls.
+ *
+ * Text is escaped rather than wrapped in CDATA: a description containing `]]>`
+ * would end the section early, and escaping is not hard. The channel title is
+ * supplied by the route because it is the group's own name, not something the
+ * roles carry.
+ */
+export function rssFeed(
+  jobs: PublicJob[],
+  options: {
+    baseUrl: string;
+    title: string;
+    link?: string;
+    description?: string;
+    publishedAt?: string;
+  }
+): string {
+  const base = origin(options.baseUrl);
+  const board = options.link ?? `${base}/careers`;
+  const items: string[] = [];
+
+  for (const job of jobs) {
+    const posted = dateOf(job);
+    if (!posted) continue;
+    const url = `${base}/careers/${job.id}`;
+    const pubDate = rfc822(posted);
+    items.push(
+      [
+        "    <item>",
+        `      <title>${xmlText(job.title)}</title>`,
+        `      <link>${xmlText(url)}</link>`,
+        `      <guid isPermaLink="true">${xmlText(url)}</guid>`,
+        `      <description>${xmlText(job.description)}</description>`,
+        ...(pubDate ? [`      <pubDate>${pubDate}</pubDate>`] : []),
+        "    </item>",
+      ].join("\n")
+    );
+  }
+
+  // The newest item's date, because a feed that claims a build time before its
+  // own newest entry is a feed a reader assumes is stale.
+  const newest = items.length > 0
+    ? rfc822(jobs.map(dateOf).filter((d): d is string => Boolean(d)).sort().reverse()[0])
+    : "";
+  const build = newest || rfc822(options.publishedAt);
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<rss version="2.0">',
+    "  <channel>",
+    `    <title>${xmlText(options.title)}</title>`,
+    `    <link>${xmlText(board)}</link>`,
+    `    <description>${xmlText(options.description ?? `Open roles with ${options.title}.`)}</description>`,
+    ...(build ? [`    <lastBuildDate>${build}</lastBuildDate>`] : []),
+    ...items,
+    "  </channel>",
+    "</rss>",
+  ].join("\n");
+}

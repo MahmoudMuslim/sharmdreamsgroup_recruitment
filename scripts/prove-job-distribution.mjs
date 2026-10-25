@@ -400,6 +400,69 @@ check(
 check("an undated role makes no row", jobsCsv([role({ posted_at: null, created_at: "" })], "https://careers.example").trimEnd().split("\n").length === 1);
 check("no roles at all is still a header", jobsCsv([], "https://careers.example").trimEnd() === "title,company,location,job_type,department,sector,description,requirements,date_posted,url");
 
+// ---------------------------------------------------------------------------
+// 5. The feed: XML the recruiter's description cannot break.
+// ---------------------------------------------------------------------------
+const { rssFeed } = await import(
+  pathToFileURL(path.join(root, "src/modules/careers/job-distribution.ts")).href
+);
+
+const feed = rssFeed([role()], {
+  baseUrl: "https://careers.example",
+  title: "Sharm Dreams Group",
+  link: "https://careers.example/careers",
+  description: "Open roles with the Sharm Dreams Group.",
+  publishedAt: "2026-10-01T00:00:00.000Z",
+});
+check("it is a declaration, then an RSS 2.0 document", feed.startsWith('<?xml version="1.0" encoding="UTF-8"?>\n<rss version="2.0">'));
+check("the channel names the group", feed.includes("<title>Sharm Dreams Group</title>"));
+check("the channel links the board", feed.includes("<link>https://careers.example/careers</link>"));
+check("one item per published role", (feed.match(/<item>/g) ?? []).length === 1);
+check("the item's guid is its canonical url as a permalink", feed.includes(`<guid isPermaLink="true">https://careers.example/careers/${role().id}</guid>`));
+check("the item links the canonical page", feed.includes(`<link>https://careers.example/careers/${role().id}</link>`));
+check("pubDate is the RFC 822 form of the posted day", feed.includes("<pubDate>Thu, 01 Oct 2026 00:00:00 GMT</pubDate>"));
+check("the channel's lastBuildDate is the newest item's date", feed.includes("<lastBuildDate>Thu, 01 Oct 2026 00:00:00 GMT</lastBuildDate>"));
+check("it closes every tag it opened", feed.trimEnd().endsWith("</channel>\n</rss>"));
+
+const hostile = rssFeed(
+  [
+    role({
+      id: "3f2a1b00-0000-4000-8000-000000000002",
+      title: 'Salt & Pepper <b>"bold"</b>',
+      description: "]]> ends a CDATA section; <tag> does not survive escaping",
+    }),
+  ],
+  { baseUrl: "https://careers.example", title: "Group & Co", publishedAt: "2026-10-01T00:00:00.000Z" }
+);
+check("an ampersand in text is escaped", hostile.includes("Salt &amp; Pepper"));
+check("angle brackets in text are escaped", hostile.includes('&lt;b&gt;"bold"&lt;/b&gt;'));
+check(
+  "a quote in text stays a quote, because a text node needs no escaping of it",
+  hostile.includes("&lt;b&gt;&quot;") === false
+);
+check("a CDATA terminator in a description is inert", hostile.includes("]]&gt;"));
+check("CDATA is not used at all", !hostile.includes("<![CDATA["));
+check(
+  "a channel title is escaped too",
+  hostile.includes("<title>Group &amp; Co</title>")
+);
+check(
+  "an undated role makes no item",
+  rssFeed([role({ posted_at: null, created_at: "" })], {
+    baseUrl: "https://careers.example",
+    title: "Group",
+    publishedAt: "2026-10-01T00:00:00.000Z",
+  }).includes("<item>") === false
+);
+const empty = rssFeed([], { baseUrl: "https://careers.example", title: "Group", publishedAt: "2026-10-01T00:00:00.000Z" });
+check("no roles is still a valid channel", empty.includes("<channel>") && empty.includes("</channel>") && !empty.includes("<item>"));
+check(
+  "the feed's own default link is the board on the base url",
+  rssFeed([], { baseUrl: "https://careers.example/", title: "Group", publishedAt: "2026-10-01T00:00:00.000Z" }).includes(
+    "<link>https://careers.example/careers</link>"
+  )
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
