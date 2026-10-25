@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-25
 **Status:** Draft for owner review — nothing is built until this design is signed off
-**Scope:** one slice — the platform gains a store for the person behind an application, not the application: identity, contact, photo, education, work history, skills, languages, location, marital and family facts, and the health and household answers a candidate can be asked to consent to. One migration (`043`, authored here, **not applied**), eleven tables, one column, one new bucket, one field registry that is the only place any field's sensitivity is declared, one writer that owns the precedence ladder, one extractor, one indicator module, three new permissions, and a hand-record door that finally accepts a CV file. No new staff page. The candidate portal is not touched.
+**Scope:** one slice — the platform gains a store for the person behind an application, not the application: identity, contact, photo, education, work history, skills, languages, location, marital and family facts, and the health and household answers a candidate can be asked to consent to. One migration (`043`, authored here, **not applied**), thirteen tables, one column, one new bucket, one field registry that is the only place any field's sensitivity is declared, one writer that owns the precedence ladder, one extractor, one indicator module, three new permissions, and a hand-record door that finally accepts a CV file. No new staff page. The candidate portal is not touched.
 
 ---
 
@@ -48,7 +48,7 @@ The meeting notes the owner supplied make the requirement concrete: *out of 50 a
 - No dated employment or education rows for an applicant, so nothing summable.
 - No consent basis coarser than "processing" and "talent pool" (`041_privacy.sql:140`) — which means there is currently no way to record that someone agreed to be asked about a disability and refused to be asked about their children.
 - Nothing that logs who *read* sensitive data. The trail records writes.
-- No person-level erasure. `erase_candidate_data` is scoped to one application id; it rewrites that row's email to `'erased+' || … || '@erased.invalid'` (`041_privacy.sql:405`), which is the fact the backfill in §1.11 must exclude.
+- No person-level erasure. `erase_candidate_data` is scoped to one application id; it rewrites that row's email to `'erased+' || … || '@erased.invalid'` (`041_privacy.sql:405`), which is the fact the backfill in §1.12 must exclude.
 
 ## The constraint that decides the design
 
@@ -62,7 +62,7 @@ So the design has one load-bearing rule, and everything else follows from it:
 
 Concretely: the special-category answers do not sit in `person_profiles` as columns. They sit in their own tables, behind their own grants, so a `select *` from the main table cannot leak, a new column added to `person_profiles` is Tier 1 or Tier 2 by construction, and the only way to read a health answer is to name the table that holds it. That is why the store is hybrid rather than one wide table (§Approaches).
 
-The second rule the constraint forces: **the change log holds values, so the change log is itself inside the boundary.** A `person_events` row that says `marital_status: single → married` is a Tier-2 fact; one that says `blood_type: — → O+` is a Tier-3 fact sitting in a table a recruiter opens to see history. Hence `person_events.field_group`, stamped from the registry by the writer, and an RLS predicate that gates the rows, not the table (§1.9).
+The second rule the constraint forces: **the change log holds values, so the change log is itself inside the boundary.** A `person_events` row that says `marital_status: single → married` is a Tier-2 fact; one that says `blood_type: — → O+` is a Tier-3 fact sitting in a table a recruiter opens to see history. Hence `person_events.field_group`, stamped from the registry by the writer, and an RLS predicate that gates the rows, not the table (§1.10).
 
 The third: **nothing a model infers is ever allowed to touch the boundary.** An extractor reads a CV and could write "female", "married", "wheelchair user" from pronouns in a paragraph. The extraction vocabulary is closed to Tier 1 and the validator refuses any other key before a value reaches the database (§5).
 
@@ -84,7 +84,7 @@ The third: **nothing a model infers is ever allowed to touch the boundary.** An 
 
 Real columns for the facts indicators need (dated employment, dated education, identity, contact, status counts); **separate tables** for the special-category groups and for third-party identities (partner, children, emergency contacts); append-only rows for every collection; one `person_events`; one `person_emails` as the identity table.
 
-**Cost:** eleven tables instead of one, one join per surface, and a registry that must be maintained as the single authority.
+**Cost:** thirteen tables instead of one, one join per surface, and a registry that must be maintained as the single authority.
 **Buy:** the boundary is a table and a grant, not a column list; indicators are SQL-shaped; third-party data is distinguishable from the candidate's own; erasure can be exhaustive because the shape of "a person's data" is a list of tables rather than a list of columns.
 
 ### The decision
@@ -107,7 +107,7 @@ Real columns for the facts indicators need (dated employment, dated education, i
 
 ## 1. Data model — `db/migrations/043_person_profile_spine.sql`
 
-Eleven tables, one column, one bucket, three permissions, one function, and a backfill. Ordered so each statement stands alone; the file is idempotent (`if not exists`, `create or replace`, `drop policy if exists`) exactly as 041 and 042 are.
+Thirteen tables, one column, one bucket, three permissions, one function, and a backfill. Ordered so each statement stands alone; the file is idempotent (`if not exists`, `create or replace`, `drop policy if exists`) exactly as 041 and 042 are.
 
 ### 1.1 `person_profiles` — the person, and only their own facts
 
@@ -389,7 +389,71 @@ create index if not exists person_employment_person_idx
 
 **Why year and month columns instead of `date` + a precision flag.** A CV says "2019–2022" and "March 2021 to present". Postgres `date` cannot hold the first, and a `date` faked to `2019-01-01` is a claim the document never made. So a period is `start_year` plus a nullable `start_month`, and `as_written` keeps the exact string the CV used. Any indicator computed from a year-only row is *less precise than one computed from a month row*, and §6 makes the module say so rather than averaging the difference away.
 
-### 1.8 `person_consents` — copied shape, person scope
+### 1.8 `person_skills` and `person_certifications` — the two claims a CV makes in words
+
+The owner's profile ask names both: *"candidate profile must have … skills"*, and the questionnaire asks *"Have you completed any recent professional development courses, workshops, or certifications?"* Neither had a home. Skills existed only as `candidate_skills` ([db/schema.sql:331](../../../db/schema.sql)), keyed `(application_id, skill_id)` — a skill attached to one application by one model run, and erased with it. A person's capability is not a property of their fourth application. Certifications existed nowhere at all outside `sourced_prospects.profile` jsonb.
+
+```sql
+create table if not exists public.person_skills (
+  id uuid default gen_random_uuid(),
+  person_id uuid not null,
+  skill text not null,
+  proficiency smallint,
+  as_written text,
+  source text not null default 'hand_record',
+  created_at timestamptz not null default now(),
+  constraint person_skills_pkey primary key (id),
+  constraint person_skills_skill_length_check check (char_length(skill) between 1 and 80),
+  constraint person_skills_proficiency_check check (
+    proficiency is null or (proficiency between 1 and 5)
+  ),
+  constraint person_skills_source_check check (
+    source in ('hand_record','cv_extraction','candidate_form')
+  ),
+  constraint person_skills_person_id_fkey foreign key (person_id)
+    references person_profiles (id) on delete cascade
+);
+create unique index if not exists person_skills_person_skill_idx
+  on public.person_skills (person_id, lower(skill));
+create index if not exists person_skills_person_idx
+  on public.person_skills (person_id, created_at desc);
+
+create table if not exists public.person_certifications (
+  id uuid default gen_random_uuid(),
+  person_id uuid not null,
+  title text not null,
+  issuer text,
+  year smallint,
+  as_written text,
+  source text not null default 'hand_record',
+  created_at timestamptz not null default now(),
+  constraint person_certifications_pkey primary key (id),
+  constraint person_certifications_title_length_check check (char_length(title) between 1 and 160),
+  constraint person_certifications_issuer_length_check check (
+    issuer is null or char_length(issuer) between 1 and 160
+  ),
+  constraint person_certifications_year_check check (year is null or (year between 1950 and 2200)),
+  constraint person_certifications_source_check check (
+    source in ('hand_record','cv_extraction','candidate_form')
+  ),
+  constraint person_certifications_person_id_fkey foreign key (person_id)
+    references person_profiles (id) on delete cascade
+);
+create unique index if not exists person_certifications_person_title_idx
+  on public.person_certifications (person_id, lower(title), lower(coalesce(issuer, '')));
+create index if not exists person_certifications_person_idx
+  on public.person_certifications (person_id, year desc nulls last);
+```
+
+**`skill` is text, not `skill_id`.** A catalogue join is a *matching result*, and matching is out of this slice (*Not in this slice*), so a `skill_id` column would be null on every row or hold an id nobody resolved — a stored claim that a match ran when it did not. `person_skills` keeps what the person said, in their words, the way `person_employment.duties` does. When a later slice resolves a claim to `skills.id`, that slice writes the id where the resolution happened; the claim stays as the evidence. `proficiency` reuses the ruler the platform already has — whole numbers 1–5, `MIN_SKILL_LEVEL`/`MAX_SKILL_LEVEL` ([openingSkills.ts:27-28](../../../src/modules/jobs/domain/openingSkills.ts)) — so a person's claim and a requisition's requirement are comparable without a conversion table. It is nullable because a CV that lists "Python" states no level, and inventing one is the fabrication §5 exists to refuse.
+
+**Both are append-only collections** (decision 2): a later application is a later moment in the same life, so a skill is added, never edited into a different skill. `as_written` keeps the CV phrase (`"AWS Certified Solutions Architect – Associate, 2023"`) beside the parsed `title`/`issuer`/`year`, and `year` is a `smallint` for the §1.7 reason — a certificate says "2023", and a date faked to `2023-01-01` is a precision the document never offered. A certification with neither issuer nor year is still a row: the person says they hold it, and the profile prints what is held rather than discarding what is thin.
+
+**The uniqueness is case-folded, because CVs are not tidy.** `lower(skill)` stops "React", "react" and "REACT" from becoming three facts about one person, and the `coalesce` in the certificate index is what makes two issuer-less rows of the same title collide instead of each other's null sliding past the index. The writer trims before insert; the index cannot be trusted to. Same refusal §3.4's exact-match check makes for employers — stated in SQL here because the extractor never sees the rows already on the person, and the app must refuse the duplicate at the door that a second model run cannot route around.
+
+**One consent group and one event group for both: `skills`.** They are Tier 1, they arrive from the same CV block, and neither is a special category. Two purposes would let a candidate agree to be asked about their skills and refuse to be asked about their certificates, which is not a distinction with a meaning — and a refusal the reader cannot explain is a worse design than a purpose slightly coarser than the table count.
+
+### 1.9 `person_consents` — copied shape, person scope
 
 ```sql
 create table if not exists public.person_consents (
@@ -402,7 +466,7 @@ create table if not exists public.person_consents (
   recorded_at timestamptz not null default now(),
   constraint person_consents_pkey primary key (id),
   constraint person_consents_purpose_check check (
-    purpose in ('identity','contact','photo','work_history','education','languages',
+    purpose in ('identity','contact','photo','work_history','education','languages','skills',
                 'marital_status','family_details','dependants','emergency_contacts',
                 'health','housing','extraction')
   ),
@@ -420,7 +484,7 @@ Verbatim the `candidate_consents` discipline: one row per answer, never an edit,
 
 `purpose = 'extraction'` is the record that a person's CV was handed to a model to be structured, which is a processing purpose of its own and should not hide behind `'work_history'`.
 
-### 1.9 `person_events` — the change log, which is inside the boundary
+### 1.10 `person_events` — the change log, which is inside the boundary
 
 ```sql
 create table if not exists public.person_events (
@@ -436,7 +500,7 @@ create table if not exists public.person_events (
   recorded_at timestamptz not null default now(),
   constraint person_events_pkey primary key (id),
   constraint person_events_field_group_check check (
-    field_group in ('identity','contact','work_history','education','languages','photo',
+    field_group in ('identity','contact','work_history','education','languages','skills','photo',
                     'marital_status','family_details','dependants','emergency_contacts',
                     'health','housing','extraction','merge')
   ),
@@ -459,7 +523,7 @@ create index if not exists person_events_field_idx
 
 `old_value`/`new_value` are text because a `date_of_birth`, a photo path and a list of children's names all have to live in the same two columns. Values longer than 500 characters are stored as their first 80 characters followed by `… [1,204 chars]` — a change trail that keeps whole medical narratives turns the trail into the largest copy of the sensitive data in the system, and a trail that keeps the full text of an accommodations answer is a second place that text must be erased from. The full value is always in its own table, which is where the reader gets it.
 
-### 1.10 `applications.person_id`, RLS, grants, permissions
+### 1.11 `applications.person_id`, RLS, grants, permissions
 
 ```sql
 alter table public.applications
@@ -471,13 +535,15 @@ comment on column public.applications.person_id is
 
 grant select on table
   public.person_profiles, public.person_emails, public.person_languages,
-  public.person_education, public.person_employment, public.person_events,
+  public.person_education, public.person_employment, public.person_skills,
+  public.person_certifications, public.person_events,
   public.person_consents, public.person_health, public.person_family_details,
   public.person_dependants, public.person_emergency_contacts
   to authenticated;
 grant all on table
   public.person_profiles, public.person_emails, public.person_languages,
-  public.person_education, public.person_employment, public.person_events,
+  public.person_education, public.person_employment, public.person_skills,
+  public.person_certifications, public.person_events,
   public.person_consents, public.person_health, public.person_family_details,
   public.person_dependants, public.person_emergency_contacts
   to service_role;
@@ -487,7 +553,7 @@ Every table: `alter table … enable row level security`, `drop policy if exists
 
 | Table | SELECT for `authenticated` |
 | --- | --- |
-| `person_profiles`, `person_emails`, `person_languages`, `person_education`, `person_employment` | `is_staff()` |
+| `person_profiles`, `person_emails`, `person_languages`, `person_education`, `person_employment`, `person_skills`, `person_certifications` | `is_staff()` |
 | `person_events` | `is_staff() and (field_group <> 'health' or has_permission('candidates.view_health_data')) and (field_group not in ('family_details','dependants') or has_permission('candidates.view_family_data')) and (field_group <> 'emergency_contacts' or has_permission('candidates.view_emergency_contacts'))` |
 | `person_health` | `is_staff() and has_permission('candidates.view_health_data')` |
 | `person_family_details`, `person_dependants` | `is_staff() and has_permission('candidates.view_family_data')` |
@@ -519,7 +585,7 @@ The role matrix reads `permissions` from the database ([settings/actions.ts:38](
 
 `docs/AUTHENTICATION.md` gains three rows in the permission table (`:92` region) and three columns of ticks in the role table (`:119` region).
 
-### 1.11 The backfill, inside 043
+### 1.12 The backfill, inside 043
 
 ```sql
 -- 0. The addresses that name a surviving person, with the name their newest row carries.
@@ -591,7 +657,7 @@ The step is **idempotent by construction**: `on conflict (email) do nothing`, an
 
 ```ts
 export type PersonFieldGroup =
-  | "identity" | "contact" | "work_history" | "education" | "languages" | "photo"
+  | "identity" | "contact" | "work_history" | "education" | "languages" | "skills" | "photo"
   | "marital_status" | "family_details" | "dependants" | "emergency_contacts"
   | "health" | "housing" | "extraction";
 
@@ -604,7 +670,8 @@ export interface PersonField {
   tier: PersonFieldTier;             // 1 operational · 2 personal · 3 special category
   table: "person_profiles" | "person_health" | "person_family_details";
   column?: string;                   // profiles/health/family facts
-  collection?: "education" | "employment" | "languages" | "dependants" | "emergency_contacts";
+  collection?: "education" | "employment" | "languages" | "skills" | "certifications"
+             | "dependants" | "emergency_contacts";
   input: "text" | "date" | "number" | "select" | "textarea" | "photo" | "list";
   options?: readonly string[];       // mirrors the SQL CHECK, never wider
   maxChars?: number;
@@ -622,18 +689,20 @@ export function consentPurposeFor(key: string): PersonFieldGroup;
 export function visibleFields(granted: ReadonlySet<string>): PersonField[];
 ```
 
+The fourteen `PersonFieldGroup` members are the fourteen `person_consents_purpose_check` values verbatim, and those fourteen plus `merge` are the fifteen `person_events_field_group_check` values. Two lists that must be kept in step by hand are two lists that drift, so the proof asserts the correspondence by name rather than trusting it (§Proof 2). A group missing from the consent list is a group no consent can ever be given for; a group missing from the event list is a change recorded with a stamp no policy names, which is a row that reads under the wrong grant.
+
 The registry is the single answer to four questions, which is the reason it exists at all:
 
 | Question | Consumer |
 | --- | --- |
 | May this value be written here? | `applyPersonField` refuses any key absent from the registry — a stray form field cannot reach SQL |
 | Which consent purpose gates it? | the same writer, before the insert |
-| Who may read it, and what group does its event carry? | the reader (§3.5) and the event stamp (§1.9) |
+| Who may read it, and what group does its event carry? | the reader (§3.5) and the event stamp (§1.10) |
 | Does it belong in the access copy, and out of an AI prompt? | §8 and §5 read the same `tier` |
 
 The invariant the proof section pins: **no `tier: 3` field key may appear in any prompt, report row or export shape.** Verified by source-scanning the screening engine and the export loaders for registry Tier-3 keys, which is a mutation-proof rather than a code comment.
 
-`options` mirrors the SQL CHECK and must not be wider; a control offering a value the column refuses is a promise the database will break. The proof asserts every `options` entry satisfies its `*_check` by name-matching — the same discipline §11 of the form-builder spec applies to its 17 types.
+`options` mirrors the SQL CHECK and must not be wider; a control offering a value the column refuses is a promise the database will break. The proof asserts every `options` entry satisfies its `*_check` by name-matching — the same discipline §11 of the form-builder spec applies to its 21 types.
 
 ## 3. The one writer
 
@@ -668,7 +737,7 @@ Refusals come back named. A door that silently swallows a rejected field is how 
 
 ### 3.2 Consent before value
 
-For each change, `consentAlive(personId, consentPurposeFor(key))` must be true. A live consent is the newest `person_consents` row for that purpose with `granted = true` against the current `notice_version` — the newest-row-wins rule 041 states in its own table comment ([041_privacy.sql:145](../../../db/migrations/041_privacy.sql)). Absent, refused, withdrawn, or given against an older notice → the field is refused with the reason naming the group, and **no value is written, including no empty placeholder**. This widens from the two purposes `planApplicationConsent` ([privacy.ts:94](../../../src/modules/privacy/domain/privacy.ts)) already decides for the apply form to the thirteen `person_consents` purposes, and it stays a pure planner in the same module: one function decides, so the door's refusal and the desk's explanation cannot drift apart.
+For each change, `consentAlive(personId, consentPurposeFor(key))` must be true. A live consent is the newest `person_consents` row for that purpose with `granted = true` against the current `notice_version` — the newest-row-wins rule 041 states in its own table comment ([041_privacy.sql:145](../../../db/migrations/041_privacy.sql)). Absent, refused, withdrawn, or given against an older notice → the field is refused with the reason naming the group, and **no value is written, including no empty placeholder**. This widens from the two purposes `planApplicationConsent` ([privacy.ts:94](../../../src/modules/privacy/domain/privacy.ts)) already decides for the apply form to the fourteen `person_consents` purposes, and it stays a pure planner in the same module: one function decides, so the door's refusal and the desk's explanation cannot drift apart.
 
 Notice wording is a deliverable of this spec, in `src/modules/candidates/domain/person-notice.ts`: one paragraph per group saying why it is asked, who reads it, that it is not used to score, and how to withdraw. It is not legal advice and the file says so in a comment; it ships as the owner's draft for their own review.
 
@@ -704,7 +773,9 @@ a session. So the form's answers land where a stranger's claim belongs: they **c
 
 ### 3.4 Collections and merges are not overwrites
 
-`person_education`, `person_employment`, `person_languages`, `person_dependants`, `person_emergency_contacts` are appended. Editing a row produces a new row and an event naming both ids; nothing in the spine updates a job's employer in place, because the *next* application is a different moment in that person's life. Duplicate rows are prevented by a stated rule (`unique (person_id, language)`, `unique (person_id, sequence)`) or by the writer's exact-match check on `(person_id, employer, start_year, end_year)`, which refuses the duplicate and says so.
+`person_education`, `person_employment`, `person_languages`, `person_skills`, `person_certifications`, `person_dependants`, `person_emergency_contacts` are appended. Editing a row produces a new row and an event naming both ids; nothing in the spine updates a job's employer in place, because the *next* application is a different moment in that person's life. Duplicate rows are prevented by a stated rule (`unique (person_id, language)`, `unique (person_id, sequence)`, the case-folded unique indexes on `person_skills` and `person_certifications`) or by the writer's exact-match check on `(person_id, employer, start_year, end_year)`, which refuses the duplicate and says so.
+
+The two new collections are the ones the extractor writes most often, so the case-folded index is the last line of a two-step rule: the writer trims and compares first, so it can *name* the refusal to the recruiter, and the index refuses second, so a second model run that arrives between the check and the insert still cannot pile "React" up three times. A unique index alone would turn a duplicate into a database error the door has to catch by string; the writer's check alone would be a race the extractor can lose.
 
 `mergePersons(fromPersonId, toPersonId)` moves `person_emails` rows, repoints `applications.person_id`, appends `person_events` with `field_group = 'merge'`, and **refuses while any field has a different value in both profiles**, returning the list. The recruiter resolves each one. A silent merge is a person whose children's names came from the wrong profile and nobody can say when.
 
@@ -763,10 +834,16 @@ export async function extractPersonProfile(
                    "field": string, "graduation_year": number | null,
                    "gpa": number | null, "honors": string, "as_written": string }],
   "languages":  [{ "language": string, "proficiency": string }],
-  "skills":     string[],
+  "skills":     [{ "skill": string, "proficiency": number | null, "as_written": string }],
+  "certifications": [{ "title": string, "issuer": string | null, "year": number | null,
+                       "as_written": string }],
   "location":   string
 }
 ```
+
+`skills` is an array of objects, not the plain `string[]` the first draft carried, because the first draft also had nowhere to put them: `person_skills` did not exist, so the one field the owner's ask names — *"candidate profile must have … skills"* — was extracted, validated and then discarded. `skills[]` → `person_skills`, `certifications[]` → `person_certifications`, both at `cv_extraction` precedence, so an extracted skill may fill a person's empty list and may never overwrite the row a recruiter typed.
+
+The prompt adds a third rule beside the two it already states: **"Report a skill level only when the text states one; otherwise `proficiency` is null. Never infer a level from seniority, from a job title, or from how many skills are listed."** `validateExtractedPersonProfile` enforces it rather than hoping: a `proficiency` outside 1–5, or a fraction, is dropped **with the skill kept** and the field named in `dropped`, because refusing "React" because its invented level was 9 would silently shrink the profile the recruiter asked for. `year` is bounded to the same 1950–2200 window the column CHECKs, and a certification whose year fails is kept with `year = null` for the same reason.
 
 The prompt inherits every rule the prospect prompt already states — never invent, keep spellings, omit an empty section — and adds two of its own: **"Convert a date only when the text states a month by name or number. Never guess a month from a season, a school year or a holiday."** and **"Report nothing about marriage, children, health, disability, religion, nationality, blood type, housing or an address. If the text states them, ignore them."**
 
@@ -779,7 +856,7 @@ export function validateExtractedPersonProfile(raw: unknown):
 
 Any key outside `extractableFieldKeys()` — Tier 1 only — is dropped and **named** in `dropped`, which the door prints ("Ignored 2 fields the extractor is not allowed to write: `marital_status`, `nationality`"). An extractor that returns a health answer is evidence of a prompt leak, and the only honest response is to say so out loud rather than quietly drop it. This is the form-builder spec's drop-and-name discipline applied to the AI boundary.
 
-**It is a click.** The record door and the profile page offer "Structure it from the CV"; nothing calls it automatically. A recruiter filing a name and an email must not cause a person's CV to be sent to a model, and a free-tier chain that 429s (a documented condition, not a hypothesis) must not be on the critical path of creating a record. The result previews — N roles, M schools, with each row's `as_written` beside the parsed period — and the recruiter confirms. Only then does `applyPersonField` run, at `cv_extraction` precedence, so it can fill an empty field and never a human's.
+**It is a click.** The record door and the profile page offer "Structure it from the CV"; nothing calls it automatically. A recruiter filing a name and an email must not cause a person's CV to be sent to a model, and a free-tier chain that 429s (a documented condition, not a hypothesis) must not be on the critical path of creating a record. The result previews — N roles, M schools, K skills, J certificates, with each row's `as_written` beside the parsed value — and the recruiter confirms. Only then does `applyPersonField` run, at `cv_extraction` precedence, so it can fill an empty field and never a human's.
 
 ## 6. Indicators: what the notes actually asked for
 
@@ -814,7 +891,7 @@ An ongoing role is counted to `now`. A year-only period counts 12 months, or the
 `/candidates/[id]` stays the only place a person is seen. **No new staff route**, so the four-place registration contract (`STAFF_ROUTES`, `NAV`, `PAGE_GUIDE`, `LIVE_WATCH`) and the 18-path count pinned in `scripts/prove-job-distribution.mjs:505` and `scripts/check-staff-routes.mjs` do **not** move. That is a deliberate saving: this slice's cost is in the store and the boundary, not in the portal tables.
 
 - **"Who they are" ([page.tsx:135](../../../src/app/(admin)/candidates/%5Bid%5D/page.tsx))** — the card the page already has, now fed by `personReader`: legal and preferred name, age with the date beside it, nationality, languages, city, photo. `getCandidateProfile` ([profile.ts:348](../../../src/app/(admin)/candidates/%5Bid%5D/profile.ts)) resolves the person through `person_emails` and keeps its `.in("email", emailSpellings(email))` read at `:386` — the application rows stay the spine's evidence, and the spine does not replace them.
-- **New tabs beside the existing ones:** History (education and employment, each with `as_written` and the source door), Background (Tier 2), Health (Tier 3, or "Not shown to you"), Family (Tier 3), Changes (`person_events`, tier-filtered). The page's read-only stance ([page.tsx:212](../../../src/app/(admin)/candidates/%5Bid%5D/page.tsx)) becomes read-and-edit for the fields the actor holds; the drawer pattern is the one the candidate record already uses for contact details (task #50).
+- **New tabs beside the existing ones:** History (education and employment, each with `as_written` and the source door), Skills (the two claim lists — skills with their level or the stated absence of one, and certifications with issuer and year — because the recruiter's first question after the indicators is "can they do the job the requisition names", and that starts from what the person claims), Background (Tier 2), Health (Tier 3, or "Not shown to you"), Family (Tier 3), Changes (`person_events`, tier-filtered). The page's read-only stance ([page.tsx:212](../../../src/app/(admin)/candidates/%5Bid%5D/page.tsx)) becomes read-and-edit for the fields the actor holds; the drawer pattern is the one the candidate record already uses for contact details (task #50).
 - **Indicators** render as one strip above History, with the coverage caveat in the same text, not in a tooltip.
 - **`/files`** shows `candidate-photos` as a fifth bucket with an honest `writtenBy` line, and `unlinkReference` gains the `person_profiles.photo_path` target ([files/actions.ts:512](../../../src/app/(admin)/files/actions.ts)) — a deleted photo must clear the column that names it, or the profile offers an image that 404s.
 
@@ -847,6 +924,8 @@ begin
   delete from person_education        where person_id = p_person_id;
   delete from person_employment       where person_id = p_person_id;
   delete from person_languages        where person_id = p_person_id;
+  delete from person_skills           where person_id = p_person_id;
+  delete from person_certifications   where person_id = p_person_id;
   delete from person_events           where person_id = p_person_id;
   delete from person_consents         where person_id = p_person_id;
   delete from person_emails           where person_id = p_person_id;
@@ -870,13 +949,13 @@ grant execute on function public.erase_person_data(uuid) to service_role;
 
 Third-party rows are **deleted**, not anonymised: a child renamed to "Erased" is a record of a person who never existed. Consent rows go with them — the erasure itself is already evidenced by `privacy_requests` and the application row's `erased_at`. `applications.person_id` survives pointing at an anonymised profile, because the pipeline needs to say an application was judged and the link is the only place "these four rows were one human" is recorded. `person_profiles` is anonymised rather than deleted to keep that fact without keeping the person.
 
-`erased_at` on `person_profiles` is also the backfill's exclusion filter (§1.11), so an erased person is never re-linked by a later run.
+`erased_at` on `person_profiles` is also the backfill's exclusion filter (§1.12), so an erased person is never re-linked by a later run.
 
 ### 8.2 The access copy
 
 `readApplications` ([accessCopy.ts](../../../src/modules/privacy/application/accessCopy.ts)) selects seven columns today and omits `cv_file_path`, `gate_answers` and every person fact — which means a subject-access request currently returns *less* than the portal shows. 043 makes the copy the truth:
 
-- Tier-1 and Tier-2 fields, education, employment, languages, the photo, and `person_events` — the requester's own data, which they are entitled to see including what they consented to.
+- Tier-1 and Tier-2 fields, education, employment, languages, skills, certifications, the photo, and `person_events` — the requester's own data, which they are entitled to see including what they consented to.
 - Tier-3 tables read on `service_role` (RLS binds staff sessions, not the DSAR path) and rendered **only** in the document the token-holder opens. Nothing is added to an email subject or body: a Gmail message is not a secure channel for a blood type.
 - Third-party rows are included with a stated note — the child's name and date of birth are the requester's own data as they gave it; the emergency contact's phone number is someone else's, and the copy names that rather than pretending.
 - Existing caps extend: `MAX_ANSWERS = 300`, `MAX_ANSWER_CHARS = 4_000`, `MAX_APPLICATIONS = 20` become one table of limits in §11.
@@ -922,6 +1001,8 @@ One module, `src/modules/candidates/domain/person-limits.ts`, cited by every con
 | `person_education` rows | 60 |
 | `person_employment` rows | 80 (a 21-year career with short contracts fits; the notes' example demands it) |
 | `person_languages` rows | 20 |
+| `person_skills` rows | 100 — a tools-heavy CV legitimately lists forty, so this is a runaway-extraction guard, not a judgment about the person |
+| `person_certifications` rows | 40 |
 | `person_dependants` rows | 20 |
 | `person_emergency_contacts` | 2 |
 | `person_events` rows per person | unbounded; read capped at the newest 500 |
@@ -932,7 +1013,7 @@ One module, `src/modules/candidates/domain/person-limits.ts`, cited by every con
 | Photo | 5 MB, jpeg/png/webp |
 | CV file | 5 MB (`CV_MAX_MB`), pdf/docx/doc/txt as the apply path already accepts |
 | Extraction input | 28,000 characters (matching `extractProfile`), output 3,000 tokens |
-| Access copy | 20 applications, 300 answers, 4,000 characters per answer, plus 200 education and 200 employment rows |
+| Access copy | 20 applications, 300 answers, 4,000 characters per answer; every collection row the person has, bounded by the per-table caps above rather than a second, higher cap that could never bind |
 
 ## 12. i18n
 
@@ -942,14 +1023,18 @@ Every label is an `en`/`ar` key, because every public-adjacent surface in this p
 
 The owner's chosen option was: this spine first, then the form-builder spec amended to write into it before its plan is executed. The amendment list, to be applied as a separate commit so the approved spec's own decisions are not silently rewritten:
 
+Items 1–7 were applied in the first amendment. The second round — the owner's answers to the re-pasted brief — added this section's two collections and grew the builder from seventeen field types to twenty-one (`time`, `duration`, `percentage`, `geolocation`). Those four types are the builder's own vocabulary, not a spine dependency: their answers land in `form_answers` unless the author binds them to a registry key, and no spine table was invented to hold them.
+
+What the second round changed in the builder's document, in full: decision 4's count and its one added sentence; §3's heading, four rows and three paragraphs; §1.2's `type` CHECK (21 names, same order as §3); §4.1's registry-`input` mapping and the `list`-binding rule item 6 asked for; §6's palette count and the picker's collection label; §11's four new ceilings; §8's access copy printing the two object answers as a sentence; proofs 3, 4, 6, 8 and 17, plus two mutations; and one correction found by reading the real code rather than by the brief — item 3's "path shape" claim and the builder's "044 adds exactly one thing" claim were both false, and both specs now say what is actually true: one bucket, two prefixes, and three additions keyed to `application_form_files` (the anon insert policy, an `ownersFor` read, an `unlinkReference` target) because `ownersFor` matches a listing against a column it knows (`src/app/(admin)/files/actions.ts:295`) and `application_attachments`' CHECK stops at `('resumes','candidate-audio')` (`db/schema.sql:773`). Nothing else moved: the six decisions' substance, the layout rules, the console's behaviour and the `ApplyWizard` fallback are as the owner signed them.
+
 1. Migration number `043` → **`044`**, and "authored, not applied" restated from the real directory listing (043 does not exist yet either).
 2. Its `applications.form_answers` jsonb stays, but the **person facts among those answers** (`name`, `email`, `phone`, plus any field bound to a registry key) route through `applyPersonField` with `door: "candidate_form"`, `actorKind: "candidate"`. Custom answers stay per-application; identity and background become per-person. **Applying this item changed §3.3 of this spec**: the apply page is anonymous, so `candidate_form` sits one rung *below* a recruiter's hand rather than at the top — an applicant's answer always survives in that application's snapshot, and what the profile believes is the ladder's decision. The rung belongs to the door, not the actor kind.
 3. Its `candidate-photos` bucket and `photo` field type defer to this spec's §1 bucket, policies, path shape and `unlinkReference` target. One bucket, one contract; the form is the second door into it, and the anon `files` insert policy is the form-builder's to add.
 4. Its §8 erasure section: `collectPaths` gains two reads, the photo **here** in 043 and the form files in 044. The 044 spec must stop claiming the photo read as its own.
 5. Its consent step gains a per-group consent write into `person_consents` whenever a rendered field maps to a registry key, using this spec's checker rather than a second one.
-6. Its `system_key` vocabulary grows a `person:` binding so an authored field can name `date_of_birth` and land in the right table instead of in `form_answers`.
+6. Its `system_key` vocabulary grows a `person:` binding so an authored field can name `date_of_birth` and land in the right table instead of in `form_answers`. **Two of those bindings point at append-only collections** — `person:skills` and `person:certifications` — so the writer appends a row per offered item rather than writing one value into one column, and §3.4's case-folded refusal decides what a second "React" from a second applicant becomes: one more row on the application's snapshot, and nothing new on the person. A `multi_select` bound to a collection is the only case in the builder where one answer is many rows, and the builder's spec says so where its binding table is.
 7. From the same read of that spec's security section, three constraints this slice must own rather than leave to it. **The ladder rung above is one of them.** The other two: a field bound to a consent-gated group must not be markable `required` — a mandatory medical question trades health data for an interview — so the rule is enforced by *this* spec's registry and its checker, and the form-builder's publish action inherits it rather than inventing it; and this slice's `unlinkReference` for `candidate-photos` clears `person_profiles.photo_path` and nothing else, so a photo an applicant uploaded and never submitted — a byte no profile ever referenced — is reachable only by the form-builder's orphan pass. The spine must not assume its own reference-clearing covers a byte with no reference.
-8. Nothing else. The amendment must not change that spec's six decisions, its 17 field types, its layout rules, its ceilings, its console behaviour, or its `ApplyWizard` fallback.
+8. Nothing else. The amendment must not change that spec's six decisions, its 21 field types, its layout rules, its ceilings, its console behaviour, or its `ApplyWizard` fallback.
 
 ## Not in this slice
 
@@ -959,7 +1044,7 @@ The owner's chosen option was: this spine first, then the form-builder spec amen
 - Level-weighted scoring, and any use of a background field in scoring. The notes ask for it; it is a decision with a discrimination exposure and it does not ship inside a store slice.
 - Timed multi-test sequencing, the 24-48-72h follow-up discipline, and job descriptions with daily-work scope.
 - Analytics, reports or exports over Tier 2 or Tier 3. Anonymised aggregate demographic reporting is a separate design with its own basis.
-- Skill-catalogue matching against `person_employment.duties`, and the `candidate_skills` roll-up.
+- Skill-catalogue matching — resolving a `person_skills.skill` to a `skills.id`, comparing it with a requisition's required levels, or reading `person_employment.duties` for it. `person_skills` holds the *claim*; a match is a later slice's conclusion, and a slice that writes a `skill_id` it never resolved would be storing a match that did not run. The `candidate_skills` roll-up into `person_skills` is the same later slice's work: `candidate_skills` says what one model run judged about one application, and promoting that to a fact about the person is exactly the overwrite `cv_extraction` is forbidden to make.
 - Encrypting `national_id`, and any self-service correction door for the candidate.
 
 ## Proof
@@ -967,49 +1052,55 @@ The owner's chosen option was: this spine first, then the form-builder spec amen
 `scripts/prove-person-spine.mjs` in the house plain-Node style (`check`, `sourceHas`, the `registerHooks` `@/` resolver, no jest).
 
 **Domain, from fixtures:**
-1. `PERSON_FIELDS` is the only key source: an unknown key refuses, and every registry key maps to a real table.
-2. Precedence, by door: `privacy_page` beats `hand_record` beats `candidate_form` beats `cv_extraction` beats `system`; `cv_extraction` fills empty and never overwrites; equal rungs overwrite with both values in the event; the six `PRECEDENCE` keys are exactly the §1.9 `person_events_door_check` values minus `merge`, so a door that writes cannot be a door the ladder forgot.
-3. `date_of_birth` accepts the first human write, then refuses a later `cv_extraction`, `hand_record` and `candidate_form` write, and accepts `privacy_page` with the reason recorded.
-4. Consent: absent / refused / withdrawn / older-notice all refuse, naming the group; a withdrawal row does not delete the value, the value is withheld by the reader and the writer refuses the next change.
-5. Tier-3 keys appear in no `extractableFieldKeys()` output.
-6. Indicators: month-precise sums, ongoing counted to `now`, year-only roles counted as whole years **and disclosed in `coverage`**; a gap sequence sums to the stated months.
-7. `validateExtractedPersonProfile` drops and names a `marital_status` and a `nationality` key from a simulated model answer.
+1. `PERSON_FIELDS` is the only key source: an unknown key refuses, every registry key maps to a real table among the thirteen, and every `collection` value names one of the seven append-only tables.
+2. Precedence, by door: `privacy_page` beats `hand_record` beats `candidate_form` beats `cv_extraction` beats `system`; `cv_extraction` fills empty and never overwrites; equal rungs overwrite with both values in the event; the six `PRECEDENCE` keys are exactly the §1.10 `person_events_door_check` values minus `merge`, so a door that writes cannot be a door the ladder forgot.
+3. Group correspondence: the fourteen `PersonFieldGroup` members are the fourteen `person_consents_purpose_check` values, and those fourteen plus `merge` are the fifteen `person_events_field_group_check` values. A group in one list and not another is a consent no door can grant or an event no policy can name.
+4. `date_of_birth` accepts the first human write, then refuses a later `cv_extraction`, `hand_record` and `candidate_form` write, and accepts `privacy_page` with the reason recorded.
+5. Consent: absent / refused / withdrawn / older-notice all refuse, naming the group — including the `skills` group that covers both claim collections. A withdrawal row does not delete the value, the value is withheld by the reader and the writer refuses the next change.
+6. Tier-3 keys appear in no `extractableFieldKeys()` output.
+7. Indicators: month-precise sums, ongoing counted to `now`, year-only roles counted as whole years **and disclosed in `coverage`**; a gap sequence sums to the stated months.
+8. `validateExtractedPersonProfile` drops and names a `marital_status` and a `nationality` key from a simulated model answer, and a simulated `skills: [{ skill: "React", proficiency: 9 }]` keeps **the skill** and drops **the level**, naming it — the claim is not thrown away with the invented number.
 
 **SQL, against the applied migration on the local stack:**
-8. `person_emails.email = lower(email)` rejects a mixed-case write.
-9. One primary index rejects a second primary for one person.
-10. `person_employment` rejects `ongoing` with an `end_year`, and an end before a start.
-11. A staff session without `candidates.view_health_data` reads zero `person_health` rows **and zero `person_events` rows in the health group**, while still reading its marital-status history.
-12. `erase_person_data` refuses while a live application links, erases after, and leaves `applications.person_id` pointing at an anonymised row.
-13. The backfill creates no profile for an `@erased.invalid` address, and is idempotent when run twice.
+9. `person_emails.email = lower(email)` rejects a mixed-case write.
+10. One primary index rejects a second primary for one person.
+11. `person_employment` rejects `ongoing` with an `end_year`, and an end before a start.
+12. `person_skills` rejects a second "react" after "React" — the case-folded index, not the writer, is what refuses, so the proof writes past the app. `person_certifications` rejects a same-title same-issuer second row, and the `coalesce` means two issuer-less copies of one title collide as well.
+13. `person_certifications` rejects a `year` of 1900 and a 161-character `title`; it accepts a row whose issuer and year are both null.
+14. A staff session without `candidates.view_health_data` reads zero `person_health` rows **and zero `person_events` rows in the health group**, while still reading its marital-status history — and reads `person_skills` freely, because the claims are Tier 1 and a grant that hid them would hide the CV.
+15. `erase_person_data` refuses while a live application links, erases after, leaves `applications.person_id` pointing at an anonymised row, and removes the person's `person_skills` and `person_certifications` rows with the rest of the collections.
+16. The backfill creates no profile for an `@erased.invalid` address, and is idempotent when run twice.
 
 **Boundaries, by source scan:**
-14. No Tier-3 registry key appears in `src/modules/screening/**`, in the export loaders, or in any file under `src/app/(admin)/assessments`.
-15. `photo_path` is read by no component under `src/app/(candidate)` or `src/app/(admin)/assessments`.
-16. `collectPaths` counts four reads, and the fourth names `candidate-photos`.
-17. `candidate-photos` exists in `BucketKey`, in `BUCKETS`, in `ownersFor`, in `unlinkReference`, and in 043's `files` policies — five places, one bucket.
-18. `PermissionKey` has the three new members and the migration seeds three `permissions` rows; the counts match.
-19. The staff route count is **still 18** and `scripts/check-staff-routes.mjs` passes untouched.
+17. No Tier-3 registry key appears in `src/modules/screening/**`, in the export loaders, or in any file under `src/app/(admin)/assessments`.
+18. `photo_path` is read by no component under `src/app/(candidate)` or `src/app/(admin)/assessments`.
+19. `collectPaths` counts four reads, and the fourth names `candidate-photos`.
+20. `candidate-photos` exists in `BucketKey`, in `BUCKETS`, in `ownersFor`, in `unlinkReference`, and in 043's `files` policies — five places, one bucket.
+21. `PermissionKey` has the three new members and the migration seeds three `permissions` rows; the counts match.
+22. The staff route count is **still 18** and `scripts/check-staff-routes.mjs` passes untouched.
 
 **Mutation proofs** — each must turn a check red, or the check proves nothing:
-- add a Tier-3 key to `extractableFieldKeys()` → 7 and 5 fail;
-- drop `field_group` from the `person_events` policy → 11 fails;
-- delete the `@erased.invalid` filter from the backfill → 13 fails;
+- add a Tier-3 key to `extractableFieldKeys()` → 8 and 6 fail;
+- drop `field_group` from the `person_events` policy → 14 fails;
+- delete the `@erased.invalid` filter from the backfill → 16 fails;
 - change `cv_extraction` precedence above `hand_record` → 2 fails;
 - put `candidate_form` on the top rung → 2 fails, which is the only proof here that
   catches an anonymous door being promoted into an impersonation door;
-- remove the photo read from `collectPaths` → 16 fails.
+- remove the photo read from `collectPaths` → 19 fails;
+- drop `skills` from `PersonFieldGroup` while leaving it in the two SQL CHECK lists → 3 fails, the proof that a group added to the store and not to the registry is caught rather than quietly unreadable;
+- make the `person_skills` unique index plain `(person_id, skill)` → 12 fails, which is the only proof that catches a case-sensitive claim list refilling on every re-extraction;
+- delete the `person_certifications` line from `erase_person_data` → 15 fails — a certificate that survives its own erasure is a medical-adjacent claim left on disk after the paperwork says the person is gone.
 
 **Gates:** `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json`; `npm run lint` (the two tolerated warnings, no new ones); `node scripts/prove-person-spine.mjs`; `node scripts/check-staff-routes.mjs`.
 
-**Live proof** needs 041 and 043 applied — owner approval per file, migrations never applied on inference — then: record a candidate by hand with a real CV, click Structure it, read the indicators off the profile, sign in as a role without the health grant and see "Not shown to you", delete the photo from `/files` and watch `photo_path` clear, then erase the person through the privacy desk and confirm the byte, the profile and every dependant row are gone.
+**Live proof** needs 041 and 043 applied — owner approval per file, migrations never applied on inference — then: record a candidate by hand with a real CV, click Structure it, read the indicators **and the skills and certifications lists** off the profile (with a level absent where the CV states none), click Structure it a second time and confirm the claims did not duplicate, sign in as a role without the health grant and see "Not shown to you", delete the photo from `/files` and watch `photo_path` clear, then erase the person through the privacy desk and confirm the byte, the profile, every dependant row **and both claim lists** are gone.
 
 ## Known limits
 
 - **One identity, one address.** Two people sharing a mailbox are one person here; one person with two addresses is two until a recruiter merges them. Phone-number identity was not designed in.
 - **No FK on `applications.person_id`.** The writer maintains it and a proof counts orphans; referential integrity is deferred to a 044-or-later `not valid` constraint once the backfill has run on real data.
 - **Tier-3 values sit in plain columns on an unencrypted disk.** A stolen `pg_dump` is a stolen medical file. §10 says so; only a separate keystore fixes it.
-- **`person_events` keeps old Tier-3 values until the person is erased.** The change log is the boundary (§1.9), which handles reading; it does not make the trail small.
+- **`person_events` keeps old Tier-3 values until the person is erased.** The change log is the boundary (§1.10), which handles reading; it does not make the trail small.
 - **Extraction quality is the model's.** Untidiest CVs produce the fewest rows, and a free tier that 429s or 503s mid-chain is a documented condition here, not a hypothesis — which is why the door works without it.
 - **Age needs a timezone to be a fact.** Derived against `organisation.timezone` the way the portal's other clock-dependent readings are; a candidate near a birthday can see "34" and "35" on different days, and the DOB is always printed beside it.
 - **Consent is group-level, not field-level.** Refusing the health group hides every question inside it; a per-field basis was considered and rejected as a form-builder concern, not a store one.
@@ -1050,3 +1141,5 @@ The owner's chosen option was: this spine first, then the form-builder spec amen
 | Access-copy caps | `src/modules/privacy/application/accessCopy.ts` (`MAX_ANSWERS`, `MAX_ANSWER_CHARS`, `MAX_APPLICATIONS`) |
 | The retention sweep's only person path | `src/app/api/cron/retention/route.ts` |
 | Opening seniority is a job property, not a person one | `db/migrations/033_opening_terms.sql:42` |
+| Skills keyed to an application, not a person | `db/schema.sql:331` (`candidate_skills`, PK `(application_id, skill_id)`), `:648` (`skills`) |
+| The 1–5 skill level the person's claim reuses | `src/modules/jobs/domain/openingSkills.ts:27`, `:28`, `:94` |

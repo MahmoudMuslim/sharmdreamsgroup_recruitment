@@ -136,7 +136,9 @@ later section follows from one of them.
    opening's assigned forms in assignment order. A field key is unique across the
    whole resolved layout, and an assignment that would duplicate one is refused
    with the offending field named. Global forms are always asked — no per-job opt-out.
-4. **17 application-safe types.** §3. Password, auto-increment/ID, reference/FK,
+4. **21 application-safe types.** §3 — seventeen when this spec was first signed,
+   plus `time`, `duration`, `percentage` and `geolocation`, which the re-pasted brief
+   asked for by name and the owner added. Password, auto-increment/ID, reference/FK,
    JSON/document and rich text/HTML are excluded *deliberately*, not forgotten.
 5. **Drafts, edits go live, answers snapshot.** `DRAFT` until the contract passes,
    then `PUBLISHED`; an in-place edit reaches the next page load and bumps
@@ -191,10 +193,11 @@ create table if not exists public.application_form_fields (
   form_id uuid not null references public.application_forms (id) on delete cascade,
   -- Generated once, never rewritten on rename. This is the snapshot's join key.
   key text not null check (char_length(key) between 3 and 60),
+  -- The 21 names are §3's table, in §3's order. One list, two places, proof 4.
   type text not null check (type in (
-    'short_text','long_text','email','phone','url','number','currency',
-    'date','datetime','select','radio','multi_select','checkbox',
-    'file','photo','address','section_heading')),
+    'short_text','long_text','email','phone','url','number','percentage','currency',
+    'date','time','datetime','duration','select','radio','multi_select','checkbox',
+    'file','photo','address','geolocation','section_heading')),
   label text not null check (char_length(btrim(label)) between 1 and 200),
   help_text text,
   placeholder text,
@@ -271,6 +274,10 @@ create index if not exists idx_form_files_orphans on public.application_form_fil
 
 Every file or photo field writes a row here and nothing else. No storage key ever
 goes into a jsonb — that is the whole reason the table exists (§*constraint*).
+Three things read it, and each is named where it lives: `collectPaths` on erasure
+(§8), the File Manager's owner lookup and row-unlinking (both §4), and the retention
+pass that clears the rows nobody claimed (§8). A ledger no reader consults is how a
+key ends up written twice, which is the failure this table was created to prevent.
 
 ### 1.5 `applications.form_answers` — the snapshot
 
@@ -361,7 +368,7 @@ the builder and the assignment door print it with the offending field named. Sam
 data, three honest reactions — a stranger gets a form that works, a write never
 lands on a broken layout, and the recruiter sees the sentence that explains both.
 
-## 3. The seventeen types
+## 3. The twenty-one types
 
 | Type | `config` | Normalised value | Notes |
 | --- | --- | --- | --- |
@@ -371,9 +378,12 @@ lands on a broken layout, and the recruiter sees the sentence that explains both
 | `phone` | — | digits, `+`, spaces; 7–20 | |
 | `url` | `hostHint` | absolute http(s) URL, ≤ 500 | |
 | `number` | `min`, `max`, `decimals` 0–2 | decimal string | merges Integer + Decimal |
+| `percentage` | `min`, `max` within 0–100, `decimals` 0–2 | decimal string, 0–100 | the unit is in the label, never in the value — a stored `"50%"` is a string no two answers can be compared against |
 | `currency` | `min`, `max`, `currencyCode` (ISO-3, default `EGP`) | decimal string | the code is stored, the symbol is not |
 | `date` | `min`, `max` (ISO) | `YYYY-MM-DD` | must be a real calendar day |
+| `time` | — | `HH:MM`, 24-hour, `00:00`–`23:59` | a clock reading with no date and no timezone — `datetime` owns both, and `AM/PM` is refused rather than guessed |
 | `datetime` | `min`, `max` (ISO) | RFC 3339 | the org timezone from `organisation.timezone` |
+| `duration` | `units[]` ⊆ `minutes`/`hours`/`days`/`weeks`/`months`/`years`, `min`, `max` (both in minutes) | `{ value, unit }` | "how long" as one number instead of three spellings — 45m, 1h and 1 hour are the same answer, and the unit comes from a closed list the way `kinds` does |
 | `select` | `options[]` 2–30 | one offered label | |
 | `radio` | `options[]` 2–30 | one offered label | |
 | `multi_select` | `options[]` 2–30, `minSelections`, `maxSelections` | array of offered labels | |
@@ -381,7 +391,34 @@ lands on a broken layout, and the recruiter sees the sentence that explains both
 | `file` | `kinds[]`, `maxBytes` ≤ 10 MB | filename in the snapshot; bytes in §1.4 | |
 | `photo` | `maxBytes` ≤ 5 MB | as `file` | images only, own bucket |
 | `address` | `components[]` ⊆ line1/line2/city/region/postalCode/country | one joined, trimmed line | structured input, one stored value |
+| `geolocation` | `pin` (default true) | `{ lat, lng }`, ≤ 6 dp | lat −90…90, lng −180…180 — two boxes, and one button that fills them from the browser |
 | `section_heading` | — | not answerable | the step divider (§1.2) |
+
+**Two of these hold an object, and that is the whole exception.** `duration` and
+`geolocation` normalise to `{ value, unit }` and `{ lat, lng }` because a single
+string cannot be compared, sorted, or range-checked, which is the only reason
+anyone asks the question. It is still *one value per key* (§11's file ceiling
+forbids a key holding a **list**), the snapshot's `value` field is jsonb either way,
+and §1.5's parser drops a malformed pair the same way it drops a malformed string.
+Every other type stores a scalar. And because those two have no scalar to write,
+**neither can carry a `person:` binding** — §4.1 says so, and the save refuses it
+rather than letting the writer invent a column the spine never declared.
+
+`time` and `percentage` are the two the fixed wizard has never had, and each exists
+to stop a specific drift: an availability question answered in `short_text` comes
+back as "9am", "09:00", "9 - 17" and "after 9", and a "what share of your week was
+management?" answered in `number` comes back as 40 or 0.4 depending on who typed it.
+A unit the schema knows is the point of asking in the first place.
+
+A `geolocation` field's `pin` button opens the browser's permission prompt **on the
+candidate's click, never on page load** — not in the builder's preview, not on the
+public form. The prompt's answer fills the two boxes and is overtypable, because a
+phone reports where the cell tower thinks you are, and because refusing a browser
+prompt must not make a question unanswerable: with `pin` on, the boxes are still a
+plain pair of number inputs, and a candidate who never clicks can still type Nasr
+City's coordinates. The pair is stored as typed and is never reverse-geocoded, so no
+map vendor is ever handed a candidate's position and this slice adds no new third
+party at all.
 
 `kinds` is a **closed vocabulary**, not author-typed MIME strings: `pdf`, `doc`,
 `sheet`, `slides`, `image`, `audio`, `video`, `text`, each mapping to a fixed set
@@ -398,6 +435,13 @@ JSON/document (a field the renderer cannot render and the eraser cannot erase),
 rich text/HTML (the public page would be rendering stranger-authored markup —
 `dangerouslySetInnerHTML` on a careers form is an XSS we would be shipping on
 purpose).
+
+The last of those still stands *after* `duration` and `geolocation`, and the
+difference is not a loophole: a `json` field's shape is whatever the author typed,
+so nothing downstream can promise it renders or erases; these two shapes are fixed
+in code, one pair of keys per type, and they are the only two object values that
+exist in the system. The exclusions are otherwise unchanged from the first signing —
+the owner added four types, none was removed.
 
 ## 4. System fields and the identity contract
 
@@ -420,10 +464,23 @@ erased and a photo that cannot.
 
 **The `candidate-photos` bucket is not created here.** The spine's `043` registers
 it — the union member, the descriptor, `ownersFor`, `unlinkReference`, and its
-staff-side `files` policies — so `044` adds exactly one thing to it: the anon
+staff-side `files` policies — so `044` adds exactly three things to it, all keyed to
+§1.4's own rows: the anon
 insert policy that lets a candidate who is not signed in file a byte at all (the
 apply page has no session; `careers/upload` already needs the same shape for the
-CV). One bucket, one disk contract, one erasure read per byte. The path stays
+CV), an `ownersFor` read of §1.4's rows joined to the application they end up on, and
+an `unlinkReference` target that deletes the ledger row when its byte is deleted from
+`/files`. The second is not decoration. `ownersFor` resolves a byte by matching a
+column against the listing (`files/actions.ts:295`, and its last branch is
+`application_attachments` with `bucket` CHECKed to `('resumes','candidate-audio')`
+— `db/schema.sql:773`), so a form byte in `candidate-photos` or `candidate-cvs`
+that no read names would sit in `/files` reporting **unlinked while a row does name
+it** — the exact dishonesty the File Manager's unlinked state exists to catch, and
+it would swallow the difference between "nobody uploaded this" and "an applicant
+uploaded this an hour ago". Rows still carrying `application_id null` keep reading
+as unlinked, and that one is true: nothing owns them yet, which is why §8's orphan
+pass is what removes them. One bucket, one disk contract, one erasure read per byte.
+The path stays
 `applications/<jobId>/<uuid>-<leaf>` — per-application, **not** the spine's
 `persons/<personId>/…` — because at upload time nobody yet knows whether this
 applicant is an existing person or a new one, and an unsubmitted photo must be
@@ -438,7 +495,14 @@ an answer on *this application*:
 
 - the key must exist in `PERSON_FIELDS` (`src/modules/candidates/domain/person-fields.ts`),
   and the field's type must be the type the registry declares for it — a `date_of_birth`
-  binding is a `date` field or the write is refused at publish;
+  binding is a `date` field or the write is refused at publish. The registry declares
+  seven `input` values, so "declares" is a table, not a judgement: `text` →
+  `short_text`, `textarea` → `long_text`, `date` → `date`, `number` → `number`,
+  `select` → `select`, `photo` → `photo`, `list` → `multi_select`. The four new §3
+  types appear on neither side: `time`, `percentage`, `duration` and `geolocation`
+  are not registry inputs, so they are not bindable, and an author who wants a
+  commute in the profile binds a `number` field to the registry's own key rather
+  than a `duration` field to a column that does not exist;
 - the answer is written through `applyPersonField(personId, changes, consent)` with
   `door: "candidate_form"`, `actorKind: "candidate"` — a rung **below** a recruiter's
   hand, and the spine's §3.3 says why: this door knows an address, not a person. The
@@ -451,6 +515,29 @@ an answer on *this application*:
   `form_answers`. Custom questions stay per-application; identity and background
   become per-person. That is the whole amendment: the form is one of the spine's
   doors, not a second store.
+
+**A `list` binding is the one answer that becomes many rows.** The registry's seven
+`input` values include `list`, and a `list` key names one of the spine's seven
+append-only collections — `person_education`, `person_employment`, `person_languages`,
+`person_skills`, `person_certifications`, `person_dependants`,
+`person_emergency_contacts`. So the writer does not put
+the value in a column; it appends **one row per offered option** at
+`candidate_form` precedence, and the spine's case-folded duplicate rule (its §3.4)
+decides what a second "React" from a second applicant becomes: another row on this
+application's snapshot, and nothing new on the person. Two consequences are stated
+here rather than discovered later. A collection binding is only legal on a
+`multi_select` — a `select` or a `short_text` cannot express "several", and the save
+refuses the mismatch by naming the field. And one answer carries only what one
+answer can carry: a skill's label becomes `skill`, with `proficiency` null and
+`as_written` holding the label as the candidate saw it; a certificate's label
+becomes `title`, with `issuer` and `year` null. Every appended row carries
+`source = 'candidate_form'`, which 043's CHECK already allows, so the profile can
+always say who told it. Two options in one answer that fold to the same key ("React"
+and "react") are refused by the same case-folded rule one step earlier, naming both
+options — the writer would otherwise be two rows ahead of the unique index. The form
+is a door, not an
+interview — the recruiter's hand or the spine's extractor fills the rest, and the
+profile shows the gap as an empty field instead of inventing a date.
 
 An authored field bound to a Tier-3 registry key (a disability, a blood type, a
 family plan) is collectable, and the consent box beside it is what makes it lawful —
@@ -588,7 +675,7 @@ Its hint promises only what the page renders — the standing rule from the nav-
 audit.
 
 **Layout.** A list (name, status, scope — global or N roles, `version`, field
-count, updated) and a three-pane editor: palette of the 17 types on the left, the
+count, updated) and a three-pane editor: palette of the 21 types on the left, the
 section-card canvas in the middle, the inspector for the selected field on the
 right. Reordering uses native HTML5 drag-and-drop like `CandidateBoard.tsx` and
 `BankColumns.tsx` — and like those two, it pairs the drag with a control a keyboard
@@ -602,7 +689,11 @@ same `canWrite` gate.
 from `PERSON_FIELDS`, never a second list the console could drift away from. Each
 is shown tier-labelled, and a Tier-2 or Tier-3 key carries its group's notice
 sentence beside it, so an author sees what the question becomes before writing the
-label. The picker cannot offer a key the writer would refuse, because both read the
+label. A `list` key is additionally labelled "saves each choice as its own row",
+because it is the one binding whose answer is not one value (§4.1), and the picker
+greys it out on a field that is not a `multi_select` rather than letting the author
+meet the refusal at publish. The picker cannot offer a key the writer would refuse,
+because both read the
 same registry.
 
 **Editing model.** The canvas holds client state; one `saveFormLayout(formId,
@@ -675,7 +766,9 @@ human-only publish step exists to catch.
   dependency and the plan must not schedule a live proof of the erasure half before
   all three are applied.
 - The access copy gains a "what you told us" section built from `form_answers`
-  (label → value, filenames for files) and the §1.4 rows, bounded by the existing
+  (label → value, filenames for files, and `duration`/`geolocation` printed as one
+  readable line — `45 minutes`, `30.0444, 31.2357` — because a person asking what we
+  hold is owed a sentence, not their own jsonb) and the §1.4 rows, bounded by the existing
   `MAX_ANSWERS`/`MAX_ANSWER_CHARS` cuts, each cut printed. Honest framing: the
   copy already omits `cv_file_path` and the gate answers today
   (`accessCopy.ts:71`), so this is not a gap the builder introduced — but the
@@ -793,6 +886,10 @@ untouched — that is decision 5's snapshot.
 | `file` bytes | 10 MB | matches `ATTACHMENT_RULES` for `resumes` |
 | `photo` bytes | 5 MB | an identity photo is a few hundred KB in practice |
 | Long text | 5,000 chars | snapshot and drawer both have to render it |
+| `percentage` | 0–100, ≤ 2 dp | outside that range it is not a percentage, and a third decimal is not more truth than a candidate was asked for |
+| `duration` | value 1–9999, `unit` from the closed six | 9999 is a typo and 0 is an empty box; the unit list is closed the way `kinds` is, so no author asks in fortnights |
+| `geolocation` | −90…90, −180…180, ≤ 6 dp | 6 decimals is ~11 cm; finer is a phone's jitter, and the range is what makes a pair of numbers a place |
+| `time` | `HH:MM`, `00:00`–`23:59`, no seconds | "when are you free" has no seconds, and `09:30:45` is a clock, not an answer |
 | `form_answers` per row | 80 entries | same ceiling as the layout |
 
 Ceilings live in `src/modules/form-builder/domain/limits.ts` as one exported
@@ -814,7 +911,7 @@ object, so the proof, the action and the UI copy cannot drift apart.
 - **Reference/FK, password, rich-text and JSON field types** (§3).
 - **Rewriting existing applications.** Rows filed before 044 keep the four fixed
   columns and no snapshot; nothing back-fills. The same is true of `person_id` —
-  the spine's §1.11 backfill gives existing applications a person, and this
+  the spine's §1.12 backfill gives existing applications a person, and this
   migration adds none.
 - **Hardening the pre-existing `cvFilePath` door** (§10).
 - **Any candidate-portal surface.** The (candidate) portal, `NoticeInbox` and
@@ -828,14 +925,18 @@ and exiting non-zero — the house style, no jest.
 **Domain (no database, no network).**
 1. `resolveLayout` order: globals before assignments, `global_position` then id, `position` then name; a run twice gives identical output.
 2. A duplicate `key` across two forms is a violation naming both forms; a duplicate `system_key` likewise; unique keys give no violation.
-3. `identityIssues` for each of the §4 bullets, including the `cv`-or-`about` rule, a type-mismatched binding, a `person:` key the registry does not carry, and a consent-gated binding marked `required`.
-4. `normaliseAnswer` per type: accepts, rejects, and the boundary values for every numeric/date ceiling; `multi_select` honouring min/max selections; `address` component joining; `section_heading` refusing a value.
+3. `identityIssues` for each of the §4 bullets, including the `cv`-or-`about` rule, a type-mismatched binding, a `person:` key the registry does not carry, a consent-gated binding marked `required`, a `list` key bound to a field that is not a `multi_select`, and a `duration` or `geolocation` field carrying any binding at all — neither has a scalar to write, and neither is a registry input (§4.1's seven).
+4. `normaliseAnswer` per type: accepts, rejects, and the boundary values for every numeric/date ceiling; `multi_select` honouring min/max selections; `address` component joining; `section_heading` refusing a value. The walk is driven by the domain's exported `FIELD_TYPES`, and the same check asserts that list is exactly the names in 044's `type` CHECK — a type the schema stores but the code cannot normalise, or a normaliser the schema would refuse to hold, is red rather than untested. Then the four newest, each at its boundary: `time` accepts `00:00` and `23:59`, refuses `24:00`, `9:30`, `09:30:45` and `9:30 PM`; `percentage` refuses 101, −1 and a third decimal; `duration` accepts `{45, minutes}` and `{1, hours}` as the same minute total and refuses a seventh unit, 0 and 10000; `geolocation` accepts 30.0444/31.2357, clips to 6 dp, refuses lat 91 and lng −181.
 5. `kinds` → accepted types and byte ceilings, and an unknown kind refusing.
-6. Snapshot encode → parse round-trip, and a parser that drops malformed entries.
+6. Snapshot encode → parse round-trip, and a parser that drops malformed entries — including the two object values, so a `duration` pair truncated to one key parses as a dropped entry rather than a half answer.
 7. Every ceiling in §11 enforced by name, not by an inline number.
 8. The binding map: a `person:` field's registry group and tier come from
    `PERSON_FIELDS` and nowhere else; the consent groups a layout needs are exactly
-   the groups its bindings belong to; a layout with no bindings needs no box.
+   the groups its bindings belong to; a layout with no bindings needs no box. And the
+   keys that append are exactly the registry's `list` keys — one row per offered
+   option, so a layout holding a `person:skills` binding is the only layout that can
+   write more rows than answers, and the count of appended rows is proven, not
+   assumed.
 9. The rung: with a value already held by `hand_record`, a `candidate_form` write is
    reported as a conflict and the held value stands; the same write against an empty
    field applies; the same write against a `cv_extraction` value wins. In all three
@@ -853,11 +954,17 @@ and exiting non-zero — the house style, no jest.
     check pins both, so neither half can silently change the other.
 17. The bucket: `candidate-photos` already sits in `BucketKey`, `BUCKETS`,
     `ownersFor`, `unlinkReference` and 043's `files` policies — those five places are
-    the spine's and this proof only asserts they are unchanged. What 044 must add is
-    the **anon `files` insert policy** for that bucket, and the check pins that the
-    policy exists, is `to anon`, is an `insert`, and constrains the path prefix — the
-    one registration place that is this slice's, because the public form is the
-    second door into a bucket 043 opened for a staff door.
+    the spine's and this proof only asserts they are unchanged *as 043 registers them*.
+    What 044 must add is three, and all three are keyed to §1.4's own rows rather than
+    to a new registration: the **anon `files` insert policy** for that bucket (the check
+    pins that it exists, is `to anon`, is an `insert`, and constrains the `applications/`
+    path prefix), an **`ownersFor` read** of `application_form_files` where
+    `application_id is not null`, and an **`unlinkReference` target** that deletes the
+    ledger row when its byte is deleted from `/files` — otherwise a form field's
+    filename survives in the snapshot pointing at nothing, which is the 404 the spine's
+    own `photo_path` target exists to prevent. The three are this slice's because the
+    public form is the second door into a bucket 043 opened for a staff door, and a
+    second door that leaves the File Manager blind is a door nobody can audit.
 18. The retention route has an orphan pass over `application_form_files` with
     `application_id is null`, its window comes from `limits.ts`, it removes bytes
     through `getFileStore().remove` **before** deleting the row, and it is not
@@ -879,7 +986,9 @@ pass back behind `privacy.retention_enabled`; move the `applyPersonField` call
 **above** the `applications` insert; let the 044 rewrite of `erase_candidate_data`
 null `applications.person_id` too; promote `candidate_form` to the top rung; mark a
 health-group binding `required` and let it publish; drop the anon `files` insert
-policy while leaving the bucket registered.
+policy while leaving the bucket registered; add an eighth name to 044's `type` CHECK
+without writing its normaliser; let a `duration` field carry a `person:` binding and
+so reach the writer with an object where a scalar column waits.
 Every one must turn the proof red, and the file is restored before the gates are
 run. Five of them are the interesting ones, because nothing else in a build notices:
 a bucket that exists but is unlisted, a sweep that unlinks the metadata and leaves
