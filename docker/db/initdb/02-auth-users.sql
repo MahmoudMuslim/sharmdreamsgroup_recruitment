@@ -1,12 +1,12 @@
 -- Everything Supabase hosts in the `auth` schema that our own policies touch.
--- Re-measured on the running local stack (2026-10-21) with
+-- Re-measured on the running local stack (2026-10-25) with
 -- `docker compose -f docker/docker-compose.yml --env-file docker/.env exec -T db
 -- psql -U postgres -d sharm_dreams` (the same door as `npm run docker:psql`) and
--- the CTE at the bottom of this comment, against the 88 policies in `public`:
---   is_staff() 55, has_permission() 24, current_user_profile_id() 10,
+-- the CTE at the bottom of this comment, against the 99 policies in `public`:
+--   is_staff() 65, has_permission() 25, current_user_profile_id() 15,
 --   is_super_admin() 9, user_tenant_id() 5, a direct auth.uid() in 3 (1 of those
 --   also calls a helper). THESE OVERLAP — one policy can call two helpers — so
---   they sum above the 80 they describe: 80 of the 88 reach an identity door.
+--   they sum above the 91 they describe: 91 of the 99 reach an identity door.
 --   5 more are addressed by the `attempt_token` claim instead (2 of those also
 --   reach identity), and 5 reach neither: `applications_public_insert`,
 --   `tenants_read` and `provider_models_public_read`, whose whole qual is

@@ -35,6 +35,17 @@ services:
       # rotating it in docker/.env is enough - no committed literal has to be
       # edited. Unset or empty leaves 00-roles.sql's first-boot default alone.
       LOCAL_PGRST_PASSWORD: ${LOCAL_PGRST_PASSWORD}
+      # Read by db/initdb/04-seed-staff.sh, which creates the three first-boot
+      # sign-ins on a fresh volume so a new stack has someone who can log in
+      # without a second command. Empty skips the seed - it never defaults to a
+      # guessable password, because "blank means 12345678" is how a public host
+      # gets its first unauthorised admin.
+      LOCAL_STAFF_PASSWORD: ${LOCAL_STAFF_PASSWORD:-}
+      # Optional: the SUPER_ADMIN address the seed creates. Defaults to the
+      # `.test` fixture the proofs sign in as, so dev volumes stay predictable;
+      # KVM2 sets a real address in docker/.env.
+      STAFF_OWNER_EMAIL: ${STAFF_OWNER_EMAIL:-}
+      STAFF_OWNER_NAME: ${STAFF_OWNER_NAME:-}
     # PG17 or newer is forced by db/schema.sql: every grant it carries uses
     # the `maintain` privilege, which does not exist before PG17. Nothing here
     # needs PG18 specifically, and nothing here breaks on it — pgcrypto's bcrypt
@@ -59,8 +70,28 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       - ./db/initdb:/docker-entrypoint-initdb.d:ro
+      # The schema of record, applied by db/initdb/03-apply-schema.sh on a fresh
+      # volume: 03-* sorts after 00-roles/01-extensions/02-auth-users (which
+      # create the roles and the `auth` stand-in it grants to) and before
+      # 04-seed-staff.sh, so a first `up` ends with 46 tables, 99 policies and
+      # the 235 reference rows already in place. Mounted as a directory, not as
+      # a single file into the initdb dir: Docker cannot create a mountpoint
+      # inside a read-only bind mount. `npm run db:apply-local` still exists and
+      # is still idempotent - it is the way to re-apply a changed schema.sql to
+      # a volume that already exists.
+      - ../db:/db:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d sharm_dreams"]
+      # -h 127.0.0.1 is load-bearing, not decoration. The entrypoint brings up a
+      # TEMPORARY server with `listen_addresses=''` while it runs
+      # /docker-entrypoint-initdb.d/*, and that server answers on the unix socket
+      # only. A socket-based check (`pg_isready -U postgres -d sharm_dreams`)
+      # therefore reports healthy DURING initialisation, so `rest` — which waits
+      # on `condition: service_healthy` — would start against a database with no
+      # tables, cache an empty schema description, and go on answering 404
+      # "relation not found" for every table schema.sql had just created. A TCP
+      # probe cannot succeed until the real server starts, which happens only
+      # after the last init file finishes.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d sharm_dreams"]
       interval: 5s
       timeout: 3s
       retries: 30

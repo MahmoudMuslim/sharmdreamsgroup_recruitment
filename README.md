@@ -10,7 +10,7 @@
 
 An enterprise-grade, **AI-Driven Omnichannel HRMS, ATS & Skill Assessment Platform** for multi-company groups (Hospitality, Real Estate, Commercial Development, Corporate Shared Services). A standalone hybrid of Canditech + Greenhouse + Lever + AI Recruiter.
 
-> Production URL: **https://hrms.sharmdreams.com**
+> Production URL: **https://sharmdreamsgroup.cloud**
 
 ---
 
@@ -22,7 +22,7 @@ This README is the entry point. Detailed, verified documentation lives in [`docs
 |-----|----------------|
 | [Architecture](docs/ARCHITECTURE.md) | Clean-architecture module layout, request lifecycle, data flow |
 | [API Reference](docs/API.md) | Every route handler (`/api/*`) and server action |
-| [Database](docs/DATABASE.md) | All 42 tables, relationships, the 88 RLS policies, and the `public.files` table + uploads volume that replaced storage buckets |
+| [Database](docs/DATABASE.md) | All 46 tables, relationships, the 99 RLS policies, and the `public.files` table + uploads volume that replaced storage buckets |
 | [Authentication & RBAC](docs/AUTHENTICATION.md) | Session tokens, roles, granular permissions, credential store |
 | [AI Integration](docs/AI_INTEGRATION.md) | Multi-provider gateway, model failover, capabilities, routing |
 | [Deployment](docs/DEPLOYMENT.md) | Docker Compose stack, environment variables, cron jobs |

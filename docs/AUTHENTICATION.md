@@ -20,7 +20,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [DATABASE.md](DATABASE.md) · [AP
 
 Layers 3–4 are application checks; **layer 5 (RLS) is the backstop** — even a bug that skips a code check still hits the database policy.
 
-`auth.uid()` is our own function: `docker/db/initdb/02-auth-users.sql` stands in the `auth` schema and defines it to read the `request.jwt.claims` GUC, which PostgREST sets from the bearer on every request. That is the whole bridge between the cookie and the 88 policies on `public`.
+`auth.uid()` is our own function: `docker/db/initdb/02-auth-users.sql` stands in the `auth` schema and defines it to read the `request.jwt.claims` GUC, which PostgREST sets from the bearer on every request. That is the whole bridge between the cookie and the 99 policies on `public`.
 
 ---
 

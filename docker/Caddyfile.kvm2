@@ -1,0 +1,33 @@
+# KVM2 public front door — TLS terminates here, one origin for the app and
+# /rest/v1/. Caddy auto-issues and auto-renews a Let's Encrypt certificate.
+#
+# Requirements: DNS A/AAAA for the domain points at this server, and ports 80
+# (HTTP-01 challenge / redirect) and 443 are reachable. Certs persist in the
+# `caddy-data` volume, so a redeploy does not re-issue them.
+#
+# This file is mounted by docker-compose.kvm2.yml as /etc/caddy/Caddyfile.
+
+{
+	# Let's Encrypt registration / expiry notices. Change if you prefer.
+	email {$ACME_EMAIL:admin@sharmdreamsgroup.cloud}
+}
+
+# One site, every path proxied to the stack's internal nginx, which already
+# routes /rest/v1/ to PostgREST, serves /healthz, and streams /api/live.
+{$SDG_DOMAIN:sharmdreamsgroup.cloud} {
+	encode zstd gzip
+
+	# flush_interval -1 disables response buffering so SSE (/api/live), streamed
+	# RSC HTML and AI token streams are delivered as they are produced.
+	# header_up passes the browser's real scheme down to nginx, which forwards it
+	# to the app as X-Forwarded-Proto (see docker/nginx/nginx.conf $sdg_proto).
+	reverse_proxy nginx:80 {
+		flush_interval -1
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+# To also own www, add the DNS record and uncomment this block:
+# www.{$SDG_DOMAIN:sharmdreamsgroup.cloud} {
+# 	redir https://{$SDG_DOMAIN:sharmdreamsgroup.cloud}{uri} permanent
+# }

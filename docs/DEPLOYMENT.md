@@ -191,9 +191,34 @@ published `APP_URL`.
 
 `docker/docker-compose.yml` is the stack the app now runs on — Postgres,
 PostgREST, the built app, nginx in front on `${NGINX_PORT}`, and the cron
-poller. Values come from `docker/.env` (copy `docker/.env.example`);
-`npm run docker:up` starts it, `npm run db:apply-local` applies
-`db/schema.sql`, `npm run db:seed-local` writes the local staff fixtures.
+poller. Values come from `docker/.env` (copy `docker/.env.example`).
+
+**A fresh volume initialises itself.** On the first start of `db-data` the
+Postgres image walks `/docker-entrypoint-initdb.d` in lexical order:
+
+| file | effect |
+| --- | --- |
+| `00-roles.sql` | `anon` / `authenticated` / `authenticator` roles |
+| `01-extensions.sql` | `extensions` schema, `pgcrypto`, `pg_stat_statements` |
+| `02-auth-users.sql` | the `auth` stand-in (`auth.users`, the table `AUTH_DB_URL` reads) |
+| `03-apply-schema.sh` | applies `db/schema.sql` from the `../db:/db:ro` mount — 46 tables, 99 policies, 9 companies + 226 lookup rows |
+| `04-seed-staff.sh` | the three staff sign-ins, bcrypt-hashed from `LOCAL_STAFF_PASSWORD` |
+| `05-set-pgrst-password.sh` | sets `authenticator`'s password from `LOCAL_PGRST_PASSWORD` |
+
+So on KVM2 the first run is one command: `npm run docker:up:kvm2` (or
+`docker compose up -d`). Nothing has to be applied or seeded by hand, and the
+`[initdb] …` lines in `docker compose logs db` report each step. The owner login
+is `STAFF_OWNER_EMAIL` with `LOCAL_STAFF_PASSWORD`; the other two fixtures are
+`recruiter.local@sharmdreams.test` and `candidate.local@sharmdreams.test`.
+
+`npm run db:apply-local` and `npm run db:seed-local` still exist and are still
+idempotent, but they are now the **existing-volume** tools: the schema has to be
+re-applied by hand only when `db/schema.sql` changed after the volume was
+created (init file `03` runs on an empty `PGDATA` and never again), and re-seeding is for
+resetting a known password. The apply script also restarts `rest` afterwards,
+which the initdb path does not need because `rest` cannot start until the db
+healthcheck passes over TCP — a check that only succeeds once every init file
+has finished, so PostgREST never caches a half-built schema.
 
 ### Rotating `LOCAL_PGRST_PASSWORD`
 
@@ -208,8 +233,10 @@ To rotate it on a host:
 1. Change `LOCAL_PGRST_PASSWORD` in the secrets file that feeds `docker/.env`
    (never in the committed `.env.example`).
 2. `npm run docker:wipe` — **this deletes the `db-data` volume.**
-3. `npm run docker:up`, then `npm run db:apply-local` and `npm run db:seed-local`
-   (or restore a `pg_dump`) to rebuild the database it removed.
+3. `npm run docker:up` — the fresh volume re-applies `db/schema.sql` and re-seeds
+   the staff sign-ins on its own (see the table above); apply a `pg_dump`
+   instead if you are restoring real data. `npm run db:apply-local` is only
+   needed if you want the object-count report.
 
 Step 2 is not optional bookkeeping: `/docker-entrypoint-initdb.d` runs only while
 `PGDATA` is empty, so on an existing volume the role keeps the password it was

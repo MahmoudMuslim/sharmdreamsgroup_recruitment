@@ -4,10 +4,10 @@ The whole application runs on **PostgreSQL 18.6 plus PostgREST 16.5, both contai
 
 Counts below are measured from that file, not from a snapshot:
 
-- **42 tables** (`grep -c '^create table if not exists public\.'`)
-- **RLS enabled** on application tables — **88 policies** across them (`grep -c '^create policy'`)
-- **15 functions** and **15 triggers** (`set_updated_at`, `assign_tracking_code`, and the RLS helpers `is_staff()` / `has_permission()` / `auth.uid()` …)
-- **55 indexes**, **18 Postgres enums** for closed value sets
+- **46 tables** (`grep -c '^create table if not exists public\.'`)
+- **RLS enabled** on application tables — **99 policies** across them (`grep -c '^create policy'`)
+- **15 functions** and **19 triggers** (`set_updated_at`, `assign_tracking_code`, and the RLS helpers `is_staff()` / `has_permission()` / `auth.uid()` …)
+- **66 indexes**, **18 Postgres enums** for closed value sets
 - **No storage buckets.** Files are rows in `public.files` plus bytes on a mounted volume — see [Files](#files-formerly-storage).
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATION.md) · [API.md](API.md)
