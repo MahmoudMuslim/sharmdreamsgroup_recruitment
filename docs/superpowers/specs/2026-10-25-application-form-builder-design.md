@@ -1,8 +1,9 @@
 # Application form builder
 
 **Date:** 2026-10-25
-**Status:** Approved design — implementation plan not yet written
-**Scope:** one slice — recruiters author the questions a candidate answers when they apply, assign those forms to an opening or to every opening, and the public apply page renders what was authored. One migration (`043`, authored, not applied), five tables and one column, a new `candidate-photos` bucket, one pure domain module, one new staff page (`/forms`), two new route handlers (a public layout read, a public upload), one new AI capability, and one new pass on the existing retention sweep. The candidate portal is not touched.
+**Status:** Approved design — amended the same day after the person-profile spine; implementation plan not yet written
+**Amended:** 2026-10-25, per [the person-profile spine spec §13](2026-10-25-person-profile-spine-design.md). That slice is designed first and owns migration `043`, so this one becomes `044`, and the `candidate-photos` bucket it once claimed is now the spine's. The amendment touches the migration number, the bucket's ownership, the byte-read count, and where an answer's *person facts* are written; it changes none of the six decisions and no field type, layout rule, ceiling, console behaviour or fallback.
+**Scope:** one slice — recruiters author the questions a candidate answers when they apply, assign those forms to an opening or to every opening, and the public apply page renders what was authored. One migration (`044`, **not authored yet** — `db/migrations/` stops at `042_offers.sql` on the day this was written, and `043` is the spine's), five tables and one column, one pure domain module, one new staff page (`/forms`), two new route handlers (a public layout read, a public upload), one new AI capability, and one new pass on the existing retention sweep. The `candidate-photos` bucket is created by `043`, not here. The candidate portal is not touched.
 
 ---
 
@@ -148,9 +149,14 @@ later section follows from one of them.
 
 ## 1. Data model
 
-One migration, `db/migrations/043_application_forms.sql`, authored and **not
-applied** — applying it needs the owner's per-file approval like every migration
-since 031. Five tables and one column.
+One migration, `db/migrations/044_application_forms.sql`, to be authored when this
+plan is executed and **not applied** — applying it needs the owner's per-file
+approval like every migration since 031. Five tables and one column.
+
+**It applies after `041` and after `043`.** 041 for the reason in §8 (this
+migration replaces a function 041 defines); 043 because the `candidate-photos`
+bucket, its `files` policies and its `person_profiles.photo_path` column are that
+slice's, and because §4's `person:` bindings write into tables only 043 creates.
 
 ### 1.1 `application_forms` — the container
 
@@ -195,9 +201,13 @@ create table if not exists public.application_form_fields (
   required boolean not null default false,
   -- Per-type settings: options, min/max, accept kinds, address components.
   config jsonb not null default '{}'::jsonb check (jsonb_typeof(config) = 'object'),
-  -- The canonical column this field writes. Null for ordinary fields.
-  system_key text check (system_key in (
-    'name','email','phone','about','cv','photo','linkedin')),
+  -- The canonical destination this field writes. Null for ordinary fields.
+  -- The seven bare keys are columns on `applications`, as decided before this
+  -- amendment. A `person:<key>` binding is the spine's registry key and lands in
+  -- a person table through its writer — see §4.
+  system_key text check (
+    system_key in ('name','email','phone','about','cv','photo','linkedin')
+    or system_key ~ '^person:[a-z][a-z0-9_]{2,59}$'),
   position integer not null default 0,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -313,7 +323,7 @@ the table shape before anything reaches a browser.
 
 ### 1.7 Seed
 
-043 inserts one `PUBLISHED`, `is_global` form named **Personal details** holding
+044 inserts one `PUBLISHED`, `is_global` form named **Personal details** holding
 `section_heading`, `name`, `email`, `phone`, `cv` (file, kinds `pdf|doc`),
 `about` (long_text) and `linkedin` (url) — the fields the fixed wizard collects
 today, expressed as the first published form. Version 1, `global_position` 0.
@@ -402,11 +412,50 @@ writes today:
 | `about` | `long_text` | `applications.cv_text` |
 | `cv` | `file` (kinds `pdf\|doc`) | `applications.cv_file_path` + text extraction into `cv_text` |
 | `linkedin` | `url` | prepended to `cv_text` — `actions.ts:528`, unchanged |
-| `photo` | `photo` | `application_form_files` in a new `candidate-photos` bucket |
+| `photo` | `photo` | `application_form_files` in `candidate-photos` |
 
 `photo` gets **no column on `applications`**. It is a file, files live in §1.4,
 and `collectPaths` reads §1.4. That is the difference between a photo that can be
 erased and a photo that cannot.
+
+**The `candidate-photos` bucket is not created here.** The spine's `043` registers
+it — the union member, the descriptor, `ownersFor`, `unlinkReference`, and its
+staff-side `files` policies — so `044` adds exactly one thing to it: the anon
+insert policy that lets a candidate who is not signed in file a byte at all (the
+apply page has no session; `careers/upload` already needs the same shape for the
+CV). One bucket, one disk contract, one erasure read per byte. The path stays
+`applications/<jobId>/<uuid>-<leaf>` — per-application, **not** the spine's
+`persons/<personId>/…` — because at upload time nobody yet knows whether this
+applicant is an existing person or a new one, and an unsubmitted photo must be
+removable without touching a profile (§8's orphan pass). `person_profiles.photo_path`
+is written only by the spine's writer, never by this one.
+
+### 4.1 `person:` bindings — where a person fact goes
+
+A `system_key` may also be `person:<registry key>` (`§1.2`'s CHECK). That is the
+only route by which an authored field becomes a fact about the *human* rather than
+an answer on *this application*:
+
+- the key must exist in `PERSON_FIELDS` (`src/modules/candidates/domain/person-fields.ts`),
+  and the field's type must be the type the registry declares for it — a `date_of_birth`
+  binding is a `date` field or the write is refused at publish;
+- the answer is written through `applyPersonField(personId, changes, consent)` with
+  `door: "candidate_form"`, `actorKind: "candidate"` — a rung **below** a recruiter's
+  hand, and the spine's §3.3 says why: this door knows an address, not a person. The
+  form creates a profile, beats a model's reading and the backfill, replaces what the
+  same mailbox typed on the last application, and loses to a value a recruiter put
+  there by hand. The application's own snapshot keeps the answer either way;
+- the same value is still snapshotted into `form_answers`, so the application keeps
+  showing the questions it was filed against (§1.5) even after the profile moves on;
+- the rest of the form — every field with no `system_key` — lands only in
+  `form_answers`. Custom questions stay per-application; identity and background
+  become per-person. That is the whole amendment: the form is one of the spine's
+  doors, not a second store.
+
+An authored field bound to a Tier-3 registry key (a disability, a blood type, a
+family plan) is collectable, and the consent box beside it is what makes it lawful —
+see §5. Nothing here lets a form field into a prompt or a report column: the §10
+boundary holds, and the spine's registry is what the proof scans for Tier-3 keys.
 
 **When both `about` and `cv` exist, `cv_text` carries both.** Today a file's
 extracted text *replaces* the pasted text: `finalCvText = extracted.text`
@@ -430,6 +479,16 @@ and is called by the publish action, the assignment door and the submit action:
   form — two forms each binding `email` is decision 3's collision and the contract
   catches it by the same read;
 - `phone`, `photo`, `linkedin` are the author's choice;
+- a `person:` binding is the author's choice too, and **satisfies no part of the
+  contract** — `person:name` is not `name`. The identity of the human is established
+  by the `name`/`email` fields exactly as today, and `applyPersonField` is only
+  reached once that person is resolved (§4.1);
+- a `person:` key absent from the registry, or bound to a field whose type is not
+  the registry's, is an issue naming the field — an author cannot invent a column;
+- a field bound to a **consent-gated group** (any group the spine's checker guards —
+  health, family, and the rest of Tier 3) may not be `required`. Making the medical
+  questions mandatory trades a person's health data for an interview, and §5's
+  "I'd rather not say" must stay a answer that does not block the application;
 - a bound field's type must be the pinned type above;
 - no `section_heading` may carry a `system_key`; and if the form contains any
   heading, no answerable field may precede the first one — it would sit in a step
@@ -441,7 +500,10 @@ Publishing is refused while any issue stands, and the refusal names the field by
 label. **Consent and Review are not in the contract because they are not in the
 builder**: the two consent boxes (`planApplicationConsent`) and the Review step
 stay hard-coded, non-deletable, and outside every form. No recruiter can author
-away a legal basis for processing.
+away a legal basis for processing. The per-group boxes §5 adds are generated by
+the registry from the resolved layout, so they are outside the author's reach in
+the same way — a form that asks health facts gets the health box whether or not
+its author thought of it, and a form that asks none never shows one.
 
 ## 5. The public apply page
 
@@ -454,6 +516,19 @@ becomes the fallback (§9).
   the `/api/careers/questions` fetch and `ApplyQuestionsStep.tsx` are untouched),
   then the fixed Review step with the two consents. A layout with no headings is
   one step under the form's own name.
+- **Consent groups, derived not authored.** The page's server render maps the
+  resolved layout's `person:` bindings through `consentPurposeFor` and passes the
+  wizard one thing per group: *which step first asks it*. That step opens with a
+  box — the group's name, why it is asked, that it is not used to score, how to
+  withdraw, all from the spine's notice file, plus two controls: agree, or **"I'd
+  rather not say"**. Neither is a submit blocker: refusing a group hides its fields
+  and the writer refuses them anyway, which is the same outcome as leaving them
+  blank and the one a candidate must be able to choose and still apply. A tick is
+  recorded as a `person_consents` row for that `personId` through the spine's own
+  consent checker — newest-row-wins against the current notice version — and the
+  write reads back through that same checker, never a second one. A layout with no
+  `person:` bindings renders no box, so today's form looks exactly like today's
+  wizard.
 - **A new public read.** `GET /api/careers/form?jobId=…`, shaped like
   `/api/careers/questions`: a route handler with a service-role read. Being a
   handler that consumes `request.url` makes it request-time, which is the point —
@@ -462,21 +537,38 @@ becomes the fallback (§9).
   cache): a recruiter's edit reaches the next page load instead of sitting in a
   cache window. It emits the *public projection* only — label, help, placeholder,
   type, required, the derived `accept`, options as labels. No `system_key`, no
-  `config.maxBytes`, no table names.
+  `config.maxBytes`, no table names — and no registry key: the consent-group map
+  above is computed in the page's server render, so the browser is told *this step
+  needs a box*, never *this field writes your diagnosis*.
 - **Uploads.** One `POST /api/careers/form-upload` for every `file`/`photo` field:
   oversize guard *before* buffering (as `careers/upload` does), kind whitelist from
   the field's `config` **resolved server-side from the published layout** — the
   browser's `Content-Type` and `accept` are never believed — magic-byte sniffing
   on the head bytes, `applications/<jobId>/<uuid>-<sanitised-leaf>` keys, and an
-  `application_form_files` row with `application_id` null. The response is an
+  `application_form_files` row with `application_id` null — `candidate-photos` for
+  a `photo` field, whose bucket `043` registers and whose one addition here is the
+  anon insert policy (§4). The response is an
   opaque `uploadId`; the browser shows a local object-URL preview and nothing else.
 - **Submit.** `submitApplication` gains `formUploads` and `customAnswers`, and the
   order is fixed: re-resolve the layout → refuse on violations → validate the
   system fields with today's rules → `normaliseAnswer` per field, required
   included → map bound fields onto columns → snapshot the rest into `form_answers`
   → attach the named `uploadId`s (each must be unattached, for this job, and for
-  this `field_key`) → gate scoring, consents, tracking code, referral credit,
+  this `field_key`) → **the person write** (§4.1, below) → gate scoring, the
+  existing `planApplicationConsent` rows, tracking code, referral credit,
   auto-screening and the polite-rejection path all unchanged.
+- **The person write is last, and it cannot break the application.** Only after the
+  `applications` row exists: resolve the person from the submitted email —
+  `person_emails` by `personKey(email)`, else create `person_profiles` plus its
+  email row — the spine's `personWriter`, not a second one this page invents; set
+  `applications.person_id`; record each ticked group in `person_consents`; then
+  `applyPersonField(personId, the person-bound answers, consent)` at
+  `door: "candidate_form"`, `actorKind: "candidate"`. Every refusal and every failure
+  here is logged and returned as nothing at all to the candidate: an application
+  that reached the database is a submitted application, and a profile store that
+  hiccuped is our problem, not a reason to tell someone to apply again. The
+  §1.5 snapshot already holds their words, so nothing is lost — the profile is
+  behind, and §7's console will show it as such.
 - **Nothing about a custom answer reaches the AI prompt in this slice.** Screening
   reads `cv_text` as it does today, and `cv_text` is built only from the `about`
   and `cv` system fields plus the LinkedIn line. Free-text custom fields are
@@ -505,12 +597,22 @@ alternative" precisely because a pointer-only move is not usable. Here that cont
 is an up/down button on every row, not only a drag handle. Writes stay behind the
 same `canWrite` gate.
 
+**The inspector's binding picker** lists the seven bare `system_key`s and, under a
+"also save as a fact about this person" group, the spine's registry keys — read
+from `PERSON_FIELDS`, never a second list the console could drift away from. Each
+is shown tier-labelled, and a Tier-2 or Tier-3 key carries its group's notice
+sentence beside it, so an author sees what the question becomes before writing the
+label. The picker cannot offer a key the writer would refuse, because both read the
+same registry.
+
 **Editing model.** The canvas holds client state; one `saveFormLayout(formId,
 fields, expectedVersion)` action commits the whole layout in a single write with an
 optimistic version check, so a drag that raced another recruiter's save fails
 loudly instead of silently dropping rows. It refuses before writing: unanswerable
 config (a select with fewer than two usable options, `min > max`, empty `kinds`),
-duplicate keys inside the form, a ceiling breach, or a heading with a `system_key`.
+duplicate keys inside the form, a ceiling breach, a heading with a `system_key`, a
+`person:` binding the registry does not know or whose type is not the registry's,
+or a consent-gated binding marked `required`.
 Publish is a **separate** action that runs `identityIssues` over the resolved
 layout and prints every violation with the field named — so an author can save an
 incomplete draft and cannot ship one. Retire sets `archived_at`; deletion is not
@@ -540,28 +642,49 @@ result, and nothing writes. Output lands as a `DRAFT` with the system fields
 pre-placed, so a drafted form is one publish away from being correct and cannot
 become one by accident. It is never assigned automatically.
 
+A draft may propose a `person:` binding, and the registry decides: an invented key
+or a mismatched type is dropped and named like any other refused entry, and a
+consent-gated field the model marked `required` is refused — because a model
+volunteering that it wants a candidate's blood type is exactly the case the
+human-only publish step exists to catch.
+
 ## 8. Privacy, erasure, and the access copy
 
-- `collectPaths` (`erasure.ts:80`) gains a **fourth** read: `application_form_files`
+- `collectPaths` (`erasure.ts:80`) gains **one more** read: `application_form_files`
   by `application_id`, grouped by its own `bucket` column — the same treatment
   `application_attachments` already gets, because a file field names a bucket and a
   hard-coded `candidate-photos` constant would be the mistake the module's comment
   at `attachment-rules.ts` warns about. It still removes bytes *before* the row is
   blanked, and still aborts the run if a byte survives.
-- `erase_candidate_data(uuid)` is `CREATE OR REPLACE`**d inside 043** to null
+  **The read count is a moving figure and this slice must not claim the photo as
+  its own:** the module enumerates three sources today, `043` makes it four by
+  adding `person_profiles.photo_path`, and `044` makes it five with the ledger
+  above. A form's photo bytes are found through §1.4, never through the profile —
+  one bucket, two paths in, two reads out, each naming its own table.
+- `erase_candidate_data(uuid)` is `CREATE OR REPLACE`**d inside 044** to null
   `applications.form_answers` and delete its `application_form_files` rows
-  alongside the columns it already blanks. Replacing the function preserves its
+  alongside the columns it already blanks. It does **not** null
+  `applications.person_id` and touches no `person_*` table: erasing an application
+  is not erasing a human. The spine decides whether the profile goes, when the last
+  live application linked to it is erased; this function only stops the application
+  from holding anything. Replacing the function preserves its
   owner and ACLs, so 041's `revoke` (`041_privacy.sql:499`) still holds.
-- **Ordering is a real constraint:** 041 is not applied on the local database yet.
-  043 replaces a function 041 defines, so 043 cannot be applied before 041. The
-  spec states the dependency and the plan must not schedule a live proof of the
-  erasure half before both are applied.
+- **Ordering is a real constraint:** 041 is not applied on the local database yet,
+  and neither is 043. 044 replaces a function 041 defines and adds a policy to a
+  bucket 043 registers, so it cannot be applied before either. The spec states the
+  dependency and the plan must not schedule a live proof of the erasure half before
+  all three are applied.
 - The access copy gains a "what you told us" section built from `form_answers`
   (label → value, filenames for files) and the §1.4 rows, bounded by the existing
   `MAX_ANSWERS`/`MAX_ANSWER_CHARS` cuts, each cut printed. Honest framing: the
   copy already omits `cv_file_path` and the gate answers today
   (`accessCopy.ts:71`), so this is not a gap the builder introduced — but the
   builder makes it a photo-sized gap, so this slice closes it.
+  A `person:`-bound answer therefore appears in **two** access copies, and that is
+  not a bug to reconcile: this one prints what was answered *on this application,
+  at this version* — decision 5's snapshot — while the spine's §8.2 prints what we
+  hold *now*. They disagree by design the moment the profile moves on, and a
+  candidate reading both should see exactly that.
 - **Orphan uploads are cleared, and that is the one place the slice overrides a
   switch.** An applicant who attaches a photo and never submits leaves real bytes
   with no record and — decisively — no consent, because `planApplicationConsent`
@@ -588,16 +711,26 @@ record.**
 | State | What the candidate gets | What the write does |
 | --- | --- | --- |
 | Nothing published resolves (no globals, no assignments) | **today's `ApplyWizard`**, unchanged | the legacy submit path, unchanged |
-| `application_forms` is missing — 043 not applied | today's `ApplyWizard`; `isMissingSchemaError` is the probe, as `erasure.ts:26` already uses it | legacy path |
+| `application_forms` is missing — 044 not applied | today's `ApplyWizard`; `isMissingSchemaError` is the probe, as `erasure.ts:26` already uses it | legacy path |
 | A published layout with violations | today's `ApplyWizard`, and the reason is logged | **refused** — a broken layout never files an application |
 | The layout read throws or times out | today's `ApplyWizard` | refused |
 | One field's value fails validation | the same wizard, that field marked with its sentence | nothing written |
+| A consent-gated group was declined | the wizard, its fields for that group hidden | application written; the group's person fields are not |
+| The person write is refused or throws | the wizard, and the candidate sees nothing of it | application written; `person_id` and the profile simply lag, and the refusal is logged by key |
 
 The fallback is read-only-safe and write-strict: degrading the *page* is always
 allowed, degrading the *record* never is. It is deleted in a later slice only once
 every live opening resolves a published layout — and `resolveLayout` is where that
 audit will be counted, which is why the "no forms published" state is a distinct
 branch rather than an empty list.
+
+**"The record" is the application, and that boundary matters now there are two
+stores on one page.** This slice owns the `applications` row: it is never half-
+written, never filed against a broken layout, never filed without its snapshot. The
+person tables are the spine's, and the form is one door into them — so a person
+write may be refused or fail and the application still stands, exactly as the spine's
+own §9 lets a `cv_extraction` fail without undoing a record. What must never happen
+is the reverse: an application refused because our profile store was unhappy.
 
 A candidate mid-form when a recruiter republishes: the next load gets the new
 layout; the submit re-resolves and refuses a key that vanished, telling the
@@ -631,6 +764,20 @@ untouched — that is decision 5's snapshot.
 - **Bounded reads.** Forms, fields, assignments and resolved layouts all carry
   limits (§11); an unbounded read on a public route is the pattern the pagination
   audit already swept.
+- **An anonymous door does not get the top rung.** Anyone can post a form carrying
+  any email address, so `candidate_form` writes create a profile and beat a model's
+  reading, but they cannot overwrite a value a recruiter set by hand — see §4.1 and
+  the spine's §3.3. The answer the person typed is still on their application
+  forever, because the snapshot is written before the ladder runs.
+- **No write without the registry, no value without the box.** A `person:` binding
+  is checked against `PERSON_FIELDS` at publish and again in the writer; §1.2's
+  column CHECK only bounds the key's *shape*, so the registry read is what stops an
+  invented key, and a request that invents one has no path to a column — the writer
+  refuses before any table is named. A consent-gated group with no live
+  `person_consents` row is refused by the
+  spine's checker before a value is looked at, so the browser cannot supply a
+  consent tick it never made: the write re-reads the row rather than trusting the
+  submission.
 
 ## 11. Limits
 
@@ -665,8 +812,10 @@ object, so the proof, the action and the UI copy cannot drift apart.
   parity is a follow-up, exactly as several before it deferred it.
 - **Form answers as report or analytics columns,** and CSV export of `form_answers`.
 - **Reference/FK, password, rich-text and JSON field types** (§3).
-- **Rewriting existing applications.** Rows filed before 043 keep the four fixed
-  columns and no snapshot; nothing back-fills.
+- **Rewriting existing applications.** Rows filed before 044 keep the four fixed
+  columns and no snapshot; nothing back-fills. The same is true of `person_id` —
+  the spine's §1.11 backfill gives existing applications a person, and this
+  migration adds none.
 - **Hardening the pre-existing `cvFilePath` door** (§10).
 - **Any candidate-portal surface.** The (candidate) portal, `NoticeInbox` and
   `communication_logs` are off-limits.
@@ -679,29 +828,44 @@ and exiting non-zero — the house style, no jest.
 **Domain (no database, no network).**
 1. `resolveLayout` order: globals before assignments, `global_position` then id, `position` then name; a run twice gives identical output.
 2. A duplicate `key` across two forms is a violation naming both forms; a duplicate `system_key` likewise; unique keys give no violation.
-3. `identityIssues` for each of the §4 bullets, including the `cv`-or-`about` rule and a type-mismatched binding.
+3. `identityIssues` for each of the §4 bullets, including the `cv`-or-`about` rule, a type-mismatched binding, a `person:` key the registry does not carry, and a consent-gated binding marked `required`.
 4. `normaliseAnswer` per type: accepts, rejects, and the boundary values for every numeric/date ceiling; `multi_select` honouring min/max selections; `address` component joining; `section_heading` refusing a value.
 5. `kinds` → accepted types and byte ceilings, and an unknown kind refusing.
 6. Snapshot encode → parse round-trip, and a parser that drops malformed entries.
 7. Every ceiling in §11 enforced by name, not by an inline number.
+8. The binding map: a `person:` field's registry group and tier come from
+   `PERSON_FIELDS` and nowhere else; the consent groups a layout needs are exactly
+   the groups its bindings belong to; a layout with no bindings needs no box.
+9. The rung: with a value already held by `hand_record`, a `candidate_form` write is
+   reported as a conflict and the held value stands; the same write against an empty
+   field applies; the same write against a `cv_extraction` value wins. In all three
+   the application's snapshot keeps the incoming answer.
 
 **Wiring (source-grepped, comment-stripped).**
-8. `collectPaths` reads `application_form_files`, and 043 replaces `erase_candidate_data` to blank `form_answers` and delete those rows. **Pinned as code, not prose** — the vacuous-needle failure the JD proof already hit, so every needle here strips comments before matching.
-9. The upload route resolves its constraints from the layout (a needle that the accept list is *not* taken from the request body).
-10. The public projection omits `system_key` and `config`.
-11. `/forms` appears in `NAV`, `STAFF_ROUTES`, the Guide and the live areas, and the staff-route count pin is **derived from the directory listing**, exactly as `prove-job-distribution.mjs` section 8 now does — so the figure cannot go stale.
-12. `form_authoring` exists in `AiCapability`, `modelChains`, and the routing console.
-13. Consent boxes and the Review step are not produced by any builder component.
-14. The dynamic submit builds `cv_text` from **both** the About answer and the
+10. `collectPaths` reads `application_form_files`, and 044 replaces `erase_candidate_data` to blank `form_answers` and delete those rows — and the same read proves it does **not** null `applications.person_id`, which is 043's column and the spine's to clear. **Pinned as code, not prose** — the vacuous-needle failure the JD proof already hit, so every needle here strips comments before matching.
+11. The upload route resolves its constraints from the layout (a needle that the accept list is *not* taken from the request body).
+12. The public projection omits `system_key`, `config` and every registry key.
+13. `/forms` appears in `NAV`, `STAFF_ROUTES`, the Guide and the live areas, and the staff-route count pin is **derived from the directory listing**, exactly as `prove-job-distribution.mjs` section 8 now does — so the figure cannot go stale.
+14. `form_authoring` exists in `AiCapability`, `modelChains`, and the routing console.
+15. The two fixed consent boxes and the Review step are not produced by any builder component; the per-group boxes are produced only from a layout that contains a binding, and their copy comes from the spine's notice file rather than a string in this slice.
+16. The dynamic submit builds `cv_text` from **both** the About answer and the
     extracted CV (§4), and `actions.ts:507`'s legacy overwrite is untouched — the
     check pins both, so neither half can silently change the other.
-15. `BucketKey` (`file-browser-types.ts:13`) names `candidate-photos`, has a
-    descriptor, and has a reader branch in `files/actions.ts` — a bucket in the
-    union without a reader is a folder that lists nothing.
-16. The retention route has an orphan pass over `application_form_files` with
+17. The bucket: `candidate-photos` already sits in `BucketKey`, `BUCKETS`,
+    `ownersFor`, `unlinkReference` and 043's `files` policies — those five places are
+    the spine's and this proof only asserts they are unchanged. What 044 must add is
+    the **anon `files` insert policy** for that bucket, and the check pins that the
+    policy exists, is `to anon`, is an `insert`, and constrains the path prefix — the
+    one registration place that is this slice's, because the public form is the
+    second door into a bucket 043 opened for a staff door.
+18. The retention route has an orphan pass over `application_form_files` with
     `application_id is null`, its window comes from `limits.ts`, it removes bytes
     through `getFileStore().remove` **before** deleting the row, and it is not
     gated behind `privacy.retention_enabled` — while the two existing passes are.
+19. `submitApplication` calls `applyPersonField` with `door: "candidate_form"` and
+    the consent checker, and the call sits **after** the `applications` insert — a
+    needle on the order, because a person write that runs first turns a store
+    failure into a refused application.
 
 **Mutation proofs.** Break each rule and confirm the check that owns it fails:
 swap the two assignment orders; rename a key to collide; drop the `cv`/`about`
@@ -709,13 +873,19 @@ clause; set a ceiling one higher than the check reads; delete the
 `application_form_files` read from `collectPaths`; feed the upload route a
 client-sent `accept`; remove `/forms` from `STAFF_ROUTES`; drop the About answer
 from the merged `cv_text`; take `candidate-photos` out of `BucketKey` while leaving
-its descriptor; make the orphan pass delete the row **before** removing the bytes;
-put the orphan pass back behind `privacy.retention_enabled`.
+its descriptor — a place that is 043's, and this slice's check still catches it;
+make the orphan pass delete the row **before** removing the bytes; put the orphan
+pass back behind `privacy.retention_enabled`; move the `applyPersonField` call
+**above** the `applications` insert; let the 044 rewrite of `erase_candidate_data`
+null `applications.person_id` too; promote `candidate_form` to the top rung; mark a
+health-group binding `required` and let it publish; drop the anon `files` insert
+policy while leaving the bucket registered.
 Every one must turn the proof red, and the file is restored before the gates are
-run. Three of them are the interesting ones, because a build cannot notice them on
-its own: a bucket that exists but is unlisted, a sweep that unlinks the metadata
-and leaves the photo on the disk, and an orphan pass quietly gated behind a switch
-that ships off.
+run. Five of them are the interesting ones, because nothing else in a build notices:
+a bucket that exists but is unlisted, a sweep that unlinks the metadata and leaves
+the photo on the disk, an orphan pass quietly gated behind a switch that ships off,
+a person write that can veto an application by running first, and an anonymous door
+promoted into the authority to rewrite a stranger's profile.
 
 **Gates.** `node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json`;
 `npm run lint` with its two known tolerated warnings and no third;
@@ -723,13 +893,19 @@ that ships off.
 (132 checks, the staff-route count pin moves 18 → 19 and must stay green);
 `node scripts/check-staff-routes.mjs`.
 
-**Live proof (needs the owner's local stack, and 041+043 applied).** Draft a form
-in `/forms`, fail publish on the contract, fix it, publish; assign it to an
-opening and watch the duplicate-key refusal; apply as a candidate with a photo and
-a file; read the row back in `/candidates` and confirm the snapshot renders the
-questions as asked; then erase that application and confirm the `candidate-photos`
-byte is gone from `$UPLOADS_ROOT` — **that last step is the slice's actual point**
-and cannot be proved until 041 and 043 are both applied, which is an owner decision,
+**Live proof (needs the owner's local stack, and 041, 043 and 044 applied).** Draft
+a form in `/forms`, fail publish on the contract, fix it, publish; bind a field to a
+registry key and try marking a health-group question `required` — the publish must
+refuse; assign it to an opening and watch the duplicate-key refusal; apply as a
+candidate with a photo and a file, decline one consent group and submit anyway, and
+confirm the application filed, that group's fields never rendered for the candidate
+to answer, and `person_consents` holds no agreeing row for it; read the row back in
+`/candidates` and confirm the snapshot
+renders the questions as asked; then erase that application and confirm the
+`candidate-photos` byte is gone from `$UPLOADS_ROOT` while `applications.person_id`
+still points at a profile that is **not** erased — **that last pair of facts is the
+slice's actual point**, that the byte went and the person did not, and it cannot be
+proved until all three migrations are applied, which is an owner decision per file,
 not a step this plan schedules.
 
 ## Known limits
@@ -742,14 +918,18 @@ not a step this plan schedules.
 - `form_answers` is a snapshot of *labels*, so a renamed label renders the old
   wording on old applications. That is the intended behaviour (decision 5), but it
   means the drawer can show copy the form no longer uses.
-- The `candidate-photos` bucket is a new disk bucket, and the File Manager's
-  buckets are a **closed union**, not a listing: `BucketKey`
-  (`src/app/(admin)/files/file-browser-types.ts:13`) with one descriptor each
-  (`:26`–`:47`) and per-bucket branches in `files/actions.ts` (`:303`, `:416`,
-  `:517`, `:538`). So photos appear in the File Manager only if this slice adds the
-  union member, the descriptor, and the row-reader that joins `application_form_files`
-  the way the CV branch joins `applications`. That is in scope; a bucket left out of
-  the union is a byte the recruiter cannot see.
+- The `candidate-photos` bucket is a **closed-union** disk bucket, and registering
+  it is not this slice's work: the File Manager's buckets are a union, not a
+  listing — `BucketKey` (`src/app/(admin)/files/file-browser-types.ts:13`) with one
+  descriptor each (`:26`–`:47`) and per-bucket branches in `files/actions.ts`
+  (`:303`, `:416`, `:517`, `:538`). The spine's `043` puts the member, the descriptor
+  and the row-reader in place, because that is where its own staff-recorded photo
+  lives. So the limit for *this* slice is a dependency, not a task: `application_form_files`
+  points into a bucket it did not register, and applying 044 without 043 means a
+  photo upload lands in a bucket no reader knows. Item 17 of the *Proof* section names
+  the union
+  member as 043's and pins only 044's own addition — the anon `files` insert policy —
+  so a merge that ships one without the other turns the proof red.
 - Erasing an application whose form was deleted still works: §1.4 carries the
   bucket and path, and the snapshot carries the label. Nothing in the delete path
   dereferences `application_forms`.
@@ -770,8 +950,10 @@ not a step this plan schedules.
   fallback is the whole point; `ApplyWizard.tsx` is not rewritten.
 - `applications` columns other than the new `form_answers`, and the stage machine.
 - Gate-question tables, scoring, and the polite-rejection path.
-- `erase_candidate_data`'s existing blanks — 043 *adds* to it, it does not
-  re-author it.
+- `erase_candidate_data`'s existing blanks. 044 replaces the function to add its own
+  two — the `form_answers` null and the `application_form_files` delete — and every
+  column 041 already blanks stays as 041 wrote it. The spine's 043 does not rewrite
+  the function at all; it only adds a source to the TypeScript side that calls it.
 - Existing buckets' rules in `attachment-rules.ts`; new kinds go in the builder's
   own table.
 - `next-env.d.ts`, `.next`, and the user's dev server on 3001.
