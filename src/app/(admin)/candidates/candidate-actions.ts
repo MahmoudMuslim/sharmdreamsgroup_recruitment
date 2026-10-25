@@ -20,6 +20,13 @@ import {
 import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsapp-dispatch";
 import { isApplicationSource } from "@/modules/candidates/domain/listFilters";
 import {
+  MISSING_ROW_ERROR,
+  bulkStageSummaryMessage,
+  planBulkStageMove,
+  summarizeBulkStageMoves,
+  type BulkStageRowOutcome,
+} from "@/modules/candidates/domain/bulkStage";
+import {
   alreadyOnFile,
   emailSpellings,
 } from "@/modules/candidates/domain/personIdentity";
@@ -397,11 +404,17 @@ export interface StageResult {
  * reject from any stage and reopen a rejected candidate — but rejecting
  * requires a stored reason, and hiring stamps `hired_at` so time-to-hire
  * analytics stay honest. Leaving REJECTED clears the stale reason.
+ *
+ * `notify` is the one switch a caller outside the single-row dialog needs. The
+ * candidate notice is what this writer costs a person, so a caller moving a
+ * batch says so and the notice stays home; leaving it out means "tell them",
+ * which is what every existing caller wants.
  */
 export async function updateApplicationStage(input: {
   applicationId: string;
   stage: PipelineStage;
   reason?: string;
+  notify?: boolean;
 }): Promise<StageResult> {
   await requireStaff("/candidates");
 
@@ -460,11 +473,16 @@ export async function updateApplicationStage(input: {
   // channel Settings → Notifications allows: WhatsApp goes through its queue and
   // is drained immediately, email is handed to the relay, and a portal notice is
   // recorded so the update survives a filtered inbox. A notification failure
-  // never affects the stage move itself.
-  after(async () => {
-    const report = await notifyStageChange(input.applicationId, input.stage);
-    if (report.whatsapp === "queued") await processDueWhatsAppJobs(5);
-  });
+  // never affects the stage move itself. A batch that did not opt in leaves both
+  // automations alone — forty rows is forty letters and forty model calls.
+  const notify = input.notify !== false;
+
+  if (notify) {
+    after(async () => {
+      const report = await notifyStageChange(input.applicationId, input.stage);
+      if (report.whatsapp === "queued") await processDueWhatsAppJobs(5);
+    });
+  }
 
   // Selection decisions get a feedback draft written after the response is
   // sent, so the recruiter is never kept waiting on a model call and a failed
@@ -473,6 +491,7 @@ export async function updateApplicationStage(input: {
   // button stays available whatever the toggle says, because pressing it is a
   // deliberate request rather than an automatic follow-up.
   const autoFeedback =
+    notify &&
     (input.stage === "REJECTED" || input.stage === "HIRED") &&
     (await getBoolSetting("ai.generate_feedback", true));
 
@@ -487,6 +506,102 @@ export async function updateApplicationStage(input: {
   revalidatePath("/dashboard");
 
   return { ok: true, stage: input.stage, auto_feedback: autoFeedback };
+}
+
+export interface BulkStageResult {
+  ok: boolean;
+  error?: string;
+  moved?: number;
+  failed?: number;
+  total?: number;
+  /** One sentence the panel prints above the list. */
+  message?: string;
+  failures?: { name: string | null; error: string }[];
+}
+
+/**
+ * Moves a selected set of applications to one stage.
+ *
+ * Each row still goes through `updateApplicationStage`, because that is where
+ * the stage vocabulary, the rejection reason, the `hired_at` stamp, the activity
+ * trail and the candidate notice live. A batch is not a second implementation of
+ * those rules — it is one click repeating them — so it cannot drift from the
+ * drawer's behaviour, and a row the single-row writer refuses reports the same
+ * sentence here.
+ *
+ * Two things a single move never has to decide are decided here. The selection is
+ * read once up front: a row that does not come back (archived, deleted, or filed
+ * under a company this recruiter cannot see) is reported as not moved rather than
+ * counted, since an update over a missing id answers without error. And the
+ * notice is off unless the recruiter opted in — the writer's own default is
+ * unchanged, so every one-row caller still tells the candidate.
+ *
+ * The writes run one after another on purpose. Fifty rows is a hundred-odd
+ * gateway round-trips either way; firing them concurrently would only make the
+ * fifty activity rows arrive in an order nobody can read.
+ */
+export async function moveApplicationsStageBulk(input: {
+  applicationIds: readonly unknown[];
+  stage: unknown;
+  reason?: unknown;
+  notify?: unknown;
+}): Promise<BulkStageResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+
+  const plan = planBulkStageMove(input);
+  if (!plan.ok) return { ok: false, error: plan.error };
+
+  const restClient = await createServerRestClient();
+
+  // Names come from this read so a refusal can say who it happened to.
+  const { data, error } = await restClient
+    .from("applications")
+    .select("id, full_name")
+    .in("id", plan.ids);
+
+  if (error) return { ok: false, error: error.message };
+
+  const rows = new Map<string, string>(
+    (data ?? []).map((row) => {
+      const application = row as { id: string; full_name: string };
+      return [application.id, application.full_name];
+    })
+  );
+
+  const outcomes: BulkStageRowOutcome[] = [];
+  for (const applicationId of plan.ids) {
+    if (!rows.has(applicationId)) {
+      outcomes.push({ id: applicationId, name: null, ok: false, error: MISSING_ROW_ERROR });
+      continue;
+    }
+    const result = await updateApplicationStage({
+      applicationId,
+      stage: plan.stage,
+      ...(plan.reason === null ? {} : { reason: plan.reason }),
+      notify: plan.notify,
+    });
+    outcomes.push({
+      id: applicationId,
+      name: rows.get(applicationId) ?? null,
+      ok: result.ok,
+      error: result.error ?? null,
+    });
+  }
+
+  const summary = summarizeBulkStageMoves(outcomes);
+
+  return {
+    ok: true,
+    moved: summary.moved,
+    failed: summary.failed,
+    total: summary.total,
+    message: bulkStageSummaryMessage(summary, plan.stage),
+    failures: summary.failures,
+  };
 }
 
 export interface ScreenResult {

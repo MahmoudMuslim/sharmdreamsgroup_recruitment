@@ -81,6 +81,7 @@ import {
   candidateSearchWords,
   filterCandidates,
 } from "@/modules/candidates/domain/listFilters";
+import { BULK_STAGE_LIMIT } from "@/modules/candidates/domain/bulkStage";
 import {
   companyNameById,
   getJobOpening,
@@ -157,6 +158,7 @@ import {
   draftCandidateFeedback,
   screenApplication,
   updateApplicationStage,
+  moveApplicationsStageBulk,
   type PipelineStage,
   getFollowUpRules,
   getTemplates,
@@ -1135,6 +1137,8 @@ export { trailScope };
 export { trailScopeNote };
 export { trailWords };
 export { updateApplicationStage };
+export { moveApplicationsStageBulk };
+export { BULK_STAGE_LIMIT };
 export { updateCandidateContact };
 export { updateJobOpening };
 export { updateMasterRecord };

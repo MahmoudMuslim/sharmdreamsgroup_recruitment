@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
   ArchiveRestore,
+  ArrowRightLeft,
   ChevronRight,
   Download,
   FileText,
@@ -38,6 +39,7 @@ import type { CandidateRow } from "./actions";
 import { CandidateBoard } from "./CandidateBoard";
 import { ArchiveButton, LockedScore, NEXT_STAGE, attemptTone, stageTone } from "./CandidateBrowserBits";
 import { BroadcastDrawer } from "./BroadcastDrawer";
+import { BulkStageDrawer } from "./BulkStageDrawer";
 import { ProfileDrawer } from "./ProfileDrawer";
 import { cn } from "@/lib/utils";
 
@@ -122,6 +124,7 @@ export function CandidateBrowser({
     () => candidates.find((c) => c.id === focusId) ?? null
   );
   const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const [bulkStageOpen, setBulkStageOpen] = useState(false);
   const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
   const [pendingArchive, setPendingArchive] = useState<string | null>(null);
   const [archiveNote, setArchiveNote] = useState<string | null>(null);
@@ -527,6 +530,23 @@ export function CandidateBrowser({
                 </a>
               ))}
             </div>
+          )}
+
+          {!archivedView && (
+            <button
+              type="button"
+              onClick={() => setBulkStageOpen(true)}
+              disabled={selected.size === 0}
+              title={
+                selected.size === 0
+                  ? "Select candidates below to move a whole group to one stage."
+                  : `Move these ${selected.size} candidates to one stage in a single write.`
+              }
+              className="inline-flex items-center gap-2 rounded-xl border border-brand-line bg-white px-4 py-2.5 text-sm font-semibold text-brand-ink/70 transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ArrowRightLeft className="h-4 w-4" aria-hidden />
+              Bulk move{selected.size > 0 ? ` (${selected.size})` : ""}
+            </button>
           )}
 
           {!archivedView && (
@@ -970,6 +990,16 @@ export function CandidateBrowser({
         recipients={candidates.filter((c) => selected.has(c.id))}
         onClose={() => setBroadcastOpen(false)}
         onSent={() => setSelected(new Set())}
+      />
+
+      <BulkStageDrawer
+        open={bulkStageOpen}
+        recipients={candidates.filter((c) => selected.has(c.id))}
+        onClose={() => setBulkStageOpen(false)}
+        onMoved={() => {
+          setSelected(new Set());
+          router.refresh();
+        }}
       />
     </>
   );

@@ -467,7 +467,8 @@ sourceHas("the booking action judges and guards the round", "src/app/(admin)/can
 // 10. Wiring — the agenda desk, the booking form, the page
 // ---------------------------------------------------------------------------
 sourceHas("the agenda re-reads the layer after every move", "src/app/(admin)/interviews/InterviewAgenda.tsx", [
-  "setLayer(await getInterviewScorecardLayer(fresh.map((row) => row.id)))",
+  "getInterviewScorecardLayer(fresh.map((row) => row.id))",
+  "setLayer(scorecards)",
 ]);
 sourceHas("the agenda sends a round only when the column exists", "src/app/(admin)/interviews/InterviewAgenda.tsx", [
   "...(layer.roundsAvailable ? { round: round || null } : {})",

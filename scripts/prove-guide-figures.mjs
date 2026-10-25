@@ -118,6 +118,19 @@ const FIGURES = [
     ],
   },
   {
+    // The cap that decides how many people one click can mail: the dialog reads
+    // the same constant it is refused by, so the manual drifts with it.
+    route: "/candidates",
+    want: "the bulk move stop",
+    guide: /A bulk move stops at ([\d,]+) rows/,
+    sources: [
+      {
+        rel: "src/modules/candidates/domain/bulkStage.ts",
+        pattern: /export const BULK_STAGE_LIMIT = ([\d_]+);/,
+      },
+    ],
+  },
+  {
     route: "/sourcing",
     want: "the dedupe window",
     guide: /An email match is only skipped when it sits among the newest ([\d,]+) records/,

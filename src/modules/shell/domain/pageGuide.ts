@@ -146,7 +146,8 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Award marks by hand on any answer the AI left for review, in the grading desk.",
       "Record a candidate files a walk-in who never applied; nothing is sent to them.",
       "Open the profile to edit contact details, read a stored CV into the record, revoke / extend / re-issue a test link, move stages, or archive and restore.",
-      "Bulk message emails everyone the current filters select. Download this list exports the same set.",
+      "Bulk message and Bulk move both act on the rows you tick, never on the whole filtered set; both stay disabled until a row is ticked. Download this list exports the set the filters do match, which is a different group.",
+      "Bulk move sends a ticked group to one stage through the same writer a single row uses, with one reason shared across the batch when that stage is rejected.",
     ],
     edges: [
       "The list is the newest 200 records; the rails count up to the newest 2,000 and the page says when even that stops being exact.",
@@ -155,6 +156,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "A profile page is addressed by the person's oldest live record: a link naming a newer application is moved onto that address.",
       "Hand-marking needs Grade assessments, edits need Edit candidates, sending needs Send messages, and booking a panel needs Schedule interviews on top of Edit candidates.",
       "A bulk send stops at 200 recipients, and the panel names the mail provider's own daily ceiling.",
+      "A bulk move stops at 50 rows, writes them one at a time, and sends no stage notice unless you tick the opt-in — a ticked group of forty is forty real emails and chats. Rows the write refused are listed by name with the reason; the rest stay moved.",
     ],
   },
 

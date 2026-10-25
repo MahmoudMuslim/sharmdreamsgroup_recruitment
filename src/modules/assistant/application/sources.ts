@@ -89,6 +89,7 @@ import {
 import { deleteAttachment } from "@/app/(admin)/candidates/attachment-actions";
 import {
   createCandidate,
+  moveApplicationsStageBulk,
   sendBulkEmail,
   sendBulkWhatsApp,
   sendCandidateFeedback,
@@ -179,6 +180,7 @@ export { getCandidateTally };
 export { draftCandidateFeedback };
 export { screenApplication };
 export { updateApplicationStage };
+export { moveApplicationsStageBulk };
 export { getFollowUpRules };
 export { getTemplates };
 export { assignTemplate };

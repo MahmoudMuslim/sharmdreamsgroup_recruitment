@@ -3,6 +3,7 @@
 import type { AssistantTool, PipelineStage } from "./shared";
 import {
   AI_CAPABILITIES,
+  BULK_STAGE_LIMIT,
   DEFAULT_REQUIRED_LEVEL,
   EMPLOYMENT_TYPE_VALUES,
   EXPERIENCE_LEVEL_VALUES,
@@ -21,6 +22,7 @@ import {
   createJobOpening,
   draftCandidateFeedback,
   jobDraft,
+  moveApplicationsStageBulk,
   num,
   optionalStr,
   queueWhatsAppMessage,
@@ -169,6 +171,31 @@ export const writes: readonly AssistantTool[] = [
         applicationId: str(args, "application_id"),
         stage,
         reason: optionalStr(args, "reason"),
+      });
+    },
+  },
+  {
+    name: "move_stage_bulk",
+    label: "Moving a group's stage",
+    description:
+      `Move a list of applications to one pipeline stage in a single batch, through the same writer the candidates board uses. At most ${BULK_STAGE_LIMIT} ids in one call. Rejecting needs a reason of at least four characters, and that one reason is stored on every row in the batch. The stage notice is NOT sent by default — pass notify: true only when the recruiter has asked for candidates to be told, because that mails or chats to every row in the list. The answer counts the batch row by row: it says how many moved, how many did not, and names each row that did not with the reason the database gave, so never report a partly failed batch as a clean move.`,
+    args: {
+      application_ids: `string[] — application ids, at most ${BULK_STAGE_LIMIT}`,
+      stage: `string — one of ${PIPELINE_STAGES.join(", ")}`,
+      reason: "string — required when stage is REJECTED, written on every row",
+      notify:
+        "boolean — optional, defaults to false. True sends the stage notice to each candidate on the channels Settings allows.",
+    },
+    run: async (args) => {
+      const stage = str(args, "stage").toUpperCase() as PipelineStage;
+      if (!(PIPELINE_STAGES as readonly string[]).includes(stage)) {
+        throw new ToolArgumentError(`"stage" must be one of: ${PIPELINE_STAGES.join(", ")}.`);
+      }
+      return moveApplicationsStageBulk({
+        applicationIds: strArray(args, "application_ids"),
+        stage,
+        reason: optionalStr(args, "reason"),
+        notify: bool(args, "notify", false),
       });
     },
   },

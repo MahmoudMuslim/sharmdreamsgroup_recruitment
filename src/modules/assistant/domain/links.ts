@@ -583,6 +583,16 @@ export function linkForTool(
     case "read_candidate_cv":
     case "set_candidate_archive":
       return applicationId ? candidate(applicationId) : null;
+    case "move_stage_bulk":
+      // A batch touches many rows, so the click-through names where they all
+      // landed — the rail for the destination stage — rather than picking one
+      // profile out of the group. A stage the rails would ignore drops the
+      // parameter, and the link becomes the plain pipeline rather than a filtered
+      // table it is not.
+      return {
+        href: `/candidates${query([["stage", named(args.stage, PIPELINE_STAGES)]])}`,
+        label: "See them in the pipeline",
+      };
     case "assign_assessment": {
       const id = firstFromArgs(args, "application_ids");
       return id ? candidate(id) : null;
