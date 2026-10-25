@@ -6,7 +6,7 @@
  * the schema.org mapping, the three pull artifacts, and the fact that each of the
  * five doors actually opens onto the module rather than writing its own version.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerHooks } from "node:module";
@@ -513,6 +513,43 @@ check(
   !read("src/app/sitemap.ts").includes("(admin)") &&
     !read("src/app/sitemap.ts").includes("/portal") &&
     !read("src/app/sitemap.ts").includes("/api/")
+);
+
+sourceHas("the robots file points at the sitemap", "src/app/robots.ts", [
+  "appConfig.url",
+  "/sitemap.xml",
+  'allow: "/"',
+  'userAgent: "*"',
+  '"/careers/apply"',
+  '"/api/"',
+  '"/login"',
+]);
+const robotText = read("src/app/robots.ts");
+const robotCode = robotText
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("//"))
+  .join("\n");
+check(
+  "the robots file waits for a request before it names its origin",
+  /^\s*await connection\(\);/m.test(robotCode),
+  "the call must be code, not a comment"
+);
+// The refusal list is read from the route tree rather than repeated: this file
+// is the one place a crawler is told what is not for it, and a page added without
+// a matching line here would be indexed the day it ships.
+const staffPaths = readdirSync(path.join(root, "src/app/(admin)"), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && existsSync(path.join(root, "src/app/(admin)", entry.name, "page.tsx")))
+  .map((entry) => `/${entry.name}`)
+  .sort();
+check("the staff tree is the eighteen pages the guard counts", staffPaths.length === 18, staffPaths.join(", "));
+for (const staffPath of staffPaths) {
+  check(`the robots file refuses ${staffPath}`, robotText.includes(`"${staffPath}"`));
+}
+check("and refuses the candidate surfaces", robotText.includes('"/portal"') && robotText.includes('"/test"'));
+check(
+  "the careers tree is allowed, which is the point of the file",
+  !robotText.includes('"/careers"')
 );
 
 if (failures.length > 0) {
