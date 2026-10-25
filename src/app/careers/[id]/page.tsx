@@ -19,6 +19,8 @@ import {
 import { starterKeys } from "@/modules/careers/chatbot/role-card";
 import { readReferralCode, referralApplyLink } from "@/modules/referrals/domain/referral";
 import { formatSalaryRange } from "@/lib/currency";
+import { appConfig } from "@/lib/config";
+import { jobPosting, jobPostingJsonLd } from "@/modules/careers/job-posting";
 import { CareersChat } from "../CareersChat";
 import { Badge } from "@/modules/analytics/presentation/ui";
 import { PublicText } from "@/modules/shell/presentation/PublicChrome";
@@ -250,6 +252,17 @@ export default async function CareerDetailPage({
   if (!job) notFound();
 
   const company = companyOfJob(job, companies);
+  // The structured card a crawler reads. The group name comes from the group's
+  // own profile row when one is active; the module owns the literal fallback, so
+  // the page does not restate it. An undated role gets no card at all — the page
+  // still renders, the role simply carries no structured claim it cannot date.
+  const posting = jobPosting(job, company, {
+    baseUrl: appConfig.url,
+    groupName: groupProfile(companies)?.name,
+  });
+  if (!posting) {
+    console.warn(`[careers] role without a date is not published: ${job.id}`);
+  }
   // Openings from the same company row, so the applicant who is not right for this
   // one is sent somewhere real rather than back to the whole board.
   const siblings = job.company_id
@@ -266,6 +279,12 @@ export default async function CareerDetailPage({
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
+      {posting && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: jobPostingJsonLd(posting) }}
+        />
+      )}
       <Link
         href="/careers"
         className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-ink/55 transition hover:text-brand-ink"

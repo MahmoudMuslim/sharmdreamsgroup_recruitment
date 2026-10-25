@@ -463,6 +463,28 @@ check(
   )
 );
 
+// ---------------------------------------------------------------------------
+// 6. The five doors: each surface calls the module, and writes no rules of its own.
+// ---------------------------------------------------------------------------
+sourceHas("the role page emits JobPosting JSON-LD", "src/app/careers/[id]/page.tsx", [
+  'type="application/ld+json"',
+  "dangerouslySetInnerHTML={{ __html: jobPostingJsonLd(posting) }}",
+  "jobPosting(job, company",
+  "appConfig.url",
+]);
+check(
+  "the page leaves the tag out when the role cannot be dated",
+  read("src/app/careers/[id]/page.tsx").includes("{posting && (")
+);
+check(
+  "the page does not write its own employer rule",
+  !read("src/app/careers/[id]/page.tsx").includes("hiringOrganization")
+);
+check(
+  "the page does not re-stringify the posting itself",
+  !read("src/app/careers/[id]/page.tsx").includes("JSON.stringify")
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
