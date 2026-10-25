@@ -194,13 +194,15 @@ export function panelAverage(scorecards: readonly InterviewScorecard[]): number 
 }
 
 /**
- * The one sentence every door says when 032 has not been applied.
- *
- * Both halves of the migration share a file, and both failures mean the same
- * thing to the reader: the database predates the feature. Naming the file is
- * the actionable half — "not supported" is not.
+ * The file that adds rounds and scorecards. It is applied on this database.
  */
 export const SCORECARD_MIGRATION = "db/migrations/032_interview_scorecards.sql";
+
+/**
+ * What a door says on a database that predates it. Both halves share a file, and
+ * both failures mean the same thing to the reader: the database predates the
+ * feature. Naming the file is the actionable half — "not supported" is not.
+ */
 
 export const SCORECARD_SCHEMA_NOTE =
   `Rounds and scorecards have not been created on this database yet. Apply ${SCORECARD_MIGRATION} — ` +

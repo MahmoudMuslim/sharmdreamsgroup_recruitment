@@ -410,13 +410,13 @@ export function skillMatchSentence(lines: readonly SkillMatchLine[]): string {
   return `Meets ${meets} of ${required}, below ${below}, no evidence for ${unevidenced}.`;
 }
 
-/** The file that adds the table. Authored, and not applied to this database yet. */
+/** The file that adds the table, applied on this database. */
 export const OPENING_SKILLS_MIGRATION = "db/migrations/037_opening_skills.sql";
 
-/** What a screen says while the table is missing. */
+/** What a screen says on a database that predates it. */
 export const OPENING_SKILLS_SCHEMA_NOTE =
-  "Requisitions cannot carry a skill list on this database yet — db/migrations/037_opening_skills.sql is authored but not applied, so job_opening_skills has no rows to read or write.";
+  `Requisitions cannot carry a skill list on this database yet — ${OPENING_SKILLS_MIGRATION} is authored but not applied, so job_opening_skills has no rows to read or write.`;
 
-/** What a write that named skills is told while the table is missing. */
+/** What a write that named skills is told on a database where the table is absent. */
 export const OPENING_SKILLS_WRITE_REFUSAL =
-  "This opening's skill list could not be saved: db/migrations/037_opening_skills.sql is authored but not applied, so job_opening_skills does not exist yet. Save the rest of the opening and record the skills once the file is applied.";
+  `This opening's skill list could not be saved: ${OPENING_SKILLS_MIGRATION} is authored but not applied, so job_opening_skills does not exist yet. Save the rest of the opening and record the skills once the file is applied.`;

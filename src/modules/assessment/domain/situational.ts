@@ -16,8 +16,9 @@
  * editor shows, and the score a candidate gets is the score the desk prints.
  *
  * Nothing here touches the database. The label itself is added by
- * `db/migrations/034_situational_judgment.sql`, which is authored and not
- * applied; every door probes for it and names that file while it is missing.
+ * `db/migrations/034_situational_judgment.sql`, which is applied on this
+ * database; every door still probes for it, so a database that predates the
+ * file names it instead of writing a row the enum would reject.
  */
 
 import type { MultipleChoiceOption, QuestionConfig } from "@/types";
@@ -25,16 +26,16 @@ import type { MultipleChoiceOption, QuestionConfig } from "@/types";
 /** The enum label, spelled exactly as the migration adds it. */
 export const SITUATIONAL_JUDGMENT = "SITUATIONAL_JUDGMENT";
 
-/** The file that adds the label to `public.question_type`. Authored, not applied. */
+/** The file that adds the label to `public.question_type`, applied on this database. */
 export const SITUATIONAL_MIGRATION = "db/migrations/034_situational_judgment.sql";
 
-/** What the builder and the bank say while the enum value is missing. */
+/** What the builder and the bank say on a database that predates the label. */
 export const SITUATIONAL_SCHEMA_NOTE =
-  "Situational judgment questions have not been added to this database yet — db/migrations/034_situational_judgment.sql is authored but not applied. Every other question type works normally.";
+  `Situational judgment questions have not been added to this database yet — ${SITUATIONAL_MIGRATION} is authored but not applied. Every other question type works normally.`;
 
-/** What a write that named the new type is told while the enum value is missing. */
+/** What a write that named the new type is told on a database where the label is absent. */
 export const SITUATIONAL_WRITE_REFUSAL =
-  "This question was not saved: db/migrations/034_situational_judgment.sql is authored but not applied, so the database's question_type enum has no SITUATIONAL_JUDGMENT value yet.";
+  `This question was not saved: ${SITUATIONAL_MIGRATION} is authored but not applied, so the database's question_type enum has no ${SITUATIONAL_JUDGMENT} value yet.`;
 
 /**
  * Whether an error means the enum has not heard of the new value.

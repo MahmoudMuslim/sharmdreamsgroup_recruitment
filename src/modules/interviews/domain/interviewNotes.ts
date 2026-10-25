@@ -217,12 +217,15 @@ export function notesFor(layer: InterviewNotesLayer, interviewId: string): Inter
 }
 
 /**
- * The one sentence every door says while 038 has not been applied.
- *
- * Naming the file is the actionable half: "notes are not supported" reads like a
- * decision the portal made, when the truth is that this database predates it.
+ * The file that adds the table. It is applied on this database.
  */
 export const INTERVIEW_NOTES_MIGRATION = "db/migrations/038_interview_notes.sql";
+
+/**
+ * What a door says on a database that predates it. Naming the file is the
+ * actionable half: "notes are not supported" reads like a decision the portal
+ * made, when the truth is that the database predates the feature.
+ */
 
 export const NOTES_SCHEMA_NOTE =
   `Interview notes have not been created on this database yet. Apply ${INTERVIEW_NOTES_MIGRATION} — ` +

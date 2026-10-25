@@ -90,7 +90,7 @@ do $$ begin
   create type public.message_direction as enum ('INBOUND', 'OUTBOUND');
 exception when duplicate_object then null; end $$;
 do $$ begin
-  create type public.question_type as enum ('EXCEL_MODEL', 'VIDEO_PITCH', 'CASE_STUDY', 'MULTIPLE_CHOICE');
+  create type public.question_type as enum ('EXCEL_MODEL', 'VIDEO_PITCH', 'CASE_STUDY', 'MULTIPLE_CHOICE', 'SITUATIONAL_JUDGMENT', 'CODING');
 exception when duplicate_object then null; end $$;
 do $$ begin
   create type public.settings_scope as enum ('GLOBAL', 'TENANT');
@@ -396,6 +396,17 @@ create table if not exists public.integrity_events (
   occurred_at timestamp with time zone default now() not null,
   PRIMARY KEY (id)
 );
+create table if not exists public.interview_notes (
+  interview_id uuid not null,
+  author_profile_id uuid not null,
+  body text not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
+  PRIMARY KEY (interview_id, author_profile_id)
+);
+comment on table public.interview_notes is 'What one interviewer wrote about one panel, in their own words. Read by every staff member who can see the schedule; changed only by its author. See migration 038.';
+comment on column public.interview_notes.body is 'The account itself, up to 4000 characters — the same bound the scorecard feedback holds, so notes can be offered into that box without truncating. A guide saved from the model sits under a heading that says so.';
+comment on column public.interview_notes.author_profile_id is 'Whose account this is, never a name sent by the browser. Part of the key, so a panel holds one note per interviewer rather than one blended text.';
 create table if not exists public.interview_schedules (
   id uuid default gen_random_uuid(),
   application_id uuid not null,
@@ -407,8 +418,39 @@ create table if not exists public.interview_schedules (
   meeting_link text,
   status interview_status default 'SCHEDULED'::interview_status not null,
   created_at timestamp with time zone default now() not null,
+  round text,
   PRIMARY KEY (id)
 );
+comment on column public.interview_schedules.round is 'Which round of the process this panel is, or NULL when none was recorded. Nullable rather than defaulted: panels booked before the rework were never asked, and labelling them SCREENING would invent an answer. See migration 032.';
+create table if not exists public.interview_scorecards (
+  id uuid default gen_random_uuid(),
+  interview_id uuid not null,
+  author_profile_id uuid,
+  technical smallint not null,
+  communication smallint not null,
+  problem_solving smallint not null,
+  culture smallint not null,
+  feedback text,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
+  PRIMARY KEY (id)
+);
+comment on table public.interview_scorecards is 'One interviewer''s judgement of one panel: four 1..5 ratings and an optional written note. One row per (interview, author), so a panel of three keeps three opinions rather than one overwritten average. See migration 032.';
+comment on column public.interview_scorecards.technical is 'Technical rating, 1 (weak) to 5 (exceptional). Stored per criterion so the portal can show a disagreement the panel exists to find.';
+comment on column public.interview_scorecards.feedback is 'The interviewer''s own words, optional. Null or blank means the ratings stood alone; the console never substitutes a generated sentence.';
+comment on column public.interview_scorecards.author_profile_id is 'Who formed this opinion. Null only after that account is deleted — the words stay on the interview''s history, but they no longer belong to a live person.';
+create table if not exists public.job_opening_skills (
+  opening_id uuid not null,
+  skill_id uuid not null,
+  required_level integer default 3 not null,
+  source text default 'RECRUITER'::text not null,
+  created_at timestamp with time zone default now() not null,
+  updated_at timestamp with time zone default now() not null,
+  PRIMARY KEY (opening_id, skill_id)
+);
+comment on table public.job_opening_skills is 'The skills one requisition asks for, and how deep each is needed. The same shape as role_family_skills, narrowed from a whole family to one opening: a candidate''s demonstrated skills are compared against this list. See migration 037.';
+comment on column public.job_opening_skills.required_level is '1 (nice to have) to 5 (essential), on the same scale role_family_skills uses, so one number means one thing wherever a required skill is shown.';
+comment on column public.job_opening_skills.source is 'RECRUITER when a person typed the skill, CATALOGUE_MATCH when they accepted one the portal found in the requirement lines. Both are written only by a human action; a model never edits a requisition on its own.';
 create table if not exists public.job_openings (
   id uuid default gen_random_uuid(),
   tenant_id uuid not null,
@@ -773,7 +815,28 @@ do $$ begin
   alter table public.currencies add constraint currencies_code_key UNIQUE (code);
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
+  alter table public.interview_notes add constraint interview_notes_body_check CHECK (((length(btrim(body)) > 0) AND (length(body) <= 4000)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_scorecards add constraint interview_scorecards_feedback_check CHECK (((feedback IS NULL) OR (char_length(feedback) <= 4000)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_scorecards add constraint interview_scorecards_ratings_check CHECK ((((technical >= 1) AND (technical <= 5)) AND ((communication >= 1) AND (communication <= 5)) AND ((problem_solving >= 1) AND (problem_solving <= 5)) AND ((culture >= 1) AND (culture <= 5))));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_scorecards add constraint interview_scorecards_one_per_author UNIQUE (interview_id, author_profile_id);
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
   alter table public.interview_schedules add constraint interview_schedules_duration_minutes_check CHECK (((duration_minutes >= 15) AND (duration_minutes <= 240)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_schedules add constraint interview_schedules_round_check CHECK (((round IS NULL) OR (round = ANY (ARRAY['SCREENING'::text, 'TECHNICAL'::text, 'HIRING_MANAGER'::text, 'CULTURE_FIT'::text]))));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.job_opening_skills add constraint job_opening_skills_required_level_check CHECK (((required_level >= 1) AND (required_level <= 5)));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.job_opening_skills add constraint job_opening_skills_source_check CHECK ((source = ANY (ARRAY['RECRUITER'::text, 'CATALOGUE_MATCH'::text])));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.job_openings add constraint job_openings_employment_type_check CHECK ((employment_type = ANY (ARRAY['FULL_TIME'::text, 'PART_TIME'::text, 'CONTRACT'::text, 'INTERNSHIP'::text])));
@@ -965,10 +1028,28 @@ do $$ begin
   alter table public.integrity_events add constraint integrity_events_question_id_fkey FOREIGN KEY (question_id) REFERENCES assessment_questions(id) ON DELETE SET NULL;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
+  alter table public.interview_notes add constraint interview_notes_author_profile_id_fkey FOREIGN KEY (author_profile_id) REFERENCES user_profiles(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_notes add constraint interview_notes_interview_id_fkey FOREIGN KEY (interview_id) REFERENCES interview_schedules(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
   alter table public.interview_schedules add constraint interview_schedules_application_id_fkey FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.interview_schedules add constraint interview_schedules_interviewer_profile_id_fkey FOREIGN KEY (interviewer_profile_id) REFERENCES user_profiles(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_scorecards add constraint interview_scorecards_author_profile_id_fkey FOREIGN KEY (author_profile_id) REFERENCES user_profiles(id) ON DELETE SET NULL;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.interview_scorecards add constraint interview_scorecards_interview_id_fkey FOREIGN KEY (interview_id) REFERENCES interview_schedules(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.job_opening_skills add constraint job_opening_skills_opening_id_fkey FOREIGN KEY (opening_id) REFERENCES job_openings(id) ON DELETE CASCADE;
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.job_opening_skills add constraint job_opening_skills_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE;
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.job_openings add constraint job_openings_created_by_fkey FOREIGN KEY (created_by) REFERENCES user_profiles(id) ON DELETE SET NULL;
@@ -1073,7 +1154,10 @@ alter table public.credential_audit_log enable row level security;
 alter table public.currencies enable row level security;
 alter table public.departments enable row level security;
 alter table public.integrity_events enable row level security;
+alter table public.interview_notes enable row level security;
 alter table public.interview_schedules enable row level security;
+alter table public.interview_scorecards enable row level security;
+alter table public.job_opening_skills enable row level security;
 alter table public.job_openings enable row level security;
 alter table public.jobs enable row level security;
 alter table public.locations enable row level security;
@@ -1333,7 +1417,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS departments_global_slug_uniq ON public.departm
 CREATE UNIQUE INDEX IF NOT EXISTS departments_tenant_slug_uniq ON public.departments USING btree (tenant_id, slug) WHERE (tenant_id IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_departments_tenant ON public.departments USING btree (tenant_id);
 CREATE INDEX IF NOT EXISTS idx_integrity_events_attempt ON public.integrity_events USING btree (attempt_id, occurred_at);
+CREATE INDEX IF NOT EXISTS interview_notes_interview_idx ON public.interview_notes USING btree (interview_id);
+CREATE INDEX IF NOT EXISTS interview_notes_author_idx ON public.interview_notes USING btree (author_profile_id);
 CREATE INDEX IF NOT EXISTS idx_interview_schedules_application ON public.interview_schedules USING btree (application_id);
+CREATE INDEX IF NOT EXISTS interview_scorecards_interview_idx ON public.interview_scorecards USING btree (interview_id);
+CREATE INDEX IF NOT EXISTS interview_scorecards_author_idx ON public.interview_scorecards USING btree (author_profile_id);
+CREATE INDEX IF NOT EXISTS job_opening_skills_opening_idx ON public.job_opening_skills USING btree (opening_id);
+CREATE INDEX IF NOT EXISTS job_opening_skills_skill_idx ON public.job_opening_skills USING btree (skill_id);
 CREATE INDEX IF NOT EXISTS idx_job_openings_position ON public.job_openings USING btree (position_id);
 CREATE INDEX IF NOT EXISTS idx_job_openings_status ON public.job_openings USING btree (status);
 CREATE INDEX IF NOT EXISTS idx_job_openings_tenant ON public.job_openings USING btree (tenant_id);
@@ -1620,10 +1710,58 @@ create policy "integrity_events_staff_read" on public.integrity_events
   for SELECT
   to public
   using (is_staff());
+drop policy if exists "interview_notes_staff_read" on public.interview_notes;
+create policy "interview_notes_staff_read" on public.interview_notes
+  for SELECT
+  to authenticated
+  using (is_staff());
+drop policy if exists "interview_notes_own_add" on public.interview_notes;
+create policy "interview_notes_own_add" on public.interview_notes
+  for INSERT
+  to authenticated
+  with check ((is_staff() AND (author_profile_id = current_user_profile_id())));
+drop policy if exists "interview_notes_own_change" on public.interview_notes;
+create policy "interview_notes_own_change" on public.interview_notes
+  for UPDATE
+  to authenticated
+  using ((is_staff() AND (author_profile_id = current_user_profile_id())))
+  with check ((is_staff() AND (author_profile_id = current_user_profile_id())));
+drop policy if exists "interview_notes_own_remove" on public.interview_notes;
+create policy "interview_notes_own_remove" on public.interview_notes
+  for DELETE
+  to authenticated
+  using ((is_staff() AND (author_profile_id = current_user_profile_id())));
 drop policy if exists "interviews_staff_all" on public.interview_schedules;
 create policy "interviews_staff_all" on public.interview_schedules
   for ALL
   to public
+  using (is_staff())
+  with check (is_staff());
+drop policy if exists "interview_scorecards_staff_read" on public.interview_scorecards;
+create policy "interview_scorecards_staff_read" on public.interview_scorecards
+  for SELECT
+  to authenticated
+  using (is_staff());
+drop policy if exists "interview_scorecards_own_add" on public.interview_scorecards;
+create policy "interview_scorecards_own_add" on public.interview_scorecards
+  for INSERT
+  to authenticated
+  with check ((is_staff() AND (author_profile_id = current_user_profile_id())));
+drop policy if exists "interview_scorecards_own_change" on public.interview_scorecards;
+create policy "interview_scorecards_own_change" on public.interview_scorecards
+  for UPDATE
+  to authenticated
+  using ((is_staff() AND (author_profile_id = current_user_profile_id())))
+  with check ((is_staff() AND (author_profile_id = current_user_profile_id())));
+drop policy if exists "job_opening_skills_staff_read" on public.job_opening_skills;
+create policy "job_opening_skills_staff_read" on public.job_opening_skills
+  for SELECT
+  to authenticated
+  using (is_staff());
+drop policy if exists "job_opening_skills_staff_write" on public.job_opening_skills;
+create policy "job_opening_skills_staff_write" on public.job_opening_skills
+  for ALL
+  to authenticated
   using (is_staff())
   with check (is_staff());
 drop policy if exists "jobs_public_read" on public.job_openings;
@@ -1850,6 +1988,12 @@ drop trigger if exists "trg_currencies_updated" on public.currencies;
 CREATE TRIGGER trg_currencies_updated BEFORE UPDATE ON public.currencies FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_departments_updated" on public.departments;
 CREATE TRIGGER trg_departments_updated BEFORE UPDATE ON public.departments FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+drop trigger if exists "trg_interview_notes_updated" on public.interview_notes;
+CREATE TRIGGER trg_interview_notes_updated BEFORE UPDATE ON public.interview_notes FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+drop trigger if exists "trg_interview_scorecards_updated" on public.interview_scorecards;
+CREATE TRIGGER trg_interview_scorecards_updated BEFORE UPDATE ON public.interview_scorecards FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+drop trigger if exists "trg_job_opening_skills_updated" on public.job_opening_skills;
+CREATE TRIGGER trg_job_opening_skills_updated BEFORE UPDATE ON public.job_opening_skills FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_locations_updated" on public.locations;
 CREATE TRIGGER trg_locations_updated BEFORE UPDATE ON public.locations FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 drop trigger if exists "trg_notification_templates_updated" on public.notification_templates;
@@ -2034,10 +2178,16 @@ grant execute on function public.integrity_severity_weight to authenticated;
 grant execute on function public.integrity_severity_weight to postgres;
 grant execute on function public.integrity_severity_weight to public;
 grant execute on function public.integrity_severity_weight to service_role;
+grant select, insert, update, delete on table public.interview_notes to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.interview_notes to postgres;
+grant select, insert, update, delete on table public.interview_notes to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.interview_schedules to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.interview_schedules to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.interview_schedules to postgres;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.interview_schedules to service_role;
+grant select, insert, update on table public.interview_scorecards to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.interview_scorecards to postgres;
+grant select, insert, update, delete on table public.interview_scorecards to service_role;
 grant execute on function public.is_staff to anon;
 grant execute on function public.is_staff to authenticated;
 grant execute on function public.is_staff to postgres;
@@ -2048,6 +2198,9 @@ grant execute on function public.is_super_admin to authenticated;
 grant execute on function public.is_super_admin to postgres;
 grant execute on function public.is_super_admin to public;
 grant execute on function public.is_super_admin to service_role;
+grant select, insert, update, delete on table public.job_opening_skills to authenticated;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_opening_skills to postgres;
+grant select, insert, update, delete on table public.job_opening_skills to service_role;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to anon;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to authenticated;
 grant delete, insert, maintain, references, select, trigger, truncate, update on table public.job_openings to postgres;
