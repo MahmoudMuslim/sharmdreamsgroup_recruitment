@@ -36,7 +36,7 @@ const AGENDA_SELECT = `
     tracking_code,
     job_openings ( title )
   ),
-  user_profiles ( full_name )
+  user_profiles!interview_schedules_interviewer_profile_id_fkey ( full_name )
 `;
 
 function nested<T>(value: unknown): T | null {

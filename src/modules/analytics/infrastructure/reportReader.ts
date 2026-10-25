@@ -195,7 +195,7 @@ export async function readAnalyticsRows(window: AnalyticsWindow): Promise<Analyt
     scoped<Raw>(
       "interview_schedules",
       "id, status, scheduled_at, created_at, duration_minutes, meeting_link, application_id, " +
-        "applications ( created_at, job_openings ( title ) ), user_profiles ( full_name )",
+        "applications ( created_at, job_openings ( title ) ), user_profiles!interview_schedules_interviewer_profile_id_fkey ( full_name )",
       LIMITS.interviews
     ),
   ]);
@@ -495,7 +495,7 @@ export async function readRowReport(
   }
 
   const panels = await scoped<Raw>(
-    "scheduled_at, status, duration_minutes, meeting_link, calendar_provider, created_at, applications ( full_name, created_at, job_openings ( title ) ), user_profiles ( full_name )",
+    "scheduled_at, status, duration_minutes, meeting_link, calendar_provider, created_at, applications ( full_name, created_at, job_openings ( title ) ), user_profiles!interview_schedules_interviewer_profile_id_fkey ( full_name )",
     LIMITS.interviews,
     "interview_schedules",
     "scheduled_at"
