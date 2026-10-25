@@ -411,7 +411,9 @@ export function FileBrowser({
               <p className="mt-1 text-xs leading-relaxed text-brand-ink/60">{bucket.writtenBy}</p>
               <p className="mt-1 text-[11px] font-semibold text-brand-ink/50">
                 {bucket.deletable
-                  ? "Staff deletes are authorised by the storage policy, so Delete appears here."
+                  ? bucket.deleteRequires
+                    ? `Deletes here also need ${bucket.deleteRequires}, so Delete appears only for a session holding it.`
+                    : "Staff deletes are authorised by the storage policy, so Delete appears here."
                   : "No storage delete policy for staff, so this portal cannot remove files from it."}
               </p>
             </li>

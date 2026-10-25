@@ -4,13 +4,18 @@
  *
  * This is one module because the truth is scattered across SQL policies: staff
  * may list and read every bucket, and `staff delete candidate cvs` plus
- * `staff delete candidate media` together authorise a delete in all four — so
- * the File Manager offers the control everywhere it can actually be honoured.
+ * `staff delete candidate media` together authorise a delete in the first four —
+ * so the File Manager offers the control everywhere it can actually be honoured.
  * A button the database would refuse is a false promise, and a policy added
  * here without the SQL behind it is the same lie in the other direction.
  *
- * `candidate-photos` is the fifth, and its SQL is 043's `staff delete candidate
- * photos`, which asks for `candidates.delete` the same way its siblings do.
+ * `candidate-photos` is the fifth, and its delete is stricter: 043's
+ * `staff delete candidate photos` wants `candidates.delete` on top of `is_staff()`,
+ * where the sibling policies ask for staff alone. The control is still honoured at
+ * the only door that offers it — this page gates delete on
+ * `settings.manage_platform`, which the seed grants to SUPER_ADMIN, the one role
+ * the seed also grants `candidates.delete`. Until 043 is applied the bucket holds
+ * no objects, so the stricter rule has nothing to refuse.
  */
 
 export type BucketKey =
@@ -27,6 +32,13 @@ export interface BucketInfo {
   writtenBy: string;
   /** Whether the `files` RLS policies let a staff session delete an object. */
   deletable: boolean;
+  /**
+   * What the delete policy asks for beyond `is_staff()`, when it asks for more.
+   *
+   * The card's one-line promise is only honest if it names the extra condition;
+   * a session that is staff but lacks it would see a button the database refuses.
+   */
+  deleteRequires: string | null;
 }
 
 export const BUCKETS: readonly BucketInfo[] = [
@@ -36,6 +48,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The career-site apply form (POST /api/careers/upload), stored as applications/<job id>/<random id>-<filename>.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "candidate-videos",
@@ -43,6 +56,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The assessment runner (POST /api/attempt/[token]/video), stored as <attempt token>/<question id>-<timestamp>.<ext>.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "resumes",
@@ -50,6 +64,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The candidate record (POST /api/files/upload, from Files added by staff), stored as applications/<application id>/<random id>-<filename> and owned by an application_attachments row.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "candidate-audio",
@@ -57,13 +72,15 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The same door on the candidate record (POST /api/files/upload). WebM, MP3 or M4A up to 20 MB, owned by an application_attachments row.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "candidate-photos",
     label: "Candidate photos",
     writtenBy:
-      "Staff from the record door (043), stored as persons/<person id>/<random id>.<ext> and named by person_profiles.photo_path; in a later slice (044) applicants upload here from the public form.",
+      "Nothing writes here yet. The record door that stores a profile photo is the next task of this slice; when it lands, staff upload from the candidate record, stored as persons/<person id>/<random id>.<ext> and named by person_profiles.photo_path.",
     deletable: true,
+    deleteRequires: "the Delete candidates permission",
   },
 ] as const;
 

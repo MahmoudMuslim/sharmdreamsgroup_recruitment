@@ -126,7 +126,7 @@ Relationships below are described logically; the schema enforces most of them wi
 
 ## Files (formerly storage)
 
-There are no buckets and no object store. A file is **a row in `public.files`** (`bucket`, `path`, `mime`, `bytes`, `unique (bucket, path)`) plus **bytes under `$UPLOADS_ROOT/<bucket>/<path>`** on the `uploads` volume. `bucket` is one of four directory names (`src/lib/config.ts` → `storageConfig.buckets`); the `/files` console lists rows and walks prefixes, and `files_bucket_path_prefix_idx` (`bucket, path text_pattern_ops`) makes that prefix walk an index scan rather than a sequential one.
+There are no buckets and no object store. A file is **a row in `public.files`** (`bucket`, `path`, `mime`, `bytes`, `unique (bucket, path)`) plus **bytes under `$UPLOADS_ROOT/<bucket>/<path>`** on the `uploads` volume. `bucket` is one of five directory names (`src/lib/config.ts` → `storageConfig.buckets`); the `/files` console lists rows and walks prefixes, and `files_bucket_path_prefix_idx` (`bucket, path text_pattern_ops`) makes that prefix walk an index scan rather than a sequential one.
 
 | Bucket | Holds |
 |--------|-------|
@@ -134,8 +134,9 @@ There are no buckets and no object store. A file is **a row in `public.files`** 
 | `candidate-audio` | Voice notes attached to a candidate record. |
 | `candidate-videos` | Video-response takes from the assessment runner. |
 | `candidate-cvs` | The CV uploaded on the public apply form (`applications/<jobId>/<uuid>-<name>`), which the submit action then downloads, extracts text from, and hands to AI screening. |
+| `candidate-photos` | Profile photos on the person spine (`persons/<personId>/<uuid>.<ext>`, named by `person_profiles.photo_path`). 043 authors its column and its three policies; the record door that writes here is the spine's next task, so today the bucket is empty. |
 
-Everything a byte passes through is our own code: `src/lib/files/paths.ts` resolves a `(bucket, path)` pair inside its bucket and refuses anything that escapes it, `src/app/api/files/upload/route.ts` and the careers/attempt routes validate size and MIME against the module rules **before** writing, `src/lib/files/signed-link.ts` mints an HMAC link (`/api/files/link`, staff + `candidates.read`), and `/api/files/f/[token]` streams it with range support. `public.files` carries 8 RLS policies; the vendor's `storage` schema is gone from the create path, and a local apply drops it if a re-dump ever restores it.
+Everything a byte passes through is our own code: `src/lib/files/paths.ts` resolves a `(bucket, path)` pair inside its bucket and refuses anything that escapes it, `src/app/api/files/upload/route.ts` and the careers/attempt routes validate size and MIME against the module rules **before** writing, `src/lib/files/signed-link.ts` mints an HMAC link (`/api/files/link`, staff + `candidates.read`), and `/api/files/f/[token]` streams it with range support. `public.files` carries 8 RLS policies (043 adds the three that gate `candidate-photos`); the vendor's `storage` schema is gone from the create path, and a local apply drops it if a re-dump ever restores it.
 
 ---
 

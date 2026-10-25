@@ -45,8 +45,8 @@ export function personKey(email: string): string {
  * `personKey` spells an address; this decides whether a string is an address at
  * all. A CV extraction hands back whatever the model read off the page, and a
  * half-typed or fabricated address written into the spine would mis-file the
- * person — so every door that writes an email runs it through here first and
- * drops the row when this returns null rather than storing a guess.
+ * person — so a door that writes an email into the spine runs it through here
+ * first and drops the row when this returns null, rather than storing a guess.
  */
 export const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/;
 

@@ -423,13 +423,13 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Tiles for buckets, folders, files and bytes, a bucket rail, one folder at a time with its sub-folders, and a card naming what writes into each bucket.",
     ],
     use: [
-      "Switch bucket — candidate CVs, pitch videos, resumes, candidate audio — walk into folders, or move back with the breadcrumb.",
+      "Switch bucket — candidate CVs, pitch videos, resumes, candidate audio, candidate photos — walk into folders, or move back with the breadcrumb.",
       "Search by file name, storage path or the linked record, and filter to All files or to Not linked to a record to find orphans.",
       "Open previews a file through a short-lived signed link; Download takes the file down.",
       "Delete removes the object and clears the record that pointed at it, then writes an audit row.",
     ],
     edges: [
-      "Nothing is uploaded from here. A CV arrives on the apply form, a pitch in the runner, a staff file from the candidate's own record.",
+      "Nothing is uploaded from here. A CV arrives on the apply form, a pitch in the runner, a staff file from the candidate's own record, and the photo bucket has no door yet, so it is empty.",
       "Browsing needs View candidates; deleting needs the stricter Manage platform settings.",
       "A folder lists its first 200 items and says when there are more. Bucket totals walk a limited number of listings a few folders deep, so a large bucket reports at least.",
       "A missing link is only trustworthy when the referencing records were read — the page says when they were not.",

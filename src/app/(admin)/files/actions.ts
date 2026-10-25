@@ -154,6 +154,9 @@ export async function deleteStoredFile(bucketKey: string, path: string): Promise
       bytes: before.bytes,
       mime_type: before.mimeType,
       application_id: owner?.applicationId ?? null,
+      // A profile photo belongs to a person, not to an application, and the
+      // person's id has to be recoverable from the trail after the byte is gone.
+      person_id: owner?.personId ?? null,
       note: note || (owner ? "Its database pointer was cleared with it." : "Nothing pointed at it."),
     },
   });
@@ -440,12 +443,16 @@ async function ownersFor(
  * A trail row that only names a storage key cannot answer "whose file went";
  * after the delete and the unlink there is nothing left to ask, so this runs
  * first and against the one path rather than the whole bucket.
+ *
+ * A profile photo is owned by the person, not by an application, so it answers
+ * with `personId` and leaves `applicationId` null — the trail must not file a
+ * person's id under a column that says application.
  */
 async function fileOwner(
   restClient: ServerClient,
   bucket: BucketKey,
   path: string
-): Promise<{ name: string; applicationId: string } | null> {
+): Promise<{ name: string; applicationId: string | null; personId: string | null } | null> {
   if (bucket === "candidate-cvs") {
     const { data } = await restClient
       .from("applications")
@@ -455,7 +462,11 @@ async function fileOwner(
 
     const row = asRecord(data);
     return row.id
-      ? { name: stringOrNull(row.full_name) ?? "Unnamed applicant", applicationId: String(row.id) }
+      ? {
+          name: stringOrNull(row.full_name) ?? "Unnamed applicant",
+          applicationId: String(row.id),
+          personId: null,
+        }
       : null;
   }
 
@@ -478,6 +489,26 @@ async function fileOwner(
       ? {
           name: stringOrNull(application.full_name) ?? "Unnamed applicant",
           applicationId: String(application.id),
+          personId: null,
+        }
+      : null;
+  }
+
+  // The person spine. `person_profiles` is 043's table, so on a database that has
+  // not had it applied this read simply finds nothing and the trail says so.
+  if (bucket === "candidate-photos") {
+    const { data } = await restClient
+      .from("person_profiles")
+      .select("id, legal_name")
+      .eq("photo_path", path)
+      .maybeSingle();
+
+    const row = asRecord(data);
+    return row.id
+      ? {
+          name: stringOrNull(row.legal_name) ?? "Unnamed person",
+          applicationId: null,
+          personId: String(row.id),
         }
       : null;
   }
@@ -495,6 +526,7 @@ async function fileOwner(
   return {
     name: stringOrNull(application.full_name) ?? "Unnamed applicant",
     applicationId: String(row.application_id),
+    personId: null,
   };
 }
 
@@ -539,8 +571,9 @@ async function recordDeletion(
  * Deleting the object is only half of deletion: a row still naming it offers a
  * download that 404s, so the record would promise a file that is gone. Every
  * bucket in this portal is now referenced by a table, so every one of them can be
- * unlinked here — a CV or a pitch has its column cleared, a staff upload loses the
- * attachment row that existed only to name it.
+ * unlinked here — a CV or a pitch has its column cleared, a profile photo clears
+ * its column together with the mime that described it, and a staff upload loses
+ * the attachment row that existed only to name it.
  */
 async function unlinkReference(
   restClient: ServerClient,

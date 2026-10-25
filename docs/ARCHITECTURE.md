@@ -178,7 +178,7 @@ Client selection is deliberate: **prefer the request client so RLS is the enforc
 
 ## Configuration & theming
 
-- `lib/config.ts` is **client-safe** and imports cleanly into browser code. It reads `APP_URL` and the four `AI_MODEL_*` chain names, and holds the four bucket names — no `NEXT_PUBLIC_*` value any more, because nothing is inlined at build time; the browser only ever needs the origin it was served from. `lib/config.server.ts` is guarded by `server-only` and holds the AI provider keys, WhatsApp/SMTP defaults, and cron config.
+- `lib/config.ts` is **client-safe** and imports cleanly into browser code. It reads `APP_URL` and the four `AI_MODEL_*` chain names, and holds the five bucket names — no `NEXT_PUBLIC_*` value any more, because nothing is inlined at build time; the browser only ever needs the origin it was served from. `lib/config.server.ts` is guarded by `server-only` and holds the AI provider keys, WhatsApp/SMTP defaults, and cron config.
 - The self-hosting secrets are deliberately *not* in a config module — each is read where it is used, so a missing one fails at the door that needs it: `AUTH_JWT_SECRET` in `auth/token.ts` (and `files/signed-link.ts`), `SETTINGS_ENCRYPTION_KEY` in `crypto/secrets.ts`, `UPLOADS_ROOT` in `files/paths.ts`, `AUTH_DB_URL` in `auth/db.ts`. `REST_BASE_URL` is the one value four modules read straight from the environment and each throws on without it: `data-api/anon.ts:51`, `data-api/server.ts:32`, `data-api/service.ts:21` and `auth/guard.ts:39`.
 - Theming is CSS-token driven (`app/globals.css` + `lib/theme.ts`): Base and Liquid-glass parents × Light/Dark, persisted in `localStorage` only (there is no per-user theme column) and applied pre-paint.
 
