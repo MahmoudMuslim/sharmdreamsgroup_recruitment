@@ -15,23 +15,61 @@ import {
 import { sourceLabel, stageLabel } from "@/lib/utils";
 import { pickerWindowNote } from "@/modules/jobs/domain/hireable";
 import { APPLICATION_SOURCES } from "@/modules/candidates/domain/listFilters";
+import { CV_ALLOWED_MIME_TYPES, CV_MAX_MB } from "@/modules/careers/cv-rules";
+import { attachmentRule } from "@/modules/careers/attachment-rules";
+import type { PersonFieldGroup } from "@/modules/candidates/domain/person-fields";
 import {
   createCandidate,
   listManualOpenings,
+  listDrawerPersonFields,
   type CreatedCandidate,
+  type DrawerPersonField,
   type ManualOpeningOption,
+  type PersonFieldValue,
 } from "./candidate-actions";
 
+/** The CV formats the staff door accepts — the same list the apply path uses. */
+const CV_ACCEPT = ".pdf,.doc,.docx,.txt," + CV_ALLOWED_MIME_TYPES.join(",");
+
+/** A stable display order for the collapsible person groups. */
+const GROUP_ORDER: PersonFieldGroup[] = [
+  "identity",
+  "contact",
+  "marital_status",
+  "housing",
+  "health",
+  "family_details",
+];
+
+const GROUP_LABELS: Partial<Record<PersonFieldGroup, string>> = {
+  identity: "Identity",
+  contact: "Contact",
+  marital_status: "Marital & family status",
+  housing: "Housing & commute",
+  health: "Health (restricted)",
+  family_details: "Family details (restricted)",
+};
+
 /**
- * Files an applicant who never came through the career site.
+ * Files an applicant who never came through the career site, and now finally
+ * takes the CV file, a profile photo and the structured person fields the record
+ * door was built for (spec §4).
  *
- * Before this, the only doors into `applications` were the public apply form and
- * converting a sourced prospect, so a CV someone mailed or a name taken during a
- * phone screen could not be worked as a candidate at all.
+ * The CV and photo travel as files in the action's arguments — this Next build
+ * serialises a `File` through a Server Action (the precedent is the sourcing
+ * profile reader, `uploadProspectProfile`), so a walk-in's CV can land in the
+ * same breath as the record instead of forcing a second "attach it afterwards"
+ * trip. The door stores the bytes itself, because the staff upload route needs an
+ * application id that does not exist yet.
  *
- * The opening list is fetched when the drawer opens rather than in the page
- * render — recording someone by hand is rare next to the table, and a fourth
- * query on every Candidates load would tax it for everyone.
+ * The person controls are generated from the registry (`listDrawerPersonFields`),
+ * not mirrored by hand, and the Tier-3 groups render only for a grant-holder. They
+ * are collapsed by default: a quick walk-in is a name, an email and a CV, and the
+ * structured half is opt-in. Whatever the recruiter fills is sent; the door
+ * decides what its consent and grants allow and reports the rest in the note.
+ *
+ * The opening list and the person fields are fetched when the drawer opens rather
+ * than in the page render — recording someone by hand is rare next to the table.
  */
 export function NewCandidateDrawer() {
   const router = useRouter();
@@ -43,13 +81,19 @@ export function NewCandidateDrawer() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [source, setSource] = useState("");
+  const [cvFile, setCvFile] = useState<File | null>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [personFields, setPersonFields] = useState<DrawerPersonField[]>([]);
+  const [personValues, setPersonValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   // One state, not two: the notice only ever describes the record it was filed
   // with, so clearing the record cannot leave an orphaned warning on screen.
-  const [created, setCreated] = useState<{ candidate: CreatedCandidate; notice: string } | null>(
+  const [created, setCreated] = useState<{ candidate: CreatedCandidate; notice: string; note: string } | null>(
     null
   );
   const [pending, setPending] = useState(false);
+
+  const photoRule = attachmentRule("candidate-photos");
 
   function stop() {
     setOpen(false);
@@ -59,22 +103,31 @@ export function NewCandidateDrawer() {
 
   function start() {
     setOpen(true);
-    if (openings !== null) return;
-    void listManualOpenings().then((result) => {
-      setOpenings(result.openings);
-      setOpeningsTotal(result.total);
-      // A failed query must not look like a group with no openings, and an
-      // empty list must not look like a failure.
-      if (!result.ok) setError("The openings list did not load. Close this panel and try again.");
-      else if (result.openings.length === 0)
-        setError("There are no job openings to file someone under yet.");
-    });
+    if (openings === null) {
+      void listManualOpenings().then((result) => {
+        setOpenings(result.openings);
+        setOpeningsTotal(result.total);
+        // A failed query must not look like a group with no openings, and an
+        // empty list must not look like a failure.
+        if (!result.ok) setError("The openings list did not load. Close this panel and try again.");
+        else if (result.openings.length === 0)
+          setError("There are no job openings to file someone under yet.");
+      });
+    }
+    if (personFields.length === 0) {
+      void listDrawerPersonFields().then((result) => {
+        if (result.ok) setPersonFields(result.fields);
+      });
+    }
   }
 
   function clearContact() {
     setFullName("");
     setEmail("");
     setPhone("");
+    setCvFile(null);
+    setPhotoFile(null);
+    setPersonValues({});
     setError(null);
     setCreated(null);
   }
@@ -82,6 +135,25 @@ export function NewCandidateDrawer() {
   // A picker ships a window of the hireable openings, so when the window ran out
   // of room the field says which roles it left off instead of looking complete.
   const shortBy = openings ? pickerWindowNote(openingsTotal, openings.length) : null;
+
+  // Group the registry fields once, in the fixed display order, so a group that
+  // renders empty never shows a blank collapsible.
+  const groups = GROUP_ORDER.map((group) => ({
+    group,
+    label: GROUP_LABELS[group] ?? group,
+    fields: personFields.filter((field) => field.group === group),
+  })).filter((section) => section.fields.length > 0);
+
+  /** The person fields that actually hold something, as the door expects them. */
+  function collectPersonChanges(): PersonFieldValue[] {
+    const out: PersonFieldValue[] = [];
+    for (const field of personFields) {
+      const raw = (personValues[field.key] ?? "").trim();
+      if (!raw) continue;
+      out.push({ key: field.key, value: field.input === "number" ? Number(raw) : raw });
+    }
+    return out;
+  }
 
   async function submit() {
     if (created) {
@@ -109,9 +181,22 @@ export function NewCandidateDrawer() {
 
     setPending(true);
     try {
-      const result = await createCandidate({ jobId, fullName, email, phone, source });
+      const result = await createCandidate({
+        jobId,
+        fullName,
+        email,
+        phone,
+        source,
+        cvFile,
+        photoFile,
+        person: collectPersonChanges(),
+      });
       if (result.ok && result.candidate) {
-        setCreated({ candidate: result.candidate, notice: result.notice ?? "" });
+        setCreated({
+          candidate: result.candidate,
+          notice: result.notice ?? "",
+          note: result.note ?? "",
+        });
         // The action already revalidated /candidates; this pulls the new row
         // into the table behind the drawer.
         router.refresh();
@@ -123,6 +208,59 @@ export function NewCandidateDrawer() {
     } finally {
       setPending(false);
     }
+  }
+
+  function renderControl(field: DrawerPersonField) {
+    const value = personValues[field.key] ?? "";
+    const setValue = (next: string) => {
+      setPersonValues((prev) => ({ ...prev, [field.key]: next }));
+      setError(null);
+      setCreated(null);
+    };
+    const id = `new-candidate-person-${field.key}`;
+
+    if (field.input === "select") {
+      return (
+        <Field label={field.label} htmlFor={id}>
+          <Select id={id} value={value} onChange={(e) => setValue(e.target.value)}>
+            <option value="">Select…</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option.replace(/_/g, " ")}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      );
+    }
+
+    if (field.input === "textarea") {
+      return (
+        <Field label={field.label} htmlFor={id}>
+          <textarea
+            id={id}
+            value={value}
+            maxLength={field.maxChars}
+            onChange={(e) => setValue(e.target.value)}
+            className="w-full rounded-xl border border-brand-line bg-brand-paper px-3 py-2 text-sm text-brand-ink"
+          />
+        </Field>
+      );
+    }
+
+    const inputType =
+      field.input === "date" ? "date" : field.input === "number" ? "number" : "text";
+    return (
+      <Field label={field.label} htmlFor={id}>
+        <TextInput
+          id={id}
+          type={inputType}
+          value={value}
+          maxLength={field.maxChars}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </Field>
+    );
   }
 
   return (
@@ -143,8 +281,8 @@ export function NewCandidateDrawer() {
         title="Record a candidate by hand"
         subtitle={
           created
-            ? "Filed under New — attach a CV on the record and read it in before screening."
-            : "For someone who never applied through the careers site."
+            ? "Filed under New — the CV is attached and read in before screening."
+            : "For someone who never applied through the careers site. Add their CV and photo now."
         }
         onSubmit={submit}
         footer={
@@ -249,6 +387,60 @@ export function NewCandidateDrawer() {
             </Field>
           </div>
 
+          <Field
+            label="CV file"
+            htmlFor="new-candidate-cv"
+            hint={`Attach the CV now, up to ${CV_MAX_MB} MB — it is stored and read for screening when the record is created.`}
+          >
+            <input
+              id="new-candidate-cv"
+              type="file"
+              accept={CV_ACCEPT}
+              onChange={(e) => {
+                setCvFile(e.target.files?.[0] ?? null);
+                setError(null);
+                setCreated(null);
+              }}
+              className="block w-full text-sm text-brand-ink file:mr-3 file:rounded-lg file:border-0 file:bg-brand-gold file:px-3 file:py-1.5 file:text-sm file:font-semibold"
+            />
+          </Field>
+
+          <Field label="Profile photo" htmlFor="new-candidate-photo" hint={photoRule?.hint}>
+            <input
+              id="new-candidate-photo"
+              type="file"
+              accept={photoRule?.accept}
+              onChange={(e) => {
+                setPhotoFile(e.target.files?.[0] ?? null);
+                setError(null);
+                setCreated(null);
+              }}
+              className="block w-full text-sm text-brand-ink file:mr-3 file:rounded-lg file:border-0 file:bg-brand-gold file:px-3 file:py-1.5 file:text-sm file:font-semibold"
+            />
+          </Field>
+
+          {groups.length > 0 && (
+            <details className="rounded-xl border border-brand-line px-3 py-2">
+              <summary className="cursor-pointer text-sm font-semibold text-brand-ink">
+                Person details (optional)
+              </summary>
+              <p className="mt-1 text-xs text-brand-ink/60">
+                Generated from the profile registry. A field needs the candidate&apos;s consent to save, so
+                anything refused is named back to you after the record is created.
+              </p>
+              <div className="mt-3 space-y-4">
+                {groups.map((section) => (
+                  <div key={section.group} className="space-y-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-brand-ink/70">
+                      {section.label}
+                    </h4>
+                    {section.fields.map(renderControl)}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
           <FormMessage
             error={error}
             success={
@@ -258,6 +450,10 @@ export function NewCandidateDrawer() {
             }
             notice={created?.notice || null}
           />
+
+          {created?.note && (
+            <p className="text-sm text-brand-ink/70">{created.note}</p>
+          )}
 
           {created && (
             <Link

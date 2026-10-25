@@ -383,6 +383,127 @@ export async function defaultConsentChecker(): Promise<ConsentChecker> {
 }
 
 // ————————————————————————————————————————————————————————————————————————————
+// §4 step 3 — resolve or create the person an application belongs to
+// ————————————————————————————————————————————————————————————————————————————
+
+/**
+ * The exact §9 note the door prints when the spine is not applied — the same
+ * sentence `personReader` uses, kept byte-for-byte so a degraded door and a
+ * degraded reader say the identical thing.
+ */
+export const PERSON_SPINE_MISSING_NOTE = "Person details need migration 043.";
+
+/** A resolved-or-created person id, plus whether this call was the one that created it. */
+export interface ResolvedPerson {
+  personId: string;
+  created: boolean;
+}
+
+/**
+ * Find the profile an address already owns, or open a new one (spec §4 step 3).
+ *
+ * One service-role transaction: read `person_emails` by the (already normalised,
+ * lowercased) address, and on a miss insert `person_profiles` + the primary
+ * `person_emails` row together so a half-person is never left behind. The legal
+ * name is the one the *door* was given, never a CV's claim — an unverified model
+ * reading is not where a person's name comes from (spec §4 step 3). The phone is
+ * stored as the door stated it, or null.
+ *
+ * `email` must already be normalised and shape-checked by the caller (the record
+ * door runs `normalizePersonEmail` first); this writes it straight into the
+ * column the `person_emails_email_is_lower_check` governs, so a raw spelling
+ * would abort the transaction.
+ *
+ * Degrade (043 not applied): the `person_profiles` / `person_emails` tables do
+ * not exist yet, so the first query answers 42P01. That is caught and returned as
+ * `{ error, missingSchema: true }` naming the migration, so the door can still
+ * create the application row (which exists today) without a person link — a
+ * missing table must not turn into "every field refused for the wrong reason."
+ */
+export async function resolveOrCreatePerson(
+  email: string,
+  legalName: string,
+  phone?: string | null
+): Promise<ResolvedPerson | { error: string; missingSchema?: boolean }> {
+  const client = await connect();
+  try {
+    await client.query("begin");
+
+    const existing = await client.query<{ person_id: string }>(
+      `select person_id from person_emails where email = $1 limit 1`,
+      [email]
+    );
+    if (existing.rows.length) {
+      await client.query("commit");
+      return { personId: existing.rows[0].person_id, created: false };
+    }
+
+    const personId = crypto.randomUUID();
+    await client.query(
+      `insert into person_profiles (id, legal_name, phone) values ($1, $2, $3)`,
+      [personId, legalName, phone?.trim() || null]
+    );
+    await client.query(
+      `insert into person_emails (person_id, email, is_primary) values ($1, $2, true)`,
+      [personId, email]
+    );
+
+    await client.query("commit");
+    return { personId, created: true };
+  } catch (cause) {
+    await client.query("rollback").catch(() => undefined);
+    if (isMissingSchemaError(cause as { code?: string; message?: string })) {
+      return { error: PERSON_SPINE_MISSING_NOTE, missingSchema: true };
+    }
+    return { error: `person resolution failed: ${(cause as Error).message}` };
+  } finally {
+    client.release();
+  }
+}
+
+// ————————————————————————————————————————————————————————————————————————————
+// §4 step 7 — name a profile photo on the person
+// ————————————————————————————————————————————————————————————————————————————
+
+/**
+ * Point `person_profiles.photo_path` / `photo_mime` at a byte the door already
+ * stored in `candidate-photos` (spec §4 step 7).
+ *
+ * This is not a ladder change and not consent-gated here: the door owns the byte
+ * it just wrote and the reference that names it, and a photo is set at record
+ * time rather than competing with an extractor's rung — the same reason
+ * `resolveOrCreatePerson` writes the legal name directly. The column is the one
+ * `unlinkReference` clears when the byte is deleted from `/files`, so the write
+ * and the erase target the same field.
+ *
+ * Degrades like the rest of the spine: on a missing table the update answers
+ * 42P01 and returns `{ error, missingSchema: true }`, so the door can remove the
+ * orphan byte it uploaded and still finish creating the application.
+ */
+export async function setPersonPhoto(
+  personId: string,
+  path: string,
+  mimeType: string
+): Promise<{ ok: true } | { error: string; missingSchema?: boolean }> {
+  const client = await connect();
+  try {
+    const { rowCount } = await client.query(
+      `update person_profiles set photo_path = $2, photo_mime = $3, updated_at = now() where id = $1`,
+      [personId, path, mimeType]
+    );
+    if (!rowCount) return { error: "no such person profile to attach the photo to" };
+    return { ok: true };
+  } catch (cause) {
+    if (isMissingSchemaError(cause as { code?: string; message?: string })) {
+      return { error: PERSON_SPINE_MISSING_NOTE, missingSchema: true };
+    }
+    return { error: `photo reference failed: ${(cause as Error).message}` };
+  } finally {
+    client.release();
+  }
+}
+
+// ————————————————————————————————————————————————————————————————————————————
 // §3.1 / §3.3 / §3.4 — applyPersonField
 // ————————————————————————————————————————————————————————————————————————————
 

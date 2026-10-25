@@ -381,23 +381,23 @@ function optionalGpa(value: unknown, name: string, dropped: string[]): number | 
 }
 
 /**
- * Structures one CV into a validated Tier-1 profile.
+ * Structures one CV and keeps the `dropped` names beside the value.
  *
- * Returns the `value` half of `validateExtractedPersonProfile` and DISCARDS
- * the `dropped` list — the record door's preview (Task 11) re-runs
- * `validateExtractedPersonProfile` on the raw output when it needs to print
- * "Ignored N fields the extractor is not allowed to write", so the names are
- * never far away.
+ * Spec §5 wants the record door's preview to print "Ignored N fields the
+ * extractor is not allowed to write", so the names the validator collected must
+ * reach the caller rather than being thrown away. This is the reporting variant
+ * the door calls; `extractPersonProfile` below stays the simple value-only
+ * surface every other caller already uses.
  *
- * Throws `AiGatewayError` (every model in the chain refused) and
- * `TruncatedJsonResponseError` (the answer hit the output cap mid-JSON)
- * unchanged, so `describeExtractionFailure` can tell the recruiter which of
- * the two happened; neither is a reason to store a half-profile.
+ * The throws are unchanged from `extractPersonProfile`: a refused chain
+ * (`AiGatewayError`) and a mid-JSON cap (`TruncatedJsonResponseError`) both
+ * escape so `describeExtractionFailure` can name which happened — neither is a
+ * reason to hand back a half-profile with a `dropped` list beside it.
  */
-export async function extractPersonProfile(
+export async function extractPersonProfileWithReport(
   cvText: string,
   hints: ExtractPersonHints = {}
-): Promise<ExtractedPersonProfile> {
+): Promise<{ value: ExtractedPersonProfile; dropped: string[] }> {
   const result = await complete({
     capability: "resume_screening",
     messages: [
@@ -410,7 +410,23 @@ export async function extractPersonProfile(
   });
 
   const parsed = parseJsonResponse<unknown>(result.content, { truncated: result.truncated });
-  return validateExtractedPersonProfile(parsed).value;
+  return validateExtractedPersonProfile(parsed);
+}
+
+/**
+ * Structures one CV into a validated Tier-1 profile.
+ *
+ * Returns the `value` half of `validateExtractedPersonProfile` and DISCARDS
+ * the `dropped` list — the record door's preview (Task 11) calls
+ * `extractPersonProfileWithReport` when it needs to print "Ignored N fields the
+ * extractor is not allowed to write", so the names are never far away.
+ */
+export async function extractPersonProfile(
+  cvText: string,
+  hints: ExtractPersonHints = {}
+): Promise<ExtractedPersonProfile> {
+  const { value } = await extractPersonProfileWithReport(cvText, hints);
+  return value;
 }
 
 /** A recruiter-facing sentence for each way the structuring step can fail. */

@@ -89,7 +89,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     key: "candidate-photos",
     label: "Candidate photos",
     writtenBy:
-      "Nothing writes here yet. The record door that stores a profile photo is the next task of this slice; when it lands, staff upload from the candidate record, stored as persons/<person id>/<random id>.<ext> and named by person_profiles.photo_path.",
+      "The hand-record door (createCandidate, from the Record-a-candidate drawer), stored as persons/<person id>/<random id>.<ext> and named by person_profiles.photo_path.",
     deletable: true,
     deleteRequires: "the Delete candidates permission",
   },
