@@ -9,12 +9,18 @@
  * or pushed into `caveats` for the surface (Task 13) to print inline.
  *
  * Resolved ambiguities (the brief left these to the implementation):
- *  - A year-only **closed** period — one where `startMonth` or `endMonth` is
- *    null and the role actually ended — counts a flat 12 months whether it
- *    sits in the middle or at the end of the list. It does NOT span to the
- *    next role's start; spanning would invent boundaries the row never had.
+ *  - A **true year-only** closed period — both `startMonth` and `endMonth`
+ *    null — counts a flat 12 months whether it sits in the middle or at the
+ *    end of the list. It does NOT span to the next role's start; spanning
+ *    would invent boundaries the row never had.
  *    The only case that runs to `now` is a missing end (§6: a role with no
  *    `endYear` and not `ongoing`), plus an ongoing role's own clock.
+ *  - A **one-sided** missing month is NOT a year-only period: the row stated
+ *    one month, so the other side is defaulted to the same UTC anchor the
+ *    gap uses (missing start month → day 1 of Jan of `startYear`; missing
+ *    end month → Dec 31 of `endYear`) and the duration is computed with the
+ *    same month-difference formula as a full month-known closed row. A flat
+ *    12 there would contradict the stated month — fabricated precision.
  *  - `coverage.withEnd` counts a role whose end is *known*, and an ongoing
  *    role's end is known: it is "current". So `ongoing: true` contributes
  *    to `withEnd` even though `endYear` is null.
@@ -75,7 +81,6 @@ function daysBetween(a: Day, b: Day): number {
 
 /** A period with its month-length resolved under the §6 rules. */
 interface ComputedPeriod {
-  row: EmploymentRow;
   start: Day;
   end: Day;
   months: number;
@@ -104,19 +109,24 @@ function computePeriod(row: EmploymentRow, now: Date): { period: ComputedPeriod;
     caveat =
       `${row.employer} states no end date and is not marked ongoing; ` +
       'it is counted to now.';
-  } else if (row.startMonth === null || row.endMonth === null) {
-    // Year-only closed period — middle or last, it counts a flat 12 months
-    // ("the rest are counted as whole years"). The gap anchor assumes the
-    // stated year ran to its end.
-    end = { year: row.endYear, month: row.endMonth ?? 12, day: row.endMonth === null ? 31 : 1 };
+  } else if (row.startMonth === null && row.endMonth === null) {
+    // True year-only closed period — middle or last, it counts a flat 12
+    // months ("the rest are counted as whole years"). The gap anchor assumes
+    // the stated year ran to its end.
+    end = { year: row.endYear, month: 12, day: 31 };
     months = 12;
   } else {
-    end = { year: row.endYear, month: row.endMonth, day: 1 };
-    months = (row.endYear - row.startYear) * 12 + (row.endMonth - row.startMonth);
+    // Both months present, or exactly one missing (a one-sided row is NOT
+    // year-only — the stated month earns real arithmetic, the missing side
+    // defaults to the same anchor the gap uses: Jan 1 / Dec 31).
+    const sMonth = row.startMonth ?? 1;
+    const eMonth = row.endMonth ?? 12;
+    end = { year: row.endYear, month: eMonth, day: row.endMonth === null ? 31 : 1 };
+    months = (row.endYear - row.startYear) * 12 + (eMonth - sMonth);
     if (months < 0) months = 0; // nonsense input is clipped, not laundered into a negative
   }
 
-  return { period: { row, start, end, months }, caveat };
+  return { period: { start, end, months }, caveat };
 }
 
 /**
@@ -164,8 +174,11 @@ export function computeCareerIndicators(
     shortestRoleMonths: months.length === 0 ? null : round2(Math.min(...months)),
     gapMonthsTotal: round2(gapMonthsTotalRaw),
     longestGapMonths: gaps.length === 0 ? null : round2(Math.max(...gaps)),
-    // `null`, never Infinity or NaN, when there is no career span to divide by.
-    changesPerFiveYears: totalMonths === 0 ? null : round2(roles.length / (totalMonths / 60)),
+    // `null`, never Infinity or NaN, when there is no career span to divide
+    // by. The division runs on the RAW total — rounding first would make the
+    // printed ratio depend on the rounding, not on the career.
+    changesPerFiveYears:
+      totalMonthsRaw === 0 ? null : round2(roles.length / (totalMonthsRaw / 60)),
     coverage: {
       rows: roles.length,
       // A row "states a month" only when its START month was given — that is
@@ -200,7 +213,7 @@ export function computeCareerIndicators(
  *
  *   totalMonths = 26 + 12 + 14 + 32.982924 + 18.002628 = 102.985552 → 102.99
  *
- *   gaps (sorted order is 1..5 as listed):
+ *   gaps (sorted timeline order is 1..5 as numbered below):
  *     Alpha→Beta   2020-05-01 → 2020-01-01  negative (overlap) → 0
  *     Beta→Gamma   2021-12-31 → 2022-06-01  152 days → 4.993430
  *     Gamma→Delta  2023-08-01 → 2024-01-01  153 days → 5.026281
@@ -209,19 +222,26 @@ export function computeCareerIndicators(
  *   longestGapMonths = 5.03
  *
  *   longest = 32.98, shortest = 12
- *   changesPerFiveYears = 5 / (102.99 / 60) = 2.912905 → 2.91
+ *   changesPerFiveYears = 5 / (102.985552 / 60) = 2.913032 → 2.91
  *   coverage: rows 5; withMonths 4 (all but Beta); withEnd 4 (all but Delta;
  *             Epsilon is ongoing, and "current" is a known end)
  *   caveats: exactly one, for Delta Co.
+ *
+ * The `roles` array is deliberately shuffled out of (startYear, startMonth)
+ * order so the sort branch is exercised; the expect block is the sorted result.
  */
-export const FIXTURE: { roles: EmploymentRow[]; now: Date; expect: CareerIndicators } = {
-  roles: [
+export const FIXTURE: {
+  roles: readonly EmploymentRow[];
+  now: Date;
+  expect: CareerIndicators;
+} = {
+  roles: Object.freeze([
+    { employer: 'Delta Co', startYear: 2024, startMonth: 1, endYear: null, endMonth: null, ongoing: false },
     { employer: 'Alpha Ltd', startYear: 2018, startMonth: 3, endYear: 2020, endMonth: 5, ongoing: false },
+    { employer: 'Epsilon Inc', startYear: 2025, startMonth: 4, endYear: null, endMonth: null, ongoing: true },
     { employer: 'Beta GmbH', startYear: 2020, startMonth: null, endYear: 2021, endMonth: null, ongoing: false },
     { employer: 'Gamma LLC', startYear: 2022, startMonth: 6, endYear: 2023, endMonth: 8, ongoing: false },
-    { employer: 'Delta Co', startYear: 2024, startMonth: 1, endYear: null, endMonth: null, ongoing: false },
-    { employer: 'Epsilon Inc', startYear: 2025, startMonth: 4, endYear: null, endMonth: null, ongoing: true },
-  ],
+  ]),
   now: new Date(Date.UTC(2026, 9, 1)),
   expect: {
     totalMonths: 102.99,
