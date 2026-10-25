@@ -5,16 +5,16 @@
  * This is one module because the truth is scattered across SQL policies: staff
  * may list and read every bucket, and `staff delete candidate cvs` plus
  * `staff delete candidate media` together cover a delete in the first four, so the
- * File Manager describes each bucket by what its policies actually permit. A
- * descriptor the storage layer does not back is a promise nobody can keep, and a
- * control the page's own permission check does not cover is the same lie in the
- * other direction.
+ * File Manager describes each bucket by what its policies actually permit. What a
+ * descriptor asserts is two things at once — what the storage layer would permit,
+ * and what this portal undertakes to do — so each half says which of the two it
+ * means, because a card that blurs them promises a refusal the code never makes.
  *
  * `candidate-photos` is the fifth, and its delete policy is stricter: 043's
  * `staff delete candidate photos` wants `candidates.delete` on top of `is_staff()`,
- * where the sibling policies ask for staff alone. The control this page offers is
- * gated on `settings.manage_platform`, which the seed grants to SUPER_ADMIN — a role
- * the seed also grants `candidates.delete`.
+ * where the sibling policies ask for staff alone. The page offers Delete on
+ * `settings.manage_platform` — a permission the seed gives SUPER_ADMIN, and the
+ * seed also gives that role `candidates.delete`, so both doors open for it.
  *
  * Say plainly what the policies are worth here: no door in this app deletes a
  * `files` row through the session client. `disk-store.ts` unlinks the byte and then

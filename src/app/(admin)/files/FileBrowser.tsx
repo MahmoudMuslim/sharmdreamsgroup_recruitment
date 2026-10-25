@@ -125,8 +125,8 @@ export function FileBrowser({
    * The descriptors say which buckets a storage delete policy permits, and this
    * portal offers the control only where one exists. The offer is the page's own
    * decision: the delete itself removes the row on the direct pool, so no policy
-   * is consulted on the way out — `deletable` is a statement about the storage
-   * layer, and a bucket without one is a bucket this console will not touch.
+   * is consulted on the way out — `deletable` is a statement about the `files`
+   * policies, and a bucket without one is a bucket this console will not touch.
    */
   const canDeleteHere =
     canDelete && (listing ? (bucketInfo(listing.bucketKey)?.deletable ?? false) : false);
@@ -415,7 +415,7 @@ export function FileBrowser({
               <p className="mt-1 text-[11px] font-semibold text-brand-ink/50">
                 {bucket.deletable
                   ? bucket.deleteRequires
-                    ? `Its storage delete policy also asks for ${bucket.deleteRequires}. The button here is gated on Manage platform settings, and the row goes through the storage layer's own door.`
+                    ? `Its storage delete policy also asks for ${bucket.deleteRequires}. The button here is gated on Manage platform settings.`
                     : "Staff deletes are authorised by the storage policy. The button here is gated on Manage platform settings."
                   : "No storage delete policy for staff, so this console will not remove files from it."}
               </p>
