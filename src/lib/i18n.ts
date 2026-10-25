@@ -399,6 +399,28 @@ const en: Dictionary = {
   "privacy.decideBody":
     "A recruiter checks that the request comes from the person on the record, and the owner approves what happens next. You hear from us by email before anything is removed. If you were hired, this page does not erase your employment record.",
 
+  // ---- The offer a candidate answers from a mailed link.
+  "offer.back": "Back to careers",
+  "offer.eyebrow": "Your offer",
+  "offer.title": "Your offer",
+  "offer.intro":
+    "This page belongs to the offer we emailed you. You can accept or decline it here, until the deadline shown below.",
+  "offer.for": "Offer for",
+  "offer.deadline": "Please answer by {date}.",
+  "offer.accept": "Accept the offer",
+  "offer.decline": "Decline the offer",
+  "offer.sending": "Recording your answer…",
+  "offer.answered": "This offer has already been answered.",
+  "offer.accepted":
+    "You accepted this offer. A recruiter will confirm the next steps with you directly.",
+  "offer.declined": "You declined this offer. A recruiter will be in touch.",
+  "offer.withdrawn":
+    "This offer was withdrawn. Contact the recruiter who sent it if you have questions.",
+  "offer.expired":
+    "The deadline for this offer has passed. Contact the recruiter who sent it if you would still like to be considered.",
+  "offer.unreachable": "We could not reach the portal just now. Try again in a moment.",
+  "offer.noToken": "This page opens from the link we emailed you about your offer.",
+
   // ---- The closed enums a job row carries. A value with no key here is shown
   // as the English label instead, so an enum the build has no words for never
   // prints its own key.
@@ -787,6 +809,25 @@ const ar: Dictionary = {
   "privacy.decideTitle": "من يقرر",
   "privacy.decideBody":
     "يتحقق مسؤول التوظيف من أن الطلب صادر من صاحب السجل، ويعتمد المالك ما يحدث بعده. سنراسلك بالبريد قبل حذف أي شيء. وإن كنت قد عُيّنت، فلا تحذف هذه الصفحة سجل التوظيف.",
+  "offer.back": "العودة إلى الوظائف",
+  "offer.eyebrow": "عرض العمل",
+  "offer.title": "عرض العمل الخاص بك",
+  "offer.intro":
+    "هذه الصفحة خاصة بعرض العمل الذي أرسلناه إلى بريدك الإلكتروني. يمكنك قبوله أو رفضه من هنا حتى الموعد المبيّن أدناه.",
+  "offer.for": "عرض العمل لـ",
+  "offer.deadline": "يُرجى الرد قبل {date}.",
+  "offer.accept": "أقبل عرض العمل",
+  "offer.decline": "أرفض عرض العمل",
+  "offer.sending": "جارٍ تسجيل ردك…",
+  "offer.answered": "تم الرد على هذا العرض بالفعل.",
+  "offer.accepted":
+    "لقد قبلت هذا العرض. سيتواصل معك مسؤول التوظيف لتأكيد الخطوات التالية.",
+  "offer.declined": "لقد رفضت هذا العرض. سيتواصل معك مسؤول التوظيف.",
+  "offer.withdrawn": "سُحب هذا العرض. تواصل مع مسؤول التوظيف الذي أرسله إن كانت لديك أسئلة.",
+  "offer.expired":
+    "انتهت المهلة المحددة لهذا العرض. تواصل مع مسؤول التوظيف الذي أرسله إن كنت لا تزال ترغب في أن ننظر في ترشيحك.",
+  "offer.unreachable": "لم نتمكن من الوصول إلى البوابة الآن. حاول بعد قليل.",
+  "offer.noToken": "تُفتح هذه الصفحة من الرابط الذي أرسلناه إلى بريدك الإلكتروني عن عرض العمل.",
   "enum.hospitality": "الضيافة",
   "enum.real_estate": "العقارات",
   "enum.commercial_development": "التطوير التجاري",

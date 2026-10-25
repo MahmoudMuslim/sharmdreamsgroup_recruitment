@@ -1,4 +1,10 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  configuredLinkSecret,
+  deriveSignedLinkKey,
+  mintSignedLink,
+  verifySignedLink,
+  type SignedLinkSpec,
+} from "@/lib/signed-link";
 
 /**
  * The mailed link that opens the privacy request page.
@@ -18,31 +24,20 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  *
  * Seven days is a deliberate ceiling: long enough for somebody to open their mail
  * at the weekend, short enough that a forwarded inbox stops working quickly.
+ *
+ * The signing itself lives in `@/lib/signed-link` because the offer door mints
+ * the same shape for a different purpose. This file owns the privacy vocabulary:
+ * the context, the seven days, and the sentence a caller sees when the secret is
+ * missing.
  */
 export const PRIVACY_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-const VERSION = "v1";
-const PURPOSE = "privacy";
-const KEY_CONTEXT = "privacy-link:v1";
-
-function configuredSecret(): string {
-  const secret = (process.env.AUTH_JWT_SECRET ?? "").trim();
-  if (secret.length < 32) {
-    throw new Error(
-      "AUTH_JWT_SECRET is missing or shorter than 32 characters, so a privacy link " +
-        "cannot be signed. See docker/.env.example."
-    );
-  }
-  return secret;
-}
+const SPEC: SignedLinkSpec = { purpose: "privacy", keyContext: "privacy-link:v1" };
 
 /** The derived key, exported so a proof can forge a token for another purpose. */
 export function privacySigningKey(secret: string): Buffer {
-  return createHmac("sha256", secret).update(KEY_CONTEXT).digest();
+  return deriveSignedLinkKey(secret, SPEC.keyContext);
 }
-
-const sign = (body: string, secret: string) =>
-  createHmac("sha256", privacySigningKey(secret)).update(body).digest("base64url");
 
 export interface PrivacyTokenInput {
   applicationId: string;
@@ -62,14 +57,13 @@ export interface PrivacyTokenInput {
 export function mintPrivacyToken(input: PrivacyTokenInput): string {
   const applicationId = input.applicationId?.trim();
   if (!applicationId) throw new Error("A privacy link needs an application id.");
-  const now = input.now ?? Math.floor(Date.now() / 1000);
-  const ttl = input.ttlSeconds ?? PRIVACY_LINK_TTL_SECONDS;
-  const secret = input.secret ?? configuredSecret();
-  const body = Buffer.from(
-    JSON.stringify({ a: applicationId, e: now + ttl, p: PURPOSE })
-  ).toString("base64url");
-  const signed = `${VERSION}.${body}`;
-  return `${signed}.${sign(signed, secret)}`;
+  return mintSignedLink({
+    spec: SPEC,
+    payload: { a: applicationId },
+    ttlSeconds: input.ttlSeconds ?? PRIVACY_LINK_TTL_SECONDS,
+    now: input.now,
+    secret: input.secret ?? configuredLinkSecret("a privacy link"),
+  });
 }
 
 export type PrivacyTokenResult =
@@ -81,51 +75,25 @@ export type PrivacyTokenResult =
  *
  * The page calls this on whatever arrived in the query string, so the contract
  * is total: every input, including a number or an object, comes back as one of
- * three reasons. The signature is checked before the body is trusted or even
- * parsed, and the purpose is inside the signed body, so it cannot be added to a
- * token that was minted for something else.
+ * three reasons.
  */
 export function verifyPrivacyToken(
   token: unknown,
   options: { now?: number; secret?: string } = {}
 ): PrivacyTokenResult {
-  if (typeof token !== "string" || token.length === 0) {
+  const verified = verifySignedLink({
+    token,
+    spec: SPEC,
+    now: options.now,
+    secret: options.secret ?? configuredLinkSecret("a privacy link"),
+  });
+  if (!verified.ok) return verified;
+
+  const applicationId = verified.payload.a;
+  if (typeof applicationId !== "string" || applicationId.length === 0) {
     return { ok: false, reason: "malformed" };
   }
-  const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== VERSION) {
-    return { ok: false, reason: "malformed" };
-  }
-  const [version, body, signature] = parts;
-  const secret = options.secret ?? configuredSecret();
-
-  try {
-    const expected = Buffer.from(sign(`${version}.${body}`, secret));
-    const actual = Buffer.from(signature);
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-      return { ok: false, reason: "signature" };
-    }
-
-    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as {
-      a?: unknown;
-      e?: unknown;
-      p?: unknown;
-    };
-    if (
-      payload.p !== PURPOSE ||
-      typeof payload.a !== "string" ||
-      payload.a.length === 0 ||
-      !Number.isInteger(payload.e)
-    ) {
-      return { ok: false, reason: "malformed" };
-    }
-
-    const now = options.now ?? Math.floor(Date.now() / 1000);
-    if ((payload.e as number) <= now) return { ok: false, reason: "expired" };
-    return { ok: true, applicationId: payload.a, expiresAt: payload.e as number };
-  } catch {
-    return { ok: false, reason: "malformed" };
-  }
+  return { ok: true, applicationId, expiresAt: verified.expiresAt };
 }
 
 /** The public page's address, carrying the token. A blank origin is relative. */

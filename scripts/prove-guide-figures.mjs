@@ -131,6 +131,19 @@ const FIGURES = [
     ],
   },
   {
+    // The deadline the offer desk offers unless the recruiter names another:
+    // the manual promises the candidate 7 days, so the default is pinned.
+    route: "/candidates",
+    want: "the offer deadline default",
+    guide: /An offer defaults to ([\d,]+) days/,
+    sources: [
+      {
+        rel: "src/modules/offers/domain/offer.ts",
+        pattern: /export const OFFER_DEFAULT_DAYS = ([\d_]+);/,
+      },
+    ],
+  },
+  {
     route: "/sourcing",
     want: "the dedupe window",
     guide: /An email match is only skipped when it sits among the newest ([\d,]+) records/,

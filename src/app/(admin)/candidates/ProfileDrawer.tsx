@@ -21,6 +21,7 @@ import type { CandidateRow } from "./actions";
 import { CandidateDossier } from "./CandidateDossier";
 import { IntegrityPanel } from "./IntegrityPanel";
 import { InterviewPanel } from "./InterviewPanel";
+import { OfferPanel } from "./OfferPanel";
 import { RejectReasonForm } from "./RejectReasonForm";
 import { ArchiveButton, stageTone } from "./CandidateBrowserBits";
 import { cn } from "@/lib/utils";
@@ -338,6 +339,17 @@ export function ProfileDrawer({
                   </div>
                 )}
               </section>
+            )}
+
+            {/* The offer is worked on where the person is: the drawer at the Offer
+                stage carries the link, the deadline and the separate hire click. */}
+            {canWrite && candidate.stage === "OFFER" && (
+              <OfferPanel
+                key={`offer-${candidate.id}`}
+                applicationId={candidate.id}
+                candidateName={candidate.full_name}
+                timeZone={timeZone}
+              />
             )}
 
             {canWrite && (

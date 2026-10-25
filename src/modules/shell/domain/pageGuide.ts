@@ -148,9 +148,11 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Open the profile to edit contact details, read a stored CV into the record, revoke / extend / re-issue a test link, move stages, or archive and restore.",
       "Bulk message and Bulk move both act on the rows you tick, never on the whole filtered set; both stay disabled until a row is ticked. Download this list exports the set the filters do match, which is a different group.",
       "Bulk move sends a ticked group to one stage through the same writer a single row uses, with one reason shared across the batch when that stage is rejected.",
+      "At the Offer stage the drawer carries the Offer panel. Send the offer mails the letter with a signed link and moves the application to Offer, so someone already at that stage receives the letter a second time with the link in it. The candidate opens the link to accept or decline. An offer defaults to 7 days and takes 1–60. Withdraw closes only an offer still open, and Confirm the hire is refused until the candidate has accepted.",
     ],
     edges: [
       "The list is the newest 200 records; the rails count up to the newest 2,000 and the page says when even that stops being exact.",
+      "The offer desk arrives with db/migrations/042_offers.sql, which is authored but not applied on this database: until it is, the panel says the offers table has not been created yet and sends nothing.",
       "Archiving is refused while an assessment link is open or an interview is on the calendar. Nothing is deleted — a filed-away candidate keeps their own tracking page.",
       "One live application per person per role is what refuses a duplicate. One person may hold several live applications on different roles, and the profile page says so rather than splitting them into two candidates.",
       "A profile page is addressed by the person's oldest live record: a link naming a newer application is moved onto that address.",
