@@ -337,6 +337,69 @@ check(
     ?.hiringOrganization.sameAs === undefined
 );
 
+// ---------------------------------------------------------------------------
+// 4. The pull surfaces: what a crawler and a recruiter's upload form read.
+// ---------------------------------------------------------------------------
+const { partitionByDate, sitemapEntries, jobsCsv } = await import(
+  pathToFileURL(path.join(root, "src/modules/careers/job-distribution.ts")).href
+);
+
+check(
+  "a dated role becomes one sitemap entry",
+  sitemapEntries([role()], "https://careers.example").length === 1
+);
+const entry = sitemapEntries([role()], "https://careers.example")[0];
+check("the entry points at the canonical page", entry.url === `https://careers.example/careers/${role().id}`);
+check("and carries the date the posting carries", entry.lastModified === "2026-10-01T00:00:00.000Z");
+check("a published role changes daily", entry.changeFrequency === "daily" && entry.priority === 0.8);
+check(
+  "an undated role is left out rather than given a made-up date",
+  sitemapEntries([role({ posted_at: null, created_at: "" })], "https://careers.example").length === 0
+);
+check(
+  "the trailing slash is normalised here too",
+  sitemapEntries([role()], "https://careers.example/")[0].url === `https://careers.example/careers/${role().id}`
+);
+
+const split = partitionByDate([role(), role({ id: "undated-1", posted_at: null, created_at: "" })]);
+check("partitionByDate keeps what it can publish", split.publishable.length === 1 && split.undated.length === 1);
+check("and names the one it could not", split.undated[0] === "undated-1");
+
+const csv = jobsCsv([role()], "https://careers.example");
+const [head, row] = csv.trimEnd().split("\n");
+check(
+  "the header is the ten columns the spec names, and no salary",
+  head === "title,company,location,job_type,department,sector,description,requirements,date_posted,url"
+);
+check("every field in the row is quoted", (row.match(/"/g) ?? []).length >= 18 && row.startsWith('"Site Quantity Surveyor"'));
+check("the stored job type code travels, not a rendered label", row.includes('"FULL_TIME"'));
+check("requirements are joined with a semicolon and a space", row.includes('"5 years on site; AutoCAD"'));
+check("the url is the canonical page", row.endsWith(`"https://careers.example/careers/${role().id}"`));
+check("and the date is the publication day", row.includes('"2026-10-01T00:00:00.000Z"'));
+
+const messy = jobsCsv(
+  [role({ title: 'Big "Boss", Jr', description: "line one\nline two", requirements: [] })],
+  "https://careers.example"
+);
+check('an internal quote is doubled, not escaped with a backslash', messy.includes('"Big ""Boss"", Jr"'));
+check("a description with a newline stays inside its quoted field", messy.includes('"line one\nline two"'));
+check(
+  "one role is one record, even when its text spans lines",
+  messy.startsWith('title,company,location,job_type,department,sector,description,requirements,date_posted,url\n"Big ""Boss"", Jr"')
+);
+check(
+  "a role with no requirements files an empty cell, not the word null",
+  jobsCsv([role({ requirements: [] })], "https://careers.example").split("\n")[1].includes('""')
+);
+check(
+  "a role with no company name files an empty company cell",
+  jobsCsv([role({ company_name: null })], "https://careers.example").split("\n")[1].startsWith(
+    '"Site Quantity Surveyor","",'
+  )
+);
+check("an undated role makes no row", jobsCsv([role({ posted_at: null, created_at: "" })], "https://careers.example").trimEnd().split("\n").length === 1);
+check("no roles at all is still a header", jobsCsv([], "https://careers.example").trimEnd() === "title,company,location,job_type,department,sector,description,requirements,date_posted,url");
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
