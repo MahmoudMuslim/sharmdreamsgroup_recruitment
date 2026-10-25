@@ -253,9 +253,11 @@ function useActiveIntoView(ref: React.RefObject<HTMLDivElement | null>) {
  */
 export function AdminShell({
   user,
+  timeZone,
   children,
 }: {
   user: SessionUser;
+  timeZone: string;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -389,7 +391,7 @@ export function AdminShell({
 
       {/* ---------- Content ---------- */}
       <div className={cn("rail-shift lg:pl-[264px]", collapsed && "lg:pl-[76px]")}>
-        <AppBar user={user} onOpenNavigation={() => setOpen(true)} />
+        <AppBar user={user} timeZone={timeZone} onOpenNavigation={() => setOpen(true)} />
         <NavigationPending collapsed={collapsed} />
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-10">
           {current && (

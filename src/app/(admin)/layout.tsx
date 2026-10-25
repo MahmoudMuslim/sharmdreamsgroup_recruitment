@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
+import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { AdminShell } from "@/modules/analytics/presentation/AdminShell";
 
 /**
@@ -36,5 +37,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   if (!user) redirect("/login");
   if (!isStaff(user.role)) redirect("/portal?denied=staff-only");
 
-  return <AdminShell user={user}>{children}</AdminShell>;
+  // The bar's clock reads the group's wall clock, not the browser's, so a
+  // recruiter abroad sees the hour every booked panel was typed against. Read
+  // after the guard: a request being redirected needs no settings.
+  const timeZone = await getOrganisationTimeZone();
+
+  return (
+    <AdminShell user={user} timeZone={timeZone}>
+      {children}
+    </AdminShell>
+  );
 }

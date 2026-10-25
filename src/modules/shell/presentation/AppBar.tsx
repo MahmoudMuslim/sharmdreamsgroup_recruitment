@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
 import { AccountMenu } from "./AppBarAccount";
 import { AlertsPanel } from "./AppBarAlerts";
+import { AppBarClock } from "./AppBarClock";
 import { GuidePanel } from "./AppBarGuide";
 import { BarButton, type Panel } from "./AppBarPrimitives";
 import { SearchField } from "./AppBarSearch";
@@ -53,7 +54,8 @@ import { PALETTE_ICON, useTheme } from "./AppBarTheme";
 /* -------------------------------------------------------------------------- */
 
 /**
- * Portal-wide top bar: search, guide, attention feed, palette and account.
+ * Portal-wide top bar: the organisation's clock, search, guide, attention feed,
+ * palette and account.
  *
  * One panel opens at a time, and everything that closes one — Escape, a click
  * outside the bar, a route change — closes whichever happens to be open, so two
@@ -62,9 +64,12 @@ import { PALETTE_ICON, useTheme } from "./AppBarTheme";
 export function AppBar({
   user,
   onOpenNavigation,
+  timeZone,
 }: {
   user: SessionUser;
   onOpenNavigation: () => void;
+  /** The organisation's wall clock, read once by the layout and named by the clock's tooltip. */
+  timeZone: string;
 }) {
   const [panel, setPanel] = useState<Panel>(null);
   const [theme, setTheme] = useTheme();
@@ -227,6 +232,7 @@ export function AppBar({
       />
 
       <div className="relative flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <AppBarClock timeZone={timeZone} />
         <LiveBadge />
         <BarButton
           label="Guide"

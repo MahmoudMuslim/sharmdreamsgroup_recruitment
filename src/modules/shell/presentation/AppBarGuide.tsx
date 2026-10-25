@@ -549,6 +549,16 @@ export function GuidePanel({ open }: { open: Panel }) {
           reload now.
         </p>
         <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+          The clock at the right of this bar is the organisation&rsquo;s wall
+          clock: the date and a 12-hour time — <span className="font-semibold">1:05 PM</span>,
+          never 13:05 — ticking every second, with the zone named in its tooltip.
+          Interview slots and the dated labels on the agenda, the trail and the
+          ledger are read in that same zone, so a recruiter in another country
+          sees the hour the office keeps. On a narrow bar the clock keeps only
+          the time, and below the tablet breakpoint it steps out altogether, so
+          the search box keeps its room.
+        </p>
+        <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
           A theme is a pair: a parent — <span className="font-semibold">Base</span>{" "}
           or <span className="font-semibold">Liquid glass</span> — and a tone,{" "}
           <span className="font-semibold">Light</span> or{" "}
