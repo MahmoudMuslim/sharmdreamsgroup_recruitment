@@ -51,6 +51,11 @@ export function ReviewStep({
   questions,
   questionsError,
   answers,
+  processingConsent,
+  talentPoolConsent,
+  talentPoolMonths,
+  onProcessing,
+  onTalentPool,
   onEdit,
 }: {
   t: T;
@@ -65,6 +70,13 @@ export function ReviewStep({
   questions: PublicGateQuestion[];
   questionsError: string | null;
   answers: Record<string, string>;
+  /** The condition of the application: the action refuses without it. */
+  processingConsent: boolean;
+  /** The optional talent-pool answer, kept as its own window. */
+  talentPoolConsent: boolean;
+  talentPoolMonths: number;
+  onProcessing: (value: boolean) => void;
+  onTalentPool: (value: boolean) => void;
   onEdit: (index: number) => void;
 }) {
   const key = sourceKey(source);
@@ -163,6 +175,47 @@ export function ReviewStep({
           </ul>
         )}
       </div>
+
+      {/*
+        The two answers the application cannot infer. Processing is required
+        and ticked only by the applicant; the pool is optional and starts
+        unticked, because a box that arrives already ticked is not a choice.
+      */}
+      <fieldset className="mt-5 rounded-xl border border-brand-line px-4 py-4">
+        <legend className="px-1 text-[11px] font-bold uppercase tracking-[0.12em] text-brand-ink/40">
+          {t("apply.consentHeading")}
+        </legend>
+
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={processingConsent}
+            onChange={(event) => onProcessing(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-brand-gold-dark"
+          />
+          <span className="text-sm leading-relaxed text-brand-ink/80">
+            {t("apply.consent.processing")}
+            <span className="mt-1 block text-xs text-brand-ink/50">
+              {t("apply.consent.processingNote")}
+            </span>
+          </span>
+        </label>
+
+        <label className="mt-3 flex cursor-pointer items-start gap-2.5">
+          <input
+            type="checkbox"
+            checked={talentPoolConsent}
+            onChange={(event) => onTalentPool(event.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-brand-gold-dark"
+          />
+          <span className="text-sm leading-relaxed text-brand-ink/80">
+            {t("apply.consent.pool", { months: talentPoolMonths })}
+            <span className="mt-1 block text-xs text-brand-ink/50">
+              {t("apply.consent.poolNote")}
+            </span>
+          </span>
+        </label>
+      </fieldset>
     </div>
   );
 }

@@ -332,7 +332,17 @@ const en: Dictionary = {
     "No file attached — our screening step reads your About me from the first step.",
   "apply.reviewQuestions": "This role's questions",
   "apply.privacy":
-    "We store your details to process this application only. You get a tracking code on the next screen.",
+    "Your details are handled as our privacy notice describes, and you get a tracking code on the next screen.",
+  "apply.consentHeading": "Your privacy",
+  "apply.consent.processing":
+    "I agree that Sharm Dreams Group may process my application — my contact details, my CV and my answers — to assess me for this role.",
+  "apply.consent.processingNote": "This is needed to receive and review an application.",
+  "apply.consent.required": "Please tick the processing consent before submitting.",
+  "apply.consent.pool":
+    "Keep my details for {months} months so you can consider me for other roles.",
+  "apply.consent.poolNote":
+    "Optional. Leave it unticked and your details are kept only for this application. You can change your mind on the privacy page at any time.",
+  "apply.consent.privacyLink": "Read the privacy notice",
   "apply.doneTitle": "Application received",
   "apply.doneBody":
     "Thank you for applying for {role}. Our people team will review your application and contact you if there is a fit.",
@@ -351,6 +361,43 @@ const en: Dictionary = {
   "apply.err.fileSize": "That file is larger than {mb} MB. Please attach a smaller CV.",
   "apply.err.failed": "Something went wrong. Please try again.",
   "apply.err.upload": "We could not attach your CV. Try pasting your CV text instead.",
+  "privacy.back": "Back to careers",
+  "privacy.eyebrow": "Your data",
+  "privacy.title": "Your privacy choices",
+  "privacy.intro":
+    "You can ask for a copy of what we hold about your application, or ask us to erase it. Requests open from a private link we email to you.",
+  "privacy.signedLink": "Opened from your link",
+  "privacy.recordFor": "Application for",
+  "privacy.linkMask": "This link speaks about the record for {email}.",
+  "privacy.linkExpires": "It stops working on {date}.",
+  "privacy.chooseKind": "What would you like us to do?",
+  "privacy.kind.access": "Send me a copy",
+  "privacy.kind.accessHint": "A list of what we hold, mailed to your address.",
+  "privacy.kind.erasure": "Erase my data",
+  "privacy.kind.erasureHint": "Your name and details are removed from the record.",
+  "privacy.erasureWarning":
+    "This cannot be undone once it runs. Your application keeps its stage and score, but it will no longer name you.",
+  "privacy.noteLabel": "Anything we should know? (optional)",
+  "privacy.file": "Send request",
+  "privacy.filing": "Sending…",
+  "privacy.askLinkBody":
+    "Requests open from a link we email to the address on your application. It works for seven days and speaks about one application only.",
+  "privacy.emailLabel": "The email address you applied with",
+  "privacy.sendLink": "Email me a private link",
+  "privacy.sending": "Sending…",
+  "privacy.linkQuiet":
+    "We answer the same way whether or not that address is on file, and the link goes only to the address we stored. If nothing arrives, check the spelling and the spam folder.",
+  "privacy.unreachable": "We could not reach the portal just now. Try again in a moment.",
+  "privacy.keepTitle": "What we hold, and for how long",
+  "privacy.keepBody":
+    "We keep your application and what you attached to it for {months} months after the last activity on it. If you agreed to be considered for other roles, we keep your details for {poolMonths} months from that agreement. We warn you {warningDays} days before anything is removed, and you can ask for it sooner at any time.",
+  "privacy.noticeVersion": "Notice version {version}.",
+  "privacy.erasureTitle": "What erasing means",
+  "privacy.erasureBody":
+    "Erasing removes your name, contact details, CV, answers and notes, and deletes the files you attached. The record that an application was received and judged stays without your identity, because the group keeps its own hiring history. Someone who was hired stays on record for that reason.",
+  "privacy.decideTitle": "Who decides",
+  "privacy.decideBody":
+    "A recruiter checks that the request comes from the person on the record, and the owner approves what happens next. You hear from us by email before anything is removed. If you were hired, this page does not erase your employment record.",
 
   // ---- The closed enums a job row carries. A value with no key here is shown
   // as the English label instead, so an enum the build has no words for never
@@ -675,7 +722,17 @@ const ar: Dictionary = {
   "apply.reviewFile": "مرفق — {name}",
   "apply.reviewCvFromAbout": "لا ملف مرفق — تقرأ خطوة الفرز نبذتك من الخطوة الأولى.",
   "apply.reviewQuestions": "أسئلة هذه الوظيفة",
-  "apply.privacy": "نحفظ بياناتك لمعالجة هذا الطلب فقط. وستحصل على رمز تتبّع في الشاشة التالية.",
+  "apply.privacy":
+    "نتعامل مع بياناتك وفقاً لإشعار الخصوصية، وستحصل على رمز تتبّع في الشاشة التالية.",
+  "apply.consentHeading": "خصوصيتك",
+  "apply.consent.processing":
+    "أوافق على أن تعالج مجموعة شرم دريمز طلبي — بيانات التواصل وسيرتي الذاتية وإجاباتي — لتقييمي لهذه الوظيفة.",
+  "apply.consent.processingNote": "هذه الموافقة لازمة لاستلام طلبك ومراجعته.",
+  "apply.consent.required": "يرجى تحديد الموافقة على معالجة الطلب قبل الإرسال.",
+  "apply.consent.pool": "احتفظوا ببياناتي لمدة {months} شهراً لتنظروا في ترشيحي لأدوار أخرى.",
+  "apply.consent.poolNote":
+    "اختياري. إن تركته دون تحديد، تُحفظ بياناتك لهذا الطلب فقط. ويمكنك تغيير رأيك في صفحة الخصوصية في أي وقت.",
+  "apply.consent.privacyLink": "اقرأ إشعار الخصوصية",
   "apply.doneTitle": "وصلنا طلبك",
   "apply.doneBody":
     "شكرًا لتقديمك على {role}. سيراجع فريق الموارد البشرية طلبك ويتواصل معك إن وجد توافقاً.",
@@ -693,6 +750,43 @@ const ar: Dictionary = {
   "apply.err.fileSize": "هذا الملف أكبر من {mb} ميغابايت. أرفق ملفاً أصغر.",
   "apply.err.failed": "حدث خطأ ما. حاول مرة أخرى.",
   "apply.err.upload": "لم نتمكن من إرفاق سيرتك الذاتية. جرّب لصق نصّها بدلاً من ذلك.",
+  "privacy.back": "العودة إلى الوظائف",
+  "privacy.eyebrow": "بياناتك",
+  "privacy.title": "خياراتك في الخصوصية",
+  "privacy.intro":
+    "يمكنك طلب نسخة من البيانات التي نحتفظ بها عن طلبك، أو طلب حذفها. تُفتح الطلبات من رابط خاص نرسله إلى بريدك الإلكتروني.",
+  "privacy.signedLink": "فُتحت الصفحة من رابطك",
+  "privacy.recordFor": "طلب التقديم لـ",
+  "privacy.linkMask": "يتعلق هذا الرابط بسجل {email}.",
+  "privacy.linkExpires": "ويتوقف عن العمل في {date}.",
+  "privacy.chooseKind": "ماذا تريد أن نفعل؟",
+  "privacy.kind.access": "أرسلوا لي نسخة",
+  "privacy.kind.accessHint": "قائمة بما نحتفظ به، تُرسل إلى بريدك.",
+  "privacy.kind.erasure": "احذفوا بياناتي",
+  "privacy.kind.erasureHint": "يُزال اسمك وبياناتك من السجل.",
+  "privacy.erasureWarning":
+    "لا يمكن التراجع عن هذا بعد تنفيذه. سيحتفظ طلبك بمرحلته ودرجته، لكنه لن يحمل اسمك.",
+  "privacy.noteLabel": "هل هناك ما ينبغي أن نعرفه؟ (اختياري)",
+  "privacy.file": "إرسال الطلب",
+  "privacy.filing": "جارٍ الإرسال…",
+  "privacy.askLinkBody":
+    "تُفتح الطلبات من رابط نرسله إلى البريد الإلكتروني الموجود في طلبك. يعمل سبعة أيام ويتعلق بطلب واحد فقط.",
+  "privacy.emailLabel": "البريد الإلكتروني الذي قدّمت به",
+  "privacy.sendLink": "أرسلوا لي رابطاً خاصاً",
+  "privacy.sending": "جارٍ الإرسال…",
+  "privacy.linkQuiet":
+    "نجيب بالطريقة نفسها سواء كان هذا البريد مسجلاً أم لا، ويُرسل الرابط إلى البريد المحفوظ لدينا فقط. إن لم يصل شيء، تحقق من الإملاء ومن مجلد الرسائل غير المرغوب فيها.",
+  "privacy.unreachable": "لم نتمكن من الوصول إلى البوابة الآن. حاول بعد قليل.",
+  "privacy.keepTitle": "ما نحتفظ به، وإلى متى",
+  "privacy.keepBody":
+    "نحتفظ بطلبك وبما أرفقته به لمدة {months} شهراً بعد آخر نشاط عليه. وإن وافقت على أن ننظر في ترشيحك لأدوار أخرى، نحتفظ ببياناتك لمدة {poolMonths} شهراً من تلك الموافقة. ننبهك قبل {warningDays} يوماً من أي حذف، ويمكنك طلب الحذف قبل ذلك في أي وقت.",
+  "privacy.noticeVersion": "إصدار الإشعار {version}.",
+  "privacy.erasureTitle": "ماذا يعني الحذف",
+  "privacy.erasureBody":
+    "الحذف يزيل اسمك وبيانات التواصل وسيرتك الذاتية وإجاباتك وملاحظاتك، ويحذف الملفات التي أرفقتها. يبقى سجل استلام الطلب وتقييمه دون هويتك، لأن المجموعة تحتفظ بتاريخها الوظيفي. ومن جرى تعيينه يبقى سجله لهذا السبب.",
+  "privacy.decideTitle": "من يقرر",
+  "privacy.decideBody":
+    "يتحقق مسؤول التوظيف من أن الطلب صادر من صاحب السجل، ويعتمد المالك ما يحدث بعده. سنراسلك بالبريد قبل حذف أي شيء. وإن كنت قد عُيّنت، فلا تحذف هذه الصفحة سجل التوظيف.",
   "enum.hospitality": "الضيافة",
   "enum.real_estate": "العقارات",
   "enum.commercial_development": "التطوير التجاري",

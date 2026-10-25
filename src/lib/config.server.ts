@@ -113,4 +113,11 @@ export const cronConfig = {
   secret: optional("CRON_SECRET", process.env.CRON_SECRET),
   whatsappBatchSize: Number(process.env.WHATSAPP_CRON_BATCH_SIZE ?? 50),
   gradingBatchSize: Number(process.env.GRADING_CRON_BATCH_SIZE ?? 10),
+  /**
+   * How many records one nightly retention pass may warn and erase. Small on
+   * purpose: a first run after the switch is turned on can have a whole book
+   * due at once, and a bound keeps one tick from mailing hundreds of letters or
+   * erasing in an unbounded burst. The next tick continues where it stopped.
+   */
+  retentionBatchSize: Number(process.env.RETENTION_CRON_BATCH_SIZE ?? 25),
 } as const;

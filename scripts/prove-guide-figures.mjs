@@ -348,6 +348,23 @@ const FIGURES = [
       },
     ],
   },
+  {
+    // Both halves of the desk's read are the one limit, so the sentence names it
+    // twice and both names are checked against the constant that decides them.
+    route: "/retention",
+    want: "the desk's two reads",
+    guide: /The read is the ([\d,]+) oldest applications and the newest ([\d,]+) requests/,
+    sources: [
+      {
+        rel: "src/modules/privacy/domain/privacy.ts",
+        pattern: /export const PRIVACY_READ_LIMIT = ([\d_]+);/,
+      },
+      {
+        rel: "src/modules/privacy/domain/privacy.ts",
+        pattern: /export const PRIVACY_READ_LIMIT = ([\d_]+);/,
+      },
+    ],
+  },
 ];
 
 for (const figure of FIGURES) {

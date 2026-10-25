@@ -222,6 +222,48 @@ export const SETTINGS_SCHEMA: readonly SettingsSection[] = [
   },
 
   {
+    id: "privacy",
+    title: "Privacy & retention",
+    description: "How long a record is kept, and what a candidate may ask for.",
+    icon: "shield",
+    controls: [
+      {
+        kind: "toggle",
+        key: "privacy.retention_enabled",
+        label: "Run the retention sweep",
+        help: "Lets the daily sweep erase people from records whose window has run out. It ships off, and switching it on starts a countdown rather than erasing anything immediately: a record is due once its last activity is older than the window below. Hired records and records with an assessment or interview still open are always held. The warning letter goes out first, through the same SMTP relay as every other candidate email.",
+      },
+      {
+        kind: "number",
+        key: "privacy.retention_months",
+        label: "Retention window",
+        help: "Months after a record's last activity before it is due for erasure. Last activity is the newest of the application's own writes, a consent answer, a submitted test and an interview booking, so a candidate still in play is never counted as stale.",
+        min: 1,
+        max: 60,
+        unit: "months",
+      },
+      {
+        kind: "number",
+        key: "privacy.talent_pool_months",
+        label: "Talent-pool window",
+        help: "Months a talent-pool grant lasts, counted from the moment the candidate gave it rather than from their last activity. When it ends the record falls back to the ordinary retention window.",
+        min: 1,
+        max: 60,
+        unit: "months",
+      },
+      {
+        kind: "number",
+        key: "privacy.warning_days",
+        label: "Warning before erasure",
+        help: "Days before a record is due that the warning letter is sent. The sweep warns and does not erase on the same pass, so a candidate has at least this long to come back or ask us to keep their details.",
+        min: 1,
+        max: 90,
+        unit: "days",
+      },
+    ],
+  },
+
+  {
     id: "security",
     title: "Security",
     description: "Session, password and data-masking values.",

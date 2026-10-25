@@ -38,6 +38,8 @@ const KEY_TO_ROUTE = {
   o: "/onboarding",
   // `p` for the referral programme — the letter `r` is the reports console.
   p: "/referrals",
+  // `l` for the legal desk: every letter of the hiring consoles is spoken for.
+  l: "/retention",
   f: "/files",
   w: "/whatsapp",
   b: "/assistant",

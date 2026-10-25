@@ -27,7 +27,7 @@
  *      longer claim to watch the rest of the portal.
  *
  * The counts are arithmetic over the table in this tree, not a database probe:
- * the watch list is a static table, and the pages it names are the sixteen staff
+ * the watch list is a static table, and the pages it names are the eighteen staff
  * routes. Whether a particular database can read a watched table is a fact about
  * that database, checked by the channel's own refusal path at runtime.
  */
@@ -204,7 +204,7 @@ const oldReads = allAreas.length * STAFF_ROUTES.length;
 
 check("no page reads the whole watch list", busiest < allAreas.length, `busiest ${busiest}`);
 check("the busiest page reads six tables", busiest === 6, `got ${busiest}`);
-check("four pages poll nothing at all", silent === 4, `got ${silent}`);
+check("five pages poll nothing at all", silent === 5, `got ${silent}`);
 check(
   "the average page reads at most a quarter of the old sweep",
   reads <= oldReads * 0.25,

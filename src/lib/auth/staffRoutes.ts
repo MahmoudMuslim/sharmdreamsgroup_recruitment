@@ -39,6 +39,7 @@ export const STAFF_ROUTES = [
   "/interviews",
   "/onboarding",
   "/referrals",
+  "/retention",
   "/files",
   "/whatsapp",
   "/assistant",

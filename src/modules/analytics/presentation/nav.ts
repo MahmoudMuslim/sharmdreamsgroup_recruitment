@@ -11,6 +11,7 @@ import {
   Library,
   MessageCircle,
   Settings,
+  ShieldCheck,
   Sparkles,
   Timer,
   UserRoundPlus,
@@ -67,6 +68,7 @@ export const NAV: readonly NavItem[] = [
   { href: "/referrals", label: "Referrals", icon: Gift, hint: "Employee referral book", section: "Hiring" },
   { href: "/files", label: "Files", icon: FolderOpen, hint: "Stored CVs & recordings", section: "Records" },
   { href: "/whatsapp", label: "Outbox", icon: MessageCircle, hint: "Candidate alerts", section: "Records" },
+  { href: "/retention", label: "Privacy & retention", icon: ShieldCheck, hint: "Candidate requests and records past their window", section: "Records" },
   { href: "/assistant", label: "Assistant", icon: Sparkles, hint: "Ask, change, and revisit", section: "Portal" },
   { href: "/settings", label: "Settings", icon: Settings, hint: "Configuration & access", section: "Portal" },
 ] as const;

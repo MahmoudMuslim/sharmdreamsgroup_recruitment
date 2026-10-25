@@ -61,6 +61,7 @@ export const ACTIVITY_AREAS = [
   "master data",
   "career site",
   "referrals",
+  "privacy",
   "system",
 ] as const;
 export type ActivityArea = (typeof ACTIVITY_AREAS)[number];

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { getPublicJob } from "../../actions";
 import { readReferralCode } from "@/modules/referrals/domain/referral";
 import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
+import { readPrivacySettings } from "@/modules/privacy/infrastructure/privacyReader";
 import { translate } from "@/lib/i18n";
 import { ApplyWizard } from "./ApplyWizard";
 
@@ -57,5 +58,16 @@ export default async function ApplyPage({
   // resolves the code again before it labels anything REFERRAL.
   const referralCode = readReferralCode(query.ref);
 
-  return <ApplyWizard job={{ id: job.id, title: job.title }} referralCode={referralCode} />;
+  // The pool consent names its own window, so the review step prints the figure
+  // the sweep will act on rather than a number typed into the copy. Reading it
+  // here also means a Settings change reaches the next applicant without a build.
+  const { talentPoolMonths } = await readPrivacySettings();
+
+  return (
+    <ApplyWizard
+      job={{ id: job.id, title: job.title }}
+      referralCode={referralCode}
+      talentPoolMonths={talentPoolMonths}
+    />
+  );
 }

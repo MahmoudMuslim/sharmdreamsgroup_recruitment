@@ -31,6 +31,11 @@ import {
 } from "@/modules/careers/company-profile";
 import { creditReferral, resolveReferralCode } from "@/modules/referrals/application/credit";
 import { readReferralCode } from "@/modules/referrals/domain/referral";
+import {
+  PRIVACY_NOTICE_VERSION,
+  planApplicationConsent,
+  type ConsentEvent,
+} from "@/modules/privacy/domain/privacy";
 
 /**
  * Public careers site.
@@ -268,6 +273,12 @@ export interface ApplyInput {
   referralCode: string;
   /** Viability answers, keyed by question id. Scored against the stored options. */
   gateAnswers: Record<string, string>;
+  /**
+   * The two consent boxes. Processing is required and is enforced here as well as
+   * in the form; the talent pool is optional, and either answer is recorded.
+   */
+  processingConsent?: boolean;
+  talentPoolConsent?: boolean;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -309,6 +320,60 @@ async function activeGateQuestions(
   return { questions: parseGateRows((data ?? []) as unknown as Record<string, unknown>[]) };
 }
 
+/**
+ * Keep the applicant's consent where the desk and the notice can read it.
+ *
+ * Best-effort and after the row exists: 041 is authored but not applied, so a
+ * missing column or table costs the record of the decision, never the applicant.
+ * The events go to `candidate_consents` — the append-only history — and, as two
+ * stamps, onto the application row every list already reads. Returns whether the
+ * record was written, which the trail repeats rather than asserting a save that
+ * may not have happened.
+ */
+async function recordConsent(
+  restClient: ReturnType<typeof getServiceRestClient>,
+  applicationId: string,
+  events: readonly ConsentEvent[]
+): Promise<boolean> {
+  const processing = events.find((event) => event.purpose === "processing") ?? null;
+  const pool = events.find((event) => event.purpose === "talent_pool") ?? null;
+
+  const { error: stampError } = await restClient
+    .from("applications")
+    .update({
+      processing_consent_at: processing?.at ?? null,
+      talent_pool_consent_at: pool?.granted ? pool.at : null,
+      notice_version: PRIVACY_NOTICE_VERSION,
+    })
+    .eq("id", applicationId);
+
+  if (stampError) {
+    if (!isMissingSchemaError(stampError)) {
+      console.error("[apply] consent stamps not written:", stampError.message);
+    }
+    return false;
+  }
+
+  const { error: historyError } = await restClient.from("candidate_consents").insert(
+    events.map((event) => ({
+      application_id: applicationId,
+      purpose: event.purpose,
+      granted: event.granted,
+      notice_version: PRIVACY_NOTICE_VERSION,
+      recorded_at: event.at,
+    }))
+  );
+
+  if (historyError) {
+    if (!isMissingSchemaError(historyError)) {
+      console.error("[apply] consent history not written:", historyError.message);
+    }
+    return false;
+  }
+
+  return true;
+}
+
 export async function submitApplication(input: ApplyInput): Promise<ApplyResult> {
   const fullName = input.fullName.trim();
   const email = input.email.trim().toLowerCase();
@@ -334,6 +399,16 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
       error: "Attach a CV or paste its text so we can review your application.",
     };
   }
+
+  // Consent is a condition of taking the application, not a stored preference:
+  // without it there is no basis for processing the file at all. The same planner
+  // the form calls decides it here, so the browser's refusal and this one are one
+  // sentence. The talent pool is optional, and an answer either way is kept.
+  const consent = planApplicationConsent({
+    processing: input.processingConsent,
+    talentPool: input.talentPoolConsent,
+  });
+  if (!consent.ok) return { ok: false, error: consent.error };
 
   const restClient = getServiceRestClient();
 
@@ -493,6 +568,13 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
   const applicationId = created?.id ? String(created.id) : "";
   const trackingCode = created?.tracking_code ?? "";
 
+  // The decision is enforced above either way; this only records it, so an
+  // unapplied 041 changes whether the answer can be proved, never whether the
+  // application stands.
+  const consentRecorded = applicationId
+    ? await recordConsent(restClient, applicationId, consent.events)
+    : false;
+
   // Best-effort, and after the row exists: the application is already stored, so
   // an unapplied migration, an unknown code or a claim somebody else filed first
   // changes what is recorded here and never whether the application stands.
@@ -531,6 +613,9 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
         cv_characters: finalCvText.length,
         gate_questions: verdict.answers.length,
         failed_gate: filteredOut ? verdict.failed.length : 0,
+        notice_version: PRIVACY_NOTICE_VERSION,
+        consent_recorded: consentRecorded,
+        talent_pool: input.talentPoolConsent === true,
       },
     });
   }

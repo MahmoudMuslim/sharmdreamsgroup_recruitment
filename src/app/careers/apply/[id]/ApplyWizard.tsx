@@ -79,10 +79,13 @@ function joinWords(locale: Locale, items: string[]): string {
 export function ApplyWizard({
   job,
   referralCode,
+  talentPoolMonths,
 }: {
   job: { id: string; title: string };
   /** A staff member's code from the link, or null when the ad was opened directly. */
   referralCode: string | null;
+  /** The window the talent-pool consent would run for, read from Settings. */
+  talentPoolMonths: number;
 }) {
   const locale = usePublicLocale();
   const t = (key: string, vars?: Record<string, string | number>) =>
@@ -110,6 +113,12 @@ export function ApplyWizard({
   const [questionsError, setQuestionsError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [questionsAttempt, setQuestionsAttempt] = useState(0);
+
+  // The two answers the review step collects. Processing is a condition of the
+  // application and therefore starts unticked; the pool is a genuine choice and
+  // starts unticked too, because consent that arrives pre-given is not consent.
+  const [processingConsent, setProcessingConsent] = useState(false);
+  const [talentPoolConsent, setTalentPoolConsent] = useState(false);
 
   const [filling, setFilling] = useState(false);
   const [fillNote, setFillNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
@@ -416,6 +425,8 @@ export function ApplyWizard({
         source,
         referralCode: referralCode ?? "",
         gateAnswers: answers,
+        processingConsent,
+        talentPoolConsent,
       });
 
       if (response.ok) {
@@ -469,6 +480,10 @@ export function ApplyWizard({
         return questions.some((question) => !answers[question.id])
           ? t("apply.err.questions")
           : null;
+      case "review":
+        // The talent pool is optional; processing consent is the condition of the
+        // application, and the action refuses without it as well.
+        return processingConsent ? null : t("apply.consent.required");
       default:
         return null;
     }
@@ -636,6 +651,14 @@ export function ApplyWizard({
             questions={questions ?? []}
             questionsError={questionsError}
             answers={answers}
+            processingConsent={processingConsent}
+            talentPoolConsent={talentPoolConsent}
+            talentPoolMonths={talentPoolMonths}
+            onProcessing={(value) => {
+              setProcessingConsent(value);
+              setStepError(null);
+            }}
+            onTalentPool={setTalentPoolConsent}
             onEdit={goTo}
           />
         )}
@@ -681,7 +704,13 @@ export function ApplyWizard({
 
         {here === "review" && (
           <p className="mt-3 text-center text-[11px] leading-relaxed text-brand-ink/45">
-            {t("apply.privacy")}
+            {t("apply.privacy")}{" "}
+            <Link
+              href="/privacy"
+              className="font-bold text-brand-gold-dark underline-offset-2 hover:underline"
+            >
+              {t("apply.consent.privacyLink")}
+            </Link>
           </p>
         )}
       </div>

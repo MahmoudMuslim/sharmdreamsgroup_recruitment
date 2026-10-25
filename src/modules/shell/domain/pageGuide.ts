@@ -390,6 +390,31 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
   },
 
+  "/retention": {
+    purpose: "The privacy desk: what people have asked us to show or erase, and which old records are inside a retention window.",
+    shows: [
+      "Five tiles for the request book — received, verified, approved, executed and declined — then three for the records being weighed: due, in their warning window, and held.",
+      "Every request with its kind, the address it came from, who verified or decided it and when, and the one next step the request allows.",
+      "The oldest records first with their last activity, the date their window ends, whether they have been warned, and the reason a record is held — hired, an open assessment, or an open interview.",
+      "The settings in force beneath the tiles: whether the sweep runs, the ordinary window, the talent-pool window and how many days a warning runs ahead of erasure.",
+    ],
+    use: [
+      "Verify a received request: the desk looks for an application under that address and links it to the request, so the owner knows whose record is being answered.",
+      "Approve or decline a verified request. Only the owner can do this, because it decides what happens next.",
+      "Execute an approved request. An access request mails a bounded copy of what is held; an erasure requests a second click, then removes the stored files and blanks the person's data while keeping the application row, its stage, its scores and its dates.",
+      "Read the retention rows while the sweep runs on its own schedule — this screen never erases a record by hand.",
+    ],
+    edges: [
+      "The book arrives with db/migrations/041_privacy.sql, which is authored but not applied on this database, so the request tiles and the retention rows say the table is missing rather than showing an empty desk. Nothing on the candidate side depends on it: consent is enforced in code, so an applicant is never refused because the migration is unapplied.",
+      "A recruiter or the owner opens the desk; a hiring manager is refused. A recruiter may verify and read, but approving, declining and executing are the owner's, and the database's own UPDATE policy repeats those gates so a direct call cannot skip them.",
+      "The sweep ships off. Even switched on, it warns a record first, waits at least the stated warning days, and only then erases it; a record already due on the first run is warned, not deleted.",
+      "Hired records are never erased, and neither are records with an assessment or interview still open. A talent-pool grant holds its own window counted from the grant, and the longer of the two windows decides.",
+      "The read is the 500 oldest applications and the newest 500 requests; the page says when a list stopped, and the counts are then of the rows shown.",
+      "A write never names the requester in the change trail. The trail outlives an erasure, so it records the request id, the kind and the state — never the person.",
+      "The figures here are populations: how many requests sit in each state and how many records are due, warned or held right now. Nothing is a rate.",
+    ],
+  },
+
   "/files": {
     purpose: "What the portal has stored, which record owns each file, and what it weighs.",
     shows: [
