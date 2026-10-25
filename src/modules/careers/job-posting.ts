@@ -18,7 +18,6 @@ import type { PublicCompany } from "@/modules/careers/company-profile";
  * prints. So the country in a posting is the group's own country — a named
  * constant, not a per-role fact.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- the role's `jobLocation`/`applicantLocationRequirements` (Task 3+) are the only consumers; kept here so the constant lives with the mapping it belongs to.
 const COUNTRY = "Egypt";
 
 /** The employer a role falls back to when nothing above it names one. */
@@ -113,6 +112,66 @@ function employerName(
   );
 }
 
+/** Google names a contract; the platform's column mixes contracts with arrangements. */
+const EMPLOYMENT_TYPES: Record<string, string> = {
+  FULL_TIME: "FULL_TIME",
+  PART_TIME: "PART_TIME",
+  CONTRACT: "CONTRACTOR",
+  INTERNSHIP: "INTERN",
+};
+
+/**
+ * Codes that describe where the work happens, not what the worker is on.
+ *
+ * The platform's own column default is FULL_TIME, but a recruiter who filed
+ * "Remote" replaced that default rather than added to it, so the contract is
+ * genuinely unrecorded. Stating FULL_TIME would be a claim the record does not
+ * make; the arrangement is not lost — `jobLocationType` is where Google looks
+ * for it.
+ */
+const ARRANGEMENT_ONLY = new Set(["REMOTE", "HYBRID"]);
+
+/** A role is remote when the text says so or the code says so. */
+function isRemote(job: PublicJob): boolean {
+  return /\bremote\b/i.test(job.location) || job.employment_type.trim().toUpperCase() === "REMOTE";
+}
+
+function employmentTypeOf(job: PublicJob): string | null {
+  const code = job.employment_type.trim().toUpperCase();
+  if (!code) return null;
+  const mapped = EMPLOYMENT_TYPES[code];
+  if (mapped) return mapped;
+  return ARRANGEMENT_ONLY.has(code) ? null : "OTHER";
+}
+
+function locationTypeOf(job: PublicJob): string | null {
+  if (isRemote(job)) return "TELECOMMUTE";
+  return job.employment_type.trim().toUpperCase() === "HYBRID" ? "HYBRID" : null;
+}
+
+/**
+ * The recruiter's own words, or null when they name no place.
+ *
+ * "Remote" alone is an arrangement; "Cairo / Remote" still names an office. The
+ * text is returned whole rather than re-spelled, because `location` is free text
+ * and editing it would invent an address nobody filed.
+ */
+function placeOf(location: string): string | null {
+  const words = location.split(/\s+/).filter(Boolean);
+  return words.some((word) => !/^remote[.,!?]$/i.test(word)) ? location.trim() : null;
+}
+
+function placeValue(locality: string): Place {
+  return {
+    "@type": "Place",
+    address: {
+      "@type": "PostalAddress",
+      addressLocality: locality,
+      addressCountry: { "@type": "Country", name: COUNTRY },
+    },
+  };
+}
+
 /**
  * The role as Google wants it, or null when the record cannot make a valid posting.
  *
@@ -149,5 +208,36 @@ export function jobPosting(
   const closing = trimmed(job.closing_at);
   if (closing) posting.validThrough = closing;
 
+  const employmentType = employmentTypeOf(job);
+  if (employmentType) posting.employmentType = employmentType;
+
+  const locationType = locationTypeOf(job);
+  if (locationType) posting.jobLocationType = locationType;
+
+  const locality = placeOf(job.location);
+  // A remote role keeps an office only when its text names one, and always names
+  // the countries an applicant may live in — Google requires at least one.
+  if (locality) posting.jobLocation = [placeValue(locality)];
+  if (isRemote(job)) {
+    posting.applicantLocationRequirements = [{ "@type": "Country", name: COUNTRY }];
+  }
+
   return posting;
+}
+
+/**
+ * The exact string that goes inside the `<script type="application/ld+json">` tag.
+ *
+ * Next's own recipe (`node_modules/next/dist/docs/01-app/02-guides/json-ld.md`):
+ * every `<` becomes the JSON escape, which parses back to `<` in the object and
+ * cannot close the tag the description opened. The proof script parses the same
+ * string this returns, so the escaping is tested rather than asserted.
+ *
+ * `baseSalary` is absent by design. Google wants a `MonetaryAmount` with a
+ * `unitText` — YEAR, MONTH, HOUR — and the platform records an amount and a
+ * currency and no period. A `salary_period` column would make this emittable
+ * honestly; that column is not in this slice.
+ */
+export function jobPostingJsonLd(posting: JobPosting): string {
+  return JSON.stringify(posting).replace(/</g, "\\u003c");
 }

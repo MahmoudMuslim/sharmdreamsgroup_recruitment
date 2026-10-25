@@ -206,6 +206,137 @@ check(
 );
 check("the group literal is the one the spec names", GROUP_NAME === "Sharm Dreams Group");
 
+// ---------------------------------------------------------------------------
+// 3. Employment and place: where the platform's vocabulary and Google's diverge.
+// ---------------------------------------------------------------------------
+const { jobPostingJsonLd } = await import(
+  pathToFileURL(path.join(root, "src/modules/careers/job-posting.ts")).href
+);
+
+const post = (over) => jobPosting(role(over), company(), { baseUrl: "https://careers.example" });
+
+// Google names a contract; the column mixes contracts with arrangements.
+check("FULL_TIME is the same word both sides", post({ employment_type: "FULL_TIME" })?.employmentType === "FULL_TIME");
+check("PART_TIME is the same word both sides", post({ employment_type: "PART_TIME" })?.employmentType === "PART_TIME");
+check("CONTRACT becomes Google's CONTRACTOR", post({ employment_type: "CONTRACT" })?.employmentType === "CONTRACTOR");
+check("INTERNSHIP becomes Google's INTERN", post({ employment_type: "INTERNSHIP" })?.employmentType === "INTERN");
+check(
+  "REMOTE names an arrangement, not a contract, so it says nothing",
+  post({ employment_type: "REMOTE" })?.employmentType === undefined
+);
+check(
+  "HYBRID names an arrangement, not a contract, so it says nothing",
+  post({ employment_type: "HYBRID" })?.employmentType === undefined
+);
+check(
+  "a code the CHECK constraint never saw is OTHER, not a guess",
+  post({ employment_type: "FREELANCE_ROTATION" })?.employmentType === "OTHER"
+);
+check("an empty job type says nothing", post({ employment_type: "" })?.employmentType === undefined);
+
+// Place.
+const place = post({})?.jobLocation?.[0];
+check(
+  "a role with a place carries it as a PostalAddress",
+  place?.address?.addressLocality === "Sharm El Sheikh" &&
+    place?.address?.addressCountry?.name === "Egypt"
+);
+check("a role that is not remote files no location type", post({})?.jobLocationType === undefined);
+
+// Remote: the arrangement is carried by jobLocationType, which is where Google looks.
+const remoteByType = post({ employment_type: "REMOTE", location: "" });
+check("a remote role files TELECOMMUTE", remoteByType?.jobLocationType === "TELECOMMUTE");
+check("a remote role with no place files no jobLocation", remoteByType?.jobLocation === undefined);
+check(
+  "a remote role names the countries an applicant may live in",
+  remoteByType?.applicantLocationRequirements?.[0]?.name === "Egypt"
+);
+const remoteByText = post({ employment_type: "FULL_TIME", location: "Remote" });
+check("the word remote in the location text is enough to be remote", remoteByText?.jobLocationType === "TELECOMMUTE");
+check("and it loses no employment contract for it", remoteByText?.employmentType === "FULL_TIME");
+const remoteWithOffice = post({ employment_type: "REMOTE", location: "Cairo / Remote" });
+check(
+  "a remote role that also names a real place keeps the hiring office",
+  remoteWithOffice?.jobLocation?.[0]?.address?.addressLocality === "Cairo / Remote" &&
+    remoteWithOffice?.jobLocationType === "TELECOMMUTE"
+);
+const hybrid = post({ employment_type: "HYBRID", location: "Sharm El Sheikh" });
+check("a hybrid role files HYBRID and keeps its place", hybrid?.jobLocationType === "HYBRID" && hybrid?.jobLocation?.length === 1);
+check(
+  "a non-remote role files no applicant location requirements",
+  post({})?.applicantLocationRequirements === undefined
+);
+check(
+  "a role with an empty location is not a crash, just an addressless posting",
+  post({ location: "   " })?.jobLocation === undefined
+);
+
+// baseSalary is deliberately absent: the platform stores an amount and a
+// currency and no period, so any unitText would be invented.
+check(
+  "no salary is emitted, because no period is recorded",
+  post({ min_salary_usd: 40000, max_salary_usd: 60000 })?.baseSalary === undefined
+);
+
+// The string that goes inside the <script> tag.
+const ld = jobPostingJsonLd(
+  jobPosting(role({ description: "We are hiring. </script><script>alert(1)</script>" }), company(), {
+    baseUrl: "https://careers.example",
+  })
+);
+check("the escape is the JSON escape, not a stripped tag", ld.includes("\\u003c/script>"));
+check("no literal angle bracket survives to close the tag", !ld.includes("<"));
+check(
+  "what the browser parses back is the text the author typed",
+  JSON.parse(ld).description === "We are hiring. </script><script>alert(1)</script>"
+);
+check(
+  "a posting with no angle brackets round-trips untouched",
+  JSON.parse(jobPostingJsonLd(post({}))).title === "Site Quantity Surveyor"
+);
+
+// --- P1: the employer chain's first step, pinned only by a fixture that
+// separates the two names. Every fixture above passes the same string to
+// `company.name` and `job.company_name`, so a posting that read the role's
+// join instead of its company row — or read an untrimmed row — stayed green.
+check(
+  "the company row is named over the role's own company name",
+  jobPosting(role(), company({ name: "Dreams Development Holdings" }), {
+    baseUrl: "https://careers.example",
+  })?.hiringOrganization.name === "Dreams Development Holdings"
+);
+check(
+  "a company row that is only spaces falls to the role's own company name",
+  jobPosting(role(), company({ name: "  " }), { baseUrl: "https://careers.example" })
+    ?.hiringOrganization.name === "Dreams Development"
+);
+
+// --- P2: the type discriminators spec §2 marks required. A posting Google
+// refuses outright would otherwise stay suite-green.
+const published = JSON.parse(jobPostingJsonLd(post({})));
+check("the published posting names the schema.org context", published["@context"] === "https://schema.org");
+check("and its own type in full", published["@type"] === "JobPosting");
+check("the employer is typed an Organization", published.hiringOrganization["@type"] === "Organization");
+check("the identifier is typed a PropertyValue", published.identifier["@type"] === "PropertyValue");
+check(
+  "the place is typed through its address to its country",
+  published.jobLocation[0]["@type"] === "Place" &&
+    published.jobLocation[0].address["@type"] === "PostalAddress" &&
+    published.jobLocation[0].address.addressCountry["@type"] === "Country"
+);
+check(
+  "a remote role's applicant requirement is typed a Country",
+  JSON.parse(jobPostingJsonLd(remoteByType)).applicantLocationRequirements[0]["@type"] === "Country"
+);
+
+// --- P3: blank-as-absent off the date path. A whitespace-only website would
+// publish `sameAs: "  "` to all five surfaces.
+check(
+  "a company whose website is only spaces files no sameAs",
+  jobPosting(role(), company({ website: "   " }), { baseUrl: "https://careers.example" })
+    ?.hiringOrganization.sameAs === undefined
+);
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);
