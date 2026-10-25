@@ -4,18 +4,27 @@
  *
  * This is one module because the truth is scattered across SQL policies: staff
  * may list and read every bucket, and `staff delete candidate cvs` plus
- * `staff delete candidate media` together authorise a delete in the first four —
- * so the File Manager offers the control everywhere it can actually be honoured.
- * A button the database would refuse is a false promise, and a policy added
- * here without the SQL behind it is the same lie in the other direction.
+ * `staff delete candidate media` together cover a delete in the first four, so the
+ * File Manager describes each bucket by what its policies actually permit. A
+ * descriptor the storage layer does not back is a promise nobody can keep, and a
+ * control the page's own permission check does not cover is the same lie in the
+ * other direction.
  *
- * `candidate-photos` is the fifth, and its delete is stricter: 043's
+ * `candidate-photos` is the fifth, and its delete policy is stricter: 043's
  * `staff delete candidate photos` wants `candidates.delete` on top of `is_staff()`,
- * where the sibling policies ask for staff alone. The control is still honoured at
- * the only door that offers it — this page gates delete on
- * `settings.manage_platform`, which the seed grants to SUPER_ADMIN, the one role
- * the seed also grants `candidates.delete`. Until 043 is applied the bucket holds
- * no objects, so the stricter rule has nothing to refuse.
+ * where the sibling policies ask for staff alone. The control this page offers is
+ * gated on `settings.manage_platform`, which the seed grants to SUPER_ADMIN — a role
+ * the seed also grants `candidates.delete`.
+ *
+ * Say plainly what the policies are worth here: no door in this app deletes a
+ * `files` row through the session client. `disk-store.ts` unlinks the byte and then
+ * deletes the row on the direct database pool, so the File Manager, the record's
+ * attachment door and the erasure engine all step around RLS on the way out — the
+ * button's real gate is the page's own permission check. The browse is the one
+ * `files` query that does travel through REST, so the read and list policies are
+ * live. `deletable` and `deleteRequires` describe the SQL, never this portal's
+ * enforcement, and they are the answer the storage layer gives the day a delete
+ * does go through a session.
  */
 
 export type BucketKey =
@@ -35,8 +44,10 @@ export interface BucketInfo {
   /**
    * What the delete policy asks for beyond `is_staff()`, when it asks for more.
    *
-   * The card's one-line promise is only honest if it names the extra condition;
-   * a session that is staff but lacks it would see a button the database refuses.
+   * Purely a reading of the SQL. Every delete this app offers removes the row on
+   * the direct pool, so this never decides what a staff session sees or is refused
+   * today; it is the condition that would refuse one if its delete went through
+   * the session client, which is the door the browse already uses.
    */
   deleteRequires: string | null;
 }

@@ -122,8 +122,11 @@ export function FileBrowser({
   const sizeHere = listing?.files.reduce((sum, file) => sum + (file.bytes ?? 0), 0) ?? 0;
   const trail = listing ? splitPrefix(listing.prefix) : [];
   /*
-   * A delete control the database would refuse is a false promise, so it only
-   * appears in buckets whose storage policy actually permits staff deletes.
+   * The descriptors say which buckets a storage delete policy permits, and this
+   * portal offers the control only where one exists. The offer is the page's own
+   * decision: the delete itself removes the row on the direct pool, so no policy
+   * is consulted on the way out — `deletable` is a statement about the storage
+   * layer, and a bucket without one is a bucket this console will not touch.
    */
   const canDeleteHere =
     canDelete && (listing ? (bucketInfo(listing.bucketKey)?.deletable ?? false) : false);
@@ -412,9 +415,9 @@ export function FileBrowser({
               <p className="mt-1 text-[11px] font-semibold text-brand-ink/50">
                 {bucket.deletable
                   ? bucket.deleteRequires
-                    ? `Deletes here also need ${bucket.deleteRequires}, so Delete appears only for a session holding it.`
-                    : "Staff deletes are authorised by the storage policy, so Delete appears here."
-                  : "No storage delete policy for staff, so this portal cannot remove files from it."}
+                    ? `Its storage delete policy also asks for ${bucket.deleteRequires}. The button here is gated on Manage platform settings, and the row goes through the storage layer's own door.`
+                    : "Staff deletes are authorised by the storage policy. The button here is gated on Manage platform settings."
+                  : "No storage delete policy for staff, so this console will not remove files from it."}
               </p>
             </li>
           ))}
