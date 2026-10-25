@@ -26,9 +26,10 @@ import {
  *
  * An offer is a document with a deadline, so this panel reads the newest one and
  * shows what can still be done to it. Issuing mails the letter with the answer
- * link and records the offer; withdrawing touches only an offer still open;
- * confirming a hire is offered only once the candidate has accepted, and it uses
- * the same stage writer the pipeline does.
+ * link and records the offer; withdrawing closes an unanswered offer, including
+ * one past its deadline, which the record still counts as open; confirming a hire
+ * is offered only once the candidate has accepted, and it uses the same stage
+ * writer the pipeline does.
  *
  * The panel lives at the OFFER stage because that is where an offer is worked on.
  * A recruiter moves the candidate there with the pipeline chips first; issuing
@@ -99,7 +100,7 @@ export function OfferPanel({
     try {
       const result = await withdrawOffer({ applicationId, offerId });
       if (result.ok) {
-        setDone("The open offer was withdrawn. The candidate is still in the pipeline.");
+        setDone("The offer was withdrawn. The candidate is still in the pipeline.");
         await load();
         router.refresh();
       } else {
@@ -180,11 +181,11 @@ export function OfferPanel({
                   ? "The candidate declined. The stage stays at Offer — archive, reject or reopen with the pipeline chips as you see fit."
                   : standing === "withdrawn"
                     ? "This offer was withdrawn. Sending a new one below opens a fresh deadline."
-                    : "The deadline has passed without an answer. Nothing was decided for anyone."}
+                    : "The deadline has passed without an answer. Nothing was decided for anyone. Close the expired offer to clear the record before a new one can be sent."}
           </p>
 
           <div className="mt-3 flex flex-wrap gap-2">
-            {standing === "open" && (
+            {standing === "open" || standing === "expired" ? (
               <Button
                 type="button"
                 variant="outline"
@@ -197,9 +198,9 @@ export function OfferPanel({
                 ) : (
                   <Undo2 className="h-3.5 w-3.5" aria-hidden />
                 )}
-                Withdraw the offer
+                {standing === "expired" ? "Close the expired offer" : "Withdraw the offer"}
               </Button>
-            )}
+            ) : null}
             {standing === "accepted" && (
               <Button
                 type="button"
@@ -225,7 +226,8 @@ export function OfferPanel({
         </p>
       )}
 
-      {panel?.ok && (standing === null || standing === "withdrawn" || standing === "expired") && (
+      {panel?.ok &&
+        (standing === null || standing === "withdrawn" || standing === "declined") && (
         <div className="mt-3 flex items-end gap-2">
           <Field
             label="Answer deadline (days)"
@@ -261,7 +263,8 @@ export function OfferPanel({
       {panel?.ok && standing === "declined" && (
         <p className="mt-3 flex items-center gap-1.5 text-[11px] text-brand-ink/40">
           <XCircle className="h-3.5 w-3.5" aria-hidden />
-          A declined offer is not re-sent from here; reopen the conversation first.
+          A new offer starts a fresh deadline and its own answer link; the declined one stays on
+          the record.
         </p>
       )}
 

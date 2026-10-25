@@ -359,7 +359,9 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
   const actions = read("src/app/(admin)/candidates/offer-actions.ts");
   check("the desk actions exist", actions.length > 0, "offer-actions.ts");
 
-  const sentAt = actions.indexOf("sendOfferNotice");
+  // Anchor on the call, not the import: the import sits above every guard and
+  // would make any "mailed before" ordering pass without reading the body.
+  const sentAt = actions.indexOf("await sendOfferNotice");
   const insertedAt = actions.indexOf('.from("application_offers")');
   check(
     "the link is mailed before the offer is written",
@@ -395,6 +397,21 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
     "the panel says when the table is not there",
     actions,
     "OFFER_SCHEMA_NOTE"
+  );
+
+  // The unique index counts an expired SENT row as open, so a new letter must
+  // never be mailed over one: the send would succeed and the insert would fail.
+  const expiredAt = actions.indexOf("past its deadline");
+  const acceptedAt = actions.indexOf("already accepted");
+  check(
+    "issuing refuses an expired offer that is still on the record",
+    expiredAt !== -1 && sentAt !== -1 && expiredAt < sentAt,
+    "the expired check must run before sendOfferNotice"
+  );
+  check(
+    "issuing refuses an offer the candidate already accepted",
+    acceptedAt !== -1 && sentAt !== -1 && acceptedAt < sentAt,
+    "the accepted check must run before sendOfferNotice"
   );
 }
 
@@ -497,6 +514,32 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
 
   has("the Guide describes issuing an offer", guide, "Offer panel");
   has("the Guide states the default deadline", guide, "An offer defaults to 7 days");
+  has(
+    "the Guide says an expired offer must be closed before a new one",
+    guide,
+    "including one past its deadline"
+  );
+  has(
+    "the Guide says a declined offer can be followed by a new one",
+    guide,
+    "A declined offer can be followed by a new one"
+  );
+
+  has(
+    "the panel lets an expired offer be closed",
+    panel,
+    'standing === "open" || standing === "expired"'
+  );
+  has(
+    "the panel offers a new offer after a decline",
+    panel,
+    'standing === null || standing === "withdrawn" || standing === "declined"'
+  );
+  has(
+    "the declined note names the fresh deadline",
+    panel,
+    "starts a fresh deadline"
+  );
 
   const EN_KEYS = [
     "offer.title",

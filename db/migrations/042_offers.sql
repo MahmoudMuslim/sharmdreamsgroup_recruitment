@@ -87,6 +87,11 @@ comment on column public.application_offers.decided_at is
  * links with different deadlines, and the desk no single answer to act on. The
  * partial index leaves answered and withdrawn rows alone, so a declined offer
  * can be followed by a new one with new terms.
+ *
+ * Expiry is a reading of `expires_at`, not a state: this index counts a SENT row
+ * exactly the same after its deadline has passed. The desk therefore closes an
+ * expired offer before it mails another — otherwise the letter would go out and
+ * this index would refuse the row behind it.
  */
 create unique index if not exists application_offers_one_open_idx
   on public.application_offers (application_id)

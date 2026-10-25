@@ -98,9 +98,11 @@ export interface OfferActionResult {
  * here with nothing stored — rather than a row whose link never reached anybody.
  *
  * A second open offer is refused before the send, because the unique index would
- * refuse the write afterwards and the letter would already be on its way. The
- * read is not a lock; if two recruiters cross anyway, the index still holds and
- * the loser is told the truth instead of being shown a success.
+ * refuse the write afterwards and the letter would already be on its way. So is
+ * an expired one, which the index still counts as open, and an accepted one,
+ * which has an answer to act on instead. The read is not a lock; if two
+ * recruiters cross anyway, the index still holds and the loser is told the truth
+ * instead of being shown a success.
  */
 export async function issueOffer(input: {
   applicationId: string;
@@ -140,17 +142,39 @@ export async function issueOffer(input: {
 
   const existing = await readLatestOffer(input.applicationId);
   if (!existing.ok) return { ok: false, error: existing.error };
-  if (
-    existing.offer &&
-    offerStanding({
-      state: existing.offer.state,
-      expiresAt: existing.offer.expiresAt,
-      now: issuedAt,
-    }) === "open"
-  ) {
+
+  // The open-offer index counts a SENT row even once its deadline has passed,
+  // because expiry is a reading of `expires_at`, not a state. Every standing
+  // that still holds the index is therefore refused here, before the letter is
+  // mailed — otherwise the send succeeds and the insert fails behind it.
+  const standing: OfferStanding | null = existing.offer
+    ? offerStanding({
+        state: existing.offer.state,
+        expiresAt: existing.offer.expiresAt,
+        now: issuedAt,
+      })
+    : null;
+
+  if (standing === "open") {
     return {
       ok: false,
       error: "An offer is already open on this application. Withdraw it before sending another.",
+    };
+  }
+
+  if (standing === "expired") {
+    return {
+      ok: false,
+      error:
+        "The last offer is past its deadline but still on the record, so a new one cannot be filed beside it. Close the expired offer first.",
+    };
+  }
+
+  if (standing === "accepted") {
+    return {
+      ok: false,
+      error:
+        "The candidate already accepted this offer. Confirm the hire rather than sending another letter.",
     };
   }
 
@@ -224,9 +248,11 @@ export async function issueOffer(input: {
 }
 
 /**
- * Withdraws the one offer that is still open. An answered offer is a fact and is
- * not withdrawn here; a candidate who has already said yes needs a conversation,
- * not a silent state change underneath their answer.
+ * Withdraws an offer nobody has answered. The row is still SENT after its
+ * deadline passes, so this door also closes an expired offer — which it must,
+ * because the open-offer index keeps counting it until it is closed. An answered
+ * offer is a fact and is not withdrawn here; a candidate who has already said yes
+ * needs a conversation, not a silent state change underneath their answer.
  */
 export async function withdrawOffer(input: {
   applicationId: string;
@@ -259,7 +285,7 @@ export async function withdrawOffer(input: {
   if (!Array.isArray(data) || data.length === 0) {
     return {
       ok: false,
-      error: "That offer is no longer open — it may already have been answered or withdrawn.",
+      error: "That offer has already been answered or withdrawn.",
     };
   }
 
@@ -268,7 +294,7 @@ export async function withdrawOffer(input: {
     action: "offer_withdrawn",
     entity: "application",
     entityId: input.applicationId,
-    summary: "Withdrew an open offer",
+    summary: "Closed an unanswered offer",
     detail: { offer_id: input.offerId },
   });
 
