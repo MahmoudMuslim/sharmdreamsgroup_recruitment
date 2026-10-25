@@ -39,6 +39,10 @@ import type { PoolClient } from "pg";
 import { consentPurposeFor, listCollectionFor, personField } from "../domain/person-fields.ts";
 import { PERSON_LIMITS } from "../domain/person-limits.ts";
 import { NOTICE_VERSION, noticeFor } from "../domain/person-notice.ts";
+// Pure domain module (no database, no `server-only`), so it is safe as a STATIC
+// import under `node --experimental-strip-types` — the Step 5 probe never runs
+// the code below that reaches the REST seam, but it does import this file.
+import { isMissingSchemaError } from "../../interviews/domain/interviewScorecard.ts";
 
 // ————————————————————————————————————————————————————————————————————————————
 // §3.1 / §3.3 — the vocabulary and the ladder
@@ -88,6 +92,23 @@ export const PRECEDENCE: Record<Door, number> = {
   cv_extraction: 10, // a model reading a document
   system: 5, // backfill, retention
 };
+
+/**
+ * The doors a person stands behind (spec §3.3): a value reached the profile
+ * through a human hand at one of these. `cv_extraction` is a model reading a
+ * document and `system` is a backfill — neither is a human set, so neither may
+ * freeze `date_of_birth` against every staff door below `privacy_page`.
+ */
+const HUMAN_DOORS: ReadonlySet<Door> = new Set<Door>([
+  "hand_record",
+  "profile_edit",
+  "candidate_form",
+  "privacy_page",
+]);
+
+function isHumanDoor(door: string | null): door is Door {
+  return door !== null && HUMAN_DOORS.has(door as Door);
+}
 
 // ————————————————————————————————————————————————————————————————————————————
 // collection metadata — how a `list` key's items become rows
@@ -189,7 +210,54 @@ const COLLECTIONS: Record<PersonCollection, CollectionMeta> = {
 };
 
 /**
- * The collection tables carry a `source` CHECK of only
+ * The §11 text ceilings that apply to a collection item's columns, keyed by
+ * column name and sourced only from `PERSON_LIMITS` (§11: "every ceiling is a
+ * name enforced before write"). Numeric/date/boolean columns (years, gpa, month,
+ * sequence, ongoing, date_of_birth) carry no `text_*` ceiling and are absent
+ * here; the store's own type and CHECK reject them. The identity columns the DDL
+ * bounds *tighter* than any named ceiling (`skill` 80, `name` 120) still fail the
+ * writer's whole-change catch if they exceed 160 — see the report's concern.
+ */
+const ITEM_TEXT_LIMITS: Record<string, number> = {
+  // 500 — text_as_written: as_written, honors, note
+  as_written: PERSON_LIMITS.text_as_written,
+  honors: PERSON_LIMITS.text_as_written,
+  note: PERSON_LIMITS.text_as_written,
+  // 2000 — text_long: duties
+  duties: PERSON_LIMITS.text_long,
+  // 160 — text_name_employer_institution: every short, name-like field
+  level: PERSON_LIMITS.text_name_employer_institution,
+  institution: PERSON_LIMITS.text_name_employer_institution,
+  degree: PERSON_LIMITS.text_name_employer_institution,
+  field: PERSON_LIMITS.text_name_employer_institution,
+  major: PERSON_LIMITS.text_name_employer_institution,
+  minor: PERSON_LIMITS.text_name_employer_institution,
+  employer: PERSON_LIMITS.text_name_employer_institution,
+  title: PERSON_LIMITS.text_name_employer_institution,
+  location: PERSON_LIMITS.text_name_employer_institution,
+  employment_type: PERSON_LIMITS.text_name_employer_institution,
+  language: PERSON_LIMITS.text_name_employer_institution,
+  proficiency: PERSON_LIMITS.text_name_employer_institution,
+  skill: PERSON_LIMITS.text_name_employer_institution,
+  issuer: PERSON_LIMITS.text_name_employer_institution,
+  name: PERSON_LIMITS.text_name_employer_institution,
+  relationship: PERSON_LIMITS.text_name_employer_institution,
+  phone: PERSON_LIMITS.text_name_employer_institution,
+};
+
+/** The first over-long text field on an offered item, or null when every field fits. */
+function overLongItemField(
+  item: Record<string, unknown>
+): { column: string; length: number; limit: number } | null {
+  for (const [column, value] of Object.entries(item)) {
+    const limit = ITEM_TEXT_LIMITS[column];
+    if (limit === undefined || typeof value !== "string") continue;
+    if (value.length > limit) return { column, length: value.length, limit };
+  }
+  return null;
+}
+
+/**
  * ('hand_record','cv_extraction','candidate_form'). Every staff door
  * (hand_record, profile_edit, privacy_page, system) is a human at a desk, so it
  * records as `hand_record`; the model records as `cv_extraction`; the anonymous
@@ -227,7 +295,41 @@ function toEventText(value: unknown): string | null {
 // the client seams, reached lazily so the probe can import this file
 // ————————————————————————————————————————————————————————————————————————————
 
-type ServiceClient = { from(table: string): any }; // eslint-disable-line @typescript-eslint/no-explicit-any
+/**
+ * The shape a consent read answers, mirroring `Result<unknown>` in
+ * `src/lib/rest/client.ts` (`{ data, error, count }`) for the one projection this
+ * module reads. `error` is kept in the shape so a missing `person_consents`
+ * table (043 not applied) is *seen* rather than silently read as no-consent.
+ */
+interface ConsentRow {
+  granted: boolean;
+  notice_version: string;
+}
+
+interface ConsentReadResult {
+  data: ConsentRow | null;
+  error: { code?: string | null; message?: string | null } | null;
+  count: number | null;
+}
+
+/**
+ * The narrow, honest view of the service REST seam used by the consent read —
+ * the chain `.from(t).select(…).eq(…).eq(…).order(…).limit(1).single()` and
+ * nothing more. Declaring only what is actually called keeps this file free of
+ * `any`; the runtime object is the full `getServiceRestClient()`, reached only
+ * through `await import()` inside a function body the probe never executes.
+ */
+interface ConsentQueryBuilder {
+  select(columns: string): ConsentQueryBuilder;
+  eq(column: string, value: unknown): ConsentQueryBuilder;
+  order(column: string, options?: { ascending?: boolean }): ConsentQueryBuilder;
+  limit(value: number): ConsentQueryBuilder;
+  single(): PromiseLike<ConsentReadResult>;
+}
+
+interface ServiceClient {
+  from(table: string): ConsentQueryBuilder;
+}
 
 async function serviceRest(): Promise<ServiceClient> {
   const { getServiceRestClient } = await import("@/lib/data-api/service");
@@ -254,10 +356,14 @@ export async function defaultConsentChecker(): Promise<ConsentChecker> {
   return {
     async consentAlive(personId: string, group: PersonFieldGroup): Promise<boolean> {
       const client = await serviceRest();
-      // Newest row wins; `.single()` on a zero-row read answers {data:null,
-      // error:PGRST116}, and `!!data` below turns that into `false` — an absent
-      // consent is refused, exactly as spec §3.2 requires.
-      const { data } = await client
+      // Newest row wins. A zero-row read answers {data:null, error:PGRST116} and
+      // `!!row` below turns that into `false` — an absent consent is refused,
+      // exactly as spec §3.2 requires. But a MISSING TABLE (043 not applied) is
+      // not an absent consent: it answers a schema error, and reading that as
+      // `false` would refuse every field for the wrong reason. §9 says the door
+      // must instead name the migration, so the read throws and the loop's catch
+      // turns it into an `error` result the door can name as "needs 043."
+      const { data, error } = await client
         .from("person_consents")
         .select("granted, notice_version")
         .eq("person_id", personId)
@@ -265,7 +371,12 @@ export async function defaultConsentChecker(): Promise<ConsentChecker> {
         .order("recorded_at", { ascending: false })
         .limit(1)
         .single();
-      const row = data as { granted: boolean; notice_version: string } | null;
+      if (isMissingSchemaError(error)) {
+        throw new Error(
+          "the person_consents table is missing — Person details need migration 043.",
+        );
+      }
+      const row = data;
       return !!row && row.granted === true && row.notice_version === NOTICE_VERSION;
     },
   };
@@ -313,7 +424,10 @@ export async function applyPersonField(
     try {
       alive = await consent.consentAlive(personId, group);
     } catch (cause) {
-      return { error: `consent read failed for person ${personId}: ${(cause as Error).message}` };
+      // An infrastructure failure the loop cannot isolate to one field — but the
+      // fields already written this call are not thrown away (§3.1 "refusals come
+      // back named"): fold the accumulated result and let the door name the error.
+      return { applied, refused, conflicts, personId, error: `consent read failed for person ${personId}: ${(cause as Error).message}` };
     }
     if (!alive) {
       refused.push({
@@ -350,7 +464,9 @@ export async function applyPersonField(
     try {
       client = await connect();
     } catch (cause) {
-      return { error: `person writer could not reach the database: ${(cause as Error).message}` };
+      // The pool being unreachable is an infrastructure failure, not one field's
+      // refusal — but the fields already written are kept (I-4): fold, do not drop.
+      return { applied, refused, conflicts, personId, error: `person writer could not reach the database: ${(cause as Error).message}` };
     }
     try {
       await client.query("begin");
@@ -407,12 +523,19 @@ async function applyScalar(
   const heldDoor = await readHeldDoor(client, personId, field.key);
   const incoming = PRECEDENCE[change.door];
 
-  // date_of_birth: immutable once any human set it — only privacy_page may change it,
-  // and the event below is what records the reason (the trail names door + actor).
-  if (field.key === "date_of_birth" && heldValue !== null && change.door !== "privacy_page") {
+  // date_of_birth: immutable once any HUMAN set it (spec §3.3) — the bend binds
+  // only when the held value itself came from a human door. A cv_extraction
+  // reading or a system backfill must not freeze the field against every staff
+  // door below privacy_page; for those the ordinary ladder rules apply below.
+  if (
+    field.key === "date_of_birth" &&
+    heldValue !== null &&
+    isHumanDoor(heldDoor) &&
+    change.door !== "privacy_page"
+  ) {
     return {
       kind: "refused",
-      reason: "Date of birth is immutable once set. Only the privacy page may change it, and the reason is recorded there.",
+      reason: "Date of birth is immutable once a human set it. Only the privacy page may change it, and the reason is recorded there.",
     };
   }
 
@@ -443,6 +566,13 @@ async function applyScalar(
  * so a second "React" is refused and *named* (naming both the held and incoming
  * spellings) before the case-folded unique index would refuse it. Enforces the
  * `PERSON_LIMITS` row cap for the collection.
+ *
+ * Two ladder/limit bends ride on top of the append: a `cv_extraction` may fill an
+ * EMPTY collection only and never append to one a human already filled (spec §3.3
+ * / §5, the list form of "fill an empty field, never overwrite a recruiter's
+ * row"); and each item's text fields are checked against their §11 ceiling before
+ * insert, so an over-long item is refused-and-named rather than throwing a DDL
+ * CHECK and rolling back the whole batch.
  */
 async function applyList(
   client: PoolClient,
@@ -468,6 +598,17 @@ async function applyList(
     if (k !== null) heldKeys.add(k);
   }
 
+  // cv_extraction may fill an EMPTY collection and nothing else, ever. §3.3 pins
+  // it to "fill a field that is empty" (spec:764) and §5 applies that to lists:
+  // "an extracted skill may fill a person's empty list and may never overwrite
+  // the row a recruiter typed" (spec:844/859). A non-empty collection is not an
+  // empty field, so a model's append conflicts and the held rows win — the exact
+  // shape applyScalar returns for a scalar.
+  if (change.door === "cv_extraction" && existing.length > 0) {
+    const heldDoor = await readHeldDoor(client, personId, field.key);
+    return { kind: "conflict", held: heldDoor ?? "an already-filled collection" };
+  }
+
   if (existing.length >= meta.cap) {
     return { kind: "refused", reason: `${field.label} already holds ${existing.length} rows, the limit is ${meta.cap}; nothing more can be appended.` };
   }
@@ -482,6 +623,18 @@ async function applyList(
       continue;
     }
     const obj = item as Record<string, unknown>;
+
+    // §11: every ceiling is a name enforced before write. An over-long item is
+    // refused-and-named here rather than left to throw a DDL CHECK inside the
+    // transaction and roll back the whole batch.
+    const over = overLongItemField(obj);
+    if (over) {
+      dupReasons.push(
+        `${describeItem(field.key, obj)} has a ${over.column} of ${over.length} characters; the limit is ${over.limit}. The writer refuses at the cap and never truncates, so this item was not appended.`
+      );
+      continue;
+    }
+
     const id = meta.identity(obj);
     if (id !== null) {
       const prior = heldKeys.has(id) ? "an item already on the person" : batchKeys.has(id) ? "an earlier item in this same write" : null;
@@ -627,11 +780,13 @@ export type MergeResult =
  * Merge one person into another (spec §3.4). Refuses while any non-null scalar
  * registry value differs between the two profiles and returns the list — a
  * silent merge is a person whose children's names came from the wrong profile
- * and nobody can say when. When nothing differs it moves the address rows, the
- * append-only collection rows and the 1:1 fact rows, repoints
- * `applications.person_id`, and stamps a `field_group = 'merge'` event on both
- * sides. All of that is one transaction: a partial merge is the exact thing this
- * function exists to prevent.
+ * and nobody can say when. When nothing differs, §3.4 enumerates exactly three
+ * moves: relocate the `person_emails` rows, repoint `applications.person_id`,
+ * and stamp a `field_group = 'merge'` event on both sides. All of that is one
+ * transaction: a partial merge is the exact thing this function exists to prevent.
+ * The append-only collections and the 1:1 health/family rows are deliberately NOT
+ * re-parented — that path is not in §3.4, and this docstring describes only what
+ * the code below does.
  */
 export async function mergePersons(fromPersonId: string, toPersonId: string): Promise<MergeResult> {
   if (!fromPersonId || !toPersonId || fromPersonId === toPersonId) {
@@ -676,21 +831,15 @@ export async function mergePersons(fromPersonId: string, toPersonId: string): Pr
       return { merged: false, conflicts };
     }
 
-    // Relocate the append-only collections and the 1:1 tables, then the identity,
-    // then the applications link. A 1:1 row that exists on both sides cannot move
-    // (PK clash); the target's row is kept and the source's dropped, since the
-    // comparison above proved they do not conflict on any differing value.
-    for (const collection of Object.keys(COLLECTIONS) as PersonCollection[]) {
-      const meta = COLLECTIONS[collection];
-      await client.query(`update ${meta.table} set person_id = $1 where person_id = $2`, [toPersonId, fromPersonId]);
-    }
-
+    // §3.4 enumerates exactly three moves and no more: relocate the person_emails
+    // rows, repoint applications.person_id, stamp the merge events. The append-only
+    // collections and the 1:1 health/family rows are NOT re-parented here — that
+    // path is not in §3.4, and silently re-parenting a person's education, skills
+    // or consent history is the half-write this function exists to prevent.
+    //
     // moved address rows must not fight the target's primary (one primary per person).
     await client.query(`update person_emails set is_primary = false where person_id = $2`, [toPersonId, fromPersonId]);
     await client.query(`update person_emails set person_id = $1 where person_id = $2`, [toPersonId, fromPersonId]);
-
-    // consents follow the person.
-    await client.query(`update person_consents set person_id = $1 where person_id = $2`, [toPersonId, fromPersonId]);
 
     await client.query(`update applications set person_id = $1 where person_id = $2`, [toPersonId, fromPersonId]);
 
