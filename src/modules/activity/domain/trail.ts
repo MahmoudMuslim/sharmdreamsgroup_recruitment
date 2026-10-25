@@ -86,6 +86,7 @@ export const ACTIVITY_ENTITIES = [
   "model routing",
   "onboarding plan",
   "onboarding task",
+  "person health data",
   "position",
   "prospect",
   "referral",
