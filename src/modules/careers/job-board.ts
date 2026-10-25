@@ -34,6 +34,17 @@ export interface PublicJob {
   salary_currency: string;
   company_id: string | null;
   company_name: string | null;
+  /**
+   * The day the role went public, or null for a row that reached PUBLISHED
+   * before the column was stamped. `posted_at` is set on the first publication
+   * and never removed (`src/app/(admin)/jobs/job-actions.ts`), so a published
+   * role normally has a real day; `created_at` is the fallback, and a role with
+   * neither is not dated enough to publish to the world.
+   */
+  posted_at: string | null;
+  created_at: string;
+  /** The advertised closing date, or null. Feeds `validThrough` only. */
+  closing_at: string | null;
 }
 
 /**

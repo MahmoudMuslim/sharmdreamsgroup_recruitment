@@ -46,7 +46,7 @@ import {
 // public board on every database that has not run it. It is read in its own
 // probe below, which degrades to "not recorded".
 const JOB_COLUMNS =
-  "id, title, tenant_id, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, tenants_and_companies(name)";
+  "id, title, tenant_id, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, created_at, tenants_and_companies(name)";
 
 /**
  * The company columns the public page prints, and nothing else.
@@ -95,6 +95,12 @@ function toJob(row: Record<string, unknown>, experienceLevel: string | null = nu
     company_id:
       typeof row.tenant_id === "string" && row.tenant_id ? row.tenant_id : null,
     company_name: companyName(row.tenants_and_companies),
+    // `created_at` is `not null` in the database, so an absent value means the
+    // read shape changed, not that the row has no date; it becomes "" and
+    // `dateOf` treats "" as absent. The other two are nullable columns.
+    posted_at: typeof row.posted_at === "string" ? row.posted_at : null,
+    created_at: String(row.created_at ?? ""),
+    closing_at: typeof row.closing_at === "string" ? row.closing_at : null,
   };
 }
 
