@@ -8,6 +8,7 @@ import { displayName, isStoredPath } from "@/lib/files/paths";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { stageLabel, formatBytes } from "@/lib/utils";
 import { recordActivity } from "@/modules/activity/application/record";
+import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import { LIST_LIMIT, WALK_LIST_LIMIT, listObjects, objectMetadata } from "./storage-list";
 import {
   BUCKETS,
@@ -286,11 +287,11 @@ async function walk(
 /**
  * Which record references each listed key.
  *
- * `applications.cv_file_path`, `candidate_responses.video_path` and
- * `application_attachments.storage_path` are the only columns in this schema that
- * hold storage keys, so a file with no row naming it — one uploaded before its
- * table existed, or dropped in from outside the portal — genuinely reports as
- * unlinked.
+ * `applications.cv_file_path`, `candidate_responses.video_path`,
+ * `application_attachments.storage_path` and `person_profiles.photo_path` are the
+ * only columns in this schema that hold storage keys, so a file with no row
+ * naming it — one uploaded before its table existed, or dropped in from outside
+ * the portal — genuinely reports as unlinked.
  */
 async function ownersFor(
   restClient: ServerClient,
@@ -361,6 +362,38 @@ async function ownersFor(
         ]
           .filter(Boolean)
           .join(" · "),
+      });
+    }
+    return { map, loaded: true };
+  }
+
+  // The person spine: one photo per profile, and the profile names it itself.
+  if (bucket === "candidate-photos") {
+    const { data, error } = await restClient
+      .from("person_profiles")
+      .select("photo_path, legal_name")
+      .not("photo_path", "is", "null")
+      .limit(1000);
+
+    if (error) {
+      // `loaded: false` is the whole answer the view can carry, so both failures
+      // report it. The split is only about the log: 043 is authored but applied
+      // per-file by the owner, so a missing `person_profiles` is an expected
+      // state, not a fault worth printing on every browse of the bucket.
+      if (!isMissingSchemaError(error)) {
+        console.error("[files] photo lookup failed:", error.message);
+      }
+      return { map, loaded: false };
+    }
+
+    for (const entry of data ?? []) {
+      const row = asRecord(entry);
+      const path = stringOrNull(row.photo_path);
+      if (!path) continue;
+
+      map.set(path, {
+        label: stringOrNull(row.legal_name) ?? "Unnamed person",
+        detail: "Profile photo",
       });
     }
     return { map, loaded: true };
@@ -536,10 +569,18 @@ async function unlinkReference(
 
   const target =
     bucket === "candidate-cvs"
-      ? { table: "applications", column: "cv_file_path" }
+      ? { table: "applications", column: "cv_file_path", clear: { cv_file_path: null } }
       : bucket === "candidate-videos"
-        ? { table: "candidate_responses", column: "video_path" }
-        : null;
+        ? { table: "candidate_responses", column: "video_path", clear: { video_path: null } }
+        : bucket === "candidate-photos"
+          ? {
+              table: "person_profiles",
+              column: "photo_path",
+              // The mime travels with the byte. Clearing only the path would leave
+              // the profile describing an image type for a file that is gone.
+              clear: { photo_path: null, photo_mime: null },
+            }
+          : null;
   if (!target) return null;
 
   const { count } = await restClient
@@ -550,7 +591,7 @@ async function unlinkReference(
 
   const { data, error } = await restClient
     .from(target.table)
-    .update({ [target.column]: null })
+    .update(target.clear)
     .eq(target.column, path)
     .select("id");
 

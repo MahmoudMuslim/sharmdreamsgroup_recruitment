@@ -45,7 +45,7 @@ export function displayName(pathValue: string): string {
  * right for a key and irrelevant to a single name, and it permits dots, which
  * would let `..` be a bucket.
  *
- * Nothing here checks the value against the four known buckets. That list is
+ * Nothing here checks the value against the known buckets. That list is
  * `storageConfig.buckets` and `BUCKETS` in the admin module, and this file is
  * deliberately kept free of both so that `scripts/prove-file-paths.mjs` can
  * import it in plain Node and so a byte-level path decision never depends on a

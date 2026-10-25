@@ -14,9 +14,9 @@ function optional(value: string | undefined, fallback = ""): string {
 }
 
 /**
- * The four names below are the buckets *we* run, not the vendor's: they are the
+ * The names below are the buckets *we* run, not the vendor's: they are the
  * directories under `UPLOADS_ROOT` that `src/lib/files/paths.ts` resolves within,
- * and the value a `files` row stores in its `bucket` column. Those four strings are
+ * and the value a `files` row stores in its `bucket` column. Those strings are
  * load-bearing, not cosmetic: `db/schema.sql` hard-codes the same spellings inside
  * the storage RLS policies, so a value here that drifts makes a working upload fail
  * its policy check — and `candidateCvs` keeps the exact spelling the "Track your
@@ -28,6 +28,7 @@ export const storageConfig = {
     candidateAudio: "candidate-audio",
     resumes: "resumes",
     candidateCvs: "candidate-cvs",
+    candidatePhotos: "candidate-photos",
   },
 } as const;
 

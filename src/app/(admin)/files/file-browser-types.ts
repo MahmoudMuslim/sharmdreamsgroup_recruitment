@@ -8,9 +8,17 @@
  * the File Manager offers the control everywhere it can actually be honoured.
  * A button the database would refuse is a false promise, and a policy added
  * here without the SQL behind it is the same lie in the other direction.
+ *
+ * `candidate-photos` is the fifth, and its SQL is 043's `staff delete candidate
+ * photos`, which asks for `candidates.delete` the same way its siblings do.
  */
 
-export type BucketKey = "candidate-cvs" | "candidate-videos" | "candidate-audio" | "resumes";
+export type BucketKey =
+  | "candidate-cvs"
+  | "candidate-videos"
+  | "candidate-audio"
+  | "resumes"
+  | "candidate-photos";
 
 export interface BucketInfo {
   key: BucketKey;
@@ -48,6 +56,13 @@ export const BUCKETS: readonly BucketInfo[] = [
     label: "Voice notes",
     writtenBy:
       "The same door on the candidate record (POST /api/files/upload). WebM, MP3 or M4A up to 20 MB, owned by an application_attachments row.",
+    deletable: true,
+  },
+  {
+    key: "candidate-photos",
+    label: "Candidate photos",
+    writtenBy:
+      "Staff from the record door (043), stored as persons/<person id>/<random id>.<ext> and named by person_profiles.photo_path; in a later slice (044) applicants upload here from the public form.",
     deletable: true,
   },
 ] as const;
