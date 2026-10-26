@@ -288,13 +288,67 @@ async function walk(
 }
 
 /**
+ * The second door into the CV and photo buckets.
+ *
+ * A public application form writes its byte to the same bucket an application's
+ * CV or a person's photo lives in, but names it in `application_form_files`
+ * instead of a column on either record, so the reads above cannot see it. Keys
+ * already mapped stay mapped: the record the bucket has always reported wins.
+ *
+ * Rows still carrying `application_id null` are deliberately left out. Nobody
+ * has filed them yet, so "unlinked" is the true answer until the orphan pass
+ * removes them (spec §4) — and that pass reads only this table's own rows.
+ */
+async function mapFormUploads(
+  restClient: ServerClient,
+  bucket: BucketKey,
+  map: Map<string, FileOwner>
+): Promise<boolean> {
+  if (bucket !== "candidate-cvs" && bucket !== "candidate-photos") return true;
+
+  const { data, error } = await restClient
+    .from("application_form_files")
+    .select("storage_path, field_key, applications(full_name)")
+    .eq("bucket", bucket)
+    .not("application_id", "is", null)
+    .limit(1000);
+
+  if (error) {
+    // 044 is applied per file by the owner, so a database without this table is
+    // an expected state rather than a fault — and a table that is not there
+    // cannot name a byte, so the rows above are still the whole answer.
+    if (isMissingSchemaError(error)) return true;
+    console.error("[files] form upload lookup failed:", error.message);
+    return false;
+  }
+
+  for (const entry of data ?? []) {
+    const row = asRecord(entry);
+    const path = stringOrNull(row.storage_path);
+    if (!path || map.has(path)) continue;
+
+    const application = asRecord(
+      Array.isArray(row.applications) ? row.applications[0] : row.applications
+    );
+
+    map.set(path, {
+      label: stringOrNull(application.full_name) ?? "Unnamed applicant",
+      detail: `Form upload · ${stringOrNull(row.field_key) ?? "file"}`,
+    });
+  }
+
+  return true;
+}
+
+/**
  * Which record references each listed key.
  *
  * `applications.cv_file_path`, `candidate_responses.video_path`,
- * `application_attachments.storage_path` and `person_profiles.photo_path` are the
- * only columns in this schema that hold storage keys, so a file with no row
- * naming it — one uploaded before its table existed, or dropped in from outside
- * the portal — genuinely reports as unlinked.
+ * `application_attachments.storage_path` and `person_profiles.photo_path` hold
+ * the keys a staff door writes. A public application form writes a second kind
+ * of row into the same two buckets — an `application_form_files` ledger row that
+ * names the applicant through `application_id` — so a byte with none of these
+ * rows *and* no ledger row is the one that genuinely reports as unlinked.
  */
 async function ownersFor(
   restClient: ServerClient,
@@ -330,7 +384,7 @@ async function ownersFor(
           .join(" · "),
       });
     }
-    return { map, loaded: true };
+    return { map, loaded: await mapFormUploads(restClient, bucket, map) };
   }
 
   if (bucket === "candidate-videos") {
@@ -399,7 +453,7 @@ async function ownersFor(
         detail: "Profile photo",
       });
     }
-    return { map, loaded: true };
+    return { map, loaded: await mapFormUploads(restClient, bucket, map) };
   }
 
   // Staff resumes and voice notes: one row per object, on the candidate it was added to.
@@ -461,13 +515,14 @@ async function fileOwner(
       .maybeSingle();
 
     const row = asRecord(data);
-    return row.id
-      ? {
-          name: stringOrNull(row.full_name) ?? "Unnamed applicant",
-          applicationId: String(row.id),
-          personId: null,
-        }
-      : null;
+    if (row.id) {
+      return {
+        name: stringOrNull(row.full_name) ?? "Unnamed applicant",
+        applicationId: String(row.id),
+        personId: null,
+      };
+    }
+    return formUploadOwner(restClient, bucket, path);
   }
 
   if (bucket === "candidate-videos") {
@@ -504,13 +559,14 @@ async function fileOwner(
       .maybeSingle();
 
     const row = asRecord(data);
-    return row.id
-      ? {
-          name: stringOrNull(row.legal_name) ?? "Unnamed person",
-          applicationId: null,
-          personId: String(row.id),
-        }
-      : null;
+    if (row.id) {
+      return {
+        name: stringOrNull(row.legal_name) ?? "Unnamed person",
+        applicationId: null,
+        personId: String(row.id),
+      };
+    }
+    return formUploadOwner(restClient, bucket, path);
   }
 
   const { data } = await restClient
@@ -526,6 +582,45 @@ async function fileOwner(
   return {
     name: stringOrNull(application.full_name) ?? "Unnamed applicant",
     applicationId: String(row.application_id),
+    personId: null,
+  };
+}
+
+/**
+ * The applicant a form upload belongs to.
+ *
+ * A public form's file names its applicant through `application_form_files`
+ * rather than through a column on the application, so the column reads above
+ * find nothing for a form-only byte. The trail must still name the applicant:
+ * "no candidate record pointing at it" would be false while the ledger row
+ * points at one.
+ */
+async function formUploadOwner(
+  restClient: ServerClient,
+  bucket: BucketKey,
+  path: string
+): Promise<{ name: string; applicationId: string | null; personId: string | null } | null> {
+  if (bucket !== "candidate-cvs" && bucket !== "candidate-photos") return null;
+
+  const { data, error } = await restClient
+    .from("application_form_files")
+    .select("application_id, applications(id, full_name)")
+    .eq("bucket", bucket)
+    .eq("storage_path", path)
+    .limit(1);
+
+  // A missing 044 ledger cannot name anybody.
+  if (error) return null;
+
+  const row = asRecord((data ?? [])[0]);
+  const application = asRecord(
+    Array.isArray(row.applications) ? row.applications[0] : row.applications
+  );
+  if (!application.id) return null;
+
+  return {
+    name: stringOrNull(application.full_name) ?? "Unnamed applicant",
+    applicationId: String(application.id),
     personId: null,
   };
 }
@@ -566,6 +661,35 @@ async function recordDeletion(
 }
 
 /**
+ * Deletes the form ledger rows that name a stored object.
+ *
+ * A form field keeps its byte in the same bucket as an application's CV or a
+ * person's photo, but names it in its own ledger rather than a column on either
+ * record, so the column clear below cannot reach it. A ledger row left behind
+ * would offer a download of an object that is gone.
+ */
+async function deleteFormUploadRows(
+  restClient: ServerClient,
+  bucket: BucketKey,
+  path: string
+): Promise<string | null> {
+  if (bucket !== "candidate-cvs" && bucket !== "candidate-photos") return null;
+
+  const { error } = await restClient
+    .from("application_form_files")
+    .delete()
+    .eq("bucket", bucket)
+    .eq("storage_path", path);
+
+  if (!error) return null;
+  // Without 044 there are no form rows to leave behind.
+  if (isMissingSchemaError(error)) return null;
+
+  console.error("[files] form upload unlink failed:", error.message);
+  return "The file was deleted, but a form upload record still names it.";
+}
+
+/**
  * Clears the database pointer to a storage key that no longer resolves.
  *
  * Deleting the object is only half of deletion: a row still naming it offers a
@@ -573,7 +697,9 @@ async function recordDeletion(
  * bucket in this portal is now referenced by a table, so every one of them can be
  * unlinked here — a CV or a pitch has its column cleared, a profile photo clears
  * its column together with the mime that described it, and a staff upload loses
- * the attachment row that existed only to name it.
+ * the attachment row that existed only to name it. A form field's byte is named
+ * by its own ledger row, which is deleted alongside whichever column it shares a
+ * bucket with.
  */
 async function unlinkReference(
   restClient: ServerClient,
@@ -616,11 +742,17 @@ async function unlinkReference(
           : null;
   if (!target) return null;
 
+  // A form field's byte is named by its own ledger row rather than by the
+  // column below, and the column may name nothing at all: a form-only file has
+  // no `cv_file_path` to clear. The ledger is cleared first so it happens even
+  // when the column read finds no row.
+  const formNote = await deleteFormUploadRows(restClient, bucket, path);
+
   const { count } = await restClient
     .from(target.table)
     .select("id", { count: "exact", head: true })
     .eq(target.column, path);
-  if (!count) return null;
+  if (!count) return formNote;
 
   const { data, error } = await restClient
     .from(target.table)
@@ -633,7 +765,7 @@ async function unlinkReference(
     return `The file was deleted, but ${count} record${count === 1 ? "" : "s"} still name${count === 1 ? "s" : ""} it — open the candidate to clear the link.`;
   }
 
-  return null;
+  return formNote;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
