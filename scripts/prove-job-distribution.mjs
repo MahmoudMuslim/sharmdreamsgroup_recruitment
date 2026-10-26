@@ -538,11 +538,25 @@ check(
 // The refusal list is read from the route tree rather than repeated: this file
 // is the one place a crawler is told what is not for it, and a page added without
 // a matching line here would be indexed the day it ships.
+// The count is derived from the tree, not written down: a hard-coded figure
+// goes stale the day a staff page is added, and a stale pin that still passes
+// because the check was skipped is worse than no pin. The tree is the source
+// of truth and the guard is measured against it.
 const staffPaths = readdirSync(path.join(root, "src/app/(admin)"), { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(path.join(root, "src/app/(admin)", entry.name, "page.tsx")))
   .map((entry) => `/${entry.name}`)
   .sort();
-check("the staff tree is the eighteen pages the guard counts", staffPaths.length === 18, staffPaths.join(", "));
+const staffRoutesBlock = /export const STAFF_ROUTES\s*=\s*\[([\s\S]*?)\]\s*as const/.exec(
+  read("src/lib/auth/staffRoutes.ts")
+);
+const guardedPaths = staffRoutesBlock
+  ? [...staffRoutesBlock[1].matchAll(/"(\/[^"]*)"/g)].map((match) => match[1]).sort()
+  : [];
+check(
+  `the staff tree is the ${staffPaths.length} pages the guard counts`,
+  staffPaths.join(",") === guardedPaths.join(","),
+  `tree ${staffPaths.join(", ")} / guard ${guardedPaths.join(", ")}`
+);
 for (const staffPath of staffPaths) {
   check(`the robots file refuses ${staffPath}`, robotText.includes(`"${staffPath}"`));
 }

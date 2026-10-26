@@ -23,6 +23,7 @@ const DISALLOW = [
   "/assistant",
   "/dashboard",
   "/files",
+  "/forms",
   "/onboarding",
   "/questions",
   "/referrals",

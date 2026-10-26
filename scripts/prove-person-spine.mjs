@@ -858,7 +858,7 @@ const check18 = () => {
 };
 
 // ---------------------------------------------------------------------------
-// 19. Erasure collects four kinds of byte, and the fourth is the photo.
+// 19. Erasure collects five kinds of byte, and the fifth is the photo.
 // ---------------------------------------------------------------------------
 const check19 = () => {
   const problems = [];
@@ -866,7 +866,7 @@ const check19 = () => {
   const collect = blockBetween(source, "async function collectPaths(", "\n/**");
   if (!collect) return verdict(["collectPaths is missing"]);
   const calls = [...collect.matchAll(/\baddPath\(\s*paths,/g)].length;
-  if (calls !== 4) problems.push(`collectPaths makes ${calls} addPath(paths, …) calls, expected 4`);
+  if (calls !== 5) problems.push(`collectPaths makes ${calls} addPath(paths, …) calls, expected 5`);
   if (!source.includes('const PHOTO_BUCKET = "candidate-photos";')) {
     problems.push("PHOTO_BUCKET is not candidate-photos");
   }
@@ -944,7 +944,7 @@ const check21 = () => {
 };
 
 // ---------------------------------------------------------------------------
-// 22. The staff route surface still holds the same eighteen pages.
+// 22. The staff route surface still holds the same nineteen pages.
 // ---------------------------------------------------------------------------
 const check22 = () => {
   const problems = [];
@@ -957,7 +957,7 @@ const check22 = () => {
   const routesBlock = /export const STAFF_ROUTES[\s\S]*?=\s*\[([\s\S]*?)\]\s*as const/.exec(routesSource);
   const guarded = routesBlock ? [...routesBlock[1].matchAll(/"(\/[^"]*)"/g)].map((m) => m[1]) : [];
 
-  if (pages.length !== 18) problems.push(`the admin tree renders ${pages.length} pages, expected 18`);
+  if (pages.length !== 19) problems.push(`the admin tree renders ${pages.length} pages, expected 19`);
   const pageSet = new Set(pages);
   const guardedSet = new Set(guarded);
   if (guarded.length !== guardedSet.size) problems.push("STAFF_ROUTES lists a path twice");
@@ -989,10 +989,10 @@ const CHECKS = [
   ["16. The backfill skips erased addresses", check16],
   ["17. No Tier-3 key in screening, reports or assessments", check17],
   ["18. No photo_path in the candidate portal or assessments", check18],
-  ["19. Erasure collects four kinds of byte", check19],
+  ["19. Erasure collects five kinds of byte", check19],
   ["20. candidate-photos reaches every surface", check20],
   ["21. Three permission keys, seeds and grants", check21],
-  ["22. The staff route surface is still eighteen pages", check22],
+  ["22. The staff route surface is still nineteen pages", check22],
 ];
 
 // ---------------------------------------------------------------------------
