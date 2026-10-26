@@ -693,6 +693,83 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         </Card>
       </div>
 
+      {/* ---- The application form and the person store ---- */}
+      <Card>
+        <CardHeader
+          title="Forms & profiles"
+          meta="What the form saved and what the person store holds · counts only"
+        />
+        <div className="p-5 sm:p-6">
+          {analytics.form_coverage.applications === 0 &&
+          analytics.form_coverage.unclaimed_uploads === 0 ? (
+            <EmptyState
+              title="Nothing has been filed yet"
+              description="The form figures count live applications; the person store fills as candidates and recruiters add profiles."
+            />
+          ) : (
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {[
+                {
+                  label: "Applications",
+                  value: analytics.form_coverage.applications,
+                  hint: "Live applications",
+                },
+                {
+                  label: "On the form",
+                  value: analytics.form_coverage.with_form,
+                  hint: "With a saved snapshot",
+                },
+                {
+                  label: "Form files",
+                  value: analytics.form_coverage.attachments,
+                  hint: "Uploaded while filling it",
+                },
+                {
+                  label: "People on file",
+                  value: analytics.form_coverage.profiles,
+                  hint: "In the person store",
+                },
+                {
+                  label: "Identity complete",
+                  value: analytics.form_coverage.identity_complete,
+                  hint: "Legal name and birth date",
+                },
+                {
+                  label: "Unclaimed uploads",
+                  value: analytics.form_coverage.unclaimed_uploads,
+                  hint: "Never submitted",
+                },
+                {
+                  label: "Past the window",
+                  value: analytics.form_coverage.unclaimed_past_window,
+                  hint: "The sweep will clear these",
+                },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-brand-line bg-white px-3 py-2.5">
+                  <dt className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                    {item.label}
+                  </dt>
+                  <dd className="mt-0.5 font-display text-xl font-extrabold tabular-nums tracking-tight">
+                    {item.value.toLocaleString()}
+                  </dd>
+                  <dd className="mt-0.5 text-[11px] leading-relaxed text-brand-ink/50">{item.hint}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <p className="mt-3 text-[11px] leading-relaxed text-brand-ink/45">
+            The snapshot behind an application is what was asked when it was filed, so a later edit of
+            the form does not rewrite it. An unclaimed upload is a file from a form nobody submitted:
+            it is not part of the record, and the retention sweep deletes it once it is past the
+            window. No demographic value is read here — the gated tallies live on{" "}
+            <Link className="font-semibold text-brand-gold-dark underline" href="/analytics">
+              Analytics
+            </Link>
+            .
+          </p>
+        </div>
+      </Card>
+
       {/* ---- Channels + fit distribution ---- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">

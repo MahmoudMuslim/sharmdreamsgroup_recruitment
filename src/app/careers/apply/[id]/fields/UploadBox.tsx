@@ -60,6 +60,7 @@ export function UploadBox({
         return;
       }
       upload.onUploaded(payload.uploadId, file.name);
+      upload.onFile?.(file);
     } catch {
       setNote(t("apply.dyn.uploadFailed"));
     } finally {
@@ -98,6 +99,7 @@ export function UploadBox({
             onClick={() => {
               setNote(null);
               upload.onUploaded(null, null);
+              upload.onFile?.(null);
             }}
             disabled={uploading}
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-brand-ink/55 transition hover:bg-white disabled:opacity-50"

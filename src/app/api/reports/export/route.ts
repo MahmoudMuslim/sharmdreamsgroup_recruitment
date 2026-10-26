@@ -21,7 +21,7 @@ import {
   buildReportDocument,
   type CandidateExportFilters,
 } from "@/modules/analytics/infrastructure/reportReader";
-import { REPORTS, type ReportId } from "@/modules/analytics/domain/documents";
+import { reportDefinition, type ReportId } from "@/modules/analytics/domain/documents";
 import {
   isApplicationSource,
   isCandidateSort,
@@ -43,7 +43,7 @@ function json(message: string, status: number): Response {
 /** Query strings are attacker-controlled, so every parameter is coerced or refused. */
 function safeReport(value: string | null): "analytics" | ReportId | "candidates" | null {
   if (value === "analytics" || value === "candidates") return value;
-  return REPORTS.some((report) => report.id === value) ? (value as ReportId) : null;
+  return reportDefinition(value)?.id ?? null;
 }
 
 function safeWindow(value: string | null): AnalyticsWindow | null {

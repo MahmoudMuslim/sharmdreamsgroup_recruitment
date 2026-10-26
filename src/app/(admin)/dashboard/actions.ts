@@ -6,6 +6,7 @@ import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/sc
 import { FIT_BUCKETS, bucketBounds } from "@/modules/analytics/domain/fitBuckets";
 import { BOARD_LIMIT } from "@/app/(admin)/dashboard/board-model";
 import { isApplicationSource, isPipelineStage } from "@/modules/candidates/domain/listFilters";
+import { LIMITS as FORM_LIMITS } from "@/modules/form-builder/domain/limits";
 import type {
   ApplicationStage,
   ApplicationSource,
@@ -42,6 +43,8 @@ interface ApplicationJoin {
   created_at: string | null;
   hired_at: string | null;
   job_id: string;
+  /** The snapshot the form saved with this application, or null on a pre-form row. */
+  form_answers?: unknown;
   job_openings?: JobShape | null;
 }
 
@@ -103,7 +106,7 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     restClient
       .from("applications")
       .select(
-        "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_id, job_openings(id, title, department, status, closing_at)"
+        "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_id, form_answers, job_openings(id, title, department, status, closing_at)"
       )
       .is("archived_at", null),
     restClient
@@ -363,6 +366,51 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
       match_score: masked ? null : app.ai_match_score,
     }));
 
+  // --- Form & person coverage ------------------------------------------------
+  // Two head-counts rather than two row reads: this card states how much the
+  // form and the person store hold, and never quotes what any of it says.
+  //
+  // A form file counts only once an application references it. A null
+  // `application_id` is an upload the applicant never submitted — the retention
+  // sweep deletes it after the orphan window — so it is not part of the record
+  // and must not make the form look fuller than it is. The same filter is the
+  // Analytics reader's definition of an attachment.
+  //
+  // Unclaimed uploads are counted beside it, never added to it. The "past
+  // window" figure mirrors the sweep's own predicate, so the card states how
+  // many rows the next run will delete rather than quoting a different rule.
+  const orphanCutoff = new Date(
+    now - FORM_LIMITS.orphan_upload_window_hours * 60 * 60 * 1000
+  ).toISOString();
+  const [formFiles, profiles, unclaimedUploads, unclaimedPastWindow] = await Promise.all([
+    restClient
+      .from("application_form_files")
+      .select("id", { count: "exact", head: true })
+      .not("application_id", "is", null),
+    restClient.from("person_profiles").select("id", { count: "exact", head: true }),
+    restClient
+      .from("application_form_files")
+      .select("id", { count: "exact", head: true })
+      .is("application_id", null),
+    restClient
+      .from("application_form_files")
+      .select("id", { count: "exact", head: true })
+      .is("application_id", null)
+      .lt("uploaded_at", orphanCutoff),
+  ]);
+
+  const formCoverage = {
+    applications: applications.length,
+    with_form: applications.filter((app) => hasSnapshot(app.form_answers)).length,
+    attachments: formFiles.count ?? 0,
+    profiles: profiles.count ?? 0,
+    identity_complete: await countIdentityComplete(restClient),
+    /** "Unclaimed uploads": files a form never submitted, still inside the window. */
+    unclaimed_uploads: unclaimedUploads.count ?? 0,
+    /** Of those, the rows past the orphan window that the sweep will clear. */
+    unclaimed_past_window: unclaimedPastWindow.count ?? 0,
+  };
+
   return {
     total_applications: applications.length,
     active_jobs: activeJobs,
@@ -384,7 +432,36 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     roles,
     oldest_waiting,
     waiting_total: waitingApplications.length,
+    form_coverage: formCoverage,
   };
+}
+
+/**
+ * The shape `parseSnapshot` accepts — an object carrying a `fields` list.
+ *
+ * Re-stated rather than imported because this file only needs the yes/no, and
+ * the count has to agree with the Analytics reader's definition of "filed on
+ * the form": a snapshot that cannot be parsed is not a form.
+ */
+function hasSnapshot(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Array.isArray((value as { fields?: unknown }).fields);
+}
+
+type DashboardRest = Awaited<ReturnType<typeof createServerRestClient>>;
+
+/** The identity core of the person store: a legal name and a birth date, both set. */
+async function countIdentityComplete(restClient: DashboardRest): Promise<number> {
+  const { count, error } = await restClient
+    .from("person_profiles")
+    .select("id", { count: "exact", head: true })
+    .not("legal_name", "is", null)
+    .not("date_of_birth", "is", null);
+  if (error) {
+    console.error("[dashboard] identity coverage count failed:", error.message);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 /* -------------------------------------------------------------------------- */

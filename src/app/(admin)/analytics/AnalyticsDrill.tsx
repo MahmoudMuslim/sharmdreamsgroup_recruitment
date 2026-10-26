@@ -8,6 +8,7 @@ import type {
   AnalyticsDrillResult,
   AnalyticsDrillScope,
   DrillAttempt,
+  DrillForm,
   DrillMessage,
   DrillPanel as DrillPanelRow,
   DrillProspect,
@@ -385,6 +386,25 @@ function PanelRow({ row, timeZone }: { row: DrillPanelRow; timeZone: string }) {
   );
 }
 
+function FormRow({ row, timeZone }: { row: DrillForm; timeZone: string }) {
+  return (
+    <RowShell
+      title={row.candidate}
+      href={`/candidates/${row.id}`}
+      lines={[
+        row.opening || "No opening on file",
+        [
+          `applied ${when(row.applied_at, timeZone)}`,
+          row.form ? `on ${row.form}` : "filed before the form existed",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ]}
+      right={<Badge tone={statusTone(row.stage)}>{pretty(row.stage)}</Badge>}
+    />
+  );
+}
+
 function RowList({
   result,
   timeZone,
@@ -421,6 +441,15 @@ function RowList({
       </ul>
     );
   }
+  if (result.kind === "forms") {
+    return (
+      <ul className="divide-y divide-brand-line">
+        {result.rows.map((row) => (
+          <FormRow key={row.id} row={row} timeZone={timeZone} />
+        ))}
+      </ul>
+    );
+  }
   return (
     <ul className="divide-y divide-brand-line">
       {result.rows.map((row) => (
@@ -437,6 +466,7 @@ const NOUNS: Record<AnalyticsDrillScope["table"], string> = {
   prospects: "prospect",
   messages: "message",
   interviews: "panel",
+  forms: "application",
 };
 
 /**

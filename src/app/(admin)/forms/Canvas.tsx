@@ -4,9 +4,15 @@ import { ArrowDown, ArrowUp, GripVertical, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { FieldDraft } from "@/modules/form-builder/domain/draftIssues";
 import type { FieldType } from "@/modules/form-builder/domain/field-types";
+import {
+  ALWAYS_FULL_TYPES,
+  GRID_CLASS,
+  SPAN_CLASS,
+  widthOf,
+} from "@/modules/form-builder/domain/rowLayout";
 import { FIELD_DRAG_MIME, FIELD_TYPE_LABELS } from "./FieldPalette";
 
-type DragPayload =
+export type DragPayload =
   | { kind: "new"; type: FieldType }
   | { kind: "move"; index: number };
 
@@ -33,9 +39,16 @@ function readPayload(event: React.DragEvent): DragPayload | null {
  * The layout as one ordered list, with drag-and-drop for a pointer and up/down
  * buttons for a keyboard (the same pairing the bank's board uses).
  *
- * A drop lands **before** the row it is dropped on; the tail strip appends. That
- * is the only rule, so a drag can never land in a second place the author did
- * not see.
+ * A drop lands **before** the row it is dropped on; the tail strip appends; a
+ * drop on a card's right edge places the dragged field **beside** it. Those are
+ * the only three rules, so a drag can never land in a second place the author
+ * did not see.
+ *
+ * The list is a six-column grid and each card takes the width its field asks
+ * for, so what the author sees is what `resolveLayout` will order and what the
+ * applicant's wizard will render — the same map, the same packing, on both
+ * sides. Pairing is a pointer affordance; the inspector's width control is the
+ * keyboard path to the same fact.
  */
 export function Canvas({
   fields,
@@ -45,6 +58,7 @@ export function Canvas({
   onAdd,
   onMove,
   onRemove,
+  onPlaceBeside,
 }: {
   fields: FieldDraft[];
   /** Which row the inspector is editing. Index, not key: a key may be mid-edit. */
@@ -54,6 +68,8 @@ export function Canvas({
   onAdd: (type: FieldType, at: number) => void;
   onMove: (from: number, to: number) => void;
   onRemove: (index: number) => void;
+  /** The dragged payload landed on `target`'s right edge, to share its row. */
+  onPlaceBeside: (payload: DragPayload, target: number) => void;
 }) {
   const drop = (event: React.DragEvent, at: number) => {
     if (disabled) return;
@@ -63,6 +79,18 @@ export function Canvas({
     if (!payload) return;
     if (payload.kind === "new") onAdd(payload.type, at);
     else onMove(payload.index, at);
+  };
+
+  const dropBeside = (event: React.DragEvent, target: number) => {
+    if (disabled) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const payload = readPayload(event);
+    if (!payload) return;
+    // The strip is offered for any field that can hold a row partner; whether
+    // the dragged one may join it is the layout module's rule, applied once by
+    // the console — which says so in words when the pair is refused.
+    onPlaceBeside(payload, target);
   };
 
   if (fields.length === 0) {
@@ -79,10 +107,11 @@ export function Canvas({
   }
 
   return (
-    <div role="list" className="flex flex-col gap-1.5">
+    <div role="list" className={cn(GRID_CLASS, "gap-1.5")}>
       {fields.map((field, index) => {
         const selected = index === selectedIndex;
         const heading = field.type === "section_heading";
+        const takesRow = ALWAYS_FULL_TYPES.has(field.type);
         return (
           <div
             key={`${index}-${field.key}`}
@@ -102,7 +131,8 @@ export function Canvas({
             }}
             onDrop={(event) => drop(event, index)}
             className={cn(
-              "group flex cursor-pointer items-start gap-2 rounded-xl border px-2.5 py-2 transition",
+              "group relative flex cursor-pointer items-start gap-2 rounded-xl border px-2.5 py-2 transition",
+              SPAN_CLASS[widthOf(field)],
               heading
                 ? "border-brand-gold/40 bg-brand-gold/10"
                 : "border-brand-line bg-white",
@@ -142,6 +172,11 @@ export function Canvas({
                 {field.systemKey && (
                   <span className="rounded bg-brand-sand px-1 py-0.5 font-mono text-[9px] text-brand-gold-dark">
                     writes {field.systemKey}
+                  </span>
+                )}
+                {widthOf(field) !== "full" && (
+                  <span className="rounded bg-brand-sand px-1 py-0.5 font-mono text-[9px] text-brand-ink/50">
+                    {widthOf(field)} wide
                   </span>
                 )}
               </p>
@@ -188,6 +223,26 @@ export function Canvas({
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
             </div>
+
+            {!takesRow && (
+              <div
+                aria-hidden
+                title="Drop a field here to ask it beside this one"
+                onDragOver={(event) => {
+                  if (!disabled) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
+                }}
+                onDrop={(event) => dropBeside(event, index)}
+                className={cn(
+                  "absolute inset-y-1 -right-2 w-4 rounded-r-xl border-r-2 border-transparent transition",
+                  disabled
+                    ? "pointer-events-none"
+                    : "pointer-events-auto bg-brand-gold/70 opacity-0 hover:opacity-100 group-hover:opacity-60",
+                )}
+              />
+            )}
           </div>
         );
       })}
@@ -199,6 +254,7 @@ export function Canvas({
         onDrop={(event) => drop(event, fields.length)}
         className={cn(
           "flex items-center justify-center gap-1.5 rounded-xl border border-dashed border-brand-line/80 px-3 py-2 text-[11px] text-brand-ink/35",
+          SPAN_CLASS.full,
           disabled ? "opacity-50" : "hover:border-brand-gold hover:text-brand-ink/55",
         )}
       >

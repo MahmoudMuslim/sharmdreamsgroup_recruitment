@@ -7,8 +7,10 @@ import {
   CalendarDays,
   ClipboardCheck,
   Download,
+  FileText,
   Info,
   Loader2,
+  Lock,
   MessageCircle,
   MousePointerClick,
   RefreshCw,
@@ -18,6 +20,7 @@ import {
 import { getAnalyticsReport } from "./actions";
 import { ChipRail, DrillDrawer, TrendStrip } from "./AnalyticsDrill";
 import type { AnalyticsDrillScope } from "@/modules/analytics/infrastructure/analyticsDrill";
+import type { FormProfileReport } from "@/modules/analytics/domain/formAndProfile";
 import {
   ANALYTICS_WINDOWS,
   measuresDelivery,
@@ -37,6 +40,9 @@ import { cn } from "@/lib/utils";
  */
 const ANY = "ALL";
 
+/** How many questions the "Answers by question" block lists before the report takes over. */
+const QUESTION_PREVIEW = 8;
+
 type Open = (scope: AnalyticsDrillScope) => void;
 
 function percent(value: number | null): string {
@@ -45,6 +51,17 @@ function percent(value: number | null): string {
 
 function count(value: number): string {
   return value.toLocaleString();
+}
+
+/** A month total as words: 39 → "3 years 3 months". Never a grade. */
+function months(value: number | null): string {
+  if (value === null) return "—";
+  if (value <= 0) return "Less than a month";
+  const years = Math.floor(value / 12);
+  const rest = value % 12;
+  if (years === 0) return `${rest} ${rest === 1 ? "month" : "months"}`;
+  if (rest === 0) return `${years} ${years === 1 ? "year" : "years"}`;
+  return `${years} ${years === 1 ? "year" : "years"} ${rest} ${rest === 1 ? "month" : "months"}`;
 }
 
 function hours(value: number | null): string {
@@ -205,6 +222,46 @@ function Cell({
   );
 }
 
+/**
+ * A counted label drawn as text, not a chip.
+ *
+ * The demographic tallies use this because there is deliberately no rows
+ * popup behind them: a list of who is which gender would be the per-person
+ * export the aggregate was allowed in place of.
+ */
+function Tally({ label, rows }: { label: string; rows: { label: string; count: number }[] }) {
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/40">{label}</p>
+      <ul className="mt-1 space-y-0.5">
+        {rows.map((row) => (
+          <li key={row.label} className="flex items-baseline justify-between gap-3 text-[11px]">
+            <span className="truncate text-brand-ink/65">{row.label}</span>
+            <span className="tabular-nums font-semibold text-brand-ink/75">{count(row.count)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** A coverage bar: how many of the people on file have anything in this group. */
+function CoverageLine({ row }: { row: FormProfileReport["profiles"]["coverage"][number] }) {
+  const pct = row.total > 0 ? Math.round((row.filled / row.total) * 100) : 0;
+  return (
+    <li>
+      <div className="flex items-baseline justify-between gap-3 text-[11px]">
+        <span className="truncate text-brand-ink/65">{row.label}</span>
+        <span className="shrink-0 tabular-nums font-semibold text-brand-ink/75">
+          {count(row.filled)}
+          <span className="font-normal text-brand-ink/40"> / {count(row.total)}</span>
+        </span>
+      </div>
+      <Meter value={pct} className="mt-1 h-1.5" />
+    </li>
+  );
+}
+
 export function AnalyticsView({
   report: initial,
   formats,
@@ -244,7 +301,7 @@ export function AnalyticsView({
 
   const query = `report=analytics&window=${encodeURIComponent(report.window)}`;
 
-  const { assessments, sourcing, messages, interviews, timeZone, scoresHidden } = report;
+  const { assessments, sourcing, messages, interviews, formProfile, timeZone, scoresHidden } = report;
   const neverOpened = assessments.issued - assessments.opened;
   const strongestBand = assessments.scoreBands[assessments.scoreBands.length - 1];
   const weakestBand = assessments.scoreBands[0];
@@ -874,6 +931,331 @@ export function AnalyticsView({
                   onPick={(bucket) => ranged({ table: "interviews", predicate: "booked" }, bucket)}
                 />
               </div>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-5 lg:col-span-2">
+          <CardHeader
+            title="Applications & profiles"
+            meta={`What the form captured, and what the person store holds, ${report.windowLabel.toLowerCase()}`}
+          />
+          {formProfile.applications.total === 0 ? (
+            <EmptyState
+              icon={<FileText className="h-6 w-6" aria-hidden />}
+              title="No application landed in this window"
+              description="The form figures count the applications in this window; the profile coverage below describes the whole person store and stays empty while it holds nobody."
+            />
+          ) : (
+            <div className="mt-3 grid gap-4 lg:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 lg:col-span-2 lg:grid-cols-3">
+                <Figure
+                  label="Filed on the form"
+                  value={count(formProfile.applications.withForm)}
+                  hint="A snapshot saved with the application, question for question."
+                  scope={{ table: "forms", predicate: "with_form" }}
+                  onOpen={open}
+                />
+                <Figure
+                  label="Filed before the form"
+                  value={count(formProfile.applications.withoutForm)}
+                  hint="No snapshot: only the four fixed columns exist for these."
+                  scope={{ table: "forms", predicate: "without_form" }}
+                  onOpen={open}
+                />
+                <Figure
+                  label="Form adoption"
+                  value={percent(formProfile.applications.adoptionRate)}
+                  hint="Form-filed over every application in the window."
+                  scope={{ table: "forms", predicate: "with_form" }}
+                  onOpen={open}
+                />
+                <Figure
+                  label="With a CV"
+                  value={count(formProfile.applications.withCv)}
+                  hint="Applications whose record names an attached CV file."
+                />
+                <Figure
+                  label="Form attachments"
+                  value={count(formProfile.applications.attachments)}
+                  hint={`${count(formProfile.applications.withAttachments)} applications carry at least one file uploaded while filling the form.`}
+                />
+                <Figure
+                  label="File completion"
+                  value={percent(formProfile.completion.completionRate)}
+                  hint={`${count(formProfile.completion.withAttachment)} of ${count(formProfile.completion.fileFieldsAsked)} applications whose form asks for a file carried one.`}
+                />
+                <Figure
+                  label="Unclaimed uploads"
+                  value={count(formProfile.completion.unclaimed)}
+                  hint={`${count(formProfile.completion.unclaimedInsideWindow)} still inside the ${formProfile.completion.orphanWindowHours}-hour window; ${count(formProfile.completion.unclaimedPastWindow)} the sweep will clear.`}
+                />
+                <Figure
+                  label="Processing consent"
+                  value={count(formProfile.applications.processingConsent)}
+                  hint="Accepted the privacy notice for this application."
+                />
+                <Figure
+                  label="Talent-pool consent"
+                  value={count(formProfile.applications.talentPoolConsent)}
+                  hint="Also agreed to be kept for later openings."
+                />
+                <Figure
+                  label="Notice versions"
+                  value={count(formProfile.applications.noticeVersions.length)}
+                  hint={
+                    formProfile.applications.noticeVersions.length === 0
+                      ? "No application in this window records the notice it accepted."
+                      : formProfile.applications.noticeVersions
+                          .map((row) => `${row.label} × ${count(row.count)}`)
+                          .join(" · ")
+                  }
+                />
+              </div>
+
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                  People on file
+                </p>
+                {formProfile.profiles.total === 0 ? (
+                  <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
+                    The person store holds nobody yet, so coverage has nothing to divide by. It is
+                    not windowed: it describes the base as it stands.
+                  </p>
+                ) : (
+                  <>
+                    <ul className="mt-2 grid grid-cols-2 gap-2">
+                      <Figure label="People" value={count(formProfile.profiles.total)} />
+                      <Figure
+                        label="Named"
+                        value={count(formProfile.profiles.withName)}
+                        hint="A legal name on file."
+                      />
+                      <Figure
+                        label="With a birth date"
+                        value={count(formProfile.profiles.withDob)}
+                        hint="What an age band is counted from."
+                      />
+                      <Figure
+                        label="Identity complete"
+                        value={count(formProfile.profiles.identityComplete)}
+                        hint="Both a legal name and a birth date."
+                      />
+                    </ul>
+                    {formProfile.profiles.coverage.length === 0 ? (
+                      <p className="mt-3 text-[11px] leading-relaxed text-brand-ink/45">
+                        No group holds a value yet beyond what the figures above count.
+                      </p>
+                    ) : (
+                      <ul className="mt-3 space-y-2">
+                        {formProfile.profiles.coverage.map((row) => (
+                          <CoverageLine key={row.group} row={row} />
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="lg:col-span-3">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                  What the form asked
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-brand-ink/60">
+                  {formProfile.forms.asked === 0
+                    ? "No snapshot in this window carries an answerable field."
+                    : `${count(formProfile.forms.answered)} of ${count(formProfile.forms.asked)} answerable fields carry a value (${percent(formProfile.forms.answerRate)}). Section headings are not questions and are not counted.`}
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/45">
+                  {formProfile.forms.versions.length === 0
+                    ? "No form version is recorded in this window's snapshots."
+                    : `Snapshots were taken from ${formProfile.forms.versions
+                        .map((row) => `${row.label} × ${count(row.count)}`)
+                        .join(", ")}. A later edit of the form does not rewrite what was asked.`}
+                </p>
+
+                {formProfile.questions.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                      Answers by question
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {formProfile.questions.slice(0, QUESTION_PREVIEW).map((row) => (
+                        <li
+                          key={row.key}
+                          className="flex items-baseline justify-between gap-3 text-[11px]"
+                        >
+                          <span className="truncate text-brand-ink/65" title={row.label}>
+                            {row.label}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-brand-ink/60">
+                            {count(row.answered)}
+                            <span className="text-brand-ink/35"> / {count(row.asked)}</span>
+                            {row.skipped > 0 && (
+                              <span className="ml-2 text-brand-ink/40">
+                                {count(row.skipped)} skipped
+                              </span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/45">
+                      {formProfile.questions.length > QUESTION_PREVIEW
+                        ? `The ${QUESTION_PREVIEW} most-asked of ${count(formProfile.questions.length)} questions in these snapshots. The full list is a report on the `
+                        : "Every question these snapshots asked. The same list is a report on the "}
+                      <Link className="font-semibold text-brand-gold-dark underline" href="/reports">
+                        Reports
+                      </Link>{" "}
+                      page. Counts only — no answer value is shown here.
+                    </p>
+                  </div>
+                )}
+
+                {formProfile.completion.fields.length > 0 && (
+                  <div className="mt-4">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                      Uploads nobody submitted
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {formProfile.completion.fields.map((row) => (
+                        <li
+                          key={row.fieldKey}
+                          className="flex items-baseline justify-between gap-3 text-[11px]"
+                        >
+                          <span className="truncate font-mono text-brand-ink/60">{row.fieldKey}</span>
+                          <span className="shrink-0 tabular-nums text-brand-ink/60">
+                            {count(row.uploads)}
+                            <span className="text-brand-ink/35">
+                              {" "}
+                              · {count(row.insideWindow)} open · {count(row.pastWindow)} past
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/45">
+                      A file lands here when someone uploaded it during the form and never
+                      submitted. The store has no record of where a form was started, so this is the
+                      only abandonment signal that exists; “past” means the retention sweep will
+                      delete it. No path, file name or content is read for this.
+                    </p>
+                  </div>
+                )}
+
+                <div className="mt-4 border-t border-brand-line pt-3">
+                  <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                    <Lock className="h-3 w-3" aria-hidden />
+                    Demographics
+                  </p>
+                  {formProfile.demographics === null ? (
+                    <p className="mt-1 text-xs leading-relaxed text-brand-ink/55">
+                      Counted only for staff holding
+                      <code className="mx-1 rounded bg-brand-sand px-1 py-0.5 font-mono text-[11px]">
+                        candidates.view_family_data
+                      </code>
+                      — the same grant that opens a family record. Without it this section is
+                      withheld rather than shown empty, and the tier-3 coverage groups are left out
+                      of the bars above.
+                    </p>
+                  ) : formProfile.demographics.stated === 0 ? (
+                    <p className="mt-1 text-xs leading-relaxed text-brand-ink/55">
+                      Nobody on file has stated a demographic fact, so every tally would be the
+                      whole population under “Not stated”.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                        <Tally label="Gender" rows={formProfile.demographics.gender} />
+                        <Tally label="Nationality" rows={formProfile.demographics.nationality} />
+                        <Tally label="Marital status" rows={formProfile.demographics.maritalStatus} />
+                        <Tally label="Children" rows={formProfile.demographics.children} />
+                        <Tally label="Age band" rows={formProfile.demographics.ageBands} />
+                      </div>
+                      <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/45">
+                        {count(formProfile.demographics.stated)} of{" "}
+                        {count(formProfile.profiles.total)} people on file stated at least one of
+                        these. “Not stated” is a real answer and is counted, not dropped. These are
+                        tallies only — there is no per-person list behind them.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+
+        {/* ---- Experience and stability, from the work-history rows ---- */}
+        <Card className="p-5 lg:col-span-2">
+          <CardHeader
+            title="Experience & stability"
+            meta="Work-history durations on file · a roll-up, never a score"
+          />
+          {formProfile.experience.withHistory === 0 ? (
+            <EmptyState
+              icon={<UserRoundSearch className="h-6 w-6" aria-hidden />}
+              title="No work history on file"
+              description="Experience is counted from the employment rows on a person's profile. It fills as candidates and recruiters add them, and it is not cut by the window above."
+            />
+          ) : (
+            <div className="mt-3 grid gap-4 lg:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 lg:col-span-2 lg:grid-cols-2">
+                <Figure
+                  label="People with history"
+                  value={count(formProfile.experience.withHistory)}
+                  hint={`Of ${count(formProfile.experience.people)} people the read reached; the person store is not windowed.`}
+                />
+                <Figure
+                  label="Roles recorded"
+                  value={count(formProfile.experience.roles)}
+                  hint="One employment row each."
+                />
+                <Figure
+                  label="Median total experience"
+                  value={months(formProfile.experience.medianTotalMonths)}
+                  hint="Middle person of everyone whose rows add up to a duration."
+                />
+                <Figure
+                  label="Month-precise starts"
+                  value={count(formProfile.experience.rowsWithMonths)}
+                  hint={`Of ${count(formProfile.experience.roles)} rows; the rest named a year only and still count twelve months each.`}
+                />
+              </div>
+
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                  Total experience
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {formProfile.experience.bands.map((band) => (
+                    <li key={band.label}>
+                      <div className="flex items-baseline justify-between gap-3 text-[11px]">
+                        <span className="truncate text-brand-ink/65">{band.label}</span>
+                        <span className="shrink-0 tabular-nums font-semibold text-brand-ink/75">
+                          {count(band.count)}
+                          <span className="font-normal text-brand-ink/40">
+                            {" "}
+                            / {count(formProfile.experience.withHistory)}
+                          </span>
+                        </span>
+                      </div>
+                      <Meter
+                        value={band.count}
+                        max={Math.max(formProfile.experience.withHistory, 1)}
+                        className="mt-1 h-1.5"
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <p className="text-[11px] leading-relaxed text-brand-ink/45 lg:col-span-3">
+                Counted month by month from each person’s employment rows. A year-only period counts
+                as twelve months; a role with no end, and an ongoing role, count to the report date.
+                Rows with no start year add nothing. This is a duration roll-up for reading a CV at a
+                glance — it is not a rating, a ranking or a prediction about anyone.
+              </p>
             </div>
           )}
         </Card>

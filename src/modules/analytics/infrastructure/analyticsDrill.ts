@@ -17,7 +17,7 @@
 
 import "server-only";
 
-import { LIMITS, readAnalyticsRows, type AnalyticsRows } from "./reportReader";
+import { LIMITS, readAnalyticsRows, readFormProfileRows, type AnalyticsRows, type FormProfileRows } from "./reportReader";
 import {
   SCORE_BANDS,
   attemptGraded,
@@ -32,6 +32,7 @@ import {
   messageRead,
   messageUndelivered,
   prospectConverted,
+  windowLabel,
   type AnalyticsWindow,
   type AttemptRow,
   type InterviewRow,
@@ -73,6 +74,8 @@ export const ANY_CHANNEL = "ALL";
 
 export type InterviewPredicate = "booked" | "upcoming" | "decided" | "lead" | "status" | "interviewer";
 
+export type FormPredicate = "with_form" | "without_form";
+
 /** Which figure was clicked, and which bucket of it. */
 export type AnalyticsDrillScope =
   | {
@@ -90,7 +93,8 @@ export type AnalyticsDrillScope =
       status?: string;
       interviewer?: string;
       range?: DayRange;
-    };
+    }
+  | { table: "forms"; predicate: FormPredicate; range?: DayRange };
 
 const ATTEMPT_PREDICATES: AttemptPredicate[] = [
   "issued",
@@ -114,6 +118,7 @@ const INTERVIEW_PREDICATES: InterviewPredicate[] = [
   "status",
   "interviewer",
 ];
+const FORM_PREDICATES: FormPredicate[] = ["with_form", "without_form"];
 
 /* --------------------------------------------------------------- shapes --- */
 
@@ -179,6 +184,16 @@ export interface DrillPanel {
   application_id: string | null;
 }
 
+export interface DrillForm {
+  id: string;
+  candidate: string;
+  opening: string | null;
+  stage: string;
+  applied_at: string | null;
+  /** "Personal details v4", or null when the application predates the form. */
+  form: string | null;
+}
+
 export interface DrillHeading {
   eyebrow: string;
   title: string;
@@ -200,6 +215,7 @@ export type AnalyticsDrillResult =
   | (DrillBody & { ok: true; kind: "prospects"; rows: DrillProspect[] })
   | (DrillBody & { ok: true; kind: "messages"; rows: DrillMessage[] })
   | (DrillBody & { ok: true; kind: "interviews"; rows: DrillPanel[] })
+  | (DrillBody & { ok: true; kind: "forms"; rows: DrillForm[] })
   | { ok: false; error: string };
 
 /* ------------------------------------------------------------ validation -- */
@@ -300,6 +316,13 @@ function withScope(input: Record<string, unknown>, range?: DayRange): AnalyticsD
     return { table: "interviews", predicate, ...tail };
   }
 
+  if (input.table === "forms") {
+    const predicate = FORM_PREDICATES.includes(input.predicate as FormPredicate)
+      ? (input.predicate as FormPredicate)
+      : null;
+    return predicate ? { table: "forms", predicate, ...tail } : null;
+  }
+
   return null;
 }
 
@@ -357,6 +380,14 @@ export async function readAnalyticsDrill(
   scope: AnalyticsDrillScope,
   window: AnalyticsWindow
 ): Promise<AnalyticsDrillResult> {
+  // Forms are their own read: the form figures are built from the applications
+  // and person stores, not from the four tables the other cards count.
+  if (scope.table === "forms") {
+    const forms = await readFormProfileRows(window);
+    if (!forms.rows) return { ok: false, error: forms.error };
+    return formsDrill(scope, window, forms.rows, forms.floored.applications);
+  }
+
   const read = await readAnalyticsRows(window);
   if (!read.rows) return { ok: false, error: read.error };
 
@@ -365,8 +396,63 @@ export async function readAnalyticsDrill(
 
   if (scope.table === "attempts") return attemptsDrill(scope, window, rows, scopeLabel);
   if (scope.table === "prospects") return prospectsDrill(scope, window, rows, scopeLabel);
-  if (scope.table === "messages") return messagesDrill(scope, window, rows, scopeLabel);
-  return interviewsDrill(scope, window, rows, scopeLabel);
+  return messagesDrillOrPanels(scope, window, rows, scopeLabel);
+}
+
+function messagesDrillOrPanels(
+  scope: Extract<AnalyticsDrillScope, { table: "messages" | "interviews" }>,
+  window: AnalyticsWindow,
+  rows: AnalyticsRows,
+  scopeLabel: string
+): AnalyticsDrillResult {
+  return scope.table === "messages"
+    ? messagesDrill(scope, window, rows, scopeLabel)
+    : interviewsDrill(scope, window, rows, scopeLabel);
+}
+
+/* ---------------------------------------------------------------- forms --- */
+
+function formsDrill(
+  scope: Extract<AnalyticsDrillScope, { table: "forms" }>,
+  window: AnalyticsWindow,
+  rows: FormProfileRows,
+  floored: boolean
+): AnalyticsDrillResult {
+  const withForm = scope.predicate === "with_form";
+  const scopeLabel = windowLabel(window);
+  const matching = rows.applications.filter(
+    (application) =>
+      (application.snapshot !== null) === withForm &&
+      inRange({ created_at: application.created_at ?? null }, scope.range, rows.context.timeZone)
+  );
+
+  const listed: DrillForm[] = matching.slice(0, DRILL_LIMIT).map((application) => {
+    const form = application.snapshot?.forms?.[0];
+    return {
+      id: application.id,
+      candidate: application.candidate || "(no name on file)",
+      opening: application.opening ?? null,
+      stage: application.stage ?? "UNKNOWN",
+      applied_at: application.created_at ?? null,
+      form: form ? `${form.name} v${form.version}` : null,
+    };
+  });
+
+  return {
+    ok: true,
+    kind: "forms",
+    window,
+    heading: {
+      eyebrow: "Application forms",
+      title: withForm ? "Filed on the form" : "Filed before the form",
+      subtitle: `${plural(matching.length, "application")} in ${scopeLabel}${rangeWords(scope.range)}.`,
+    },
+    total: matching.length,
+    shown: listed.length,
+    note: floorNote(floored, LIMITS.applications, "applications"),
+    read_at: new Date().toISOString(),
+    rows: listed,
+  };
 }
 
 /* ------------------------------------------------------------- attempts -- */

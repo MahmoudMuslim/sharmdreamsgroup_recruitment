@@ -27,6 +27,7 @@ import {
 } from "./field-types";
 import { INPUT_TO_TYPE, UNBINDABLE_TYPES } from "./identityIssues";
 import { LIMITS } from "./limits";
+import { ALWAYS_FULL_TYPES, FIELD_WIDTHS } from "./rowLayout";
 
 /** One editable field as the console holds it — no id, because a save replaces the set. */
 export interface FieldDraft {
@@ -209,6 +210,23 @@ export function draftIssues(fields: readonly FieldDraft[]): DraftIssue[] {
           issues.push({ fieldKey: field.key, message: `${named} offers "${String(unit)}" as a unit, which is not one of ${DURATION_UNITS.join(", ")}.` });
           break;
         }
+      }
+    }
+
+    // The width is the one layout fact a field carries, and a bad value would
+    // otherwise reach the browser as a column the author never picked.
+    const width = config.width;
+    if (width !== undefined && width !== null && width !== "") {
+      if (typeof width !== "string" || !(FIELD_WIDTHS as readonly string[]).includes(width)) {
+        issues.push({
+          fieldKey: field.key,
+          message: `${named} asks to be ${String(width)} wide; a field is full, half or third.`,
+        });
+      } else if (width !== "full" && ALWAYS_FULL_TYPES.has(field.type)) {
+        issues.push({
+          fieldKey: field.key,
+          message: `${named} takes a whole row: a ${field.type} answer is not asked in half a line.`,
+        });
       }
     }
 

@@ -5,9 +5,13 @@ import {
   CalendarDays,
   ClipboardCheck,
   Download,
+  FileQuestion,
+  FileText,
   Info,
   Loader2,
   Send,
+  UploadCloud,
+  UserRound,
   UserRoundSearch,
   Users,
 } from "lucide-react";
@@ -24,6 +28,10 @@ const ICONS = {
   sourcing: UserRoundSearch,
   messages: Send,
   interviews: CalendarDays,
+  application_forms: FileText,
+  form_questions: FileQuestion,
+  unclaimed_uploads: UploadCloud,
+  person_profiles: UserRound,
 } as const;
 
 type Definition = { id: keyof typeof ICONS; label: string; blurb: string; caveats: string[] };

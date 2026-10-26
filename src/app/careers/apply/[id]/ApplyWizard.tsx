@@ -21,13 +21,13 @@ import type { CvDetails } from "@/modules/careers/cv-details";
 import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
 import { usePublicLocale } from "@/modules/shell/presentation/PublicChrome";
 import { translate } from "@/lib/i18n";
-import type { Locale } from "@/types";
 import { cn } from "@/lib/utils";
 import { AboutStep } from "./ApplyAboutStep";
 import { CvStep } from "./ApplyCvStep";
 import { QuestionsStep } from "./ApplyQuestionsStep";
 import { ReceivedPanel } from "./ApplyReceivedPanel";
 import { ReviewStep } from "./ApplyReviewStep";
+import { joinWords } from "./joinWords";
 
 /**
  * The application, one screen at a time.
@@ -67,14 +67,6 @@ const STEP_KEYS: Record<StepId, string> = {
   questions: "apply.steps.questions",
   review: "apply.steps.review",
 };
-
-/** "name, email and phone", in the grammar of the language on screen. */
-function joinWords(locale: Locale, items: string[]): string {
-  if (items.length <= 1) return items[0] ?? "";
-  const arabic = locale === "ar";
-  const head = items.slice(0, -1).join(arabic ? "، " : ", ");
-  return `${head}${arabic ? " و" : " and "}${items[items.length - 1]}`;
-}
 
 export function ApplyWizard({
   job,

@@ -24,6 +24,7 @@ import type { FieldDraft } from "@/modules/form-builder/domain/draftIssues";
 import { draftIssues } from "@/modules/form-builder/domain/draftIssues";
 import type { FieldType } from "@/modules/form-builder/domain/field-types";
 import { LIMITS } from "@/modules/form-builder/domain/limits";
+import { beside, widthOf, type FieldWidth } from "@/modules/form-builder/domain/rowLayout";
 import { isHireable, openingOptionLabel } from "@/modules/jobs/domain/hireable";
 import {
   assignFormToJob,
@@ -40,8 +41,8 @@ import {
   type FormSummary,
 } from "@/modules/form-builder/application/formActions";
 import { cn } from "@/lib/utils";
-import { Canvas } from "./Canvas";
-import { FieldPalette } from "./FieldPalette";
+import { Canvas, type DragPayload } from "./Canvas";
+import { FieldPalette, FIELD_TYPE_LABELS } from "./FieldPalette";
 import { defaultsFor, Inspector } from "./Inspector";
 
 /**
@@ -294,19 +295,21 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
     setSelectedKey(fields[index]?.key ?? null);
   };
 
+  const draftFor = (type: FieldType, width: FieldWidth = "full"): EditorField => ({
+    uid: newUid(),
+    key: uniqueKey(type === "section_heading" ? "heading" : "field"),
+    type,
+    label: "",
+    helpText: null,
+    placeholder: null,
+    required: false,
+    config: { ...defaultsFor(type), width },
+    systemKey: null,
+  });
+
   const addField = (type: FieldType, at: number) => {
     if (!canEdit) return;
-    const draft: EditorField = {
-      uid: newUid(),
-      key: uniqueKey(type === "section_heading" ? "heading" : "field"),
-      type,
-      label: "",
-      helpText: null,
-      placeholder: null,
-      required: false,
-      config: defaultsFor(type),
-      systemKey: null,
-    };
+    const draft = draftFor(type);
     const next = [...fields];
     const index = Math.max(0, Math.min(at, next.length));
     next.splice(index, 0, draft);
@@ -314,6 +317,74 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
     setSelectedIndex(index);
     setSelectedKey(draft.key);
     setLayoutDirty(true);
+  };
+
+  /**
+   * The third drop rule: land on a card's right edge and the two questions are
+   * asked in one row.
+   *
+   * That is a reorder as well as a resize — auto-placement packs the list in
+   * order, so the dragged field has to sit directly after its partner for the
+   * pairing the author aimed at to be the pairing they get. The widths, the
+   * refusal and the sentence are the layout module's, so the console cannot get
+   * the noun wrong: a live proof dropped a file on a URL field and the console
+   * blamed the URL field for taking a whole row.
+   */
+  const placeBeside = (payload: DragPayload, target: number) => {
+    if (!canEdit) return;
+    const targetField = fields[target];
+    const draggedType = payload.kind === "new" ? payload.type : fields[payload.index]?.type;
+    if (!targetField || !draggedType) return;
+    // A card dropped on its own edge asks a field to share its row with itself.
+    if (payload.kind === "move" && payload.index === target) return;
+
+    const pair = beside({
+      dragged: {
+        type: draggedType,
+        label:
+          payload.kind === "new"
+            ? FIELD_TYPE_LABELS[payload.type]
+            : fields[payload.index].label || fields[payload.index].key,
+      },
+      target: {
+        type: targetField.type,
+        label: targetField.label || targetField.key,
+        width: widthOf(targetField),
+      },
+    });
+    if (!pair.ok) {
+      setError(pair.error);
+      return;
+    }
+
+    const next = [...fields];
+    let draggedIndex: number;
+    let targetIndex: number;
+    if (payload.kind === "move") {
+      const [moved] = next.splice(payload.index, 1);
+      targetIndex = payload.index < target ? target - 1 : target;
+      draggedIndex = targetIndex + 1;
+      next.splice(draggedIndex, 0, moved);
+    } else {
+      draggedIndex = target + 1;
+      targetIndex = target;
+      next.splice(draggedIndex, 0, draftFor(payload.type, pair.dragged));
+    }
+    next[targetIndex] = {
+      ...next[targetIndex],
+      config: { ...next[targetIndex].config, width: pair.target },
+    };
+    next[draggedIndex] = {
+      ...next[draggedIndex],
+      config: { ...next[draggedIndex].config, width: pair.dragged },
+    };
+
+    setFields(next);
+    setSelectedIndex(draggedIndex);
+    setSelectedKey(next[draggedIndex].key);
+    setLayoutDirty(true);
+    setError(null);
+    setNotice(pair.notice);
   };
 
   const updateField = (index: number, patch: Partial<FieldDraft>) => {
@@ -331,7 +402,10 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
           ? {
               ...field,
               type,
-              config: defaultsFor(type),
+              // The width survives a type change the layout can still honour —
+              // a half question that becomes another half question — and a type
+              // that takes the row resets it, because `widthOf` says so.
+              config: { ...defaultsFor(type), width: widthOf({ ...field, type }) },
               systemKey: null,
               ...(type === "section_heading" ? { required: false } : {}),
             }
@@ -943,6 +1017,7 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
                 onAdd={(type, at) => addField(type, at)}
                 onMove={moveField}
                 onRemove={removeField}
+                onPlaceBeside={placeBeside}
               />
               {layoutDirty && liveIssues.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2 pl-7 text-[11px] leading-relaxed text-amber-900">
@@ -955,8 +1030,11 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
                 </ul>
               )}
               <p className="mt-2 px-1 text-[10px] leading-relaxed text-brand-ink/40">
-                A drop lands before the row it is dropped on. The arrows are the
-                keyboard path; a heading starts a new step on the candidate&apos;s form.
+                A drop on a row lands before it; the strip at the bottom appends, and
+                the arrows are the keyboard path. Drop on a row&apos;s gold right edge
+                to ask the two fields in one row — the Width control in the inspector
+                is the keyboard path for that. A heading, a long answer or a file
+                always takes the whole row.
               </p>
             </Card>
 

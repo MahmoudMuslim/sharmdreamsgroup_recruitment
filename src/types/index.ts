@@ -527,6 +527,34 @@ export interface DashboardAnalytics {
   oldest_waiting: DashboardWaitingRow[];
   /** How many applications are still waiting, including the ones not listed. */
   waiting_total: number;
+  /** The paper trail the form and the person store leave, counted, never quoted. */
+  form_coverage: DashboardFormCoverage;
+}
+
+/**
+ * What the application form and the person spine leave behind, as counts.
+ *
+ * No demographic value is read for this card: the Dashboard is behind the same
+ * screen as the pipeline, and the gated tallies live on Analytics instead.
+ */
+export interface DashboardFormCoverage {
+  /** Every live application, whether or not it carries a snapshot. */
+  applications: number;
+  /** Applications whose `form_answers` holds a snapshot. */
+  with_form: number;
+  /** Files uploaded while filling the form, across every application. */
+  attachments: number;
+  /** People in the person store, which is not windowed. */
+  profiles: number;
+  /** People holding both a legal name and a birth date. */
+  identity_complete: number;
+  /**
+   * "Unclaimed uploads": files uploaded by a form that never reached submit
+   * (a null `application_id`). Deliberately outside `attachments`.
+   */
+  unclaimed_uploads: number;
+  /** Of `unclaimed_uploads`, those older than the orphan window — the sweep's next targets. */
+  unclaimed_past_window: number;
 }
 
 // ---------------------------------------------------------------------------

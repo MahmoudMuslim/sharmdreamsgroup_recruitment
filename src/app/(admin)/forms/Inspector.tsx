@@ -12,6 +12,12 @@ import {
   type Kind,
 } from "@/modules/form-builder/domain/field-types";
 import { LIMITS } from "@/modules/form-builder/domain/limits";
+import {
+  ALWAYS_FULL_TYPES,
+  FIELD_WIDTHS,
+  widthOf,
+  type FieldWidth,
+} from "@/modules/form-builder/domain/rowLayout";
 import { cn } from "@/lib/utils";
 import { BindingPicker } from "./BindingPicker";
 import { FIELD_TYPE_LABELS } from "./FieldPalette";
@@ -50,6 +56,12 @@ const TEXTUAL_TYPES: ReadonlySet<FieldType> = new Set([
 const CHOICE_TYPES: ReadonlySet<FieldType> = new Set(["select", "radio", "multi_select"]);
 const RANGE_TYPES: ReadonlySet<FieldType> = new Set(["number", "percentage", "currency"]);
 const KIND_TYPES: ReadonlySet<FieldType> = new Set(["file", "photo"]);
+
+const WIDTH_LABELS: Record<FieldWidth, string> = {
+  full: "Full",
+  half: "Half",
+  third: "Third",
+};
 
 /**
  * The config one newly added type starts with. Kept beside the editor that
@@ -216,6 +228,7 @@ export function Inspector({
 }) {
   const config = field.config ?? {};
   const heading = field.type === "section_heading";
+  const takesRow = ALWAYS_FULL_TYPES.has(field.type);
   const options = stringList(config.options);
   const kinds = stringList(config.kinds);
   const components = stringList(config.components);
@@ -346,6 +359,47 @@ export function Inspector({
           </span>
         </label>
       )}
+
+      <div>
+        <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-brand-ink/40">
+          Width
+        </p>
+        <div className="flex gap-1" role="radiogroup" aria-label="How wide this field is">
+          {FIELD_WIDTHS.map((width) => {
+            const active = widthOf(field) === width;
+            return (
+              <label
+                key={width}
+                className={cn(
+                  "flex-1 rounded-lg border px-2 py-1.5 text-center text-[11px] font-semibold transition",
+                  active
+                    ? "border-brand-gold bg-brand-gold/15 text-brand-ink"
+                    : "border-brand-line bg-white text-brand-ink/55",
+                  takesRow || disabled
+                    ? "cursor-not-allowed opacity-45"
+                    : "cursor-pointer hover:border-brand-gold/60",
+                )}
+              >
+                <input
+                  type="radio"
+                  name={`width-${htmlId}`}
+                  value={width}
+                  checked={active}
+                  disabled={disabled || takesRow}
+                  onChange={() => setConfig({ width })}
+                  className="sr-only"
+                />
+                {WIDTH_LABELS[width]}
+              </label>
+            );
+          })}
+        </div>
+        <p className="mt-1 text-[10px] leading-relaxed text-brand-ink/45">
+          {takesRow
+            ? "This type takes a whole row: the settings below are what make its answer wide."
+            : "A narrow field shares its row with the fields beside it in the list. On a phone every field still takes the whole row."}
+        </p>
+      </div>
 
       {heading ? (
         <p className="rounded-xl border border-dashed border-brand-line bg-brand-cream/50 px-3 py-2 text-[11px] leading-relaxed text-brand-ink/55">

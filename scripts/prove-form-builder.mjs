@@ -10,16 +10,21 @@
  * map and the rows it appends, the precedence rung a candidate's answer sits on,
  * and the wiring: the erasure read, the upload door, the public projection, the
  * nineteenth staff route, the AI capability, the consent boxes, the merged
- * `cv_text`, the bucket's doors, the orphan pass and the order of the person
- * write.
+ * `cv_text`, the bucket's doors, the orphan pass, the order of the person
+ * write and the three field widths that let two questions share a row — with
+ * the sentence that tells the author which half of a pair refused to — and the
+ * public door that reads an attached CV into the questions a published layout
+ * asks, the one model call behind it, and the wizard that fills only a blank
+ * the candidate did not write in.
  *
- * Migrations 043 and 044 are authored, not applied, so the checks that name a
- * table, a policy or a CHECK are text pins against those files (comments
- * stripped, whitespace squashed), not assertions against a live schema.
+ * Migrations 043 and 044 are applied on the local database, but nothing here
+ * reads one: the checks that name a table, a policy or a CHECK are text pins
+ * against those files (comments stripped, whitespace squashed), so the proof
+ * runs the same on a machine with no stack up.
  *
- * The eighteen mutation proofs are real edits: each one breaks a file, re-runs
- * the check that must notice, and restores the file in a `finally`. A mutation
- * that does not turn its check red fails the proof.
+ * The thirty-three mutation proofs are real edits: each one breaks a file,
+ * re-runs the check that must notice, and restores the file in a `finally`. A
+ * mutation that does not turn its check red fails the proof.
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -369,16 +374,20 @@ const resolveUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domai
 const typesUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/field-types.ts")).href;
 const identityUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/identityIssues.ts")).href;
 const limitsUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/limits.ts")).href;
+const draftIssuesUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/draftIssues.ts")).href;
 const snapshotUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/snapshot.ts")).href;
 const writerUrl = pathToFileURL(path.join(root, "src/modules/candidates/application/personWriter.ts")).href;
+const i18nUrl = pathToFileURL(path.join(root, "src/lib/i18n.ts")).href;
 const publicUrl = pathToFileURL(path.join(root, "src/modules/form-builder/application/publicForm.ts")).href;
 
 const rl = await import(resolveUrl);
 const ft = await import(typesUrl);
 const ii = await import(identityUrl);
 const LIMITS = (await import(limitsUrl)).LIMITS;
+const di = await import(draftIssuesUrl);
 const snap = await import(snapshotUrl);
 const writer = await import(writerUrl);
+const staticI18n = await import(i18nUrl);
 const pf = await import(publicUrl);
 const registry = await import(fieldsUrl);
 
@@ -1394,6 +1403,7 @@ const check11 = () => {
 // ---------------------------------------------------------------------------
 const PUBLIC_FIELD_KEYS = new Set([
   "key", "label", "help", "placeholder", "type", "required", "options", "accept", "maxBytes", "units",
+  "width",
 ]);
 
 const check12 = async (publicMod = pf, mod = rl) => {
@@ -1774,6 +1784,504 @@ const check19 = () => {
 };
 
 // ---------------------------------------------------------------------------
+// 20. rowLayout: three widths, one grid, and who refuses a shared row.
+// ---------------------------------------------------------------------------
+const ROW_LAYOUT_REL = "src/modules/form-builder/domain/rowLayout.ts";
+const rowLayoutUrl = pathToFileURL(path.join(root, ROW_LAYOUT_REL)).href;
+
+const ALWAYS_FULL = [
+  "section_heading",
+  "long_text",
+  "file",
+  "photo",
+  "address",
+  "geolocation",
+];
+
+const check20 = async (injected) => {
+  let row;
+  if (injected) {
+    row = injected;
+  } else {
+    try {
+      row = await import(rowLayoutUrl);
+    } catch (cause) {
+      return {
+        pass: false,
+        detail: `rowLayout.ts is not loadable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    }
+  }
+  const problems = [];
+
+  if (!deepEqual([...(row.FIELD_WIDTHS ?? [])], ["full", "half", "third"])) {
+    problems.push(`FIELD_WIDTHS is ${JSON.stringify(row.FIELD_WIDTHS)}`);
+  }
+  if (row.GRID_COLUMNS !== 6) problems.push(`GRID_COLUMNS is ${row.GRID_COLUMNS}`);
+
+  if (!row.ALWAYS_FULL_TYPES) {
+    problems.push("rowLayout declares no ALWAYS_FULL_TYPES");
+  } else if (!deepEqual([...row.ALWAYS_FULL_TYPES].sort(), [...ALWAYS_FULL].sort())) {
+    problems.push(`the always-full set is ${JSON.stringify([...row.ALWAYS_FULL_TYPES].sort())}`);
+  }
+
+  const width = (type, config) => row.widthOf?.({ type, config });
+
+  if (width("short_text", {}) !== "full") {
+    problems.push("a field whose config names no width is not full — every form on the database today would move");
+  }
+  if (width("short_text", { width: "half" }) !== "half") problems.push("config.width=half did not reach the layout");
+  if (width("short_text", { width: "third" }) !== "third") problems.push("config.width=third did not reach the layout");
+  if (width("short_text", { width: "wide" }) !== "full") problems.push("an unknown width was taken at face value");
+  if (width("short_text", { width: 2 }) !== "full") problems.push("a numeric width was taken at face value");
+  if (width("short_text", null) !== "full") problems.push("a null config threw instead of defaulting to full");
+  for (const type of ALWAYS_FULL) {
+    if (width(type, { width: "half" }) !== "full") {
+      problems.push(`a ${type} field was allowed half — its answer box would be cut in two`);
+    }
+  }
+
+  // The classes are one map, written as literals so Tailwind's scanner sees them.
+  if (!row.GRID_CLASS || !/grid/.test(row.GRID_CLASS) || !/grid-cols-6/.test(row.GRID_CLASS)) {
+    problems.push(`GRID_CLASS is ${JSON.stringify(row.GRID_CLASS)}`);
+  }
+  for (const [name, mobile, desktop] of [
+    ["full", "col-span-6", null],
+    ["half", "col-span-6", "sm:col-span-3"],
+    ["third", "col-span-6", "sm:col-span-2"],
+  ]) {
+    const cls = row.SPAN_CLASS?.[name];
+    if (!cls) {
+      problems.push(`SPAN_CLASS has no ${name}`);
+      continue;
+    }
+    if (!cls.includes(mobile) || (desktop && !cls.includes(desktop))) {
+      problems.push(`SPAN_CLASS.${name} is "${cls}"`);
+    }
+    if (cls.includes("${")) problems.push(`SPAN_CLASS.${name} is built by interpolation, so Tailwind never sees the class`);
+  }
+  if (!existsSync(path.join(root, ROW_LAYOUT_REL))) {
+    problems.push("rowLayout.ts is not readable");
+  } else {
+    const raw = rawOf(ROW_LAYOUT_REL);
+    for (const literal of ["col-span-6", "sm:col-span-3", "sm:col-span-2", "grid-cols-6"]) {
+      if (!raw.includes(literal)) problems.push(`${literal} is not a literal in rowLayout.ts, so the CSS is never generated`);
+    }
+  }
+
+  // Placing one field beside another is one contract: the widths the pair takes
+  // and the sentence the author is told. A refusal has to name the side that
+  // actually takes the whole row — the live proof caught a builder that blamed
+  // the pairable field the drag was dropped on.
+  const pair = (draggedType, draggedLabel, targetType, targetLabel, targetWidth) =>
+    row.beside?.({
+      dragged: { type: draggedType, label: draggedLabel },
+      target: { type: targetType, label: targetLabel, width: targetWidth },
+    });
+
+  const ontoFull = pair("short_text", "First name", "phone", "Phone", "full");
+  if (!ontoFull?.ok) {
+    problems.push("two questions refused to share a row");
+  } else {
+    if (ontoFull.dragged !== "half" || ontoFull.target !== "half") {
+      problems.push(`dropping beside a full field gave ${JSON.stringify([ontoFull.dragged, ontoFull.target])}`);
+    }
+    if (ontoFull.notice !== `"Phone" and "First name" are asked in one row.`) {
+      problems.push(`the pairing sentence reads ${JSON.stringify(ontoFull.notice)}`);
+    }
+  }
+  const ontoThird = pair("select", "Country", "date", "Birthday", "third");
+  if (!ontoThird?.ok || ontoThird.dragged !== "third" || ontoThird.target !== "third") {
+    problems.push(`dropping beside a third field gave ${JSON.stringify(ontoThird)}`);
+  }
+
+  const draggedTakesRow = pair("file", "CV", "url", "LinkedIn", "full");
+  const draggedRefusal = typeof draggedTakesRow?.error === "string" ? draggedTakesRow.error : "";
+  if (draggedTakesRow?.ok) {
+    problems.push("an upload door was allowed beside a question");
+  } else if (!draggedRefusal.includes('"CV"')) {
+    problems.push(`the refusal did not name the field that takes the row: ${JSON.stringify(draggedRefusal)}`);
+  } else if (draggedRefusal.includes("LinkedIn")) {
+    problems.push(`the refusal blamed the pairable field it was dropped on: ${JSON.stringify(draggedRefusal)}`);
+  }
+
+  const targetTakesRow = pair("short_text", "First name", "section_heading", "Experience", "full");
+  const targetRefusal = typeof targetTakesRow?.error === "string" ? targetTakesRow.error : "";
+  if (targetTakesRow?.ok) {
+    problems.push("a section heading accepted a field beside it");
+  } else if (!targetRefusal.includes('"Experience"')) {
+    problems.push(`the refusal did not name the row the drop landed on: ${JSON.stringify(targetRefusal)}`);
+  }
+
+  const bothTakeRow = pair("long_text", "About you", "address", "Home address", "full");
+  const bothRefusal = typeof bothTakeRow?.error === "string" ? bothTakeRow.error : "";
+  if (bothTakeRow?.ok) {
+    problems.push("two whole-row fields were allowed in one row");
+  } else if (!bothRefusal.includes('"Home address"')) {
+    problems.push(`a double refusal named the dragged side first: ${JSON.stringify(bothRefusal)}`);
+  }
+  if (!/takes a whole row/.test(draggedRefusal + targetRefusal + bothRefusal)) {
+    problems.push("the refusal does not say what the row is for");
+  }
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 21. The width crosses to the browser, is refused at save, and is one map.
+// ---------------------------------------------------------------------------
+const WIDTH_SURFACES = [
+  ["src/app/(admin)/forms/Canvas.tsx", ["GRID_CLASS", "SPAN_CLASS"]],
+  ["src/app/(admin)/forms/Inspector.tsx", ["FIELD_WIDTHS", "ALWAYS_FULL_TYPES"]],
+  ["src/app/(admin)/forms/FormsConsole.tsx", ["beside", "widthOf"]],
+  ["src/app/careers/apply/[id]/DynamicApplyWizard.tsx", ["GRID_CLASS", "SPAN_CLASS"]],
+];
+
+const draftField = (key, type, config = {}) => ({
+  key,
+  type,
+  label: `The ${key}`,
+  helpText: null,
+  placeholder: null,
+  required: false,
+  config,
+  systemKey: null,
+});
+
+const check21 = (injected = {}) => {
+  const layoutMod = injected.rl ?? rl;
+  const publicMod = injected.pf ?? pf;
+  const draftMod = injected.di ?? di;
+  const problems = [];
+
+  const layout = layoutMod.resolveLayout({
+    forms: [form("wv", { name: "Width probe", isGlobal: true, globalPosition: 0 })],
+    fieldsByForm: {
+      wv: [
+        field("w1", "wv", "first_name", "short_text", { config: { width: "half", maxLength: 40 } }),
+        field("w2", "wv", "city_name", "short_text", { config: {} }),
+        field("w3", "wv", "cv_file", "file", { config: { kinds: ["pdf"], width: "third" } }),
+        field("w4", "wv", "years_exp", "number", { config: { width: "wide" } }),
+        field("w5", "wv", "about_you", "long_text", { config: { width: "half" } }),
+      ],
+    },
+    assignments: [],
+    jobId: JOB,
+  });
+  const flat = publicMod.project(layout).steps.flatMap((step) => step.fields);
+  if (flat.length !== 5) problems.push(`the probe resolved ${flat.length} fields`);
+  const widthOfProjected = (key) => flat.find((entry) => entry.key === key)?.width;
+  for (const key of flat.map((entry) => entry.key)) {
+    if (widthOfProjected(key) === undefined) {
+      problems.push(`${key} crossed with no width, so the browser cannot lay it out`);
+    }
+  }
+  if (widthOfProjected("first_name") !== "half") problems.push(`first_name crossed as ${widthOfProjected("first_name")}`);
+  if (widthOfProjected("city_name") !== "full") problems.push(`an unset width crossed as ${widthOfProjected("city_name")}`);
+  if (widthOfProjected("cv_file") !== "full") problems.push(`the file field crossed as ${widthOfProjected("cv_file")} — its byte ceiling and door are its own`);
+  if (widthOfProjected("years_exp") !== "full") problems.push(`the unusable width crossed as ${widthOfProjected("years_exp")}`);
+  if (widthOfProjected("about_you") !== "full") problems.push(`the long-text field crossed as ${widthOfProjected("about_you")}`);
+
+  const publicRaw = rawOf("src/modules/form-builder/application/publicForm.ts");
+  const publicBody = blockBetween(publicRaw, "export interface PublicField {", "export interface PublicStep");
+  if (!/^ {2}width:/m.test(publicBody)) problems.push("PublicField declares no width");
+
+  // The editor refuses a width it cannot lay out, before the config is written.
+  if (draftMod.draftIssues([draftField("first_name", "short_text", { width: "half" })]).length) {
+    problems.push("a half-width short_text was refused");
+  }
+  if (!draftMod.draftIssues([draftField("years_exp", "number", { width: "wide" })]).length) {
+    problems.push("draftIssues accepted a width that is not full, half or third");
+  }
+  if (!draftMod.draftIssues([draftField("cv_file", "file", { kinds: ["pdf"], width: "half" })]).length) {
+    problems.push("draftIssues accepted a half-width file field");
+  }
+  if (!draftMod.draftIssues([draftField("about_you", "long_text", { width: "third" })]).length) {
+    problems.push("draftIssues accepted a third-width long_text field");
+  }
+
+  // Both editors read the one map — no second copy of the grid in a component.
+  for (const [rel, names] of WIDTH_SURFACES) {
+    if (!existsSync(path.join(root, rel))) {
+      problems.push(`${rel} is not readable`);
+      continue;
+    }
+    const code = codeOf(rel);
+    if (!code.includes('from "@/modules/form-builder/domain/rowLayout"')) {
+      problems.push(`${rel} lays fields out without reading rowLayout.ts`);
+    }
+    for (const name of names) {
+      if (!new RegExp(`\\b${name}\\b`).test(code)) problems.push(`${rel} never uses ${name}`);
+    }
+    if (/col-span/.test(code)) problems.push(`${rel} hardcodes a col-span class beside the one map in rowLayout.ts`);
+  }
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 22. cvAnswers: what a CV may be allowed to type into the form.
+// ---------------------------------------------------------------------------
+const CV_ANSWERS_REL = "src/modules/form-builder/domain/cvAnswers.ts";
+const cvAnswersUrl = pathToFileURL(path.join(root, CV_ANSWERS_REL)).href;
+
+/** An authored field, as the door sees it once the layout is resolved. */
+const cvField = (key, type, config = {}, label = key) => ({
+  key,
+  type,
+  label,
+  help: null,
+  config,
+});
+
+const check22 = async (injected) => {
+  let cv;
+  if (injected) {
+    cv = injected;
+  } else {
+    try {
+      cv = await import(cvAnswersUrl);
+    } catch (cause) {
+      return {
+        pass: false,
+        detail: `cvAnswers.ts is not loadable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    }
+  }
+  const problems = [];
+
+  // ——— the ask list ———
+  const form = [
+    cvField("full_name", "short_text", { maxLength: 80, width: "half" }, "Full name"),
+    cvField("email", "email", {}, "Email"),
+    cvField("country", "select", { options: ["Egypt", "UAE"] }, "Country"),
+    cvField("cv_file", "file", { kinds: ["pdf"] }, "CV"),
+    cvField("portrait", "photo", {}, "Photo"),
+    cvField("agree_news", "checkbox", {}, "Newsletter"),
+    cvField("office", "geolocation", {}, "Office location"),
+    cvField("experience", "section_heading", {}, "Experience"),
+  ];
+
+  const listed = cv.cvAskList(form, []);
+  if (!deepEqual(listed.map((ask) => ask.key), ["full_name", "email", "country"])) {
+    problems.push(`the ask list is ${JSON.stringify(listed.map((ask) => ask.key))}`);
+  }
+  if (!deepEqual(cv.cvAskList(form, ["email"]).map((ask) => ask.key), ["full_name", "country"])) {
+    problems.push("a key the candidate already answered stayed in the ask list");
+  }
+
+  // The ask carries the answer's shape and none of the author's settings.
+  const askedJson = JSON.stringify(listed);
+  for (const leak of ["width", "kinds", "system_key", "required", "config"]) {
+    if (new RegExp(`"${leak}"`).test(askedJson)) {
+      problems.push(`the ask list carries ${leak}, which the model has no business reading`);
+    }
+  }
+  if (listed[0]?.maxLength !== 80) problems.push("a text field's ceiling did not reach the ask list");
+  if (!deepEqual(listed[2]?.options, ["Egypt", "UAE"])) {
+    problems.push(`the offered options did not reach the ask list: ${JSON.stringify(listed[2]?.options)}`);
+  }
+  if (cv.cvAskList([cvField("country", "select", {}, "Country")], []).length) {
+    problems.push("a select the author left optionless was asked — nothing could validate its answer");
+  }
+
+  // ——— the answers accepted back ———
+  const fields = [
+    cvField("full_name", "short_text", { maxLength: 80 }, "Full name"),
+    cvField("email", "email", {}, "Email"),
+    cvField("phone", "phone", {}, "Phone"),
+    cvField("birthday", "date", { max: "2020-01-01" }, "Date of birth"),
+    cvField("salary", "number", { decimals: 2 }, "Expected salary"),
+    cvField("country", "select", { options: ["Egypt", "UAE"] }, "Country"),
+    cvField("langs", "multi_select", { options: ["Arabic", "English", "French"] }, "Languages"),
+    cvField("about", "long_text", {}, "About you"),
+    cvField("home", "address", { components: ["line1", "city", "country"] }, "Home address"),
+    cvField("notice", "duration", { units: ["days", "weeks"] }, "Notice period"),
+    cvField("cv_file", "file", { kinds: ["pdf"] }, "CV"),
+    cvField("agree_news", "checkbox", {}, "Newsletter"),
+  ];
+
+  const filled = cv.acceptCvAnswers(fields, {
+    full_name: "  Mahmoud Muslim  ",
+    email: "MAHMOUD@Example.COM",
+    phone: "+20 100 000 0000",
+    birthday: "1994-06-15",
+    salary: "45000.555",
+    country: "Libya",
+    langs: ["Arabic", "German"],
+    about: "x".repeat(5_001),
+    home: { line1: "12 Tahrir St", city: "Cairo", country: "Egypt", street: "not a component" },
+    notice: { value: 30, unit: "days" },
+    cv_file: "CV.pdf",
+    agree_news: true,
+    national_id: "51422",
+  });
+
+  const accepted = Object.keys(filled).sort();
+  if (!deepEqual(accepted, ["birthday", "email", "full_name", "home", "notice", "phone"])) {
+    problems.push(`the accepted answers are ${JSON.stringify(accepted)}`);
+  }
+  if (filled.full_name !== "Mahmoud Muslim") problems.push("a name was not trimmed");
+  if (filled.email !== "mahmoud@example.com") problems.push("an email reached the form unnormalised");
+  // The address box edits parts, so what it is handed must stay parts — the
+  // normaliser's joined line is the snapshot's shape, not the input's.
+  if (!deepEqual(filled.home, { line1: "12 Tahrir St", city: "Cairo", country: "Egypt" })) {
+    problems.push(`the address answer is ${JSON.stringify(filled.home)}`);
+  }
+
+  // A blank is not an answer: it would read as filled and then fail `required`.
+  for (const blank of [
+    [cvField("full_name", "short_text", {}), { full_name: "   " }],
+    [cvField("langs", "multi_select", { options: ["Arabic", "English"] }), { langs: [] }],
+    [cvField("home", "address", {}), { home: { city: "  " } }],
+  ]) {
+    if (Object.keys(cv.acceptCvAnswers([blank[0]], blank[1])).length) {
+      problems.push(`an empty ${blank[0].type} answer was kept — the step would call it answered`);
+    }
+  }
+
+  // A value the normaliser refuses never reaches the browser, whatever it is.
+  if (
+    Object.keys(
+      cv.acceptCvAnswers(
+        [cvField("notice", "duration", { units: ["days", "weeks"] })],
+        { notice: { value: 1, unit: "months" } }
+      )
+    ).length
+  ) {
+    problems.push("a duration in a unit the field does not offer was accepted");
+  }
+  if (
+    Object.keys(
+      cv.acceptCvAnswers([cvField("birthday", "date", { max: "2020-01-01" })], {
+        birthday: "2025-01-01",
+      })
+    ).length
+  ) {
+    problems.push("a date after the field's own ceiling was accepted");
+  }
+
+  // And a door that hands back anything but an object answers with nothing.
+  for (const garbage of [null, undefined, "Mahmoud", ["email"], 42]) {
+    if (Object.keys(cv.acceptCvAnswers(fields, garbage)).length) {
+      problems.push(`proposals of ${JSON.stringify(garbage) ?? "undefined"} produced answers`);
+    }
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 23. The CV autofill door: same guards as the contact reader, one model call,
+//     and a wizard that fills only what the candidate left blank.
+// ---------------------------------------------------------------------------
+const FORM_PREFILL_REL = "src/app/api/careers/form-prefill/route.ts";
+const CV_FORM_READ_REL = "src/modules/careers/cv-form-answers.ts";
+const WIZARD_REL = "src/app/careers/apply/[id]/DynamicApplyWizard.tsx";
+const UPLOAD_BOX_REL = "src/app/careers/apply/[id]/fields/UploadBox.tsx";
+const FIELD_TYPES_REL = "src/app/careers/apply/[id]/fields/types.ts";
+
+const CV_FILL_KEYS = [
+  "apply.dyn.cvFillButton",
+  "apply.dyn.cvFillBusy",
+  "apply.dyn.cvFillNoFile",
+  "apply.dyn.cvFillNote",
+];
+
+const check23 = (injected = {}) => {
+  const problems = [];
+  const i18n = injected.i18n ?? staticI18n;
+
+  if (!existsSync(path.join(root, FORM_PREFILL_REL))) {
+    problems.push(`${FORM_PREFILL_REL} does not exist`);
+  } else {
+    const route = codeOf(FORM_PREFILL_REL);
+
+    const sent = [...route.matchAll(/form\.get\("([^"]+)"\)/g)].map((m) => m[1]).sort();
+    if (!deepEqual(sent, ["file", "jobId"])) {
+      problems.push(`the body is read for [${sent}]`);
+    }
+    if (!route.includes('form.getAll("skip")')) {
+      problems.push("the keys the candidate already answered are not read from the body");
+    }
+
+    // Every guard that keeps a public door from costing a model call.
+    const oversize = route.indexOf("oversizeUploadResponse(request, CV_MAX_BYTES)");
+    const parsed = route.indexOf("await request.formData()");
+    if (oversize === -1 || parsed === -1 || oversize > parsed) {
+      problems.push("an oversize file is buffered and read before the byte ceiling refuses it");
+    }
+    for (const needle of [
+      "isAcceptedCvType(",
+      "cvContentError(",
+      "cvSizeError(",
+      'eq("status", "PUBLISHED")',
+      "extractCvText(",
+      "resolveFormForJob(jobId)",
+      "cvAskList(",
+      "acceptCvAnswers(",
+    ]) {
+      if (!route.includes(needle)) problems.push(`the form-prefill door no longer contains ${needle}`);
+    }
+    if (!/no-store/.test(route)) problems.push("the answers a model inferred are left cacheable");
+    if (/system_key/.test(route)) problems.push("the door reads a registry key");
+  }
+
+  if (!existsSync(path.join(root, CV_FORM_READ_REL))) {
+    problems.push(`${CV_FORM_READ_REL} does not exist`);
+  } else {
+    const reader = codeOf(CV_FORM_READ_REL);
+    if (!reader.includes('capability: "resume_screening"')) {
+      problems.push("the form read is not the screening capability the CV reader already uses");
+    }
+    for (const needle of ["temperature: 0", "jsonMode: true", "MAX_INPUT_CHARS"]) {
+      if (!reader.includes(needle)) problems.push(`the CV form reader no longer contains ${needle}`);
+    }
+    // The gateway's own parser, generic and all — the model's JSON is never sliced
+    // out by hand, the way the contact reader does it. Same line only, so the
+    // import alone cannot satisfy it.
+    if (!/parseJsonResponse[^(\n]*\(/.test(reader)) {
+      problems.push("the CV form reader no longer parses through the gateway");
+    }
+    if (!/never guess/i.test(rawOf(CV_FORM_READ_REL))) {
+      problems.push("the prompt no longer tells the model to leave out what the CV does not print");
+    }
+  }
+
+  if (!existsSync(path.join(root, WIZARD_REL))) {
+    problems.push(`${WIZARD_REL} does not exist`);
+  } else {
+    const wizard = codeOf(WIZARD_REL);
+    for (const needle of [
+      "/api/careers/form-prefill",
+      "touched.current.add(",
+      "touched.current.has(",
+      "cvFile.current",
+    ]) {
+      if (!wizard.includes(needle)) problems.push(`the wizard no longer contains ${needle}`);
+    }
+    if (!wizard.includes('t("apply.dyn.cvFillButton")')) {
+      problems.push("no step offers the candidate a fill from their CV");
+    }
+  }
+
+  for (const [rel, needle, what] of [
+    [UPLOAD_BOX_REL, "upload.onFile?.(file)", "the upload box"],
+    [FIELD_TYPES_REL, "onFile", "the upload door's type"],
+  ]) {
+    if (!existsSync(path.join(root, rel))) problems.push(`${rel} does not exist`);
+    else if (!codeOf(rel).includes(needle)) problems.push(`${what} no longer hands the file over (${needle})`);
+  }
+
+  for (const key of CV_FILL_KEYS) {
+    const en = i18n.translate("en", key);
+    const ar = i18n.translate("ar", key);
+    if (en === key) problems.push(`${key} ships no English copy`);
+    if (ar === key || ar === en || !ar.trim()) problems.push(`${key} ships no Arabic copy`);
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
 // The checks, in the spec's own numbering.
 // ---------------------------------------------------------------------------
 const CHECKS = [
@@ -1796,6 +2304,10 @@ const CHECKS = [
   ["17. candidate-photos: 043's five surfaces, 044's three doors", check17],
   ["18. The orphan pass sweeps unclaimed uploads, bytes first, ungated", check18],
   ["19. The person write runs last, on one door, behind a consent checker", check19],
+  ["20. rowLayout: three widths, six types that never sit beside, the pairing sentence", check20],
+  ["21. The width reaches the browser, is refused at save, and has one map", check21],
+  ["22. cvAnswers: the ask list a CV is read against, and the answers it may leave", check22],
+  ["23. The CV autofill door, the model read behind it, and the wizard that keeps its blanks", check23],
 ];
 
 const ENTRY = Object.fromEntries(CHECKS.map(([name, fn], index) => [index + 1, { name, fn }]));
@@ -1873,6 +2385,9 @@ const ACTIONS_REL = "src/app/careers/actions.ts";
 const BROWSER_TYPES_REL = "src/app/(admin)/files/file-browser-types.ts";
 const RETENTION_REL = "src/app/api/cron/retention/route.ts";
 const WRITER_REL = "src/modules/candidates/application/personWriter.ts";
+const PUBLIC_FORM_REL = "src/modules/form-builder/application/publicForm.ts";
+const DRAFT_ISSUES_REL = "src/modules/form-builder/domain/draftIssues.ts";
+const CANVAS_REL = "src/app/(admin)/forms/Canvas.tsx";
 
 // 1. The two assignment orders swapped → check 1 red.
 await mutation(
@@ -2077,8 +2592,191 @@ await mutation(
   async () => checkIsRed(3, async () => check3(await mutated(identityUrl)))
 );
 
+// 19. A long-text answer allowed into a half row → check 20 red.
+await mutation(
+  "19. long_text dropped from the always-full set → check 20 red",
+  ROW_LAYOUT_REL,
+  `export const ALWAYS_FULL_TYPES: ReadonlySet<FieldType> = new Set([
+  "section_heading",
+  "long_text",
+  "file",`,
+  `export const ALWAYS_FULL_TYPES: ReadonlySet<FieldType> = new Set([
+  "section_heading",
+  "file",`,
+  async () => checkIsRed(20, async () => check20(await mutated(rowLayoutUrl)))
+);
+
+// 20. A field that names no width no longer reads as full → check 20 red.
+await mutation(
+  "20. The no-width fallback flipped to half, so every form already on the database moves → check 20 red",
+  ROW_LAYOUT_REL,
+  `  return (FIELD_WIDTHS as readonly string[]).includes(String(raw))
+    ? (raw as FieldWidth)
+    : "full";`,
+  `  return (FIELD_WIDTHS as readonly string[]).includes(String(raw))
+    ? (raw as FieldWidth)
+    : "half";`,
+  async () => checkIsRed(20, async () => check20(await mutated(rowLayoutUrl)))
+);
+
+// 21. A half field given no mobile span → check 20 red.
+await mutation(
+  "21. SPAN_CLASS.half narrowed to the desktop break, so a phone gets two boxes in one row → check 20 red",
+  ROW_LAYOUT_REL,
+  '  half: "col-span-6 sm:col-span-3",',
+  '  half: "sm:col-span-3",',
+  async () => checkIsRed(20, async () => check20(await mutated(rowLayoutUrl)))
+);
+
+// 22. `beside` stops refusing an always-full partner → check 20 red.
+await mutation(
+  "22. The pairing rule asks nothing about the two types → check 20 red",
+  ROW_LAYOUT_REL,
+  `  if (ALWAYS_FULL_TYPES.has(input.target.type)) {
+    return { ok: false, error: wholeRowSentence(input.target) };
+  }
+  if (ALWAYS_FULL_TYPES.has(input.dragged.type)) {
+    return { ok: false, error: wholeRowSentence(input.dragged) };
+  }`,
+  "",
+  async () => checkIsRed(20, async () => check20(await mutated(rowLayoutUrl)))
+);
+
+// 26. The refusal names the dragged side first, so a drop onto a heading is
+//     blamed on the question rather than on the row it landed on → check 20 red.
+await mutation(
+  "26. The pairing refusal blames the wrong half of the pair → check 20 red",
+  ROW_LAYOUT_REL,
+  `  if (ALWAYS_FULL_TYPES.has(input.target.type)) {
+    return { ok: false, error: wholeRowSentence(input.target) };
+  }
+  if (ALWAYS_FULL_TYPES.has(input.dragged.type)) {
+    return { ok: false, error: wholeRowSentence(input.dragged) };
+  }`,
+  `  if (ALWAYS_FULL_TYPES.has(input.dragged.type)) {
+    return { ok: false, error: wholeRowSentence(input.dragged) };
+  }
+  if (ALWAYS_FULL_TYPES.has(input.target.type)) {
+    return { ok: false, error: wholeRowSentence(input.target) };
+  }`,
+  async () => checkIsRed(20, async () => check20(await mutated(rowLayoutUrl)))
+);
+
+// 23. The width dropped from the projection → check 21 red.
+await mutation(
+  "23. The width never crosses the projection, so the candidate's page lays every field full → check 21 red",
+  PUBLIC_FORM_REL,
+  "    width: widthOf(field),\n",
+  "",
+  async () => checkIsRed(21, async () => check21({ pf: await mutated(publicUrl) }))
+);
+
+// 24. The editor's width guard switched off → check 21 red.
+await mutation(
+  "24. Save accepts a width the grid cannot lay out → check 21 red",
+  DRAFT_ISSUES_REL,
+  "    if (width !== undefined && width !== null && width !== \"\") {",
+  "    if (false) {",
+  async () => checkIsRed(21, async () => check21({ di: await mutated(draftIssuesUrl) }))
+);
+
+// 25. The console ships its own grid class → check 21 red.
+await mutation(
+  "25. The builder hardcodes a full row beside the one map → check 21 red",
+  CANVAS_REL,
+  "              SPAN_CLASS[widthOf(field)],",
+  '              "col-span-6",',
+  () => checkIsRed(21)
+);
+
+// 27. An answer the field's own normaliser refused is filed anyway → check 22 red.
+await mutation(
+  "27. A model's answer goes into the form without passing the field's normaliser → check 22 red",
+  CV_ANSWERS_REL,
+  "    if (!normalised.ok) continue;",
+  "    if (false) continue;",
+  async () => checkIsRed(22, async () => check22(await mutated(cvAnswersUrl)))
+);
+
+// 28. A blank is kept as an answer → check 22 red.
+await mutation(
+  "28. An empty answer is filed, so the step calls the field answered and the door refuses it → check 22 red",
+  CV_ANSWERS_REL,
+  "    if (isEmptyAnswer(field.type, normalised.value)) continue;",
+  "    if (false) continue;",
+  async () => checkIsRed(22, async () => check22(await mutated(cvAnswersUrl)))
+);
+
+// 29. The model's raw output goes straight back to the browser → check 23 red.
+await mutation(
+  "29. A proposal skips the field that asks for it, and reaches the page unjudged → check 23 red",
+  FORM_PREFILL_REL,
+  "    const answers = acceptCvAnswers(fields, proposals);",
+  "    const answers = proposals;",
+  () => checkIsRed(23, async () => check23())
+);
+
+// 30. The byte ceiling read after the buffer → check 23 red.
+await mutation(
+  "30. The form is parsed before the Content-Length ceiling is asked, so a 40 MB file costs the read → check 23 red",
+  FORM_PREFILL_REL,
+  `  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return Response.json({ error: "Could not read that file." }, { status: 400 });
+  }`,
+  `  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return Response.json({ error: "Could not read that file." }, { status: 400 });
+  }
+
+  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;`,
+  () => checkIsRed(23, async () => check23())
+);
+
+// 31. Both readings of the touched set vanish → check 23 red. One `mutation`
+//     cannot do it: it replaces the first occurrence, and the set is read twice.
+await mutationEdits(
+  "31. The wizard fills over what the candidate typed → check 23 red",
+  WIZARD_REL,
+  [
+    [
+      "  return answerableFields(entry, answers).filter((field) => !touched.current.has(field.key));",
+      "  return answerableFields(entry, answers);",
+    ],
+    ["        if (touched.current.has(field.key)) {", "        if (false) {"],
+  ],
+  () => checkIsRed(23, async () => check23())
+);
+
+// 32. The upload box keeps the bytes to itself → check 23 red.
+await mutation(
+  "32. The attached CV never reaches the wizard, so the button has nothing to read → check 23 red",
+  UPLOAD_BOX_REL,
+  "      upload.onFile?.(file);",
+  "      void 0;",
+  () => checkIsRed(23, async () => check23())
+);
+
+// 33. One Arabic line of the four deleted → check 23 red. The missing key falls
+//     back to English, which is exactly the silence this guard refuses to accept.
+await mutation(
+  "33. A fill button with no Arabic copy ships the English words to an Arabic page → check 23 red",
+  "src/lib/i18n.ts",
+  '  "apply.dyn.cvFillButton": "املأ من سيرتي الذاتية",\n',
+  "",
+  async () => checkIsRed(23, async () => check23({ i18n: await mutated(i18nUrl) }))
+);
+
 // ---------------------------------------------------------------------------
-// Run the nineteen checks
+// Run the twenty-three checks
 // ---------------------------------------------------------------------------
 for (const [name, fn] of CHECKS) {
   results.push({ name, ...(await safe(fn)) });

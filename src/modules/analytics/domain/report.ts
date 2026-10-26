@@ -15,6 +15,7 @@
  */
 
 import { dayKeyInZone } from "@/lib/timezone";
+import type { FormProfileReport } from "./formAndProfile";
 
 export type AnalyticsWindow = "30" | "90" | "365" | "all";
 
@@ -211,6 +212,12 @@ export interface AnalyticsInput {
    * analytics page reads exactly like a real number.
    */
   limitations: string[];
+  /**
+   * The form and profile section. Built by its own pure module because it reads
+   * two stores the other four sections never touch; `formProfile` rides here so
+   * one report object describes the whole page and one export file.
+   */
+  formProfile: FormProfileReport;
 }
 
 export interface AnalyticsReport {
@@ -221,6 +228,8 @@ export interface AnalyticsReport {
   complete: boolean;
   scoresHidden: boolean;
   limitations: string[];
+  /** Application-form adoption and person-profile coverage, with demographics behind the grant. */
+  formProfile: FormProfileReport;
   assessments: {
     issued: number;
     opened: number;
@@ -577,6 +586,7 @@ export function buildAnalyticsReport(input: AnalyticsInput): AnalyticsReport {
     complete: input.complete,
     scoresHidden: input.scoresHidden,
     limitations: input.limitations,
+    formProfile: input.formProfile,
     assessments: {
       issued: input.attempts.length,
       opened,

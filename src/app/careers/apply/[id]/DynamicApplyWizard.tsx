@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -8,21 +8,25 @@ import {
   CheckCircle2,
   Loader2,
   Pencil,
+  Sparkles,
 } from "lucide-react";
 import { submitApplication } from "../../actions";
 import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
 import type { PersonFieldGroup } from "@/modules/candidates/domain/person-fields";
 import { noticeFor } from "@/modules/candidates/domain/person-notice";
+import { NEVER_ASKED_TYPES } from "@/modules/form-builder/domain/cvAnswers";
 import type {
   PublicField,
   PublicForm,
   PublicStep,
 } from "@/modules/form-builder/application/publicForm";
+import { GRID_CLASS, SPAN_CLASS } from "@/modules/form-builder/domain/rowLayout";
 import { usePublicLocale } from "@/modules/shell/presentation/PublicChrome";
 import { translate } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { QuestionsStep } from "./ApplyQuestionsStep";
 import { ReceivedPanel } from "./ApplyReceivedPanel";
+import { joinWords } from "./joinWords";
 import { FieldRenderer } from "./fields/FieldRenderer";
 import { isBlank } from "./fields/FieldFrame";
 import type { T } from "./fields/types";
@@ -40,6 +44,18 @@ import type { T } from "./fields/types";
  * of both the answers and the person write. Undefined is not a decline: the
  * box is a genuine choice, so a candidate who never touches it keeps seeing
  * the questions and simply records no consent.
+ *
+ * Each step is a six-column grid and every field carries the width the server
+ * derived, so two half-width questions sit in one row on a desktop. On a phone
+ * each one spans the whole grid: a narrow field is an arrangement, never a
+ * smaller question.
+ *
+ * A step can also be answered from the CV the candidate already attached. The
+ * bytes of that file are held in a ref, never re-picked, and one press sends them
+ * to `/api/careers/form-prefill` with the keys this page has already answered, so
+ * the model is asked only about what is still blank here. What comes back is
+ * written into the blanks and nowhere else: a field the candidate touched is
+ * theirs, and the door re-checks every answer against the field that asks for it.
  */
 
 type AuthoredStep = {
@@ -156,6 +172,149 @@ function ConsentBox({
   );
 }
 
+/**
+ * The questions on a step a CV could still answer.
+ *
+ * A heading asks nothing, an attachment is chosen not read, and a checkbox is a
+ * declaration no model makes for anybody else — the server refuses those too,
+ * from the same list, so the page never counts a blank the CV owes it nothing for.
+ */
+function answerableFields(entry: AuthoredStep, answers: Record<string, unknown>): PublicField[] {
+  return entry.fields.filter(
+    (field) => !NEVER_ASKED_TYPES.includes(field.type) && isBlank(answers[field.key]),
+  );
+}
+
+/**
+ * One authored step of the form: its consent boxes, its fields in the author's
+ * widths, and the button that reads the attached CV into the blanks.
+ *
+ * A component rather than a render helper because its parent holds two refs the
+ * CV read lives on — the bytes and the set of fields the candidate wrote in —
+ * and a ref reached through a helper called during render is a value the render
+ * cannot re-run on. Everything here arrives as props and every ref stays in the
+ * wizard, touched only from a handler.
+ */
+function AuthoredStepCard({
+  entry,
+  answers,
+  fieldErrors,
+  uploads,
+  consents,
+  jobId,
+  filling,
+  fillNote,
+  onFill,
+  onFieldChange,
+  onFile,
+  onUploadResult,
+  onConsent,
+  t,
+}: {
+  entry: AuthoredStep;
+  answers: Record<string, unknown>;
+  fieldErrors: Record<string, string>;
+  uploads: Record<string, { uploadId: string; fileName: string }>;
+  consents: Consents;
+  jobId: string;
+  filling: boolean;
+  fillNote: { tone: "ok" | "bad"; text: string } | null;
+  onFill: () => void;
+  onFieldChange: (key: string, value: unknown) => void;
+  onFile: (key: string, file: File | null) => void;
+  onUploadResult: (key: string, uploadId: string | null, fileName: string | null) => void;
+  onConsent: (group: PersonFieldGroup, agreed: boolean) => void;
+  t: T;
+}) {
+  const hidden = declined(entry.consentGroups, consents);
+  const blanks = hidden ? [] : answerableFields(entry, answers);
+
+  return (
+    <>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <h2 className="font-display text-xl font-bold">
+          {entry.heading ?? t("apply.dyn.formStep")}
+        </h2>
+
+        {blanks.length > 0 && (
+          <button
+            type="button"
+            onClick={onFill}
+            disabled={filling}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-brand-gold/60 bg-brand-sand/60 px-3.5 py-2 text-xs font-bold text-brand-ink transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {filling ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
+            )}
+            {filling ? t("apply.dyn.cvFillBusy") : t("apply.dyn.cvFillButton")}
+          </button>
+        )}
+      </div>
+
+      {blanks.length > 0 && !fillNote && (
+        <p className="mt-1.5 text-[11px] leading-relaxed text-brand-ink/45">
+          {t("apply.dyn.cvFillNote")}
+        </p>
+      )}
+
+      {fillNote && (
+        <p
+          role={fillNote.tone === "bad" ? "alert" : "status"}
+          className={cn(
+            "mt-2 text-[11px] leading-relaxed",
+            fillNote.tone === "ok" ? "text-emerald-800" : "text-amber-800",
+          )}
+        >
+          {fillNote.text}
+        </p>
+      )}
+
+      {entry.consentGroups.map((group) => (
+        <ConsentBox
+          key={group}
+          group={group}
+          choice={consents[group]}
+          onChoose={(agreed) => onConsent(group, agreed)}
+          t={t}
+        />
+      ))}
+
+      {hidden ? (
+        <p className="mt-5 rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-sm leading-relaxed text-brand-ink/60">
+          {t("apply.dyn.declined")}
+        </p>
+      ) : (
+        <div className={cn(GRID_CLASS, "gap-x-4 gap-y-5 sm:gap-x-5")}>
+          {entry.fields.map((field) => (
+            <div key={field.key} className={SPAN_CLASS[field.width]}>
+              <FieldRenderer
+                field={field}
+                id={`field-${field.key}`}
+                value={answers[field.key]}
+                onChange={(value) => onFieldChange(field.key, value)}
+                error={fieldErrors[field.key]}
+                upload={{
+                  jobId,
+                  fieldKey: field.key,
+                  uploadId: uploads[field.key]?.uploadId ?? null,
+                  fileName: uploads[field.key]?.fileName ?? null,
+                  onUploaded: (uploadId, fileName) => onUploadResult(field.key, uploadId, fileName),
+                  // The CV is the file the candidate already has open, so the read
+                  // reuses these bytes instead of asking for the file twice.
+                  onFile: (file) => onFile(field.key, file),
+                }}
+                t={t}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export function DynamicApplyWizard({
   form,
   job,
@@ -193,6 +352,22 @@ export function DynamicApplyWizard({
   const [result, setResult] = useState<
     { ok: true; outcome: "received"; trackingCode: string } | null
   >(null);
+
+  /**
+   * The fields this candidate has written in themselves, however briefly.
+   *
+   * A ref, not state: nothing on screen depends on it, and a re-render on every
+   * keystroke would be a second cost beside the one the field itself already pays.
+   * It is read the moment the CV answers come back, so a candidate who typed while
+   * the model was thinking keeps what they typed.
+   */
+  const touched = useRef<Set<string>>(new Set());
+
+  /** The bytes of the last file attached on this page, for the CV read to reuse. */
+  const cvFile = useRef<{ fieldKey: string; file: File } | null>(null);
+
+  const [filling, setFilling] = useState(false);
+  const [fillNote, setFillNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -261,11 +436,13 @@ export function DynamicApplyWizard({
     const next = Math.min(Math.max(0, target), steps.length - 1);
     setStep(next);
     setStepError(null);
+    setFillNote(null);
     setFurthest((current) => Math.max(current, next));
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function setAnswer(key: string, value: unknown) {
+    touched.current.add(key);
     setAnswers((current) => ({ ...current, [key]: value }));
     setFieldErrors((current) => {
       if (!(key in current)) return current;
@@ -273,6 +450,138 @@ export function DynamicApplyWizard({
       delete next[key];
       return next;
     });
+    setStepError(null);
+  }
+
+  /* --------------------------------------------------------------- the CV read */
+
+  /**
+   * Of this step's answerable blanks, the ones the candidate has not written in.
+   *
+   * A field typed into and then cleared is still theirs. Asked from the click,
+   * where the ref holds what the candidate did up to this instant rather than what
+   * an older render saw.
+   */
+  function fillable(entry: AuthoredStep): PublicField[] {
+    return answerableFields(entry, answers).filter((field) => !touched.current.has(field.key));
+  }
+
+  /**
+   * Ask what the attached CV says about the blanks on this step.
+   *
+   * The file is the one already attached here — held in a ref since the upload box
+   * took it — so the candidate never picks it twice. Every other key on the form
+   * goes up as `skip`, which is only ever a subtraction: the model is asked about
+   * this page's blanks and nothing else, and a second press costs fewer tokens than
+   * the first.
+   *
+   * Nothing is written over. The field errors stay as they are and the answers stay
+   * editable, and a refusal from the door reads as an advice line under the button,
+   * never as a red box on a field the candidate never touched.
+   */
+  async function fillFromCv(entry: AuthoredStep) {
+    const source = cvFile.current?.file ?? null;
+    if (!source) {
+      setFillNote({ tone: "bad", text: t("apply.dyn.cvFillNoFile") });
+      return;
+    }
+
+    const targets = fillable(entry);
+    if (targets.length === 0) return;
+
+    setFilling(true);
+    setFillNote(null);
+
+    try {
+      const wanted = new Set(targets.map((field) => field.key));
+      const body = new FormData();
+      body.append("file", source);
+      body.append("jobId", job.id);
+      for (const stage of form.steps) {
+        for (const field of stage.fields) {
+          if (!wanted.has(field.key)) body.append("skip", field.key);
+        }
+      }
+
+      const response = await fetch("/api/careers/form-prefill", { method: "POST", body });
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: unknown; answers?: Record<string, unknown> }
+        | null;
+
+      if (!response.ok) {
+        setFillNote({
+          tone: "bad",
+          text: typeof payload?.error === "string" ? payload.error : t("apply.fill.failed"),
+        });
+        return;
+      }
+
+      const proposals = payload?.answers ?? {};
+      const written: string[] = [];
+      const kept: string[] = [];
+      const absent: string[] = [];
+
+      for (const field of targets) {
+        // Read at the moment the answer lands, not when the request started: a
+        // candidate who typed while the model was thinking keeps what they typed.
+        if (touched.current.has(field.key)) {
+          kept.push(field.label);
+          continue;
+        }
+        if (proposals[field.key] === undefined) {
+          absent.push(field.label);
+          continue;
+        }
+        setAnswer(field.key, proposals[field.key]);
+        written.push(field.label);
+      }
+
+      const parts: string[] = [];
+      if (written.length) parts.push(t("apply.fill.written", { fields: joinWords(locale, written) }));
+      if (kept.length) parts.push(t("apply.fill.kept", { fields: joinWords(locale, kept) }));
+      if (absent.length) parts.push(t("apply.fill.absent", { fields: joinWords(locale, absent) }));
+
+      // Every target landed in one of the three buckets, so an empty sentence here
+      // is a bug, not a state to describe to the candidate. Say nothing instead.
+      if (parts.length > 0) {
+        setFillNote({ tone: written.length ? "ok" : "bad", text: parts.join(" ") });
+      }
+    } catch {
+      setFillNote({ tone: "bad", text: t("apply.fill.unreachable") });
+    } finally {
+      setFilling(false);
+    }
+  }
+
+  /**
+   * The bytes the upload box took.
+   *
+   * Replacing an attachment replaces the stash; removing the one that is stashed is
+   * the only removal that empties it.
+   */
+  function keepCvFile(fieldKey: string, file: File | null) {
+    if (file) cvFile.current = { fieldKey, file };
+    else if (cvFile.current?.fieldKey === fieldKey) cvFile.current = null;
+  }
+
+  /** Where an attachment's ledger id lands, and the error beside it clears. */
+  function recordUploadResult(fieldKey: string, uploadId: string | null, fileName: string | null) {
+    setUploads((current) => {
+      const next = { ...current };
+      if (uploadId && fileName) next[fieldKey] = { uploadId, fileName };
+      else delete next[fieldKey];
+      return next;
+    });
+    setFieldErrors((current) => {
+      if (!(fieldKey in current)) return current;
+      const next = { ...current };
+      delete next[fieldKey];
+      return next;
+    });
+  }
+
+  function agreeConsent(group: PersonFieldGroup, agreed: boolean) {
+    setConsents((current) => ({ ...current, [group]: agreed }));
     setStepError(null);
   }
 
@@ -450,69 +759,6 @@ export function DynamicApplyWizard({
     return t(entry.kind === "gate" ? "apply.steps.questions" : "apply.steps.review");
   }
 
-  function renderAuthored(entry: AuthoredStep) {
-    const hidden = declined(entry.consentGroups, consents);
-
-    return (
-      <>
-        <h2 className="font-display text-xl font-bold">
-          {entry.heading ?? t("apply.dyn.formStep")}
-        </h2>
-
-        {entry.consentGroups.map((group) => (
-          <ConsentBox
-            key={group}
-            group={group}
-            choice={consents[group]}
-            onChoose={(agreed) => {
-              setConsents((current) => ({ ...current, [group]: agreed }));
-              setStepError(null);
-            }}
-            t={t}
-          />
-        ))}
-
-        {hidden ? (
-          <p className="mt-5 rounded-xl border border-brand-line bg-brand-cream px-4 py-3 text-sm leading-relaxed text-brand-ink/60">
-            {t("apply.dyn.declined")}
-          </p>
-        ) : (
-          entry.fields.map((field) => (
-            <FieldRenderer
-              key={field.key}
-              field={field}
-              id={`field-${field.key}`}
-              value={answers[field.key]}
-              onChange={(value) => setAnswer(field.key, value)}
-              error={fieldErrors[field.key]}
-              upload={{
-                jobId: job.id,
-                fieldKey: field.key,
-                uploadId: uploads[field.key]?.uploadId ?? null,
-                fileName: uploads[field.key]?.fileName ?? null,
-                onUploaded: (uploadId, fileName) => {
-                  setUploads((current) => {
-                    const next = { ...current };
-                    if (uploadId && fileName) next[field.key] = { uploadId, fileName };
-                    else delete next[field.key];
-                    return next;
-                  });
-                  setFieldErrors((current) => {
-                    if (!(field.key in current)) return current;
-                    const next = { ...current };
-                    delete next[field.key];
-                    return next;
-                  });
-                },
-              }}
-              t={t}
-            />
-          ))
-        )}
-      </>
-    );
-  }
-
   function renderReview() {
     return (
       <div>
@@ -683,7 +929,24 @@ export function DynamicApplyWizard({
 
       {/* ---------------------------------------------------------------- card */}
       <div className="mt-4 rounded-2xl border border-brand-line bg-white p-6 shadow-soft sm:p-8">
-        {here.kind === "authored" && renderAuthored(here)}
+        {here.kind === "authored" && (
+          <AuthoredStepCard
+            entry={here}
+            answers={answers}
+            fieldErrors={fieldErrors}
+            uploads={uploads}
+            consents={consents}
+            jobId={job.id}
+            filling={filling}
+            fillNote={fillNote}
+            onFill={() => void fillFromCv(here)}
+            onFieldChange={setAnswer}
+            onFile={keepCvFile}
+            onUploadResult={recordUploadResult}
+            onConsent={agreeConsent}
+            t={t}
+          />
+        )}
 
         {here.kind === "gate" && (
           <QuestionsStep

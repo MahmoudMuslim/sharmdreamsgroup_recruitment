@@ -647,7 +647,7 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
       .limit(FILE_LIMIT),
     restClient
       .from("activity_log")
-      .select("id, created_at, area, summary, actor_kind, actor_label, actor_name, entity_id")
+      .select("id, created_at, area, summary, actor_kind, actor_label, entity_id, user_profiles(full_name)")
       .eq("entity", TRAIL_ENTITY)
       .in("entity_id", ids)
       .order("created_at", { ascending: false })
@@ -1264,9 +1264,8 @@ function trailChanges(
       summary: asText(row.summary),
       area: asText(row.area),
       actor:
-        asText(row.actor_name) ||
-        asText(row.actor_label) ||
-        asText(row.actor_kind, "SYSTEM"),
+        asNullableText(one<{ full_name?: unknown }>(row.user_profiles)?.full_name) ??
+        (asText(row.actor_label) || asText(row.actor_kind, "SYSTEM")),
       job_title: titleOf.get(asText(row.entity_id)) ?? null,
     })),
     note: null,

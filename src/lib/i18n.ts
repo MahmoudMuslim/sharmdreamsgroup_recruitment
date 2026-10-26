@@ -374,6 +374,11 @@ const en: Dictionary = {
     "Answering is optional and never decides your application. “I'd rather not say” leaves this part out of your profile; the application carries on.",
   "apply.dyn.declined":
     "You chose not to answer this part. It is left out, and your application carries on.",
+  "apply.dyn.cvFillButton": "Fill from my CV",
+  "apply.dyn.cvFillBusy": "Reading your CV…",
+  "apply.dyn.cvFillNoFile": "Attach your CV first — that file is what we read.",
+  "apply.dyn.cvFillNote":
+    "The CV you attached is read again for the questions still blank on this step. Anything you have typed stays exactly as you wrote it.",
   "apply.dyn.chooseFile": "Choose a file",
   "apply.dyn.replaceFile": "Choose another file",
   "apply.dyn.removeFile": "Remove",
@@ -953,6 +958,11 @@ const ar: Dictionary = {
     "نبذتك موجودة في الخطوة الأولى، وهي مع هذا الملف ما تقرأه خطوة الفرز. اضغط الزر هناك لصياغتها من هذه السيرة.",
   "apply.cvNoAbout":
     "بدون ملف مرفق، تقرأ خطوة الفرز نبذتك من الخطوة الأولى. أرفق سيرتك هنا أو اكتب تلك السطور هناك.",
+  "apply.dyn.cvFillButton": "املأ من سيرتي الذاتية",
+  "apply.dyn.cvFillBusy": "نقرأ سيرتك الذاتية…",
+  "apply.dyn.cvFillNoFile": "أرفق سيرتك الذاتية أولاً — ذلك الملف هو ما نقرأه.",
+  "apply.dyn.cvFillNote":
+    "تُقرأ سيرتك المرفقة من جديد عن الأسئلة التي ما زالت فارغة في هذه الخطوة. وكل ما كتبته يبقى كما كتبته.",
   "apply.fill.written": "تم ملء {fields}.",
   "apply.fill.kept": "كنت قد كتبت {fields} بنفسك، فبقيت كما كتبتها.",
   "apply.fill.absent": "لم تذكر سيرتك الذاتية {fields}.",

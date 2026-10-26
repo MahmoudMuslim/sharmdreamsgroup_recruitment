@@ -16,6 +16,14 @@ export interface UploadDoor {
   fileName: string | null;
   /** `null` clears the attachment. */
   onUploaded: (uploadId: string | null, fileName: string | null) => void;
+  /**
+   * The bytes themselves, handed to the wizard beside the ledger id.
+   *
+   * The candidate is about to attach the file that says who they are, so the same
+   * file answers the other questions on the page. Only this box ever sees the
+   * `File`, so only its door can pass it on; `null` is the remove button.
+   */
+  onFile?: (file: File | null) => void;
 }
 
 /** A translation function, as `translate` is bound by the wizard. */

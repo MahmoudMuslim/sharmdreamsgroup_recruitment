@@ -43,6 +43,7 @@ import {
   type ResolvedField,
   type ResolvedLayout,
 } from "@/modules/form-builder/domain/resolveLayout";
+import { widthOf, type FieldWidth } from "@/modules/form-builder/domain/rowLayout";
 
 /** What a step may carry. No `system_key`, no `config`, no registry key. */
 export interface PublicField {
@@ -52,6 +53,11 @@ export interface PublicField {
   placeholder: string | null;
   type: FieldType;
   required: boolean;
+  /**
+   * How wide the question is, derived from its config by the one layout module.
+   * Always one of the three, so the browser needs none of the author's config.
+   */
+  width: FieldWidth;
   /** Offered labels, for the three choice types only. */
   options?: readonly string[];
   /** The derived MIME list for `file`/`photo`, never an author-typed string. */
@@ -339,6 +345,7 @@ function toPublicField({ field }: ResolvedField): PublicField {
     placeholder: field.placeholder,
     type: field.type,
     required: field.required,
+    width: widthOf(field),
   };
 
   if (field.type === "select" || field.type === "radio" || field.type === "multi_select") {

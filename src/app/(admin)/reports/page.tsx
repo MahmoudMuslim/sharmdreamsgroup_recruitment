@@ -38,7 +38,7 @@ export default async function ReportsPage() {
       <PageHeader
         eyebrow="Reporting"
         title="Reports"
-        description="The lists behind the analytics numbers: every application, every issued test, every sourced prospect, every candidate message and every interview panel in the window you pick. Anything you can see here you can take with you, in CSV, Excel or PDF."
+        description="The lists behind the analytics numbers: every application, every issued test, every sourced prospect, every candidate message, every interview panel, every application form, every form question, every unclaimed upload and every person profile in the window you pick. Anything you can see here you can take with you, in CSV, Excel or PDF."
         actions={
           <span className="inline-flex items-center gap-2 rounded-full border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink/60">
             <FileSpreadsheet className="h-3.5 w-3.5 text-brand-gold" aria-hidden />

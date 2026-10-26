@@ -16,9 +16,19 @@ import "server-only";
 import { CANDIDATE_ROW_LIMIT } from "@/modules/candidates/domain/listFilters";
 import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import type { ExportCell, ExportDocument, ExportSheet } from "./exportDocument";
+import type { FormQuestionRow, UnclaimedFieldRow } from "./formAndProfile";
 import type { AnalyticsReport } from "./report";
 
-export type ReportId = "pipeline" | "assessments" | "sourcing" | "messages" | "interviews";
+export type ReportId =
+  | "pipeline"
+  | "assessments"
+  | "sourcing"
+  | "messages"
+  | "interviews"
+  | "application_forms"
+  | "form_questions"
+  | "unclaimed_uploads"
+  | "person_profiles";
 
 export type ReportDefinition = (typeof REPORTS)[number];
 
@@ -85,6 +95,58 @@ export const REPORTS: {
     caveats: [
       "Only panels booked inside the portal appear. A call arranged straight in someone's calendar is invisible here.",
       "Lead days counts from the application to the slot, not from the invite.",
+    ],
+  },
+  {
+    id: "application_forms",
+    label: "Every application form",
+    blurb:
+      "One row per application in the window: the form it was filed under, how many questions it asked and were answered, the files attached, and the consent the applicant gave.",
+    caveats: [
+      "The snapshot behind a row is what the form asked when the application was filed. Editing or retiring the form afterwards does not rewrite it.",
+      "Asked counts every answerable field in the snapshot; a section heading is not a question. Answered counts only fields carrying a value, so an empty box reads as blank rather than as a question skipped.",
+      "A row whose Form column is empty was filed before the dynamic form existed, or through a door that does not use it. Its Asked and Answered cells are empty rather than zero.",
+      "Attachments are the upload rows filed against the application; the count is not a promise that each file is still in storage.",
+    ],
+  },
+  {
+    id: "form_questions",
+    label: "Every form question",
+    blurb:
+      "One row per question the application forms asked in the window: how often it was asked, how often it was answered, and how often it was left blank.",
+    caveats: [
+      "Counted from the snapshot each application filed, so editing or retiring the form afterwards does not rewrite an older application's row.",
+      "A section heading is layout, not a question, and is not listed.",
+      "An empty box, an empty list and a null all count as skipped; no answer value is exported here.",
+      "The label is the most recent wording seen for the field key, so a renamed question keeps one row.",
+      "Only snapshots in the selected window are counted; an older application's answers are outside this file.",
+    ],
+  },
+  {
+    id: "unclaimed_uploads",
+    label: "Every unclaimed upload",
+    blurb:
+      "One row per form field that received uploads nobody submitted, split by the retention window that will clear them.",
+    caveats: [
+      "An unclaimed upload is a row whose application is still null: the file arrived but the application was never filed.",
+      "Rows older than the orphan window are what the retention sweep deletes; rows inside it may still be claimed by a submission.",
+      "The portal records no form-start event, so this file shows what was uploaded and abandoned — not how far anyone got through the form.",
+      "Only the field key is shown: no storage path, file name or uploaded content is exported.",
+      "Rows are cut by the selected window on their upload date; the retention clock is a separate, fixed window and is not the report's window.",
+    ],
+  },
+  {
+    id: "person_profiles",
+    label: "Every person profile",
+    blurb:
+      "One row per person profile added in the window: the name, whether the identity core is complete, and which groups of the profile have been filled.",
+    caveats: [
+      "The person store is not the application list: one person can hold several applications, and a profile can exist before any application does.",
+      "Identity core means a legal name and a date of birth together; either on its own is incomplete.",
+      "This file names the groups a person has filled, never what a field inside them says. Demographic values are not exported here — the gated tallies live on the Analytics page.",
+      "A profile marked erased keeps its row with its fields cleared, so it appears here as an empty profile rather than disappearing.",
+      "Experience is the sum of the dated roles on file, counted month by month; a role with no end date is counted to the report's date, and a year-only period counts twelve months.",
+      "Experience is coverage of what was entered, not a judgement about anyone: no score, verdict or rating is attached.",
     ],
   },
 ];
@@ -226,6 +288,45 @@ export interface PanelRow {
   application_created_at: string | null;
   meeting_link: string | null;
   calendar_provider: string | null;
+}
+
+/** One application against the form it was filed under. */
+export interface ApplicationFormRow {
+  candidate: string;
+  opening: string | null;
+  stage: string;
+  applied_at: string | null;
+  /** "Personal details v4", or null when the row predates the dynamic form. */
+  form: string | null;
+  /** Null, not zero, when there is no snapshot to count. */
+  asked: number | null;
+  answered: number | null;
+  attachments: number;
+  cv: boolean;
+  processing_consent: boolean;
+  talent_pool_consent: boolean;
+  notice_version: string | null;
+}
+
+/** One person in the store: which groups are filled, never what they hold. */
+export interface ProfileRow {
+  full_name: string;
+  added_at: string | null;
+  identity_complete: boolean;
+  /** Group labels only, and never one that would name a demographic value. */
+  groups: string[];
+  /**
+   * The dated roles added up, as words — "7 years 4 months". Null when the
+   * person has no dated role, which is a fact about the record, not a zero.
+   * Never a score, and never a verdict about the person.
+   */
+  total_experience: string | null;
+  /** How many roles the figure was summed from. */
+  roles: number;
+  /** The longest single role, or null when no role has a computable length. */
+  longest_role: string | null;
+  /** The longest gap between two roles, or null when there is no gap to measure. */
+  longest_gap: string | null;
 }
 
 /** One application as the candidates console shows it, plus what a file needs. */
@@ -404,6 +505,99 @@ export function panelSheet(rows: PanelRow[], context: SheetContext): ExportSheet
   );
 }
 
+export function applicationFormSheet(
+  rows: ApplicationFormRow[],
+  context: SheetContext
+): ExportSheet {
+  return sheet(
+    "Application forms",
+    context,
+    [
+      { header: "Candidate", value: (row) => row.candidate },
+      { header: "Opening", value: (row) => row.opening },
+      { header: "Stage", value: (row) => row.stage },
+      { header: "Applied", value: (row) => stamp(row.applied_at, context.timeZone) },
+      { header: "Form", value: (row) => row.form },
+      { header: "Asked", value: (row) => row.asked },
+      { header: "Answered", value: (row) => row.answered },
+      { header: "Attachments", value: (row) => row.attachments },
+      { header: "CV attached", value: (row) => (row.cv ? "yes" : "no") },
+      {
+        header: "Processing consent",
+        value: (row) => (row.processing_consent ? "given" : "not given"),
+      },
+      {
+        header: "Talent-pool consent",
+        value: (row) => (row.talent_pool_consent ? "given" : "not given"),
+      },
+      { header: "Notice version", value: (row) => row.notice_version },
+    ],
+    rows
+  );
+}
+
+export function profileSheet(rows: ProfileRow[], context: SheetContext): ExportSheet {
+  return sheet(
+    "Profiles",
+    context,
+    [
+      { header: "Name", value: (row) => row.full_name },
+      { header: "Added", value: (row) => stamp(row.added_at, context.timeZone) },
+      {
+        header: "Identity core",
+        value: (row) => (row.identity_complete ? "complete" : "incomplete"),
+      },
+      { header: "Groups filled", value: (row) => row.groups.length },
+      { header: "Which groups", value: (row) => row.groups.join(" · ") },
+      { header: "Total experience", value: (row) => row.total_experience },
+      { header: "Roles recorded", value: (row) => row.roles },
+      { header: "Longest role", value: (row) => row.longest_role },
+      { header: "Longest gap", value: (row) => row.longest_gap },
+    ],
+    rows
+  );
+}
+
+/**
+ * One question per row, with counts only.
+ *
+ * The answer itself is deliberately absent: a question-level list is a form
+ * quality report, and pasting every answer into a spreadsheet would turn it
+ * into a second PII export nobody asked for.
+ */
+export function questionSheet(rows: FormQuestionRow[], context: SheetContext): ExportSheet {
+  return sheet(
+    "Questions",
+    context,
+    [
+      { header: "Question", value: (row) => row.label },
+      { header: "Field key", value: (row) => row.key },
+      { header: "Type", value: (row) => row.type },
+      { header: "Asked", value: (row) => row.asked },
+      { header: "Answered", value: (row) => row.answered },
+      { header: "Skipped", value: (row) => row.skipped },
+      { header: "Answer rate %", value: (row) => row.answerRate },
+    ],
+    rows
+  );
+}
+
+/** The field key and the counts; never a path, a file name or a URL. */
+export function unclaimedSheet(rows: UnclaimedFieldRow[], context: SheetContext): ExportSheet {
+  return sheet(
+    "Unclaimed uploads",
+    context,
+    [
+      { header: "Field key", value: (row) => row.fieldKey },
+      { header: "Uploads", value: (row) => row.uploads },
+      { header: "Inside window", value: (row) => row.insideWindow },
+      { header: "Past window", value: (row) => row.pastWindow },
+      { header: "Oldest (hours)", value: (row) => row.oldestHours },
+    ],
+    rows
+  );
+}
+
 /**
  * The candidates console's own columns, widened to what a recruiter works from
  * offline: the tracking code they would quote back, both numbers the test has,
@@ -534,10 +728,43 @@ export function analyticsDocument(
   add("interviews", "median_lead_days", i.medianLeadDays);
   for (const panel of i.byInterviewer) add("interviews", `panels:${panel.name}`, panel.panels);
 
+  const f = report.formProfile;
+  add("forms", "applications", f.applications.total);
+  add("forms", "with_form", f.applications.withForm);
+  add("forms", "adoption_rate_percent", f.applications.adoptionRate);
+  add("forms", "attachments", f.applications.attachments);
+  add("forms", "processing_consent", f.applications.processingConsent);
+  add("forms", "talent_pool_consent", f.applications.talentPoolConsent);
+  add("forms", "questions_asked", f.forms.asked);
+  add("forms", "questions_answered", f.forms.answered);
+  add("forms", "answer_rate_percent", f.forms.answerRate);
+  add("forms", "file_questions_asked", f.completion.fileFieldsAsked);
+  add("forms", "file_questions_with_attachment", f.completion.withAttachment);
+  add("forms", "attachment_completion_rate_percent", f.completion.completionRate);
+  add("forms", "unclaimed_uploads", f.completion.unclaimed);
+  add("forms", "unclaimed_past_window", f.completion.unclaimedPastWindow);
+  add("forms", "unclaimed_inside_window", f.completion.unclaimedInsideWindow);
+  add("forms", "orphan_window_hours", f.completion.orphanWindowHours);
+
+  add("profiles", "people", f.profiles.total);
+  add("profiles", "identity_complete", f.profiles.identityComplete);
+  add("profiles", "with_work_history", f.experience.withHistory);
+  add("profiles", "dated_roles", f.experience.roles);
+  add("profiles", "median_total_experience_months", f.experience.medianTotalMonths);
+  add("profiles", "roles_with_months", f.experience.rowsWithMonths);
+  add("profiles", "roles_with_end", f.experience.rowsWithEnd);
+  for (const band of f.experience.bands) {
+    add("profiles", `experience:${band.label}`, band.count);
+  }
+  const demographics = f.demographics
+    ? "included for this account"
+    : "withheld from this account";
+  add("profiles", "demographics", demographics);
+
   return {
     title: `Hiring analytics, ${context.scope}`,
     description:
-      "Aggregates over the window: whether issued tests get opened and finished, how an outbound pool converts, whether messages land and how loaded the interview panel is.",
+      "Aggregates over the window: whether issued tests get opened and finished, how an outbound pool converts, whether messages land, how loaded the interview panel is, how the application form and person profile are being filled, and what was uploaded but never submitted.",
     meta: metaFor(context),
     limitations: report.limitations,
     sheets: [{ name: "Summary", columns: ["Section", "Metric", "Value"], rows }],
