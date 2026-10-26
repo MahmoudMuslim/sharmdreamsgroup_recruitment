@@ -26,9 +26,15 @@
 import { revalidatePath } from "next/cache";
 
 import { requireStaff } from "@/lib/auth/session";
+import { hasAiProvider } from "@/lib/config.server";
 import { createServerRestClient } from "@/lib/data-api/server";
-import { recordActivity } from "@/modules/activity/application/record";
+import { recordActivity, withActivityContext } from "@/modules/activity/application/record";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
+import {
+  draftFormFields,
+  reviewNote,
+  type FormDraftReview,
+} from "@/modules/form-builder/infrastructure/formAuthoring";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import {
   draftIssues,
@@ -84,6 +90,8 @@ export interface FormMutation {
   /** The version the form now carries after a save or publish. */
   version?: number;
   id?: string;
+  /** What was drafted or refused, in the console's own words, after an AI run. */
+  note?: string;
 }
 
 const FORM_COLUMNS =
@@ -400,6 +408,102 @@ export async function createForm(input: {
 
   revalidatePath("/forms");
   return { ok: true, id: created.id, version: created.version };
+}
+
+/**
+ * Draft a form's questions from a recruiter's brief, and store them as a DRAFT.
+ *
+ * The model is the only untrusted quarter here: it is handed a brief, and
+ * `formAuthoring` judges everything it offers through `draftIssues` before it
+ * reaches this function. What this function adds is the write — a new form with
+ * the system fields pre-placed, left DRAFT and unassigned, so publishing stays
+ * the human door spec §7 relies on.
+ *
+ * Both writes carry the AI context, so the trail says a model drafted the
+ * questions and names the recruiter it drafted them for; the publish that
+ * follows is a person's own act. A refusal with nothing kept creates no form at
+ * all — an empty draft on the list would be a question nobody asked.
+ */
+export async function draftWithAI(input: {
+  name: string;
+  description: string | null;
+  isGlobal: boolean;
+  prompt: string;
+}): Promise<FormMutation> {
+  const staff = await requireStaff("/forms");
+  const guard = await formEditor();
+  if (!guard.ok) return { ok: false, error: guard.error };
+  if (!hasAiProvider()) {
+    return { ok: false, error: "No AI provider key is configured, so nothing can be drafted." };
+  }
+
+  const prompt = (input.prompt ?? "").trim();
+  if (prompt.length < 20) {
+    return {
+      ok: false,
+      error: "Describe the role and what the form should ask — at least 20 characters.",
+    };
+  }
+
+  let review: FormDraftReview;
+  try {
+    review = await draftFormFields(prompt);
+  } catch (cause) {
+    return {
+      ok: false,
+      error: cause instanceof Error ? cause.message : "The model did not return any questions.",
+    };
+  }
+
+  if (review.kept === 0) {
+    return {
+      ok: false,
+      error: review.dropped[0] ?? "The model returned no questions.",
+      issues: review.dropped,
+    };
+  }
+
+  const written = await withActivityContext(
+    {
+      actorKind: "AI",
+      actorLabel: "AI form drafting",
+      actorId: staff.profileId,
+      companyId: staff.tenantId,
+      via: "console",
+    },
+    async (): Promise<FormMutation> => {
+      const form = await createForm({
+        name: input.name,
+        description: input.description,
+        isGlobal: input.isGlobal,
+      });
+      if (!form.ok || !form.id || form.version === undefined) return form;
+
+      const layout = await saveFormLayout(form.id, review.fields, form.version);
+      if (!layout.ok) {
+        // The form exists empty. Saying so is the only way the recruiter can
+        // find it: a silent failure would leave a nameless draft on the list.
+        return {
+          ok: false,
+          error: `The draft form was created, but its questions did not store: ${
+            layout.error ?? "the save did not land."
+          } Open it from the list and save again, or retire it.`,
+          issues: layout.issues,
+          id: form.id,
+          version: form.version,
+        };
+      }
+      return { ok: true, id: form.id, version: layout.version };
+    },
+  );
+
+  if (!written.ok) return written;
+
+  return {
+    ...written,
+    issues: review.dropped.length > 0 ? review.dropped : undefined,
+    note: reviewNote(review),
+  };
 }
 
 /** Name, description and scope. A layout change is `saveFormLayout`'s write. */

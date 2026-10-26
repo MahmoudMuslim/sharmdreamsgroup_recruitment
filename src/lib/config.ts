@@ -55,7 +55,8 @@ export type AiCapability =
   | "transcription"
   | "assistant"
   | "chatbot"
-  | "translation";
+  | "translation"
+  | "form_authoring";
 
 const PRIMARY = optional(process.env.AI_MODEL_PRIMARY, "google/gemma-4-31b-it:free");
 const FAST = optional(process.env.AI_MODEL_FAST, "nvidia/nemotron-3.5-lightning:free");
@@ -87,4 +88,9 @@ export const modelChains: Record<AiCapability, readonly string[]> = {
   // reroute the other: a recruiter watching a translation stall has to be able to
   // change its model without touching the page a candidate is waiting on.
   translation: ["gemini-3-flash-preview", "gemini-3.1-flash-lite", PRIMARY, FALLBACK],
+  // Drafting application-form questions from a recruiter's brief. Its own chain
+  // for the same reason as translation: a slow draft must be reroutable without
+  // moving the interview guide, and the models that draft a quiz are the ones
+  // that suit a short structured field list.
+  form_authoring: [FAST, PRIMARY],
 } as const;

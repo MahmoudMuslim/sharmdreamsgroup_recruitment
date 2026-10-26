@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Save,
   Send,
+  Sparkles,
   X,
 } from "lucide-react";
 import { Field, FormMessage, TextArea, TextInput } from "@/modules/analytics/presentation/Form";
@@ -27,6 +28,7 @@ import { isHireable, openingOptionLabel } from "@/modules/jobs/domain/hireable";
 import {
   assignFormToJob,
   createForm,
+  draftWithAI,
   listForms,
   publishForm,
   retireForm,
@@ -139,6 +141,18 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
     description: "",
     isGlobal: false,
   });
+  const [draftBrief, setDraftBrief] = useState("");
+  // The create panel owns its own failure text: with no form selected the centre
+  // column has nowhere to print an error, and a failed create must not be silent.
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createIssues, setCreateIssues] = useState<string[]>([]);
+  // Keyed by form so the outcome card follows the form it describes, and a later
+  // navigation to a different form does not leave last run's sentence on screen.
+  const [drafted, setDrafted] = useState<{
+    formId: string;
+    note: string;
+    refusals: string[];
+  } | null>(null);
 
   const selectedId = selected?.form.id ?? null;
   const current = selectedId ? forms.find((form) => form.id === selectedId) ?? null : null;
@@ -422,6 +436,8 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
     setError(null);
     setIssues([]);
     setNotice(null);
+    setCreateError(null);
+    setCreateIssues([]);
     setPending(true);
     try {
       const result = await createForm({
@@ -430,8 +446,8 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
         isGlobal: createDraft.isGlobal,
       });
       if (!result.ok || !result.id) {
-        setError(result.error ?? NOT_ANSWERED);
-        setIssues(result.issues ?? []);
+        setCreateError(result.error ?? NOT_ANSWERED);
+        setCreateIssues(result.issues ?? []);
         return;
       }
       setShowCreate(false);
@@ -439,7 +455,54 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
       setNotice(`Created “${createDraft.name.trim()}”. Add its fields below.`);
       router.push(`/forms?form=${encodeURIComponent(result.id)}`);
     } catch {
-      setError(NOT_ANSWERED);
+      setCreateError(NOT_ANSWERED);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  /**
+   * Draft a form's questions through the AI path.
+   *
+   * The form is created on the server; on success this opens it so the recruiter
+   * lands on the fields that were just written. A partial write (the form exists
+   * but its questions did not store) still opens it, because the error text on
+   * the create panel would otherwise point at a form the panel cannot show.
+   */
+  const submitDraft = async () => {
+    setError(null);
+    setIssues([]);
+    setNotice(null);
+    setCreateError(null);
+    setCreateIssues([]);
+    setDrafted(null);
+    setPending(true);
+    try {
+      const result = await draftWithAI({
+        name: createDraft.name,
+        description: createDraft.description || null,
+        isGlobal: createDraft.isGlobal,
+        prompt: draftBrief,
+      });
+      if (!result.id) {
+        setCreateError(result.error ?? NOT_ANSWERED);
+        setCreateIssues(result.issues ?? []);
+        return;
+      }
+      const name = createDraft.name.trim();
+      setShowCreate(false);
+      setCreateDraft({ name: "", description: "", isGlobal: false });
+      setDraftBrief("");
+      setDrafted({
+        formId: result.id,
+        note: result.ok
+          ? result.note ?? `Drafted “${name}”. Review it before publishing.`
+          : result.error ?? NOT_ANSWERED,
+        refusals: result.issues ?? [],
+      });
+      router.push(`/forms?form=${encodeURIComponent(result.id)}`);
+    } catch {
+      setCreateError(NOT_ANSWERED);
     } finally {
       setPending(false);
     }
@@ -561,6 +624,34 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
                     />
                     Ask it on every open role
                   </label>
+                  <Field label="Draft the questions with AI" htmlFor="form-brief">
+                    <TextArea
+                      id="form-brief"
+                      value={draftBrief}
+                      rows={3}
+                      maxLength={1500}
+                      onChange={(event) => setDraftBrief(event.target.value)}
+                      className="text-xs"
+                      placeholder="The role and what a recruiter needs to judge — e.g. front-desk agent: hotel systems, shift availability, languages spoken"
+                    />
+                  </Field>
+                  <p className="text-[10px] leading-relaxed text-brand-ink/40">
+                    Name and description come from this panel. The AI writes only the questions,
+                    keeps name, email, phone, CV, LinkedIn and About, and leaves the result as a
+                    draft for you to edit and publish.
+                  </p>
+                  {createError && (
+                    <p className="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[10px] leading-relaxed text-rose-700">
+                      {createError}
+                    </p>
+                  )}
+                  {createIssues.length > 0 && (
+                    <ul className="max-h-40 list-disc space-y-1 overflow-y-auto rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 pl-5 text-[10px] leading-relaxed text-rose-700">
+                      {createIssues.map((issue, index) => (
+                        <li key={`${index}-${issue}`}>{issue}</li>
+                      ))}
+                    </ul>
+                  )}
                   <div className="flex gap-2">
                     <Button
                       size="sm"
@@ -574,12 +665,35 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={pending}
-                      onClick={() => setShowCreate(false)}
+                      disabled={
+                        pending ||
+                        createDraft.name.trim().length < 2 ||
+                        draftBrief.trim().length < 20
+                      }
+                      onClick={submitDraft}
+                      className="flex-1"
                     >
-                      Cancel
+                      {pending ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      ) : (
+                        <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      Draft with AI
                     </Button>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={pending}
+                    onClick={() => {
+                      setShowCreate(false);
+                      setCreateError(null);
+                      setCreateIssues([]);
+                    }}
+                    className="w-full"
+                  >
+                    Cancel
+                  </Button>
                 </div>
               ) : (
                 <Button
@@ -589,6 +703,8 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
                     setShowCreate(true);
                     setError(null);
                     setNotice(null);
+                    setCreateError(null);
+                    setCreateIssues([]);
                   }}
                   className="w-full"
                 >
@@ -682,6 +798,31 @@ export function FormsConsole({ data }: { data: FormsConsoleData }) {
             </div>
 
             <FormMessage error={error} success={notice} notice={stale ? "Someone changed this form on the server while you were editing. Reload before saving, or save and read the conflict if you lose the race." : null} />
+            {drafted && currentForm.id === drafted.formId && (
+              <Card className="border-brand-gold/60 bg-brand-sand/50 p-4">
+                <p className="flex items-center gap-1.5 text-xs font-bold">
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  AI draft
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-brand-ink/70">{drafted.note}</p>
+                {drafted.refusals.length > 0 && (
+                  <>
+                    <p className="mt-2 text-[11px] font-bold text-brand-ink/70">
+                      Offered but not added:
+                    </p>
+                    <ul className="mt-1 list-disc space-y-1 pl-5 text-[11px] leading-relaxed text-brand-ink/70">
+                      {drafted.refusals.map((refusal, index) => (
+                        <li key={`${index}-${refusal}`}>{refusal}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/50">
+                  It is a draft: nothing is asked until you publish it, and it is not assigned to
+                  an opening yet.
+                </p>
+              </Card>
+            )}
             {issues.length > 0 && (
               <Card className="border-rose-200 bg-rose-50/70 p-4">
                 <p className="text-xs font-bold text-rose-700">
