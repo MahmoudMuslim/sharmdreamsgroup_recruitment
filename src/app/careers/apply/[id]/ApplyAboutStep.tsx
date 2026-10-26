@@ -23,6 +23,7 @@ export function AboutStep({
   referred,
   writing,
   writeNote,
+  fillNote,
   hasFile,
   aboutFileInput,
   onName,
@@ -45,6 +46,8 @@ export function AboutStep({
   referred: boolean;
   writing: boolean;
   writeNote: { tone: "ok" | "bad"; text: string } | null;
+  /** What the CV's contact block filled, so the press reports both halves. */
+  fillNote: { tone: "ok" | "bad"; text: string } | null;
   hasFile: boolean;
   aboutFileInput: React.RefObject<HTMLInputElement | null>;
   onName: (value: string) => void;
@@ -182,6 +185,18 @@ export function AboutStep({
           />
 
           <div className="mt-2">
+            {fillNote && (
+              <p
+                role={fillNote.tone === "bad" ? "alert" : "status"}
+                className={cn(
+                  "mt-2 text-[11px] leading-relaxed",
+                  fillNote.tone === "ok" ? "text-emerald-800" : "text-amber-800"
+                )}
+              >
+                {fillNote.text}
+              </p>
+            )}
+
             {writeNote && (
               <p
                 role={writeNote.tone === "bad" ? "alert" : "status"}

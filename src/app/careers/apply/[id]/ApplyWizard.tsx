@@ -226,14 +226,15 @@ export function ApplyWizard({
    * they chose to write beats anything inferred from their file, and the rest
    * stays editable for them to check — on the step behind this one.
    */
-  async function fillFromCv() {
-    if (!file) return;
+  async function fillFromCv(attachment?: File | null) {
+    const source = attachment ?? file;
+    if (!source) return;
     setFilling(true);
     setFillNote(null);
 
     try {
       const body = new FormData();
-      body.append("file", file);
+      body.append("file", source);
       body.append("jobId", job.id);
 
       const response = await fetch("/api/careers/prefill", { method: "POST", body });
@@ -370,10 +371,15 @@ export function ApplyWizard({
    * here to write from, so the same press opens the file picker rather than sitting
    * greyed out under a heading that promises a CV. The file chosen there *is* the
    * CV this application carries — the CV step shows the same one, not a second copy.
+   *
+   * A CV is read for both halves of the form: the letter goes into About me, and
+   * the contact block printed at its head fills name, email and phone through the
+   * prefill door. One press that filled only the letter read as a broken button.
    */
   function askAboutMe() {
     if (linkedinUrl.trim() || file) {
       void fillAboutMe();
+      if (file) void fillFromCv(file);
       return;
     }
     aboutFileInput.current?.click();
@@ -382,7 +388,9 @@ export function ApplyWizard({
   /** Choose the CV on this step, then write from it straight away. */
   function pickForAbout(selected: File | null) {
     const accepted = pickFile(selected);
-    if (accepted) void fillAboutMe(accepted);
+    if (!accepted) return;
+    void fillFromCv(accepted);
+    void fillAboutMe(accepted);
   }
 
   /* -------------------------------------------------------------- submitting */
@@ -578,6 +586,7 @@ export function ApplyWizard({
             referred={referralCode !== null}
             writing={writing}
             writeNote={writeNote}
+            fillNote={fillNote}
             hasFile={file !== null}
             aboutFileInput={aboutFileInput}
             onName={(value) => {
