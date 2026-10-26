@@ -81,12 +81,14 @@ function uuidPattern(value: string): boolean {
 /**
  * Every stored object this application owns, grouped by the bucket it lives in.
  *
- * Four columns in this schema hold storage keys, so four reads. An attachment
+ * Five columns in this schema hold storage keys, so five reads. An attachment
  * names its own bucket — staff uploads land in `resumes` and `candidate-audio`
  * while the career site uses `candidate-cvs` — so one bucket constant per kind
  * would miss half of them. The fourth is the profile photo, which is not on the
  * application at all: it is a `person_profiles` column reached through the
- * person, so the id arrives already resolved rather than being read here.
+ * person, so the id arrives already resolved rather than being read here. The
+ * fifth is a public form's own upload, which is named by the ledger row that
+ * recorded it and names its bucket the way an attachment does.
  */
 async function collectPaths(
   service: ServiceClient,
@@ -133,6 +135,29 @@ async function collectPaths(
       typeof raw.bucket === "string" ? raw.bucket : null,
       raw.storage_path
     );
+  }
+
+  // The public form's own bytes: a form field's file is named by the ledger row
+  // that recorded it, and that row carries its own bucket (spec §8).
+  const { data: formFiles, error: formError } = await service
+    .from("application_form_files")
+    .select("bucket, storage_path")
+    .eq("application_id", applicationId);
+
+  if (formError) {
+    // 044 is applied per file by the owner, so a database without the ledger
+    // holds no form bytes to erase; a missing table is not a fault to report.
+    if (!isMissingSchemaError(formError)) {
+      console.error("[privacy] the form upload ledger was unreadable:", formError.message);
+    }
+  } else {
+    for (const raw of (formFiles ?? []) as Record<string, unknown>[]) {
+      addPath(
+        paths,
+        typeof raw.bucket === "string" ? raw.bucket : null,
+        raw.storage_path
+      );
+    }
   }
 
   if (personId) {

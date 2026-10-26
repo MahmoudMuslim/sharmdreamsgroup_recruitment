@@ -10,6 +10,7 @@ import { emailSpellings, personKey } from "@/modules/candidates/domain/personIde
 import { fieldsForTier } from "@/modules/candidates/domain/person-fields";
 import { PERSON_LIMITS } from "@/modules/candidates/domain/person-limits";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
+import { parseSnapshot, type SnapshotField } from "@/modules/form-builder/domain/snapshot";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 
 /**
@@ -29,6 +30,12 @@ import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnec
  * the address list, the five claim collections, the photograph, and the change
  * log. A subject-access request that answered only the first half returned less
  * than the portal itself shows, which is not what a subject-access right means.
+ *
+ * Since migration 044 the application rows carry the form's own answers: what
+ * the candidate wrote in the boxes the form asked, as it was asked that day. An
+ * answer that also became part of the profile is printed in both places, and the
+ * letter says so rather than reconciling them — the snapshot is what was sent
+ * and the profile is what is held now, and where they differ both are true.
  *
  * Tier 3 is read here and NOT printed here. §8.2 is explicit that a Gmail
  * message is not a secure channel for a blood type, so the four special-category
@@ -253,6 +260,94 @@ async function readInterviews(
         text(raw.meeting_link) ? ` — ${text(raw.meeting_link)}` : ""
       }`
   );
+}
+
+// ————————————————————————————————————————————————————————————————————————————
+// the form half — spec §8
+// ————————————————————————————————————————————————————————————————————————————
+
+/**
+ * What one answer reads as, in a sentence.
+ *
+ * A person asking what we hold is owed a sentence, not their own jsonb: a
+ * duration is "45 minutes", a location is a pair of numbers, a file is the name
+ * of the file. A blank answer is "not given" — the fact that a question was
+ * asked and left empty is part of what was filed.
+ */
+function printAnswer(field: SnapshotField): string {
+  const value = field.value;
+
+  if (value === null || value === undefined) return "not given";
+
+  switch (field.type) {
+    case "file":
+    case "photo":
+      return typeof value === "string" && value ? `the file “${value}”` : "no file";
+    case "duration": {
+      const pair = value as { value?: unknown; unit?: unknown };
+      return typeof pair.value === "number" && typeof pair.unit === "string"
+        ? `${pair.value} ${pair.unit}`
+        : "not given";
+    }
+    case "geolocation": {
+      const pair = value as { lat?: unknown; lng?: unknown };
+      return typeof pair.lat === "number" && typeof pair.lng === "number"
+        ? `${pair.lat}, ${pair.lng}`
+        : "not given";
+    }
+    case "multi_select":
+      return Array.isArray(value) ? value.join(", ") : "not given";
+    case "checkbox":
+      return value === "true" ? "yes" : "no";
+    default:
+      return typeof value === "string" ? value : "not given";
+  }
+}
+
+/**
+ * What the candidate wrote in the application form, as it was asked.
+ *
+ * The snapshot is the record of the questions *as they were on the day*, so it
+ * stays the honest answer to "what did you tell us" even after the form has
+ * been edited or retired. It is read on its own because `form_answers` is a 044
+ * column: naming it beside the older columns would refuse the whole read on a
+ * database that has not been migrated.
+ */
+async function readFormAnswers(
+  service: ServiceClient,
+  applicationId: string
+): Promise<{ lines: string[]; capped: boolean }> {
+  const { data, error } = await service
+    .from("applications")
+    .select("form_answers")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (error) {
+    // 044 is applied per file by the owner, so a database without the column
+    // holds no form answers to print.
+    if (!isMissingSchemaError(error)) {
+      console.error("[privacy] the form answers were unreadable:", error.message);
+    }
+    return { lines: [], capped: false };
+  }
+
+  const snapshot = parseSnapshot((data as Record<string, unknown> | null)?.form_answers);
+  if (!snapshot) return { lines: [], capped: false };
+
+  const lines: string[] = [];
+  let capped = false;
+
+  for (const field of snapshot.fields) {
+    if (field.type === "section_heading") continue;
+    if (lines.length >= MAX_ANSWERS) {
+      capped = true;
+      break;
+    }
+    lines.push(`${field.label}: ${cut(printAnswer(field))}`);
+  }
+
+  return { lines, capped };
 }
 
 // ————————————————————————————————————————————————————————————————————————————
@@ -829,6 +924,7 @@ export async function sendAccessCopy(input: {
 
   const blocks: string[] = [];
   const budget = { answers: 0 };
+  const formDisclosures: string[] = [];
 
   const personHalf = await readPersonHalf(service, input.email);
   if (personHalf.lines.length > 0) blocks.push(personHalf.lines.join("\n"));
@@ -839,6 +935,13 @@ export async function sendAccessCopy(input: {
     const consents = await readConsents(service, row.id);
     const attempts = await readAttempts(service, row.id, budget);
     const interviews = await readInterviews(service, row.id);
+    const form = await readFormAnswers(service, row.id);
+
+    if (form.capped) {
+      formDisclosures.push(
+        `The form answers for “${row.jobTitle}” stop at ${MAX_ANSWERS}; the rest can be sent on request.`
+      );
+    }
 
     blocks.push(
       [
@@ -850,6 +953,14 @@ export async function sendAccessCopy(input: {
         row.ai_score ? `  AI screening score: ${row.ai_score}` : "",
         row.ai_screening_summary ? `  AI screening summary: ${cut(row.ai_screening_summary)}` : "",
         consents.length ? `  Consents:\n${consents.map((line) => `    ${line}`).join("\n")}` : "",
+        form.lines.length
+          ? `  What you told us in the application form:\n${form.lines
+              .map((line) => `    ${line}`)
+              .join("\n")}`
+          : "",
+        form.lines.length
+          ? "  Where an answer also became part of your profile it is printed in both places. If they differ, this is what you sent then and the profile is what we hold now."
+          : "",
         attempts.lines.length
           ? `  Assessments:\n${attempts.lines.map((line) => `    ${line}`).join("\n")}`
           : "  Assessments: none on file",
@@ -872,6 +983,7 @@ export async function sendAccessCopy(input: {
   const footer = [
     "",
     ...personHalf.disclosures,
+    ...formDisclosures,
     applications.capped
       ? `Only the first ${MAX_APPLICATIONS} applications are included; older ones can be sent on request.`
       : "",
