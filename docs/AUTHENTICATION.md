@@ -83,12 +83,12 @@ The `app_role` enum and `roles` table define **six** roles:
 
 Grants live in `role_permissions (role_key, permission_key, granted)`. A `granted = false` row is an explicit deny (e.g. `RECRUITER → candidates.delete = false`). Checks run through `hasPermissionForUser(key)` / `permissionsForCurrentUser()`.
 
-The **20** permission keys, grouped:
+The **23** permission keys, grouped:
 
 | Group | Keys |
 |-------|------|
 | Analytics | `analytics.view`, `analytics.export` |
-| Candidates | `candidates.read`, `candidates.write`, `candidates.view_scores`, `candidates.delete` |
+| Candidates | `candidates.read`, `candidates.write`, `candidates.view_scores`, `candidates.delete`, `candidates.view_health_data`, `candidates.view_family_data`, `candidates.view_emergency_contacts` |
 | Scores | `scores.view_unmasked` |
 | Jobs | `jobs.manage` |
 | Assessments | `assessments.create`, `assessments.assign`, `assessments.grade` |
@@ -117,8 +117,11 @@ The **20** permission keys, grouped:
 | settings.manage_platform / roles | ✅ | — | — | — | — |
 | settings.manage_users, users.create/manage | ✅ | ✅ | — | — | — |
 | scores.view_unmasked | ✅ | — | — | — | — |
+| candidates.view_health_data | ✅ | — | — | — | — |
+| candidates.view_family_data | ✅ | — | — | — | — |
+| candidates.view_emergency_contacts | ✅ | — | — | — | — |
 
-`SUPER_ADMIN` holds every permission. Editing grants is itself gated by `settings.manage_roles` (Settings → Roles).
+`SUPER_ADMIN` holds every permission. Editing grants is itself gated by `settings.manage_roles` (Settings → Roles). The three `candidates.view_*` rows are the Tier-3 grants of the person-profile spine: each withholds a group from every reader without it — the list is not rendered empty, it is named as withheld — and health reads are written to the activity trail.
 
 ---
 
