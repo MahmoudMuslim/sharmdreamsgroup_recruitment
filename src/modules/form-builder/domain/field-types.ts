@@ -207,8 +207,12 @@ function parseDecimal(
   return { number, dp };
 }
 
-/** A single path segment that can be shown and stored: no separators, no control bytes. */
-function sanitiseFileName(name: string): string {
+/**
+ * A single path segment that can be shown and stored: no separators, no control
+ * bytes. Exported because the snapshot stores a file answer as this leaf and
+ * nothing else — one rule for the accept path and the record of what was sent.
+ */
+export function sanitiseFileName(name: string): string {
   const leaf = name.split(/[\\/]/).pop() ?? "";
   return leaf.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 200);
 }
