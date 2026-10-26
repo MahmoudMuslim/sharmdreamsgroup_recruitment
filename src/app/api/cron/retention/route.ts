@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 
 import { cronConfig } from "@/lib/config.server";
 import { getServiceRestClient } from "@/lib/data-api/service";
+import { getFileStore } from "@/lib/files/store";
 import { publicBaseUrl } from "@/lib/public-url";
 
+import { LIMITS } from "@/modules/form-builder/domain/limits";
+import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
 import { eraseApplication } from "@/modules/privacy/application/erasure";
 import {
@@ -43,6 +46,13 @@ import { getBoolSetting } from "@/modules/settings/infrastructure/settingsReader
  * Both passes are bounded. A first run after the switch is turned on can find a
  * whole book due at once; the batch keeps one tick from mailing or erasing in an
  * unbounded burst, and the next tick continues from the oldest rows.
+ *
+ * One pass runs even with the switch off: unclaimed form uploads. A photographed
+ * passport or a CV that never became an application has no record to protect, so
+ * `privacy.retention_enabled` cannot be allowed to mean "keep a stranger's file
+ * forever". That pass deletes bytes before the ledger row — the reverse order
+ * would leave a file on disk no row could name again — and it skips quietly when
+ * the form-builder tables are not on the database yet.
  *
  * Protected like the other cron routes — an `x-cron-secret` header matching
  * CRON_SECRET, failing closed when the secret is unset.
@@ -89,6 +99,90 @@ function warningLetter(input: {
   ].join("\n");
 }
 
+interface OrphanSweep {
+  /** False when 044 is not on the database; the rest of the sweep still runs. */
+  available: boolean;
+  scanned: number;
+  removed: number;
+  failed: number;
+}
+
+interface RetiredRow {
+  id: string;
+  bucket: string;
+  storage_path: string;
+}
+
+/**
+ * Delete the uploads nobody claimed.
+ *
+ * A file field writes its row with `application_id` null and fills it in at
+ * submit, so a row that is still null after the window belongs to an application
+ * that never arrived — abandoned mid-form, or a probe that only ever uploaded.
+ * The window is a constant in `LIMITS`, not a setting: a wider one would keep
+ * personal bytes longer than the applicant was told.
+ */
+async function clearOrphanUploads(
+  service: ReturnType<typeof getServiceRestClient>
+): Promise<OrphanSweep> {
+  const empty: OrphanSweep = { available: true, scanned: 0, removed: 0, failed: 0 };
+  const cutoff = new Date(
+    Date.now() - LIMITS.orphan_upload_window_hours * 60 * 60 * 1000
+  );
+
+  const { data, error } = await service
+    .from("application_form_files")
+    .select("id, bucket, storage_path")
+    .is("application_id", null)
+    .lt("uploaded_at", cutoff.toISOString())
+    .order("uploaded_at", { ascending: true })
+    .limit(500);
+
+  if (error) {
+    // An unapplied 044 is not a failure of the retention sweep.
+    if (isMissingSchemaError(error)) return { ...empty, available: false };
+    console.error("[privacy] the orphan-upload read failed:", error.message);
+    return { ...empty, failed: 1 };
+  }
+
+  const rows = (data ?? []) as RetiredRow[];
+  if (rows.length === 0) return empty;
+
+  const store = await getFileStore();
+  let removed = 0;
+  let failed = 0;
+
+  for (const row of rows) {
+    // Bytes first. A row deleted before its file would orphan the bytes with no
+    // ledger entry left to find them by.
+    const gone = await store.remove({ bucket: row.bucket, paths: [row.storage_path] });
+    if (!gone.ok) {
+      console.error(
+        `[privacy] orphan upload ${row.id} could not be removed from ${row.bucket}:`,
+        gone.error ?? gone.failed.join(", ")
+      );
+      failed += 1;
+      continue;
+    }
+
+    const { error: deleteError } = await service
+      .from("application_form_files")
+      .delete()
+      .eq("id", row.id);
+    if (deleteError) {
+      console.error(
+        `[privacy] orphan upload ${row.id} lost its bytes but not its row:`,
+        deleteError.message
+      );
+      failed += 1;
+      continue;
+    }
+    removed += 1;
+  }
+
+  return { available: true, scanned: rows.length, removed, failed };
+}
+
 interface SweepSummary {
   enabled: boolean;
   scanned: number;
@@ -99,6 +193,7 @@ interface SweepSummary {
   held: number;
   failed: number;
   batch: number;
+  orphans: OrphanSweep;
   note?: string;
 }
 
@@ -115,6 +210,12 @@ async function handle(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const service = getServiceRestClient();
+
+  // Deliberately before the switch: an unclaimed upload is not a retention
+  // policy question, and switching the sweep off must not keep stray bytes.
+  const orphans = await clearOrphanUploads(service);
+
   const enabled = await getBoolSetting("privacy.retention_enabled", false);
   if (!enabled) {
     const off: SweepSummary = {
@@ -127,13 +228,13 @@ async function handle(request: Request): Promise<NextResponse> {
       held: 0,
       failed: 0,
       batch: batchSize(),
+      orphans,
       note: "The retention sweep is switched off in Settings → Privacy & retention.",
     };
     return NextResponse.json(off);
   }
 
   const settings = await readPrivacySettings();
-  const service = getServiceRestClient();
   const candidates = await readRetentionCandidates(service);
 
   if (!candidates.available) {
@@ -147,6 +248,7 @@ async function handle(request: Request): Promise<NextResponse> {
       held: 0,
       failed: 0,
       batch: batchSize(),
+      orphans,
       note: candidates.note ?? "The retention view could not be read.",
     };
     return NextResponse.json(missing);
@@ -272,6 +374,7 @@ async function handle(request: Request): Promise<NextResponse> {
     held,
     failed,
     batch,
+    orphans,
   };
   if (candidates.capped && candidates.note) summary.note = candidates.note;
   return NextResponse.json(summary);

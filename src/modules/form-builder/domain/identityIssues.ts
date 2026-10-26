@@ -61,8 +61,14 @@ export interface IdentityIssue {
   message: string;
 }
 
-/** The seven system keys and the one type each may carry (spec §4). */
-const PINNED_TYPE: Record<string, FieldType> = {
+/**
+ * The seven system keys and the one type each may carry (spec §4).
+ *
+ * Exported because the binding picker offers an application fact only at the
+ * type this table declares — one table, so the picker cannot offer a pairing
+ * that publish would refuse.
+ */
+export const PINNED_TYPE: Record<string, FieldType> = {
   name: "short_text",
   email: "email",
   phone: "phone",
@@ -72,8 +78,13 @@ const PINNED_TYPE: Record<string, FieldType> = {
   photo: "photo",
 };
 
-/** The registry's seven `input` values and the field type that carries each one (§4.1). */
-const INPUT_TO_TYPE: Record<PersonField["input"], FieldType> = {
+/**
+ * The registry's seven `input` values and the field type that carries each one
+ * (§4.1). Exported because the builder's binding picker offers a key only at
+ * the type this map declares — one table, so the picker cannot offer what the
+ * writer and the publish check would refuse.
+ */
+export const INPUT_TO_TYPE: Record<PersonField["input"], FieldType> = {
   text: "short_text",
   textarea: "long_text",
   date: "date",
@@ -83,8 +94,12 @@ const INPUT_TO_TYPE: Record<PersonField["input"], FieldType> = {
   list: "multi_select",
 };
 
-/** Types the registry cannot store, so no `person:` binding can land on one. */
-const UNBINDABLE_TYPES: ReadonlySet<FieldType> = new Set(["time", "percentage", "duration", "geolocation"]);
+/**
+ * Types the registry cannot store, so no `person:` binding can land on one.
+ * Exported for the picker, which greys every one of them out rather than
+ * letting an author choose a binding publish will refuse.
+ */
+export const UNBINDABLE_TYPES: ReadonlySet<FieldType> = new Set(["time", "percentage", "duration", "geolocation"]);
 
 function exactlyOne(
   issues: IdentityIssue[],
