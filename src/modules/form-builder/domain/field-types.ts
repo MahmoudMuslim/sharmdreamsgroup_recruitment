@@ -131,6 +131,22 @@ export function kindRules(kind: string): KindRule | null {
     : null;
 }
 
+/**
+ * Whether the head bytes look like this kind. `text` has no signature and
+ * matches anything; an unknown kind matches nothing. The upload door is the one
+ * caller — a declared MIME follows the filename, so the bytes are what decide.
+ */
+export function headMatchesKind(kind: string, head: Uint8Array): boolean {
+  const rule = kindRules(kind);
+  if (!rule) return false;
+  if (rule.magicBytes.length === 0) return true;
+  return rule.magicBytes.some(
+    (signature) =>
+      signature.length <= head.length &&
+      signature.every((byte, index) => byte === -1 || head[index] === byte),
+  );
+}
+
 // ——— the four type-specific shapes ——————————————————————————————————————
 
 /** The closed six, in the order §3 lists them. */
