@@ -69,9 +69,20 @@ export interface PublicForm {
   consentGroups: PersonFieldGroup[];
 }
 
+/**
+ * Why a role fell back to the built-in wizard (spec §9).
+ *
+ * The page treats all three the same — degrade the page — but the submit door
+ * does not: `no-layout` is the one state whose record is still today's
+ * application and therefore the one state the legacy path may file. A broken
+ * or unreadable layout is a refusal, never a quiet rewrite of what the
+ * candidate was asked.
+ */
+export type FallbackCause = "no-layout" | "broken" | "unavailable";
+
 export type FormResolution =
   | ResolvedLayout
-  | { fallback: "wizard"; reason: string };
+  | { fallback: "wizard"; cause: FallbackCause; reason: string };
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -168,7 +179,7 @@ function violationSentence(violation: LayoutViolation): string {
  */
 export async function resolveFormForJob(jobId: string): Promise<FormResolution> {
   if (!UUID_PATTERN.test(jobId)) {
-    return { fallback: "wizard", reason: "That is not a role reference." };
+    return { fallback: "wizard", cause: "unavailable", reason: "That is not a role reference." };
   }
 
   let client: ReturnType<typeof getServiceRestClient>;
@@ -179,7 +190,7 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
       "[forms] the public layout read has no REST client:",
       error instanceof Error ? error.message : error,
     );
-    return { fallback: "wizard", reason: "The application form is unavailable right now." };
+    return { fallback: "wizard", cause: "unavailable", reason: "The application form is unavailable right now." };
   }
 
   const { data: job, error: jobError } = await client
@@ -191,10 +202,10 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
 
   if (jobError) {
     console.error("[forms] the role check was refused:", jobError.message);
-    return { fallback: "wizard", reason: "The application form is unavailable right now." };
+    return { fallback: "wizard", cause: "unavailable", reason: "The application form is unavailable right now." };
   }
   if (!job) {
-    return { fallback: "wizard", reason: "This role is not accepting applications." };
+    return { fallback: "wizard", cause: "unavailable", reason: "This role is not accepting applications." };
   }
 
   const [formsResult, fieldsResult, assignmentsResult] = await Promise.all([
@@ -220,6 +231,10 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
     console.error("[forms] the public layout read was refused:", error.message);
     return {
       fallback: "wizard",
+      // A missing table is 044 not applied: the opening still takes today's
+      // application. Anything else is a read that failed under a published
+      // library, and the submit door refuses rather than guess.
+      cause: isMissingSchemaError(error) ? "no-layout" : "unavailable",
       reason: isMissingSchemaError(error)
         ? "The application form has not been published on this deployment yet."
         : "The application form is unavailable right now.",
@@ -239,7 +254,7 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
       "[forms] the public layout read hit a bound:",
       `${formsResult.count ?? 0} forms, ${fieldsResult.count ?? 0} fields, ${assignmentsResult.count ?? 0} assignments`,
     );
-    return { fallback: "wizard", reason: "The form library is too large to compose for one role." };
+    return { fallback: "wizard", cause: "broken", reason: "The form library is too large to compose for one role." };
   }
 
   const fieldsByForm: Record<string, FieldRow[]> = {};
@@ -261,19 +276,19 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
   });
 
   if (layout.fields.length === 0) {
-    return { fallback: "wizard", reason: "No published form asks anything for this role yet." };
+    return { fallback: "wizard", cause: "no-layout", reason: "No published form asks anything for this role yet." };
   }
 
   if (layout.violations.length > 0) {
     const reason = violationSentence(layout.violations[0]);
     console.error("[forms] the published layout for", jobId, "is broken:", reason);
-    return { fallback: "wizard", reason };
+    return { fallback: "wizard", cause: "broken", reason };
   }
 
   const issues = identityIssues(layout.fields);
   if (issues.length > 0) {
     console.error("[forms] the published layout for", jobId, "breaks the identity contract:", issues[0].message);
-    return { fallback: "wizard", reason: issues[0].message };
+    return { fallback: "wizard", cause: "broken", reason: issues[0].message };
   }
 
   return layout;

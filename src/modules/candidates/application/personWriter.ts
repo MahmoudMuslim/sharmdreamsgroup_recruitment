@@ -516,10 +516,12 @@ export type ConsentPurpose = PersonFieldGroup;
  * as 041's `candidate_consents` discipline states).
  *
  * This is the desk recording what the candidate said — not the desk deciding.
- * The door is `profile_edit`, the purpose comes from the registry/notice
- * vocabulary, and `NOTICE_VERSION` stamps which paragraph the answer was given
- * against. Nothing is updated: a changed mind is a later row, so the newest
- * answer wins on every read.
+ * The door is the one that asked: `profile_edit` at the profile editor,
+ * `candidate_form` at the public application, whose boxes a candidate answers
+ * in their own words. The purpose comes from the registry/notice vocabulary, and
+ * `NOTICE_VERSION` stamps which paragraph the answer was given against. Nothing
+ * is updated: a changed mind is a later row, so the newest answer wins on every
+ * read.
  *
  * Degrades like the rest of the spine (043 unapplied → 42P01 → named note).
  */
@@ -527,7 +529,7 @@ export async function recordPersonConsent(
   personId: string,
   purpose: ConsentPurpose,
   granted: boolean,
-  door: Extract<Door, "profile_edit" | "hand_record" | "privacy_page"> = "profile_edit",
+  door: Extract<Door, "profile_edit" | "hand_record" | "privacy_page" | "candidate_form"> = "profile_edit",
 ): Promise<{ ok: true } | { error: string; missingSchema?: boolean }> {
   const client = await connect();
   try {

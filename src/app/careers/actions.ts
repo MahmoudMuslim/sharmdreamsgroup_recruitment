@@ -36,6 +36,26 @@ import {
   planApplicationConsent,
   type ConsentEvent,
 } from "@/modules/privacy/domain/privacy";
+import {
+  consentPurposeFor,
+  personField,
+  type PersonCollection,
+  type PersonFieldGroup,
+} from "@/modules/candidates/domain/person-fields";
+import {
+  applyPersonField,
+  defaultConsentChecker,
+  recordPersonConsent,
+  resolveOrCreatePerson,
+  type PersonFieldChange,
+} from "@/modules/candidates/application/personWriter";
+import {
+  normaliseAnswer,
+  type NormalisedValue,
+} from "@/modules/form-builder/domain/field-types";
+import { resolveFormForJob } from "@/modules/form-builder/application/publicForm";
+import { encodeSnapshot } from "@/modules/form-builder/domain/snapshot";
+import type { ResolvedField, ResolvedLayout } from "@/modules/form-builder/domain/resolveLayout";
 
 /**
  * Public careers site.
@@ -255,7 +275,12 @@ export type ApplyResult =
    * told they were not accepted never tells them which answer decided it.
    */
   | { ok: true; outcome: "received"; trackingCode: string }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /** Per-field sentences, keyed by form field key, for the dynamic wizard. */
+      fieldErrors?: Record<string, string>;
+    };
 
 export interface ApplyInput {
   jobId: string;
@@ -279,6 +304,19 @@ export interface ApplyInput {
    */
   processingConsent?: boolean;
   talentPoolConsent?: boolean;
+  /**
+   * The dynamic form's file/photo answers: one ledger id per attachment. The
+   * submit checks each is unattached, for this job and for a field this layout
+   * names before it attaches anything (spec §10).
+   */
+  formUploads?: { uploadId: string }[];
+  /** Every authored answer, keyed by the form field's key. */
+  customAnswers?: Record<string, unknown>;
+  /**
+   * The candidate's answer per consent group, keyed by `PersonFieldGroup`.
+   * Absent means declined — a box that was not ticked is not a consent.
+   */
+  personConsents?: Record<string, boolean>;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -374,7 +412,24 @@ async function recordConsent(
   return true;
 }
 
+/**
+ * File one application, by the route the opening's layout decides (spec §5, §9).
+ *
+ * The layout is read first because the choice between the two write paths is
+ * the layout's: a role with no published form files today's application exactly
+ * as it always has, while a published layout that is broken or unreadable is a
+ * refusal — never a quiet fall-in to a form the candidate was not shown.
+ */
 export async function submitApplication(input: ApplyInput): Promise<ApplyResult> {
+  const resolution = await resolveFormForJob(input.jobId);
+  if ("fallback" in resolution) {
+    if (resolution.cause === "no-layout") return submitLegacy(input);
+    return { ok: false, error: resolution.reason };
+  }
+  return submitDynamic(input, resolution);
+}
+
+async function submitLegacy(input: ApplyInput): Promise<ApplyResult> {
   const fullName = input.fullName.trim();
   const email = input.email.trim().toLowerCase();
   const phone = input.phone.trim();
@@ -561,18 +616,85 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
     return { ok: false, error: "Your application could not be submitted. Please try again." };
   }
 
+  const applicationId = created?.id ? String(created.id) : "";
+  const trackingCode = created?.tracking_code ?? "";
+
+  await settleApplication({
+    restClient,
+    applicationId,
+    trackingCode,
+    job,
+    input,
+    consentEvents: consent.events,
+    referralCode,
+    source,
+    email,
+    fullName,
+    finalCvText,
+    cvAttached: Boolean(input.cvFilePath),
+    gateAnswerCount: verdict.answers.length,
+    filteredOut,
+    failedGateCount: verdict.failed.length,
+  });
+
+  return { ok: true, outcome: "received", trackingCode };
+}
+
+/**
+ * Everything that follows a stored application, shared by both write paths.
+ *
+ * None of it can turn a filed application into a refused one: the consent
+ * record, the referral credit, the activity row, the rejection letter and the
+ * auto-screening call each degrade on their own, exactly as they did before the
+ * dynamic path existed.
+ */
+interface ApplicationSettlement {
+  restClient: ReturnType<typeof getServiceRestClient>;
+  applicationId: string;
+  trackingCode: string;
+  job: { title?: string | null; tenant_id?: string | null } | null;
+  input: ApplyInput;
+  consentEvents: readonly ConsentEvent[];
+  /** Null when the ad was opened directly, or the code was malformed. */
+  referralCode: string | null;
+  source: string;
+  email: string;
+  fullName: string;
+  finalCvText: string;
+  cvAttached: boolean;
+  gateAnswerCount: number;
+  filteredOut: boolean;
+  failedGateCount: number;
+}
+
+async function settleApplication(settlement: ApplicationSettlement): Promise<void> {
+  const {
+    restClient,
+    applicationId,
+    trackingCode,
+    job,
+    input,
+    consentEvents,
+    referralCode,
+    source,
+    email,
+    fullName,
+    finalCvText,
+    cvAttached,
+    gateAnswerCount,
+    filteredOut,
+    failedGateCount,
+  } = settlement;
+
   // The recruiter's job list shows application counts, so refresh it.
   revalidatePath("/careers");
   revalidatePath("/jobs");
-
-  const applicationId = created?.id ? String(created.id) : "";
-  const trackingCode = created?.tracking_code ?? "";
 
   // The decision is enforced above either way; this only records it, so an
   // unapplied 041 changes whether the answer can be proved, never whether the
   // application stands.
   const consentRecorded = applicationId
-    ? await recordConsent(restClient, applicationId, consent.events)
+    ? await recordConsent(restClient, applicationId, consentEvents)
     : false;
 
   // Best-effort, and after the row exists: the application is already stored, so
@@ -609,10 +731,10 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
         referral: referral?.reason ?? null,
         tracking_code: trackingCode,
         stage: filteredOut ? "REJECTED" : "NEW",
-        cv_attached: Boolean(input.cvFilePath),
+        cv_attached: cvAttached,
         cv_characters: finalCvText.length,
-        gate_questions: verdict.answers.length,
-        failed_gate: filteredOut ? verdict.failed.length : 0,
+        gate_questions: gateAnswerCount,
+        failed_gate: failedGateCount,
         notice_version: PRIVACY_NOTICE_VERSION,
         consent_recorded: consentRecorded,
         talent_pool: input.talentPoolConsent === true,
@@ -633,7 +755,7 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
     if (applicationId) {
       after(() => notifyStageChange(applicationId, "REJECTED").then(() => undefined));
     }
-    return { ok: true, outcome: "received", trackingCode };
+    return;
   }
 
   // Auto-screening runs after the candidate's response is sent, so submitting
@@ -646,6 +768,575 @@ export async function submitApplication(input: ApplyInput): Promise<ApplyResult>
       after(() => screenApplicationById(applicationId).then(() => undefined));
     }
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* The dynamic path — 044 applied, and a layout resolved for this opening      */
+/* -------------------------------------------------------------------------- */
+
+const FORM_CHANGED =
+  "The form changed while this page was open. Reload it and fill it in again.";
+
+interface FormUploadRow {
+  id: string;
+  application_id: string | null;
+  job_id: string;
+  field_key: string;
+  bucket: string;
+  storage_path: string;
+  mime: string | null;
+}
+
+/** The leaf behind the `<uuid>-` prefix the upload door writes ahead of it. */
+function storedLeaf(storagePath: string): string {
+  const leaf = storagePath.split("/").pop() ?? "";
+  const match =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(.+)$/i.exec(leaf);
+  return match ? match[1] : leaf;
+}
+
+function missingAnswer(field: ResolvedField["field"]): ApplyResult {
+  const error =
+    field.type === "checkbox"
+      ? `Please tick “${field.label}”.`
+      : field.type === "photo"
+        ? `Please attach a photo for “${field.label}”.`
+        : field.type === "file"
+          ? `Please attach a file for “${field.label}”.`
+          : `Please answer “${field.label}”.`;
+  return { ok: false, error, fieldErrors: { [field.key]: error } };
+}
+
+function invalidAnswer(field: ResolvedField["field"], reason: string): ApplyResult {
+  const error = `“${field.label}”: ${reason}.`;
+  return { ok: false, error, fieldErrors: { [field.key]: error } };
+}
+
+/**
+ * One label per collection, as spec §4.1 states: a skill's answer becomes
+ * `skill` and a certificate's becomes `title`, each keeping the candidate's own
+ * words in `as_written` where the table carries that column.
+ *
+ * `emergency_contacts` has no single-column shape — 043 wants a name *and* a
+ * phone, and a multi_select label is only one of the two — so the form leaves
+ * that row to a staff hand rather than inventing the other half. The answer is
+ * still on the application's snapshot either way.
+ */
+const COLLECTION_LABEL_COLUMN: Record<PersonCollection, string | null> = {
+  education: "institution",
+  employment: "employer",
+  languages: "language",
+  skills: "skill",
+  certifications: "title",
+  dependants: "name",
+  emergency_contacts: null,
+};
+
+const COLLECTIONS_WITH_AS_WRITTEN: ReadonlySet<PersonCollection> = new Set<PersonCollection>([
+  "education",
+  "employment",
+  "skills",
+  "certifications",
+]);
+
+function collectionItem(
+  collection: PersonCollection | undefined,
+  label: string,
+): Record<string, unknown> | null {
+  if (!collection) return null;
+  const column = COLLECTION_LABEL_COLUMN[collection];
+  if (!column) return null;
+  const item: Record<string, unknown> = { [column]: label };
+  if (COLLECTIONS_WITH_AS_WRITTEN.has(collection)) item.as_written = label;
+  return item;
+}
+
+/** Read a submitted CV's text; any failure is a blank reading, never a refusal. */
+async function extractStoredCv(row: FormUploadRow): Promise<string> {
+  try {
+    const files = await getFileStore();
+    const { bytes, error } = await files.download({
+      bucket: row.bucket,
+      path: row.storage_path,
+    });
+    if (error || !bytes) {
+      if (error) console.error("[apply] CV download failed:", error);
+      return "";
+    }
+
+    const buffer = Buffer.from(bytes);
+    const ext = row.storage_path.split(".").pop()?.toLowerCase() ?? "";
+    const mime =
+      row.mime ??
+      (ext === "pdf"
+        ? "application/pdf"
+        : ext === "docx"
+          ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          : ext === "doc"
+            ? "application/msword"
+            : ext === "txt"
+              ? "text/plain"
+              : "application/pdf");
+
+    const extracted = await extractCvText(buffer, mime);
+    return extracted.empty ? "" : extracted.text;
+  } catch (extractionError) {
+    console.error("[apply] CV extraction failed:", extractionError);
+    return "";
+  }
+}
+
+/**
+ * The person write, last and unable to break the application (spec §5, §9).
+ *
+ * Consent is recorded first because the writer's checker reads the newest
+ * `person_consents` row and has to find the one this submit just made. Every
+ * refusal and every failure below is logged and swallowed: the application is
+ * filed, the snapshot keeps the candidate's words, and the profile is merely
+ * behind.
+ */
+async function writePersonFromForm(args: {
+  personId: string;
+  layout: ResolvedLayout;
+  normalised: ReadonlyMap<string, NormalisedValue>;
+  uploadsByField: ReadonlyMap<string, FormUploadRow>;
+  consented: Record<string, boolean>;
+}): Promise<void> {
+  try {
+    const groups = new Set<PersonFieldGroup>();
+    for (const { field } of args.layout.fields) {
+      const systemKey = field.systemKey;
+      if (systemKey?.startsWith("person:")) {
+        groups.add(consentPurposeFor(systemKey.slice("person:".length)));
+      }
+    }
+
+    const granted = new Set<PersonFieldGroup>();
+    for (const group of groups) {
+      const agreed = args.consented[group] === true;
+      if (agreed) granted.add(group);
+      // A refusal is recorded too: the newest row wins, so a changed mind is a
+      // later answer rather than an edit of this one.
+      const recorded = await recordPersonConsent(
+        args.personId,
+        group,
+        agreed,
+        "candidate_form",
+      );
+      if ("error" in recorded) {
+        console.error("[apply] person consent not recorded:", group, recorded.error);
+      }
+    }
+
+    const changes: PersonFieldChange[] = [];
+    for (const { field } of args.layout.fields) {
+      const systemKey = field.systemKey;
+      if (!systemKey?.startsWith("person:")) continue;
+      const registryKey = systemKey.slice("person:".length);
+      const registry = personField(registryKey);
+      if (!registry || !granted.has(registry.group)) continue;
+
+      if (registry.input === "photo") {
+        const upload = args.uploadsByField.get(field.key);
+        if (upload) {
+          changes.push({
+            key: registryKey,
+            value: upload.storage_path,
+            door: "candidate_form",
+            actorId: null,
+            actorKind: "candidate",
+          });
+        }
+        continue;
+      }
+
+      if (registry.input === "list") {
+        const picked = args.normalised.get(field.key);
+        if (!Array.isArray(picked) || picked.length === 0) continue;
+        const items: Record<string, unknown>[] = [];
+        for (const label of picked) {
+          const item = collectionItem(registry.collection, label);
+          if (item) items.push(item);
+        }
+        if (items.length > 0) {
+          changes.push({
+            key: registryKey,
+            value: items,
+            door: "candidate_form",
+            actorId: null,
+            actorKind: "candidate",
+          });
+        }
+        continue;
+      }
+
+      const value = args.normalised.get(field.key);
+      if (value === undefined) continue;
+      changes.push({
+        key: registryKey,
+        value,
+        door: "candidate_form",
+        actorId: null,
+        actorKind: "candidate",
+      });
+    }
+
+    if (changes.length === 0) return;
+
+    const result = await applyPersonField(
+      args.personId,
+      changes,
+      await defaultConsentChecker(),
+    );
+    if ("error" in result) {
+      console.error("[apply] the person write failed:", result.error);
+      return;
+    }
+    for (const refusal of result.refused) {
+      console.error("[apply] person field refused:", refusal.key, refusal.reason);
+    }
+    for (const conflict of result.conflicts) {
+      console.error("[apply] person field held:", conflict.key, conflict.held);
+    }
+  } catch (error) {
+    console.error(
+      "[apply] the person write threw:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+/**
+ * File an application against a resolved layout (spec §5's fixed order).
+ *
+ * The layout is re-read by the caller, every answer is normalised here — never
+ * in the browser — and the snapshot is built from those normalised values. A
+ * submitted key the layout no longer asks is refused rather than filed, which is
+ * the mid-form republish case spec §9 names.
+ */
+async function submitDynamic(
+  input: ApplyInput,
+  layout: ResolvedLayout,
+): Promise<ApplyResult> {
+  const restClient = getServiceRestClient();
+  const answers = input.customAnswers ?? {};
+  const answerable = layout.fields.filter(
+    (entry) => entry.field.type !== "section_heading",
+  );
+  const byKey = new Map(answerable.map((entry) => [entry.field.key, entry]));
+
+  for (const key of Object.keys(answers)) {
+    if (!byKey.has(key)) return { ok: false, error: FORM_CHANGED };
+  }
+
+  const boundBySystem = new Map<string, ResolvedField>();
+  for (const entry of answerable) {
+    const systemKey = entry.field.systemKey;
+    if (!systemKey || systemKey.startsWith("person:")) continue;
+    boundBySystem.set(systemKey, entry);
+  }
+
+  const normalised = new Map<string, NormalisedValue>();
+  const fileFields = new Map<string, ResolvedField>();
+
+  for (const entry of answerable) {
+    const { field } = entry;
+    if (field.type === "file" || field.type === "photo") {
+      fileFields.set(field.key, entry);
+      continue;
+    }
+
+    const raw = answers[field.key];
+
+    if (field.type === "checkbox") {
+      if (raw === undefined || raw === null) {
+        if (field.required) return missingAnswer(field);
+        continue;
+      }
+      const result = normaliseAnswer(field.type, field.config, raw);
+      if (!result.ok) return invalidAnswer(field, result.reason);
+      // `required` on a tick box means it has to be ticked, the same rule a
+      // field's own `mustBeTrue` states in copy.
+      if (field.required && result.value !== "true") return missingAnswer(field);
+      normalised.set(field.key, result.value);
+      continue;
+    }
+
+    const blank =
+      raw === undefined ||
+      raw === null ||
+      raw === "" ||
+      (Array.isArray(raw) && raw.length === 0) ||
+      (typeof raw === "object" && !Array.isArray(raw) && Object.keys(raw).length === 0);
+    if (blank) {
+      if (field.required) return missingAnswer(field);
+      continue;
+    }
+
+    const result = normaliseAnswer(field.type, field.config, raw);
+    if (!result.ok) return invalidAnswer(field, result.reason);
+    normalised.set(field.key, result.value);
+  }
+
+  // Upload ownership (spec §10): every id must name an unattached ledger row for
+  // this job, at a file/photo field this layout asks, and no field may carry two.
+  const requested = (input.formUploads ?? []).map((upload) => upload.uploadId);
+  const uploadIds = [...new Set(requested)];
+  if (
+    uploadIds.length !== requested.length ||
+    uploadIds.some((id) => !UUID_PATTERN.test(id))
+  ) {
+    return { ok: false, error: FORM_CHANGED };
+  }
+
+  const uploadsByField = new Map<string, FormUploadRow>();
+  if (uploadIds.length > 0) {
+    const { data, error } = await restClient
+      .from("application_form_files")
+      .select("id, application_id, job_id, field_key, bucket, storage_path, mime")
+      .in("id", uploadIds);
+
+    if (error) {
+      console.error("[apply] the form upload ledger was unreadable:", error.message);
+      return { ok: false, error: "We could not check the attached files. Please try again." };
+    }
+
+    const rows = (data ?? []) as unknown as FormUploadRow[];
+    if (rows.length !== uploadIds.length) return { ok: false, error: FORM_CHANGED };
+
+    for (const row of rows) {
+      if (row.application_id !== null || row.job_id !== input.jobId) {
+        return { ok: false, error: FORM_CHANGED };
+      }
+      const resolved = fileFields.get(row.field_key);
+      if (!resolved) return { ok: false, error: FORM_CHANGED };
+      if (uploadsByField.has(row.field_key)) {
+        const sentence = `Only one file can be attached to “${resolved.field.label}”.`;
+        return {
+          ok: false,
+          error: sentence,
+          fieldErrors: { [resolved.field.key]: sentence },
+        };
+      }
+      uploadsByField.set(row.field_key, row);
+    }
+  }
+
+  for (const [key, resolved] of fileFields) {
+    if (!uploadsByField.has(key) && resolved.field.required) {
+      return missingAnswer(resolved.field);
+    }
+  }
+
+  const fieldText = (resolved: ResolvedField | null): string =>
+    resolved ? String(normalised.get(resolved.field.key) ?? "").trim() : "";
+
+  const nameField = boundBySystem.get("name") ?? null;
+  const emailField = boundBySystem.get("email") ?? null;
+  const phoneField = boundBySystem.get("phone") ?? null;
+  const aboutField = boundBySystem.get("about") ?? null;
+  const cvField = boundBySystem.get("cv") ?? null;
+  const linkedinField = boundBySystem.get("linkedin") ?? null;
+
+  const fullName = fieldText(nameField);
+  const email = fieldText(emailField).toLowerCase();
+  const phone = fieldText(phoneField);
+  const about = fieldText(aboutField);
+
+  if (fullName.length < 2) return { ok: false, error: "Enter your full name." };
+  if (!EMAIL_PATTERN.test(email)) {
+    return { ok: false, error: "Enter a valid email address." };
+  }
+
+  const typedLink = fieldText(linkedinField);
+  const linkedinUrl = typedLink ? profileLink(typedLink) : null;
+  if (typedLink && !linkedinUrl) {
+    return { ok: false, error: "Enter your linkedin.com profile link, or leave it empty." };
+  }
+
+  const cvUpload = cvField ? uploadsByField.get(cvField.field.key) ?? null : null;
+  const extractedCv = cvUpload ? await extractStoredCv(cvUpload) : "";
+  const linkedinLine = linkedinUrl ? `LinkedIn profile: ${linkedinUrl}` : "";
+
+  // Spec §4: a form may bind both, and then the CV text carries both. The About
+  // answer is not overwritten by the extraction the way the legacy path's
+  // `actions.ts:507` line still does — that path is left exactly as it was.
+  const cvParts =
+    aboutField && cvField
+      ? [about, linkedinLine, extractedCv]
+      : aboutField
+        ? [about, linkedinLine]
+        : [linkedinLine, extractedCv];
+  const finalCvText = cvParts.filter((part) => part.length > 0).join("\n\n");
+
+  if (!cvUpload && about.length < CV_TEXT_MIN_CHARS) {
+    return {
+      ok: false,
+      error: "Attach a CV or paste its text so we can review your application.",
+    };
+  }
+
+  const consent = planApplicationConsent({
+    processing: input.processingConsent,
+    talentPool: input.talentPoolConsent,
+  });
+  if (!consent.ok) return { ok: false, error: consent.error };
+
+  // Re-read for the insert and the activity row; the layout read proved this a
+  // moment ago, and a role can close between that read and this one.
+  const { data: job } = await restClient
+    .from("job_openings")
+    .select("id, title, tenant_id")
+    .eq("id", input.jobId)
+    .eq("status", "PUBLISHED")
+    .maybeSingle();
+
+  if (!job) {
+    return { ok: false, error: "This role is no longer accepting applications." };
+  }
+
+  const allowedSources = new Set(["CAREER_SITE", "JOB_BOARD"]);
+  const referralCode = readReferralCode(input.referralCode);
+  const claimant = referralCode ? await resolveReferralCode(referralCode) : null;
+  const source = claimant
+    ? "REFERRAL"
+    : allowedSources.has(input.source)
+      ? input.source
+      : "CAREER_SITE";
+
+  const gate = await activeGateQuestions(input.jobId);
+  if ("error" in gate) return { ok: false, error: gate.error };
+
+  const verdict = evaluateGate(gate.questions, input.gateAnswers);
+
+  if (verdict.missing.length) {
+    return {
+      ok: false,
+      error:
+        verdict.missing.length === 1
+          ? `Please answer “${verdict.missing[0]}” before submitting.`
+          : `Please answer all ${verdict.missing.length} application questions before submitting.`,
+    };
+  }
+
+  const filteredOut = verdict.failed.length > 0;
+
+  // Resolve-or-create before the insert, so `applications.person_id` names the
+  // profile this application belongs to. A missing spine is not a refusal: the
+  // application is filed unlinked and the profile lags (spec §9).
+  let personId: string | null = null;
+  try {
+    const person = await resolveOrCreatePerson(email, fullName, phone || null);
+    if ("personId" in person) personId = person.personId;
+    else console.error("[apply] the person was not resolved:", person.error);
+  } catch (error) {
+    console.error(
+      "[apply] the person store could not be reached:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+
+  const snapshotAnswers: Record<string, unknown> = {};
+  for (const [key, value] of normalised) snapshotAnswers[key] = value;
+  for (const [key, upload] of uploadsByField) {
+    snapshotAnswers[key] = { name: storedLeaf(upload.storage_path) };
+  }
+
+  const snapshot = encodeSnapshot(
+    layout.fields,
+    snapshotAnswers,
+    new Date().toISOString(),
+  );
+
+  const { data: created, error } = await restClient
+    .from("applications")
+    .insert({
+      job_id: input.jobId,
+      full_name: fullName,
+      email,
+      phone: phone || null,
+      cv_text: finalCvText || null,
+      cv_file_path: cvUpload?.storage_path ?? null,
+      source,
+      stage: filteredOut ? "REJECTED" : "NEW",
+      ...(filteredOut ? { rejection_reason: gateRejectionReason(verdict.failed) } : {}),
+      gate_answers: verdict.answers.length ? verdict.answers : null,
+      form_answers: snapshot,
+      ...(personId ? { person_id: personId } : {}),
+    })
+    .select("id, tracking_code")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      if (error.message.includes("applications_one_live_per_job")) {
+        return {
+          ok: false,
+          error:
+            "You already have an application in progress for this role. Check your tracking code, or contact the HR team to update your details.",
+        };
+      }
+      return { ok: false, error: "That tracking code is already in use. Try again." };
+    }
+    if (error.code === "42501") {
+      return { ok: false, error: "Your application could not be accepted. Please try again." };
+    }
+    return { ok: false, error: "Your application could not be submitted. Please try again." };
+  }
+
+  const applicationId = created?.id ? String(created.id) : "";
+  const trackingCode = created?.tracking_code ?? "";
+
+  if (applicationId && uploadsByField.size > 0) {
+    const ids = [...uploadsByField.values()].map((upload) => upload.id);
+    const { data: attached, error: attachError } = await restClient
+      .from("application_form_files")
+      .update({ application_id: applicationId })
+      .in("id", ids)
+      .is("application_id", null)
+      .select("id");
+
+    if (attachError) {
+      console.error("[apply] the form uploads were not attached:", attachError.message);
+    } else if ((attached?.length ?? 0) !== ids.length) {
+      // A row was claimed while this form was open. The application stands; the
+      // unattached byte is the orphan sweep's.
+      console.error(
+        "[apply] some form uploads were claimed before attach:",
+        `${attached?.length ?? 0} of ${ids.length}`,
+      );
+    }
+  }
+
+  // Last, and after the row exists: a person write may be refused or fail and
+  // the application still stands (spec §5, §9).
+  if (personId) {
+    await writePersonFromForm({
+      personId,
+      layout,
+      normalised,
+      uploadsByField,
+      consented: input.personConsents ?? {},
+    });
+  }
+
+  await settleApplication({
+    restClient,
+    applicationId,
+    trackingCode,
+    job,
+    input,
+    consentEvents: consent.events,
+    referralCode,
+    source,
+    email,
+    fullName,
+    finalCvText,
+    cvAttached: cvUpload !== null,
+    gateAnswerCount: verdict.answers.length,
+    filteredOut,
+    failedGateCount: verdict.failed.length,
+  });
 
   return { ok: true, outcome: "received", trackingCode };
 }
