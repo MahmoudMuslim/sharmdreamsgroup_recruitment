@@ -30,6 +30,7 @@ import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScore
 /** The buckets a row's path columns point into. */
 const CV_BUCKET = "candidate-cvs";
 const VIDEO_BUCKET = "candidate-videos";
+const PHOTO_BUCKET = "candidate-photos";
 
 /** How many attempt ids are sent in one `in()` filter. */
 const ID_CHUNK = 100;
@@ -45,6 +46,14 @@ export interface ErasureOutcome {
   alreadyErased?: boolean;
   filesRemoved?: number;
   erasedAt?: string | null;
+  /**
+   * The person half, in one sentence, whenever it did not complete.
+   *
+   * Set alongside `ok: true`, never instead of it: the application's own erasure
+   * did happen, and a run that reports failure would leave the request open for a
+   * retry that has nothing left to erase (spec §8.1).
+   */
+  personNote?: string;
 }
 
 export interface EraseApplicationInput {
@@ -72,14 +81,17 @@ function uuidPattern(value: string): boolean {
 /**
  * Every stored object this application owns, grouped by the bucket it lives in.
  *
- * Three columns in this schema hold storage keys, so three reads. An attachment
+ * Four columns in this schema hold storage keys, so four reads. An attachment
  * names its own bucket — staff uploads land in `resumes` and `candidate-audio`
  * while the career site uses `candidate-cvs` — so one bucket constant per kind
- * would miss half of them.
+ * would miss half of them. The fourth is the profile photo, which is not on the
+ * application at all: it is a `person_profiles` column reached through the
+ * person, so the id arrives already resolved rather than being read here.
  */
 async function collectPaths(
   service: ServiceClient,
-  applicationId: string
+  applicationId: string,
+  personId: string | null
 ): Promise<PathsByBucket> {
   const paths: PathsByBucket = new Map();
 
@@ -123,13 +135,105 @@ async function collectPaths(
     );
   }
 
+  if (personId) {
+    const { data: profile } = await service
+      .from("person_profiles")
+      .select("photo_path")
+      .eq("id", personId)
+      .not("photo_path", "is", "null")
+      .maybeSingle();
+    addPath(paths, PHOTO_BUCKET, (profile as Record<string, unknown> | null)?.photo_path);
+  }
+
   return paths;
+}
+
+/**
+ * The person this application belongs to, or null.
+ *
+ * Read on its own rather than bolted onto `collectPaths`' `cv_file_path` select:
+ * `person_id` is a 043 column, and naming a missing column beside an existing
+ * one refuses the whole read, so a database without 043 would lose its CV path
+ * too (spec §9). Here a missing column costs the photo and the person pass,
+ * which is exactly what is new.
+ */
+async function readPersonId(service: ServiceClient, applicationId: string): Promise<string | null> {
+  const { data } = await service
+    .from("applications")
+    .select("person_id")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  const value = (data as Record<string, unknown> | null)?.person_id;
+  return typeof value === "string" && uuidPattern(value) ? value : null;
 }
 
 function rpcReason(error: { code?: string | null; message?: string | null }): string {
   if (isMissingSchemaError(error)) return PRIVACY_WRITE_REFUSAL;
   // The function raises P0001 for each refusal with a sentence worth printing.
   return error.message ?? "The database refused the erasure.";
+}
+
+/** What the person half of an erasure did, and what the desk has to say about it. */
+interface PersonEraseResult {
+  erased: boolean;
+  /** Set only when the person half did not complete — null is nothing to report. */
+  note: string | null;
+}
+
+/**
+ * Erase the person, but only now that this was their last live application.
+ *
+ * Runs *after* the per-application erase, so the row this call just stamped is
+ * already out of the count and a retried request cannot count it twice. An
+ * unread count is never read as zero: a number this engine did not get must not
+ * turn into permission to erase a person whose other applications are still
+ * live, so every branch that did not prove the coast clear stops before the
+ * function. The application's own erasure already happened either way, which is
+ * why a failure here is reported in a sentence and not as a failed run.
+ */
+async function erasePersonIfLast(
+  service: ServiceClient,
+  personId: string
+): Promise<PersonEraseResult> {
+  const { count, error } = await service
+    .from("applications")
+    .select("id", { count: "exact", head: true })
+    .eq("person_id", personId)
+    .is("erased_at", null);
+
+  if (error) {
+    return {
+      erased: false,
+      note: `The application is erased; the person was not reached — the live-application count failed (${error.message ?? "no reason given"}).`,
+    };
+  }
+  if (count === null) {
+    return {
+      erased: false,
+      note: "The application is erased; the person was not reached — the live-application count answered no number.",
+    };
+  }
+  // Still live applications elsewhere means the person stays whole (spec §8.3).
+  if (count > 0) return { erased: false, note: null };
+
+  const { data, error: rpcError } = await service.rpc("erase_person_data", {
+    p_person_id: personId,
+  });
+
+  if (rpcError) {
+    return {
+      erased: false,
+      note: `The application is erased; the person was not — ${rpcReason(rpcError)}`,
+    };
+  }
+
+  const result = (data ?? null) as Record<string, unknown> | null;
+  if (result?.erased === true) return { erased: true, note: null };
+
+  const reason =
+    typeof result?.reason === "string" ? result.reason : "the profile answered that it did not erase";
+  return { erased: false, note: `The application is erased; the person was kept — ${reason}.` };
 }
 
 /**
@@ -181,7 +285,8 @@ export async function eraseApplication(
   });
   if (blocker) return { ok: false, error: blocker };
 
-  const paths = await collectPaths(service, applicationId);
+  const personId = await readPersonId(service, applicationId);
+  const paths = await collectPaths(service, applicationId, personId);
   const files = await getFileStore();
   let removed = 0;
 
@@ -209,6 +314,8 @@ export async function eraseApplication(
     return { ok: false, error: rpcReason(eraseError) };
   }
 
+  const person = personId ? await erasePersonIfLast(service, personId) : null;
+
   // The company is read from the row before the trail is written; after the
   // function the row keeps its tenant, but reading it now keeps this call honest
   // about which record it is filing against even if a later change drops it.
@@ -231,6 +338,7 @@ export async function eraseApplication(
       application_id: applicationId,
       files_removed: removed,
       cause: input.cause,
+      ...(person ? { person_erased: person.erased, person_note: person.note } : {}),
     },
     actorKind: input.actorId ? "STAFF" : "SYSTEM",
     actorLabel: input.actorLabel,
@@ -244,7 +352,12 @@ export async function eraseApplication(
       ? ((erased as Record<string, unknown>).erased_at as string | undefined) ?? null
       : null;
 
-  return { ok: true, filesRemoved: removed, erasedAt };
+  return {
+    ok: true,
+    filesRemoved: removed,
+    erasedAt,
+    personNote: person?.note ?? undefined,
+  };
 }
 
 export interface ErasePersonOutcome {
@@ -253,6 +366,12 @@ export interface ErasePersonOutcome {
   erased: number;
   /** The refusals that kept a record, each already phrased for a person. */
   held: string[];
+  /**
+   * What the person half did not do, when every application went. `ok` stays
+   * true — the erasures that could happen all happened — and this is the rest of
+   * the truth, for the desk to print instead of a bare "Done."
+   */
+  note?: string;
 }
 
 /**
@@ -304,6 +423,7 @@ export async function erasePerson(input: {
 
   let erased = 0;
   const held: string[] = [];
+  const notes = new Set<string>();
 
   for (const applicationId of ids) {
     const outcome = await eraseApplication({
@@ -316,6 +436,7 @@ export async function erasePerson(input: {
 
     if (outcome.ok) {
       erased += 1;
+      if (outcome.personNote) notes.add(outcome.personNote);
       continue;
     }
     held.push(outcome.error ?? "A record could not be erased.");
@@ -333,5 +454,6 @@ export async function erasePerson(input: {
     };
   }
 
-  return { ok: true, erased, held: [] };
+  const note = [...notes].join(" ");
+  return { ok: true, erased, held: [], ...(note ? { note } : {}) };
 }
