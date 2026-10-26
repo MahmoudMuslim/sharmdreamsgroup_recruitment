@@ -361,6 +361,42 @@ const en: Dictionary = {
   "apply.err.fileSize": "That file is larger than {mb} MB. Please attach a smaller CV.",
   "apply.err.failed": "Something went wrong. Please try again.",
   "apply.err.upload": "We could not attach your CV. Try pasting your CV text instead.",
+
+  // ---- The authored form. The step headings, labels, help and placeholders are
+  // the recruiter's own sentences and arrive as filed; everything here is the
+  // furniture around them.
+  "apply.dyn.formStep": "Your application",
+  "apply.dyn.required": "Please answer “{label}”.",
+  "apply.dyn.badUrl": "Enter a full web address starting with http:// or https://.",
+  "apply.dyn.agree": "I agree",
+  "apply.dyn.ratherNot": "I'd rather not say",
+  "apply.dyn.consentNote":
+    "Answering is optional and never decides your application. “I'd rather not say” leaves this part out of your profile; the application carries on.",
+  "apply.dyn.declined":
+    "You chose not to answer this part. It is left out, and your application carries on.",
+  "apply.dyn.chooseFile": "Choose a file",
+  "apply.dyn.replaceFile": "Choose another file",
+  "apply.dyn.removeFile": "Remove",
+  "apply.dyn.uploading": "Uploading…",
+  "apply.dyn.uploadFailed": "That file could not be uploaded. Try again.",
+  "apply.dyn.tooLarge": "That file is larger than {mb} MB.",
+  "apply.dyn.choose": "Choose one",
+  "apply.dyn.yes": "Yes",
+  "apply.dyn.no": "No",
+  "apply.dyn.amount": "Amount",
+  "apply.dyn.unit": "Unit",
+  "apply.dyn.useLocation": "Use my location",
+  "apply.dyn.locating": "Finding you…",
+  "apply.dyn.locationFailed":
+    "We could not read your location. Type the two numbers instead.",
+  "apply.dyn.lat": "Latitude",
+  "apply.dyn.lng": "Longitude",
+  "apply.dyn.address.line1": "Address line 1",
+  "apply.dyn.address.line2": "Address line 2",
+  "apply.dyn.address.city": "City",
+  "apply.dyn.address.region": "Region",
+  "apply.dyn.address.postalCode": "Postal code",
+  "apply.dyn.address.country": "Country",
   "privacy.back": "Back to careers",
   "privacy.eyebrow": "Your data",
   "privacy.title": "Your privacy choices",

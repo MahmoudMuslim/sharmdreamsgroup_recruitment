@@ -26,8 +26,10 @@ import {
 } from "@/modules/candidates/domain/person-fields";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import {
+  DURATION_UNITS,
   KINDS,
   kindRules,
+  type DurationUnit,
   type FieldType,
   type Kind,
 } from "@/modules/form-builder/domain/field-types";
@@ -56,11 +58,18 @@ export interface PublicField {
   accept?: string;
   /** The byte ceiling the upload door enforces, resolved server-side. */
   maxBytes?: number;
+  /** The closed units a `duration` field offers, in the author's order. */
+  units?: readonly DurationUnit[];
 }
 
 export interface PublicStep {
   heading: string | null;
   fields: PublicField[];
+  /**
+   * The consent purposes any field on this step is bound to. The browser learns
+   * that this step needs a box — never which field caused it (spec §5).
+   */
+  consentGroups: PersonFieldGroup[];
 }
 
 export interface PublicForm {
@@ -346,6 +355,17 @@ function toPublicField({ field }: ResolvedField): PublicField {
     };
   }
 
+  if (field.type === "duration") {
+    const raw = field.config.units;
+    const units = Array.isArray(raw)
+      ? raw.filter(
+          (unit): unit is DurationUnit =>
+            typeof unit === "string" && (DURATION_UNITS as readonly string[]).includes(unit),
+        )
+      : [];
+    return units.length > 0 ? { ...base, units } : base;
+  }
+
   return base;
 }
 
@@ -361,19 +381,29 @@ function toPublicField({ field }: ResolvedField): PublicField {
  */
 export function project(layout: ResolvedLayout): PublicForm {
   const consentGroups: PersonFieldGroup[] = [];
-  for (const resolved of layout.fields) {
-    const systemKey = resolved.field.systemKey;
-    if (!systemKey || !systemKey.startsWith("person:")) continue;
-    const group = consentPurposeFor(systemKey.slice("person:".length));
-    if (!consentGroups.includes(group)) consentGroups.push(group);
-  }
+
+  const stepGroups = layout.steps.map((step) => {
+    const groups: PersonFieldGroup[] = [];
+    for (const { field } of step.fields) {
+      const systemKey = field.systemKey;
+      if (!systemKey || !systemKey.startsWith("person:")) continue;
+      const group = consentPurposeFor(systemKey.slice("person:".length));
+      // A group is asked once, on the step that first needs it. Repeating the
+      // box lower down would ask the same question twice for one layout.
+      if (consentGroups.includes(group)) continue;
+      consentGroups.push(group);
+      groups.push(group);
+    }
+    return groups;
+  });
 
   return {
-    steps: layout.steps.map((step) => ({
+    steps: layout.steps.map((step, index) => ({
       heading: step.heading
         ? step.heading.field.label
         : step.fields[0]?.form.name ?? null,
       fields: step.fields.map(toPublicField),
+      consentGroups: stepGroups[index],
     })),
     consentGroups,
   };

@@ -5,7 +5,9 @@ import { readReferralCode } from "@/modules/referrals/domain/referral";
 import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
 import { readPrivacySettings } from "@/modules/privacy/infrastructure/privacyReader";
 import { translate } from "@/lib/i18n";
+import { project, resolveFormForJob } from "@/modules/form-builder/application/publicForm";
 import { ApplyWizard } from "./ApplyWizard";
+import { DynamicApplyWizard } from "./DynamicApplyWizard";
 
 /**
  * The application itself, on its own page.
@@ -63,8 +65,23 @@ export default async function ApplyPage({
   // here also means a Settings change reaches the next applicant without a build.
   const { talentPoolMonths } = await readPrivacySettings();
 
+  // Spec §9's one rule: a published layout renders itself, and every failure
+  // state degrades to the wizard below rather than to a broken form. The
+  // submit door re-reads the same layout and refuses where this page degraded.
+  const resolved = await resolveFormForJob(job.id);
+  if ("fallback" in resolved) {
+    return (
+      <ApplyWizard
+        job={{ id: job.id, title: job.title }}
+        referralCode={referralCode}
+        talentPoolMonths={talentPoolMonths}
+      />
+    );
+  }
+
   return (
-    <ApplyWizard
+    <DynamicApplyWizard
+      form={project(resolved)}
       job={{ id: job.id, title: job.title }}
       referralCode={referralCode}
       talentPoolMonths={talentPoolMonths}
