@@ -843,6 +843,48 @@ export function linkForTool(
       return settingsView(settingKeys(result), words(args.query));
     case "get_master_data":
       return masterListView((result as { entity?: unknown } | undefined | null)?.entity);
+    case "read_offer":
+    case "issue_offer":
+    case "withdraw_offer":
+    case "confirm_offer_hire":
+      // The offer panel lives on the application's desk, which is the page the
+      // stage buttons and the letter history are rendered on.
+      return applicationId ? candidateDesk(applicationId) : null;
+    case "get_retention_desk":
+    case "act_on_privacy_request":
+      return { href: "/retention", label: "Open the privacy desk" };
+    case "get_referral_board":
+    case "file_referral":
+    case "reassign_referral":
+    case "decide_referral_bonus":
+      return { href: "/referrals", label: "Open the referrals" };
+    case "start_time":
+    case "stop_time":
+    case "add_time":
+    case "edit_time":
+    case "discard_time":
+    case "delete_time":
+      // The ledger's cut is a window over the signed-in person's rows, and the
+      // default window holds the row a timer tool just wrote; naming a cut the
+      // action did not report would guess at a view the answer never read.
+      return { href: "/time", label: "Open the Time Tracker" };
+    case "copy_bank_question": {
+      // The copy lands in one of two stores, and each store is a different page:
+      // a gate copy is authored on /questions, a suite copy lives in the suite
+      // drawer on /assessments. A target the helper cannot read lands on the
+      // bank, which shows both stores' questions.
+      const target = named(args.target, ["GATE", "SUITE"]);
+      if (target === "GATE") {
+        return { href: "/questions?store=gate", label: "Open the apply-form questions" };
+      }
+      return target === "SUITE"
+        ? { href: "/assessments", label: "Open the assessment suites" }
+        : { href: "/questions", label: "Open the question bank" };
+    }
+    case "recommend_tests":
+      // A recommendation is about suites, not about the opening it read: the
+      // recruiter acts on it by saving or assigning one of the named suites.
+      return { href: "/assessments", label: "Open the assessment suites" };
     default:
       return null;
   }

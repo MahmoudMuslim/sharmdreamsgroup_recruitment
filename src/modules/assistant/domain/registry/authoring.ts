@@ -1,5 +1,9 @@
 // One section of the assistant's tool registry — see ./shared.ts and ../tools.ts.
 
+import {
+  copyBankQuestion,
+  recommendTests,
+} from "@/modules/assistant/application/sources";
 import type { AssistantTool } from "./shared";
 import {
   QUESTION_TYPES,
@@ -138,5 +142,52 @@ export const authoring: readonly AssistantTool[] = [
       return report(await moveQuestion(str(args, "question_id"), str(args, "template_id"), direction));
     },
   },
-
+  {
+    name: "copy_bank_question",
+    label: "Copying a question between the gate and a suite",
+    description:
+      "Copy one question from the question bank's two stores into the other: from the apply-form gate questions into an assessment suite, or from a suite into a published role's gate form or its shared form. The copy goes through the action that owns the destination, so its permission check, validation and trail row still apply. Read list_gate_questions or get_assessment_suite first for the question id; `place_key` is a job id, `shared` for every published role's form, or a suite template id.",
+    args: {
+      store: "string — gate or suite, which store the question is read from",
+      id: "string — the question's id in that store",
+      target: "string — gate or suite, which store the copy lands in",
+      place_key:
+        "string — the destination: a job id, `shared` for every published role (gate target only), or a suite template id",
+    },
+    run: async (args) => {
+      const store = str(args, "store").toLowerCase();
+      const target = str(args, "target").toLowerCase();
+      if (store !== "gate" && store !== "suite") {
+        throw new ToolArgumentError('"store" must be "gate" or "suite".');
+      }
+      if (target !== "gate" && target !== "suite") {
+        throw new ToolArgumentError('"target" must be "gate" or "suite".');
+      }
+      return report(
+        await copyBankQuestion({
+          store,
+          id: str(args, "id"),
+          target,
+          placeKey: str(args, "place_key"),
+        })
+      );
+    },
+  },
+  {
+    name: "recommend_tests",
+    label: "Recommending tests for an opening",
+    description:
+      "Ask the AI gateway to read one hireable opening's requirements and choose from the existing assessment suites what a candidate should sit, inside a time budget of 5 to 480 whole minutes. It changes nothing: what comes back is the opening, the requirements it read, the recommended suites with their reasons and the ids of the ones it would issue. Needs AI features switched on and the Create assessments permission; save or assign whatever the recruiter approves with the assessment tools.",
+    args: {
+      opening_id: "string — from list_jobs, a draft, published or paused opening",
+      budget_minutes: "number — 5 to 480, whole minutes the candidate can sit",
+    },
+    run: async (args) =>
+      report(
+        await recommendTests({
+          openingId: str(args, "opening_id"),
+          budgetMinutes: num(args, "budget_minutes"),
+        })
+      ),
+  },
 ];

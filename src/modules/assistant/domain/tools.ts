@@ -280,6 +280,10 @@ import { masterData } from "./registry/masterData";
 import { team } from "./registry/team";
 import { web } from "./registry/web";
 import { files } from "./registry/files";
+import { offers } from "./registry/offers";
+import { privacy } from "./registry/privacy";
+import { referrals } from "./registry/referrals";
+import { time } from "./registry/time";
 import { destructive } from "./registry/destructive";
 import type { AssistantTool } from "./registry/shared";
 
@@ -301,6 +305,10 @@ export const ASSISTANT_TOOLS: readonly AssistantTool[] = [
   ...team,
   ...web,
   ...files,
+  ...offers,
+  ...privacy,
+  ...referrals,
+  ...time,
   ...destructive,
 ];
 
@@ -318,10 +326,12 @@ export function toolByName(name: string): AssistantTool | undefined {
  * write only costs recruiter a click, while a write accidentally listed as a
  * read is a change nobody approved.
  *
- * Three names here are worth explaining, because they look like writes:
+ * A few names here are worth explaining, because they look like writes:
  * - `ask_question` ends the turn on a button the recruiter has to press, so it
  *   is already the confirmation;
  * - `draft_interview_guide` generates text and stores nothing (`stored: false`);
+ * - `recommend_tests` reads an opening and the suite catalogue and returns a
+ *   recommendation; it writes no row and changes no status;
  * - `create_file` hands the recruiter a download and touches no row — the bytes are
  *   not stored anywhere, only the card that names the file;
  * - `read_candidate_cv` sounds like a read and is NOT listed, because it writes
@@ -343,6 +353,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "list_candidates",
   "get_job_applicants",
   "get_application",
+  "read_offer",
   "list_assessment_suites",
   "list_prospects",
   "get_prospect_profile",
@@ -353,6 +364,8 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "list_model_routing",
   "get_audit_log",
   "get_activity_trail",
+  "get_retention_desk",
+  "get_referral_board",
   "get_time_ledger",
   "list_credentials",
   "get_credential_audit",
@@ -369,6 +382,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "list_team",
   "list_email_outbox",
   "draft_interview_guide",
+  "recommend_tests",
   "create_file",
 ];
 

@@ -105,12 +105,36 @@ import {
   setInterviewStatus,
 } from "@/app/(admin)/candidates/interview-actions";
 import {
+  copyBankQuestion,
   deleteGateQuestion,
   getGateConsoleData,
   moveGateQuestion,
   saveGateQuestion,
   setGateQuestionActive,
 } from "@/app/(admin)/questions/actions";
+import { recommendTests } from "@/app/(admin)/assessments/recommendation-actions";
+import {
+  confirmOfferHire,
+  issueOffer,
+  readOfferPanel,
+  withdrawOffer,
+} from "@/app/(admin)/candidates/offer-actions";
+import { actOnPrivacyRequest, getRetentionDesk } from "@/app/(admin)/retention/actions";
+import {
+  decideReferralBonus,
+  fileReferral,
+  getReferralBoard,
+  reassignReferral,
+} from "@/app/(admin)/referrals/actions";
+import {
+  addTime,
+  deleteTime,
+  discardTime,
+  editTime,
+  getLedger,
+  startTime,
+  stopTime,
+} from "@/app/(admin)/time/actions";
 import { deleteStoredFile, getFileBrowserData, openFolder } from "@/app/(admin)/files/actions";
 import {
   fileSearchWords,
@@ -170,10 +194,31 @@ import {
 } from "@/app/(admin)/whatsapp/actions";
 import { TASK_CATEGORIES, TASK_OWNERS } from "@/app/(admin)/onboarding/checklist";
 import { getTrail } from "@/app/(admin)/activity/actions";
-import { getLedger } from "@/app/(admin)/time/actions";
+import { BONUS_STATES } from "@/modules/referrals/domain/referral";
+import { TIME_CATEGORIES } from "@/modules/timelog/domain/ledger";
 
 export { getTrail };
 export { getLedger };
+export { readOfferPanel };
+export { issueOffer };
+export { withdrawOffer };
+export { confirmOfferHire };
+export { getRetentionDesk };
+export { actOnPrivacyRequest };
+export { getReferralBoard };
+export { fileReferral };
+export { reassignReferral };
+export { decideReferralBonus };
+export { startTime };
+export { stopTime };
+export { discardTime };
+export { addTime };
+export { editTime };
+export { deleteTime };
+export { copyBankQuestion };
+export { recommendTests };
+export { BONUS_STATES };
+export { TIME_CATEGORIES };
 export { getDashboardAnalytics };
 export { getCandidateList };
 export { getCandidateTally };
