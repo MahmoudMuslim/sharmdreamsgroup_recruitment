@@ -35,12 +35,14 @@ import {
 import {
   personField,
   visibleFields,
+  type PersonField,
   type PersonFieldGroup,
   type PersonFieldTier,
 } from "@/modules/candidates/domain/person-fields";
 import {
   applyPersonField,
   defaultConsentChecker,
+  recordPersonConsent,
   resolveOrCreatePerson,
   setPersonPhoto,
   PERSON_SPINE_MISSING_NOTE,
@@ -1363,6 +1365,19 @@ export async function structurePersonFromCv(applicationId: string): Promise<Extr
     return { ok: false, error: PERSON_SPINE_MISSING_NOTE };
   }
 
+  // An extraction is its own processing purpose (spec §3.2): handing the CV to a
+  // model needs the candidate's agreement on record, and a refusal is the same
+  // gate as a missing answer. The free-tier chain below would otherwise read a
+  // document on the strength of a persona the candidate never agreed to share.
+  const consent = await defaultConsentChecker();
+  if (!(await consent.consentAlive(row.person_id, "extraction"))) {
+    return {
+      ok: false,
+      error:
+        "This CV cannot be handed to a model yet: the candidate has not agreed to the CV-structuring notice, or agreed against an older version. Record the answer on their profile first.",
+    };
+  }
+
   const cvText = (row.cv_text ?? "").trim();
   if (cvText.length < CV_TEXT_MIN_CHARS) {
     return { ok: false, error: "This record has no CV text to structure yet. Attach a CV first." };
@@ -1642,6 +1657,290 @@ export async function listDrawerPersonFields(): Promise<DrawerPersonFieldsResult
     }));
 
   return { ok: true, fields };
+}
+
+/* -------------------------------------------------------------------------- */
+/* The profile desk: hand edits and the candidate's consent answers             */
+/* -------------------------------------------------------------------------- */
+
+/** The fourteen purposes 043's CHECK admits, in the notice's own order. */
+const CONSENT_PURPOSES: readonly PersonFieldGroup[] = [
+  "identity",
+  "contact",
+  "photo",
+  "work_history",
+  "education",
+  "languages",
+  "skills",
+  "marital_status",
+  "family_details",
+  "dependants",
+  "emergency_contacts",
+  "health",
+  "housing",
+  "extraction",
+];
+
+type WritablePerson =
+  | { ok: true; personId: string }
+  | { ok: false; error: string };
+
+/**
+ * The person profile a desk write targets, resolved server-side.
+ *
+ * `applications.person_id` is preferred and `person_emails` is the fallback, for
+ * the same reason the profile reader falls back: an application row written
+ * before 043's backfill still carries the address that owns the person. A missing
+ * column is the unapplied spine, and it is named rather than reported as "no
+ * person" — the two mean different things to whoever reads the refusal.
+ */
+async function resolveWritablePerson(applicationId: string): Promise<WritablePerson> {
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
+    .from("applications")
+    .select("person_id, email")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (error && isMissingSchemaError(error)) {
+    return { ok: false, error: PERSON_SPINE_MISSING_NOTE };
+  }
+  if (error) return { ok: false, error: `The record could not be read: ${error.message}` };
+  if (!data) return { ok: false, error: "This candidate record is no longer here." };
+
+  const row = data as { person_id?: string | null; email?: string | null };
+  if (row.person_id) return { ok: true, personId: row.person_id };
+
+  const email = (row.email ?? "").trim().toLowerCase();
+  if (!email) {
+    return { ok: false, error: "This record is not linked to a person profile yet." };
+  }
+
+  const { data: owned, error: ownedError } = await restClient
+    .from("person_emails")
+    .select("person_id")
+    .eq("email", email)
+    .limit(1)
+    .maybeSingle();
+
+  if (isMissingSchemaError(ownedError)) {
+    return { ok: false, error: PERSON_SPINE_MISSING_NOTE };
+  }
+  if (ownedError) return { ok: false, error: `The person lookup failed: ${ownedError.message}` };
+
+  const personId = (owned as { person_id?: string | null } | null)?.person_id ?? null;
+  if (!personId) {
+    return {
+      ok: false,
+      error:
+        "This record is not linked to a person profile yet. Record the candidate again, or apply 043's backfill, before editing their details.",
+    };
+  }
+  return { ok: true, personId };
+}
+
+/** One scalar value coerced to what its column takes, or the reason it cannot be. */
+function coercePersonValue(
+  field: PersonField,
+  raw: string
+): { ok: true; value: string | number | null } | { ok: false; reason: string } {
+  const trimmed = raw.trim();
+
+  if (field.maxChars && trimmed.length > field.maxChars) {
+    return { ok: false, reason: `That is longer than ${field.maxChars} characters.` };
+  }
+  if (trimmed === "") return { ok: true, value: null };
+
+  if (field.input === "select") {
+    const allowed = field.options ?? [];
+    return allowed.includes(trimmed)
+      ? { ok: true, value: trimmed }
+      : { ok: false, reason: `"${trimmed}" is not one of the answers this field accepts.` };
+  }
+
+  if (field.input === "number") {
+    const n = Number(trimmed);
+    return Number.isInteger(n)
+      ? { ok: true, value: n }
+      : { ok: false, reason: "This field takes a whole number." };
+  }
+
+  if (field.input === "date") {
+    const stamp = Date.parse(`${trimmed}T00:00:00Z`);
+    const real =
+      /^\d{4}-\d{2}-\d{2}$/.test(trimmed) &&
+      Number.isFinite(stamp) &&
+      new Date(stamp).toISOString().startsWith(trimmed);
+    return real
+      ? { ok: true, value: trimmed }
+      : { ok: false, reason: "This field takes a date as YYYY-MM-DD." };
+  }
+
+  return { ok: true, value: trimmed };
+}
+
+export interface PersonFieldDraft {
+  key: string;
+  value: string;
+}
+
+export interface SavePersonFieldsInput {
+  applicationId: string;
+  fields: PersonFieldDraft[];
+}
+
+export interface SavePersonFieldsResult {
+  ok: boolean;
+  error?: string;
+  applied?: string[];
+  refused?: { key: string; reason: string }[];
+  conflicts?: { key: string; held: string; incoming: string; winner: string }[];
+}
+
+/**
+ * Writes a recruiter's hand edits at the `profile_edit` rung.
+ *
+ * Only the fields the form actually changed are sent, so an untouched value is
+ * never rewritten: rewriting it would stamp an event that says a person changed
+ * something they did not. Every key is resolved through the registry first (an
+ * unknown key is refused, not written), the value is coerced to its column's own
+ * shape, and then `applyPersonField` owns consent, the precedence ladder and the
+ * event — this door decides no sensitivity and no precedence itself.
+ *
+ * A group without a live consent is refused by the writer and named back to the
+ * caller; the desk records the candidate's answer through `savePersonConsent`,
+ * never by writing a guess here.
+ */
+export async function savePersonFields(input: SavePersonFieldsInput): Promise<SavePersonFieldsResult> {
+  const staff = await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+  if (!Array.isArray(input.fields) || input.fields.length === 0) {
+    return { ok: false, error: "There is nothing to save." };
+  }
+
+  const target = await resolveWritablePerson(input.applicationId);
+  if (!target.ok) return { ok: false, error: target.error };
+
+  const changes: PersonFieldChange[] = [];
+  const refused: { key: string; reason: string }[] = [];
+
+  for (const draft of input.fields) {
+    const field = personField(draft.key);
+    if (!field) {
+      refused.push({ key: draft.key, reason: "This is not a field the profile desk can write." });
+      continue;
+    }
+    if (field.input === "list" || field.input === "photo") {
+      refused.push({ key: draft.key, reason: "This field is not written one value at a time." });
+      continue;
+    }
+
+    const coerced = coercePersonValue(field, typeof draft.value === "string" ? draft.value : "");
+    if (!coerced.ok) {
+      refused.push({ key: draft.key, reason: coerced.reason });
+      continue;
+    }
+
+    changes.push({
+      key: field.key,
+      value: coerced.value,
+      door: "profile_edit",
+      actorId: staff.profileId,
+      actorKind: "staff",
+    });
+  }
+
+  if (changes.length === 0) {
+    return { ok: false, error: "None of these fields could be saved.", refused };
+  }
+
+  const consent = await defaultConsentChecker();
+  const result = await applyPersonField(target.personId, changes, consent);
+  if ("error" in result) return { ok: false, error: result.error, refused };
+
+  const allRefused = [...refused, ...result.refused];
+  const applied = result.applied;
+
+  await recordActivity({
+    area: "candidates",
+    action: "person_edit",
+    entity: "application",
+    entityId: input.applicationId,
+    summary: `Edited ${applied.length} person field${applied.length === 1 ? "" : "s"} by hand${
+      allRefused.length ? `, ${allRefused.length} refused` : ""
+    }${result.conflicts.length ? `, ${result.conflicts.length} held by a higher door` : ""}`,
+    detail: {
+      person_id: target.personId,
+      applied,
+      refused: allRefused.map((r) => r.key),
+      conflicts: result.conflicts.map((c) => c.key),
+    },
+  });
+
+  if (applied.length) {
+    revalidatePath(`/candidates/${input.applicationId}`);
+    revalidatePath("/candidates");
+  }
+
+  return { ok: true, applied, refused: allRefused, conflicts: result.conflicts };
+}
+
+export interface SavePersonConsentInput {
+  applicationId: string;
+  purpose: PersonFieldGroup;
+  granted: boolean;
+}
+
+export interface SavePersonConsentResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Records what the candidate said about one notice at the recruitment desk.
+ *
+ * Append-only, like every consent trail on this platform: a withdrawal is a later
+ * `granted: false` row, never an edit, and nothing here decides that the answer
+ * is acceptable — the writer's gate reads the newest row. The door refuses to
+ * take an answer for a purpose the notice vocabulary does not carry, so a typo
+ * cannot mint a fifteenth purpose the database would then reject.
+ */
+export async function savePersonConsent(input: SavePersonConsentInput): Promise<SavePersonConsentResult> {
+  await requireStaff("/candidates");
+
+  if (!(await hasPermissionForUser("candidates.write"))) {
+    return { ok: false, error: "You need the Edit candidates permission." };
+  }
+  if (!CONSENT_PURPOSES.includes(input.purpose)) {
+    return { ok: false, error: "That is not a consent purpose this desk records." };
+  }
+
+  const target = await resolveWritablePerson(input.applicationId);
+  if (!target.ok) return { ok: false, error: target.error };
+
+  const result = await recordPersonConsent(
+    target.personId,
+    input.purpose,
+    input.granted === true,
+    "profile_edit"
+  );
+  if ("error" in result) return { ok: false, error: result.error };
+
+  const granted = input.granted === true;
+  await recordActivity({
+    area: "candidates",
+    action: "person_consent",
+    entity: "application",
+    entityId: input.applicationId,
+    summary: `Recorded the candidate's ${granted ? "agreement to" : "refusal of"} the ${input.purpose.replace(/_/g, " ")} notice`,
+    detail: { person_id: target.personId, purpose: input.purpose, granted },
+  });
+
+  revalidatePath(`/candidates/${input.applicationId}`);
+  return { ok: true };
 }
 
 /* -------------------------------------------------------------------------- */

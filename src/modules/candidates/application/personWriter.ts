@@ -504,6 +504,50 @@ export async function setPersonPhoto(
 }
 
 // ————————————————————————————————————————————————————————————————————————————
+// §3.2 — recording the answer a consent gate reads
+// —————————————————————————————————————————————————————————————————————————————
+
+/** `extraction` gates the act of handing a CV to a model; no registry field carries it. */
+export type ConsentPurpose = PersonFieldGroup;
+
+/**
+ * Append one consent answer at person scope: `granted = true` for an agreement,
+ * `false` for a refusal or a withdrawal (the two are the same later row, exactly
+ * as 041's `candidate_consents` discipline states).
+ *
+ * This is the desk recording what the candidate said — not the desk deciding.
+ * The door is `profile_edit`, the purpose comes from the registry/notice
+ * vocabulary, and `NOTICE_VERSION` stamps which paragraph the answer was given
+ * against. Nothing is updated: a changed mind is a later row, so the newest
+ * answer wins on every read.
+ *
+ * Degrades like the rest of the spine (043 unapplied → 42P01 → named note).
+ */
+export async function recordPersonConsent(
+  personId: string,
+  purpose: ConsentPurpose,
+  granted: boolean,
+  door: Extract<Door, "profile_edit" | "hand_record" | "privacy_page"> = "profile_edit",
+): Promise<{ ok: true } | { error: string; missingSchema?: boolean }> {
+  const client = await connect();
+  try {
+    await client.query(
+      `insert into person_consents (person_id, purpose, granted, notice_version, door)
+       values ($1, $2, $3, $4, $5)`,
+      [personId, purpose, granted, NOTICE_VERSION, door]
+    );
+    return { ok: true };
+  } catch (cause) {
+    if (isMissingSchemaError(cause as { code?: string; message?: string })) {
+      return { error: PERSON_SPINE_MISSING_NOTE, missingSchema: true };
+    }
+    return { error: `consent answer failed: ${(cause as Error).message}` };
+  } finally {
+    client.release();
+  }
+}
+
+// ————————————————————————————————————————————————————————————————————————————
 // §3.1 / §3.3 / §3.4 — applyPersonField
 // ————————————————————————————————————————————————————————————————————————————
 

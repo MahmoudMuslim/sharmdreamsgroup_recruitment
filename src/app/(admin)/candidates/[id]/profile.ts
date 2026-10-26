@@ -24,7 +24,7 @@
  * data fetch of its own.
  */
 
-import { requireStaff } from "@/lib/auth/session";
+import { requireStaff, type SessionUser } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/timezone";
 import { createServerRestClient } from "@/lib/data-api/server";
 import type { SoftSkillReport } from "@/types";
@@ -32,13 +32,30 @@ import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/li
 import { attachmentRule } from "@/modules/careers/attachment-rules";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";
 import { parseGateAnswers, type GateAnswer } from "@/modules/careers/gate-questions";
-import { emailSpellings, summarizePerson } from "@/modules/candidates/domain/personIdentity";
-import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { emailSpellings, personKey, summarizePerson } from "@/modules/candidates/domain/personIdentity";
+import {
+  visibleFields,
+  type PersonFieldGroup,
+  type PersonFieldTier,
+} from "@/modules/candidates/domain/person-fields";
+import {
+  computeCareerIndicators,
+  type CareerIndicators,
+  type EmploymentRow,
+} from "@/modules/candidates/domain/careerIndicators";
+import { NOTICE_VERSION } from "@/modules/candidates/domain/person-notice";
+import {
+  readPersonBundle,
+  type PersonBundle,
+} from "@/modules/candidates/application/personReader";
+import { PERSON_SPINE_MISSING_NOTE } from "@/modules/candidates/application/personWriter";
+import { hasPermissionForUser, permissionsForCurrentUser } from "@/modules/settings/infrastructure/permissions";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import {
   getNumberSetting,
   getOrganisationTimeZone,
 } from "@/modules/settings/infrastructure/settingsReader";
+import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import {
   INTERVIEW_SELECT,
   toInterviewRecord,
@@ -222,6 +239,178 @@ export interface ProfilePerson {
   last_seen: string | null;
 }
 
+/**
+ * One person's profile spine, shaped for the surfaces (Task 13).
+ *
+ * Every row here has already been tier-filtered by `readPersonBundle`: a Tier-3
+ * group this caller may not read is named in `hidden` and its rows are absent —
+ * never an empty array, because an empty list would read as "nothing there" when
+ * the truth is "not shown to you" (spec §7).
+ */
+export interface PersonBundleProfile {
+  legal_name: string | null;
+  preferred_name: string | null;
+  pronouns: string | null;
+  gender: string | null;
+  date_of_birth: string | null;
+  birthplace: string | null;
+  national_id: string | null;
+  nationality: string | null;
+  phone: string | null;
+  mailing_address: string | null;
+  current_city: string | null;
+  photo_path: string | null;
+  photo_mime: string | null;
+  marital_status: string | null;
+  children_count: number | null;
+  household_size: number | null;
+  housing_tenure: string | null;
+  commute_mode: string | null;
+  commute_minutes: number | null;
+  relocation_willingness: string | null;
+  travel_restrictions: string | null;
+}
+
+export interface PersonLanguageView {
+  language: string;
+  proficiency: string;
+}
+
+export interface PersonEducationView {
+  id: string;
+  level: string;
+  institution: string;
+  degree: string | null;
+  field: string | null;
+  graduation_year: number | null;
+  start_year: number | null;
+  end_year: number | null;
+  honors: string | null;
+  as_written: string | null;
+  source: string | null;
+}
+
+/** The `EmploymentRow` fields the indicators need, plus what the rows print. */
+export interface PersonEmploymentView extends EmploymentRow {
+  id: string;
+  title: string | null;
+  location: string | null;
+  duties: string | null;
+  as_written: string | null;
+  source: string | null;
+}
+
+export interface PersonSkillView {
+  id: string;
+  skill: string;
+  proficiency: number | null;
+  as_written: string | null;
+  source: string | null;
+}
+
+export interface PersonCertificationView {
+  id: string;
+  title: string;
+  issuer: string | null;
+  year: number | null;
+  as_written: string | null;
+  source: string | null;
+}
+
+export interface PersonHealthView {
+  disability_status: string | null;
+  accommodations: string | null;
+  chronic_conditions: string | null;
+  allergies: string | null;
+  dietary_restrictions: string | null;
+  blood_type: string | null;
+  health_insurance: string | null;
+}
+
+export interface PersonFamilyView {
+  partner_name: string | null;
+  partner_occupation: string | null;
+  partner_contact: string | null;
+  anniversary_date: string | null;
+  household_composition: string | null;
+  family_planning: string | null;
+}
+
+export interface PersonDependantView {
+  id: string;
+  name: string;
+  relationship: string;
+  date_of_birth: string | null;
+  note: string | null;
+}
+
+export interface PersonEmergencyContactView {
+  id: string;
+  sequence: number;
+  name: string;
+  relationship: string | null;
+  phone: string;
+  note: string | null;
+}
+
+/**
+ * The answer in force for one consent purpose. `answered` is false when no row
+ * exists — "never asked" — which is a different fact from a refusal.
+ */
+export interface PersonConsentView {
+  purpose: PersonFieldGroup;
+  answered: boolean;
+  granted: boolean;
+  live: boolean;
+  recorded_at: string | null;
+}
+
+/** One `person_events` row; the writer already stripped any group this caller cannot read. */
+export interface PersonEventView {
+  id: string;
+  field_key: string;
+  field_group: string;
+  old_value: string | null;
+  new_value: string | null;
+  door: string;
+  actor_kind: string;
+  recorded_at: string;
+}
+
+export interface PersonBundleView {
+  /** False only when migration 043 is not applied. */
+  available: boolean;
+  /** The degrade sentence, when `available` is false. */
+  note: string | null;
+  /** The Tier-3 groups withheld from this caller. */
+  hidden: string[];
+  profile: PersonBundleProfile | null;
+  emails: string[];
+  languages: PersonLanguageView[];
+  education: PersonEducationView[];
+  employment: PersonEmploymentView[];
+  skills: PersonSkillView[];
+  certifications: PersonCertificationView[];
+  /** Null when withheld (see `hidden`) or when no row was ever written. */
+  health: PersonHealthView | null;
+  family: PersonFamilyView | null;
+  dependants: PersonDependantView[];
+  emergency_contacts: PersonEmergencyContactView[];
+  consents: PersonConsentView[];
+  events: PersonEventView[];
+}
+
+/** One registry field the profile's hand-edit form may write. */
+export interface EditablePersonField {
+  key: string;
+  label: string;
+  group: PersonFieldGroup;
+  tier: PersonFieldTier;
+  input: "text" | "date" | "number" | "select" | "textarea";
+  options?: readonly string[];
+  maxChars?: number;
+}
+
 export interface CandidateProfile {
   person: ProfilePerson;
   applications: ProfileApplication[];
@@ -231,6 +420,13 @@ export interface CandidateProfile {
   files: ProfileFile[];
   plans: ProfilePlan[];
   changes: { rows: ProfileChange[]; note: string | null };
+  /** The linked `person_profiles.id`; null when 043 is absent or nothing is linked. */
+  person_id: string | null;
+  person_bundle: PersonBundleView;
+  /** Null when there are no dated roles to count — never a fabricated zero. */
+  person_indicators: CareerIndicators | null;
+  /** The scalar registry fields this caller may edit (no photo, no list collection). */
+  person_fields: EditablePersonField[];
   /** Which of the bounded reads actually hit their bound. */
   clipped: { applications: boolean; attempts: boolean; messages: boolean; files: boolean };
   scores_masked: boolean;
@@ -346,7 +542,7 @@ interface ApplicationRow extends PersonRow {
  * addresses.
  */
 export async function getCandidateProfile(applicationId: string): Promise<ProfileResult> {
-  await requireStaff(`/candidates/${applicationId}`);
+  const staff = await requireStaff(`/candidates/${applicationId}`);
 
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(applicationId)) {
     return { ok: false, reason: "invalid_id" };
@@ -376,6 +572,12 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
 
   const email = asText(anchor.email);
   if (!email) return { ok: false, reason: "not_found" };
+
+  // The person spine starts resolving here, beside the application rows rather
+  // than after them: it is an addition to this page, never a precondition of it
+  // (spec §9), so a missing 043 degrades the person half and leaves the record
+  // exactly as it was.
+  const personRead = readPerson(restClient, applicationId, email, staff);
 
   const { data: rowSet, count: rowCount, error: rowsError } = await restClient
     .from("applications")
@@ -451,6 +653,8 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
       .order("created_at", { ascending: false })
       .limit(CHANGE_LIMIT),
   ]);
+
+  const person = await personRead;
 
   // A CV link is signed per record, so a person with four applications has four
   // files to open. Signing is a round trip, and the file is only worth a link for
@@ -657,6 +861,10 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
         };
       }),
       changes: trailChanges(changes, titleOf),
+      person_id: person.personId,
+      person_bundle: person.bundle,
+      person_indicators: person.indicators,
+      person_fields: person.fields,
       clipped: {
         applications: (rowCount ?? 0) > summary.applications,
         attempts: attemptRows.length >= ATTEMPT_LIMIT,
@@ -669,6 +877,358 @@ export async function getCandidateProfile(applicationId: string): Promise<Profil
       can_write: canWrite,
       time_zone: timeZone,
     },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* The person spine                                                            */
+/* -------------------------------------------------------------------------- */
+
+type RestClient = Awaited<ReturnType<typeof createServerRestClient>>;
+
+/**
+ * The person an application belongs to, or the reason there is none.
+ *
+ * `spinePresent: false` means migration 043 is not on this database — a fact the
+ * page prints once, in place of the person half, rather than mistaking it for "no
+ * person linked". A transport failure on the link read is NOT that: it leaves the
+ * spine present and the link unknown, which the page states plainly.
+ *
+ * The fallback path is the identity rule of §1.5: when the column is null (a row
+ * written before the backfill ran), the address a person owns still finds them.
+ */
+async function resolvePerson(
+  client: RestClient,
+  applicationId: string,
+  email: string
+): Promise<{ personId: string | null; spinePresent: boolean }> {
+  const { data, error } = await client
+    .from("applications")
+    .select("person_id")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (isMissingSchemaError(error)) return { personId: null, spinePresent: false };
+  if (error) {
+    console.error("[candidate-profile] person link refused:", error.message);
+    return { personId: null, spinePresent: true };
+  }
+
+  const linked = asNullableText((data as { person_id?: unknown } | null)?.person_id);
+  if (linked) return { personId: linked, spinePresent: true };
+
+  const { data: owned, error: ownedError } = await client
+    .from("person_emails")
+    .select("person_id")
+    .eq("email", personKey(email))
+    .limit(1)
+    .maybeSingle();
+
+  if (isMissingSchemaError(ownedError)) return { personId: null, spinePresent: false };
+  if (ownedError) {
+    console.error("[candidate-profile] person address lookup refused:", ownedError.message);
+    return { personId: null, spinePresent: true };
+  }
+
+  return {
+    personId: asNullableText((owned as { person_id?: unknown } | null)?.person_id),
+    spinePresent: true,
+  };
+}
+
+/** A bundle with nothing in it — the shape a degraded page still renders. */
+function emptyPersonBundle(available: boolean, note: string | null): PersonBundleView {
+  return {
+    available,
+    note,
+    hidden: [],
+    profile: null,
+    emails: [],
+    languages: [],
+    education: [],
+    employment: [],
+    skills: [],
+    certifications: [],
+    health: null,
+    family: null,
+    dependants: [],
+    emergency_contacts: [],
+    consents: [],
+    events: [],
+  };
+}
+
+/** The fourteen consent purposes, in the registry's own order. */
+const CONSENT_PURPOSES: readonly PersonFieldGroup[] = [
+  "identity",
+  "contact",
+  "photo",
+  "work_history",
+  "education",
+  "languages",
+  "skills",
+  "marital_status",
+  "family_details",
+  "dependants",
+  "emergency_contacts",
+  "health",
+  "housing",
+  "extraction",
+];
+
+/** The scalar registry fields a hand-edit form may write. */
+function editablePersonFields(granted: ReadonlySet<string>): EditablePersonField[] {
+  return visibleFields(granted)
+    // A list is appended row by row and a photo is a byte, so neither belongs in
+    // a generated form of single values. `photo_mime` is the byte's own label.
+    .filter((field) => field.input !== "list" && field.input !== "photo" && field.key !== "photo_mime")
+    .map((field) => ({
+      key: field.key,
+      label: field.label,
+      group: field.group,
+      tier: field.tier,
+      input: field.input as EditablePersonField["input"],
+      options: field.options,
+      maxChars: field.maxChars,
+    }));
+}
+
+/**
+ * The newest answer per purpose, with the two questions the surface needs to tell
+ * apart: "never asked" (`answered: false`) and "asked, not agreed" (`live:
+ * false`). A row given against an older notice is answered but not live, because
+ * the gate the writer reads would refuse it — the surface says the same thing the
+ * writer will do.
+ */
+function consentViews(rows: readonly Record<string, unknown>[]): PersonConsentView[] {
+  const newest = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const purpose = asText(row.purpose);
+    // Rows arrive newest first; the first sighting of a purpose is the answer.
+    if (purpose && !newest.has(purpose)) newest.set(purpose, row);
+  }
+
+  return CONSENT_PURPOSES.map((purpose) => {
+    const row = newest.get(purpose);
+    if (!row) {
+      return { purpose, answered: false, granted: false, live: false, recorded_at: null };
+    }
+    const granted = row.granted === true;
+    return {
+      purpose,
+      answered: true,
+      granted,
+      live: granted && asText(row.notice_version) === NOTICE_VERSION,
+      recorded_at: asNullableText(row.recorded_at),
+    };
+  });
+}
+
+/** Map the reader's raw rows onto the surface's own types, coercing at the edge. */
+function toPersonBundleView(bundle: PersonBundle): PersonBundleView {
+  if (!bundle.available) {
+    return emptyPersonBundle(false, bundle.note ?? PERSON_SPINE_MISSING_NOTE);
+  }
+
+  const profileRow = bundle.profile ?? null;
+  const profile: PersonBundleProfile | null = profileRow
+    ? {
+        legal_name: asNullableText(profileRow.legal_name),
+        preferred_name: asNullableText(profileRow.preferred_name),
+        pronouns: asNullableText(profileRow.pronouns),
+        gender: asNullableText(profileRow.gender),
+        date_of_birth: asNullableText(profileRow.date_of_birth),
+        birthplace: asNullableText(profileRow.birthplace),
+        national_id: asNullableText(profileRow.national_id),
+        nationality: asNullableText(profileRow.nationality),
+        phone: asNullableText(profileRow.phone),
+        mailing_address: asNullableText(profileRow.mailing_address),
+        current_city: asNullableText(profileRow.current_city),
+        photo_path: asNullableText(profileRow.photo_path),
+        photo_mime: asNullableText(profileRow.photo_mime),
+        marital_status: asNullableText(profileRow.marital_status),
+        children_count: asNumber(profileRow.children_count),
+        household_size: asNumber(profileRow.household_size),
+        housing_tenure: asNullableText(profileRow.housing_tenure),
+        commute_mode: asNullableText(profileRow.commute_mode),
+        commute_minutes: asNumber(profileRow.commute_minutes),
+        relocation_willingness: asNullableText(profileRow.relocation_willingness),
+        travel_restrictions: asNullableText(profileRow.travel_restrictions),
+      }
+    : null;
+
+  const employment: PersonEmploymentView[] = (bundle.employment ?? []).flatMap((row) => {
+    const startYear = asNumber(row.start_year);
+    // The column is NOT NULL; a row without one cannot be placed on a timeline,
+    // so it is left out rather than given a made-up start.
+    if (startYear === null) return [];
+    return [
+      {
+        id: asText(row.id),
+        employer: asText(row.employer),
+        title: asNullableText(row.title),
+        location: asNullableText(row.location),
+        startYear,
+        startMonth: asNumber(row.start_month),
+        endYear: asNumber(row.end_year),
+        endMonth: asNumber(row.end_month),
+        ongoing: row.ongoing === true,
+        duties: asNullableText(row.duties),
+        as_written: asNullableText(row.as_written),
+        source: asNullableText(row.source),
+      },
+    ];
+  });
+
+  const healthRow = bundle.health ?? null;
+  const familyRow = bundle.family ?? null;
+
+  return {
+    available: true,
+    note: null,
+    hidden: bundle.hidden,
+    profile,
+    emails: (bundle.emails ?? [])
+      .filter((row) => asNullableText(row.email) !== null)
+      .sort((a, b) => Number(b.is_primary === true) - Number(a.is_primary === true))
+      .map((row) => asText(row.email)),
+    languages: (bundle.languages ?? []).map((row) => ({
+      language: asText(row.language),
+      proficiency: asText(row.proficiency, "unspecified"),
+    })),
+    education: (bundle.education ?? []).map((row) => ({
+      id: asText(row.id),
+      level: asText(row.level, "other"),
+      institution: asText(row.institution),
+      degree: asNullableText(row.degree),
+      field: asNullableText(row.field),
+      graduation_year: asNumber(row.graduation_year),
+      start_year: asNumber(row.start_year),
+      end_year: asNumber(row.end_year),
+      honors: asNullableText(row.honors),
+      as_written: asNullableText(row.as_written),
+      source: asNullableText(row.source),
+    })),
+    employment,
+    skills: (bundle.skills ?? []).map((row) => ({
+      id: asText(row.id),
+      skill: asText(row.skill),
+      proficiency: asNumber(row.proficiency),
+      as_written: asNullableText(row.as_written),
+      source: asNullableText(row.source),
+    })),
+    certifications: (bundle.certifications ?? []).map((row) => ({
+      id: asText(row.id),
+      title: asText(row.title),
+      issuer: asNullableText(row.issuer),
+      year: asNumber(row.year),
+      as_written: asNullableText(row.as_written),
+      source: asNullableText(row.source),
+    })),
+    health: healthRow
+      ? {
+          disability_status: asNullableText(healthRow.disability_status),
+          accommodations: asNullableText(healthRow.accommodations),
+          chronic_conditions: asNullableText(healthRow.chronic_conditions),
+          allergies: asNullableText(healthRow.allergies),
+          dietary_restrictions: asNullableText(healthRow.dietary_restrictions),
+          blood_type: asNullableText(healthRow.blood_type),
+          health_insurance: asNullableText(healthRow.health_insurance),
+        }
+      : null,
+    family: familyRow
+      ? {
+          partner_name: asNullableText(familyRow.partner_name),
+          partner_occupation: asNullableText(familyRow.partner_occupation),
+          partner_contact: asNullableText(familyRow.partner_contact),
+          anniversary_date: asNullableText(familyRow.anniversary_date),
+          household_composition: asNullableText(familyRow.household_composition),
+          family_planning: asNullableText(familyRow.family_planning),
+        }
+      : null,
+    dependants: (bundle.dependants ?? []).map((row) => ({
+      id: asText(row.id),
+      name: asText(row.name),
+      relationship: asText(row.relationship, "child"),
+      date_of_birth: asNullableText(row.date_of_birth),
+      note: asNullableText(row.note),
+    })),
+    emergency_contacts: (bundle.emergencyContacts ?? []).map((row) => ({
+      id: asText(row.id),
+      sequence: asNumber(row.sequence) ?? 1,
+      name: asText(row.name),
+      relationship: asNullableText(row.relationship),
+      phone: asText(row.phone),
+      note: asNullableText(row.note),
+    })),
+    consents: consentViews(bundle.consents ?? []),
+    events: (bundle.events ?? []).map((row) => ({
+      id: asText(row.id),
+      field_key: asText(row.field_key),
+      field_group: asText(row.field_group),
+      old_value: asNullableText(row.old_value),
+      new_value: asNullableText(row.new_value),
+      door: asText(row.door),
+      actor_kind: asText(row.actor_kind),
+      recorded_at: asText(row.recorded_at),
+    })),
+  };
+}
+
+/**
+ * Resolve, read and shape the person half of the page.
+ *
+ * The three outcomes are deliberately distinct, because they mean three different
+ * things to the person reading the page: 043 is absent (`available: false`), no
+ * person is linked yet (`person_id: null`, bundle present and empty), or a person
+ * is linked and read through `readPersonBundle`'s tier gate.
+ *
+ * Indicators are computed only when there is at least one dated role. A person
+ * with no work history has no total experience — zero would be a figure nobody
+ * measured (spec §6).
+ */
+async function readPerson(
+  client: RestClient,
+  applicationId: string,
+  email: string,
+  staff: SessionUser
+): Promise<{
+  personId: string | null;
+  bundle: PersonBundleView;
+  indicators: CareerIndicators | null;
+  fields: EditablePersonField[];
+}> {
+  const resolved = await resolvePerson(client, applicationId, email);
+
+  if (!resolved.spinePresent) {
+    return {
+      personId: null,
+      bundle: emptyPersonBundle(false, PERSON_SPINE_MISSING_NOTE),
+      indicators: null,
+      fields: [],
+    };
+  }
+  if (!resolved.personId) {
+    return {
+      personId: null,
+      bundle: emptyPersonBundle(true, null),
+      indicators: null,
+      fields: [],
+    };
+  }
+
+  const [bundle, granted] = await Promise.all([
+    readPersonBundle(resolved.personId, staff),
+    permissionsForCurrentUser(),
+  ]);
+  const view = toPersonBundleView(bundle);
+
+  return {
+    personId: resolved.personId,
+    bundle: view,
+    indicators:
+      view.employment.length > 0 ? computeCareerIndicators(view.employment, new Date()) : null,
+    fields: editablePersonFields(new Set(granted)),
   };
 }
 
