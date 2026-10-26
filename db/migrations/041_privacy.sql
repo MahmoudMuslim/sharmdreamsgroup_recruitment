@@ -211,7 +211,7 @@ comment on column public.privacy_requests.application_id is
   'an access request that matches nothing is declined rather than answered.';
 
 create index if not exists privacy_requests_state_idx
-  on public.privacy_requests (state, created_at descending);
+  on public.privacy_requests (state, created_at desc);
 create index if not exists privacy_requests_email_idx
   on public.privacy_requests (lower(email));
 create index if not exists privacy_requests_application_idx
