@@ -30,6 +30,8 @@ const KEY_TO_ROUTE = {
   c: "/candidates",
   s: "/sourcing",
   j: "/jobs",
+  // `m` for the application-for**m** builder — `f` already opens the files.
+  m: "/forms",
   // `q` used to open the apply-form console. That page is a tab of the bank now,
   // so the letter follows the questions to the one page that holds them all.
   q: "/questions",

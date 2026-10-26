@@ -47,6 +47,7 @@ export type ActivitySurface = (typeof ACTIVITY_SURFACES)[number];
 export const ACTIVITY_AREAS = [
   "candidates",
   "jobs",
+  "forms",
   "assessments",
   "interviews",
   "onboarding",
@@ -69,6 +70,7 @@ export type ActivityArea = (typeof ACTIVITY_AREAS)[number];
 /** The record a row points at, used to pull one candidate's or job's history. */
 export const ACTIVITY_ENTITIES = [
   "application",
+  "application form",
   "assistant session",
   "attempt",
   "attachment",

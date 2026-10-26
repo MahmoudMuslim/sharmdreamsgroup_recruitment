@@ -219,6 +219,33 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
     ],
   },
 
+  "/forms": {
+    purpose:
+      "The application forms themselves: what an applicant is asked, in what order, and which openings ask it.",
+    shows: [
+      "A list of every form with its name, whether it is a draft or published, whether it is global or the roles it is assigned to, its version, how many fields it holds and when it last changed.",
+      "The selected form in a three-pane editor: a palette of the twenty-one field types, the layout as ordered cards with section headings dividing the steps, and an inspector for the selected field.",
+      "Each card prints its type, its key, whether it is required, and the candidate fact it writes when it is bound. The inspector's binding list shows the seven fields an application has always collected, then the profile registry keys with their sensitivity tier.",
+      "Every save names the version the editor was opened at, so a colleague's save in another tab makes this one refuse instead of quietly overwriting it.",
+    ],
+    use: [
+      "New form names it, writes its description and says whether every open role asks it or only the roles you assign it to. It starts as a draft.",
+      "Click a field type to add it at the end; drag a card, or use its up and down buttons, to move it. Select a card to edit its label, help text, placeholder, required box and type-specific settings, and to bind it to a candidate field.",
+      "A multi_select can write a profile list; the picker labels that binding \"saves each choice as its own row\" and offers it only on that type. A Tier-3 profile key shows the consent notice it carries, and cannot be marked required.",
+      "Save layout writes the whole ordered set in one save at the version on screen. Publish runs the identity contract over the composed layout — every global form plus this one, and every opening this form is assigned to — and lists every violation with the field named.",
+      "Assign adds the form to an opening, keeping its place in that opening's order; Unassign takes it off. Retire files the form away: its answers on existing applications stay readable.",
+    ],
+    edges: [
+      "The form tables arrive with db/migrations/044_application_forms.sql, which is authored but not applied on this database: until it is, this page says the tables have not been created yet and refuses every write, rather than pretending the list is empty.",
+      "Saving needs the Manage jobs permission; reading the list needs only a staff session.",
+      "A draft may be incomplete. Publish is what refuses a layout with no name field, no email field, neither a CV nor an About field, a key or candidate fact held by two forms, a binding the profile cannot store, or two fields sharing a key.",
+      "A form is never deleted here. Retire sets its archived date, and applications keep the questions they answered because each submission stores a snapshot of the labels as asked.",
+      "A global form is asked on every open role and is not assignable to one; an assigned form is asked only where it is assigned.",
+      "There are no conditional questions, branches, scoring or gating inside a form, and no per-field translations. Gate questions that reject an application live at /questions, and the consent step on the public form is fixed.",
+      "A published layout can be edited, and an edit reaches a candidate who is mid-form on their next load; nothing snapshots the form until the application is submitted.",
+    ],
+  },
+
   "/questions": {
     purpose:
       "The question bank — every question the portal stores, in one list or on a board of the places that ask it, with the writing that used to sit in two separate consoles.",

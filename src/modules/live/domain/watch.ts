@@ -111,6 +111,15 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     paths: ["/whatsapp"],
   },
   {
+    // A save bumps `version`, and publish moves `status` — either is a change a
+    // second recruiter's console has to see without a reload. `archived_at` is
+    // included because retire is a write this list also shows.
+    area: "forms",
+    table: "application_forms",
+    columns: ["id", "version", "status", "archived_at"],
+    paths: ["/forms"],
+  },
+  {
     area: "gate questions",
     table: "application_gate_questions",
     stamp: "updated_at",
