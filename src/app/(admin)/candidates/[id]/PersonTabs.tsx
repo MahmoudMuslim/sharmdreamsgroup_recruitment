@@ -1178,7 +1178,7 @@ function FamilyPanel({
           key={entry.group}
           title={`${entry.label} ${withheld.length === 1 ? "is" : "are"} not shown to you`}
           permission={entry.permission}
-          note="This is other people's data behind a named grant. Nothing arriving empty here means there is nothing to see."
+          note="This is other people's data behind a named grant. An empty list here does not mean there is nothing to see."
         />
       ))}
 
