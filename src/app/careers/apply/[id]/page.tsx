@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { getPublicJob } from "../../actions";
 import { readReferralCode } from "@/modules/referrals/domain/referral";
 import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
@@ -49,6 +50,11 @@ export default async function ApplyPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  // The role, its layout and the pool window are all read fresh per request;
+  // without this the route qualifies for a static render, and the clock reads
+  // Next's own cache layer performs inside it abort every attempt.
+  await connection();
+
   const { id } = await params;
   const query = await searchParams;
   const job = await getPublicJob(id);

@@ -618,6 +618,32 @@ const check8 = (fields = pf) => {
   if (result.value.experience.length !== 1 || result.value.experience[0].startYear !== 2019) {
     problems.push("a valid employment row did not survive validation");
   }
+
+  // 043's person_education_level_check only accepts its eight-stage vocabulary.
+  // The model reports free text ("Bachelor of Islamic Studies"), so the
+  // validator must map it before the row can ever reach the store — and an
+  // unstated or unrecognised stage must land in "other", never be guessed.
+  const education = extractor.validateExtractedPersonProfile({
+    education: [
+      { institution: "Al-Azhar University", level: "Bachelor of Islamic Studies in Urdu" },
+      { institution: "Cairo University", level: "Master of Science" },
+      { institution: "Unknown Institute", level: "Higher National Widgetry" },
+      { institution: "Unstated Institute" },
+    ],
+  });
+  const stages = education.value.education.map((row) => row.level);
+  if (stages[0] !== "bachelor") {
+    problems.push(`a stated "Bachelor…" level was stored as "${stages[0]}", not the checked vocabulary`);
+  }
+  if (stages[1] !== "master") {
+    problems.push(`a stated "Master…" level was stored as "${stages[1]}", not the checked vocabulary`);
+  }
+  if (stages[2] !== "other" || stages[3] !== "other") {
+    problems.push(`unstated levels were stored as ${JSON.stringify([stages[2], stages[3]])}, not "other"`);
+  }
+  if (!education.value.education[0]?.asWritten.startsWith("Bachelor of Islamic Studies in Urdu")) {
+    problems.push("the as-written line lost the CV's own wording when the level was normalised");
+  }
   return verdict(problems);
 };
 

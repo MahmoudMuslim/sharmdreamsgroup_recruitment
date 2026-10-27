@@ -16,6 +16,11 @@ import {
   parseGateAnswers,
   type GateAnswer,
 } from "@/modules/careers/gate-questions";
+import {
+  parseSnapshot,
+  type SnapshotField,
+  type SnapshotForm,
+} from "@/modules/form-builder/domain/snapshot";
 
 /**
  * The whole candidate record: what they submitted, what the gate asked, and
@@ -132,8 +137,20 @@ export interface DossierAttachment {
   uploaded_by: string | null;
 }
 
+/** The questions this application was filed against, exactly as asked. */
+export interface DossierFormAnswers {
+  fields: SnapshotField[];
+  forms: SnapshotForm[];
+}
+
 export interface CandidateDossier {
   application: DossierApplication;
+  /**
+   * The form snapshot, or null for a pre-044 application and for one whose
+   * answers were erased — the drawer then shows the fixed application fields
+   * and nothing else.
+   */
+  form_answers: DossierFormAnswers | null;
   /** Empty when the role asked no viability questions. */
   gate_answers: GateAnswer[];
   attempts: DossierAttempt[];
@@ -215,7 +232,7 @@ export async function getCandidateDossier(
   const { data: row, error } = await restClient
     .from("applications")
     .select(
-      "id, full_name, email, phone, tracking_code, source, created_at, cv_file_path, cv_text, gate_answers, job_openings(title, department, location)"
+      "id, full_name, email, phone, tracking_code, source, created_at, cv_file_path, cv_text, gate_answers, form_answers, job_openings(title, department, location)"
     )
     .eq("id", applicationId)
     .maybeSingle();
@@ -230,6 +247,9 @@ export async function getCandidateDossier(
   const job = one<{ title?: unknown; department?: unknown; location?: unknown }>(
     row.job_openings
   );
+  // A malformed entry is dropped by the parser rather than repaired here; an
+  // application filed before 044, or one already erased, has nothing to show.
+  const snapshot = parseSnapshot(row.form_answers);
 
   // The links are short-lived and only this recruiter asked for them, so a CV
   // that cannot be signed degrades to a note rather than an empty drawer.
@@ -336,6 +356,7 @@ export async function getCandidateDossier(
             ? "The attached CV could not be opened — the candidate may have uploaded it before CV storage was enabled."
             : null,
       },
+      form_answers: snapshot,
       gate_answers: parseGateAnswers(row.gate_answers),
       attempts: (attempts.data ?? []).map((attempt: Record<string, unknown>) => ({
         id: String(attempt.id),

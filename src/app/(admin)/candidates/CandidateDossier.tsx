@@ -21,6 +21,7 @@ import { formatDateTime, sourceLabel, truncate } from "@/lib/utils";
 import { humanizeStage } from "@/modules/settings/domain/templates";
 import { getCandidateDossier, type CandidateDossier as DossierData } from "./dossier-actions";
 import type { DossierAttempt } from "./dossier-actions";
+import type { SnapshotField } from "@/modules/form-builder/domain/snapshot";
 import { AttachmentPanel } from "./AttachmentPanel";
 import { readRecordCv } from "./cv-actions";
 import {
@@ -82,6 +83,27 @@ function Detail({ label, value }: { label: string; value: string }) {
       </dd>
     </div>
   );
+}
+
+/**
+ * A snapshot answer as a recruiter should read it. The four shapes the parser
+ * guarantees (string, list, duration pair, point) each get their own wording;
+ * anything blank says so rather than leaving a gap that looks unanswered.
+ */
+function snapshotAnswer(field: SnapshotField): string {
+  const value = field.value;
+  if (value === null || value === undefined || value === "") return "Not answered";
+  if (field.type === "checkbox") return value === "true" ? "Yes" : "No";
+  if (field.type === "multi_select" && Array.isArray(value)) return value.join(", ");
+  if (field.type === "duration" && typeof value === "object") {
+    const pair = value as { value?: unknown; unit?: unknown };
+    return `${pair.value} ${pair.unit}`;
+  }
+  if (field.type === "geolocation" && typeof value === "object") {
+    const point = value as { lat?: unknown; lng?: unknown };
+    return `${point.lat}, ${point.lng}`;
+  }
+  return String(value);
 }
 
 const EXTENSIONS = [
@@ -544,6 +566,51 @@ export function CandidateDossier({
           )}
         </div>
       </Section>
+
+      {dossier.form_answers && dossier.form_answers.fields.length > 0 && (
+        <Section title="Form answers">
+          <p className="text-xs leading-relaxed text-brand-ink/55">
+            The questions as they were asked when this application was filed. Later
+            edits to the form do not rewrite them.
+          </p>
+          {dossier.form_answers.forms.length > 0 && (
+            <p className="mt-1 text-[11px] text-brand-ink/40">
+              {dossier.form_answers.forms
+                .map((form) => `${form.name} · version ${form.version}`)
+                .join(" · ")}
+            </p>
+          )}
+          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+            {dossier.form_answers.fields.map((field) =>
+              field.type === "section_heading" ? (
+                <div
+                  key={field.key}
+                  className="col-span-2 border-t border-brand-line pt-2 first:border-0 first:pt-0"
+                >
+                  <dt className="text-[11px] font-bold uppercase tracking-wider text-brand-ink/45">
+                    {field.label}
+                  </dt>
+                </div>
+              ) : (
+                <div key={field.key} className="min-w-0">
+                  <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+                    {field.label}
+                  </dt>
+                  <dd
+                    className={`mt-0.5 whitespace-pre-wrap break-words text-sm ${
+                      field.value === null || field.value === ""
+                        ? "text-brand-ink/40"
+                        : "text-brand-ink"
+                    }`}
+                  >
+                    {snapshotAnswer(field)}
+                  </dd>
+                </div>
+              )
+            )}
+          </dl>
+        </Section>
+      )}
 
       <Section title="Files added by staff">
         <AttachmentPanel

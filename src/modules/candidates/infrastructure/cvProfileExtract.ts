@@ -159,6 +159,35 @@ function rows(value: unknown): Record<string, unknown>[] {
   );
 }
 
+/** The eight stages 043's `person_education_level_check` accepts. */
+type EducationStage =
+  | "high_school"
+  | "diploma"
+  | "associate"
+  | "bachelor"
+  | "master"
+  | "doctorate"
+  | "vocational"
+  | "other";
+
+/**
+ * Maps the model's free-text stage ("Bachelor of Islamic Studies") onto the
+ * vocabulary the store accepts. A stated stage is translated, never guessed:
+ * text that names no recognised stage, or names none at all, lands in "other"
+ * and the CV's own wording survives in `as_written`.
+ */
+export function normaliseEducationLevel(value: string): EducationStage {
+  const s = ` ${value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
+  if (/\b(phd|ph d|doctorate|doctoral|doctor)\b/.test(s)) return "doctorate";
+  if (/\b(master|masters|msc|m sc|mba|m b a|ma|m a)\b/.test(s)) return "master";
+  if (/\b(bachelor|bachelors|bsc|b sc|ba|b a|undergraduate)\b/.test(s)) return "bachelor";
+  if (/\bassociate\b/.test(s)) return "associate";
+  if (/\b(high school|secondary|thanaweya|baccalaureate)\b/.test(s)) return "high_school";
+  if (/\b(vocational|technical|trade|apprenticeship)\b/.test(s)) return "vocational";
+  if (/\b(diploma|hnc|hnd)\b/.test(s)) return "diploma";
+  return "other";
+}
+
 /** An optional integer in [min, max]; absent → null silently, invalid → null + named. */
 function optionalInt(
   value: unknown,
@@ -275,7 +304,8 @@ export function validateExtractedPersonProfile(raw: unknown): {
         dropped.push(`education[${i}] dropped (no institution)`);
         return [];
       }
-      const level = text(item.level, 80) ?? "";
+      const levelText = text(item.level, 80) ?? "";
+      const level = normaliseEducationLevel(levelText);
       const degree = text(item.degree, PERSON_LIMITS.text_name_employer_institution) ?? undefined;
       const field = text(item.field, PERSON_LIMITS.text_name_employer_institution) ?? undefined;
       const graduationYear = optionalInt(
@@ -285,7 +315,7 @@ export function validateExtractedPersonProfile(raw: unknown): {
       const honors = text(item.honors, PERSON_LIMITS.text_as_written) ?? undefined;
       const asWritten =
         text(item.as_written, PERSON_LIMITS.text_as_written) ??
-        [level, degree, institution].filter(Boolean).join(" — ");
+        [levelText, degree, institution].filter(Boolean).join(" — ");
       return [{
         institution,
         level,

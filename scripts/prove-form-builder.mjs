@@ -22,7 +22,7 @@
  * against those files (comments stripped, whitespace squashed), so the proof
  * runs the same on a machine with no stack up.
  *
- * The thirty-three mutation proofs are real edits: each one breaks a file,
+ * The thirty-five mutation proofs are real edits: each one breaks a file,
  * re-runs the check that must notice, and restores the file in a `finally`. A
  * mutation that does not turn its check red fails the proof.
  */
@@ -2282,6 +2282,54 @@ const check23 = (injected = {}) => {
 };
 
 // ---------------------------------------------------------------------------
+// 24. The filed answers read back on the candidate's own row.
+//
+// Spec §"Live proof": "read the row back in `/candidates` and confirm the
+// snapshot renders the questions as asked." The snapshot is only worth writing
+// if a recruiter can read it, so this pins both halves — the dossier read that
+// fetches and parses the column, and the drawer section that prints it.
+// ---------------------------------------------------------------------------
+const DOSSIER_ACTIONS_REL = "src/app/(admin)/candidates/dossier-actions.ts";
+const DOSSIER_REL = "src/app/(admin)/candidates/CandidateDossier.tsx";
+
+const check24 = async () => {
+  const problems = [];
+  for (const rel of [DOSSIER_ACTIONS_REL, DOSSIER_REL]) {
+    if (!existsSync(path.join(root, rel))) problems.push(`${rel} does not exist`);
+  }
+  if (problems.length > 0) return verdict(problems);
+
+  const actions = codeOf(DOSSIER_ACTIONS_REL);
+  if (!actions.includes('parseSnapshot')) {
+    problems.push("the dossier read does not import parseSnapshot");
+  }
+  // The select must ask for the column, not merely mention it in a comment.
+  if (!actions.includes("gate_answers, form_answers, job_openings")) {
+    problems.push("the dossier query does not select form_answers");
+  }
+  if (!/parseSnapshot\(\s*row\.form_answers\s*\)/.test(actions)) {
+    problems.push("the dossier hands the raw jsonb on instead of parsing it");
+  }
+  if (!/form_answers:\s*snapshot/.test(actions)) {
+    problems.push("no parsed form_answers reaches the dossier");
+  }
+
+  const dossier = codeOf(DOSSIER_REL);
+  if (!dossier.includes("dossier.form_answers")) {
+    problems.push("the drawer never reads dossier.form_answers");
+  }
+  for (const needle of ['"Form answers"', "Not answered", "section_heading", "snapshotAnswer(field)"]) {
+    if (!dossier.includes(needle)) problems.push(`the drawer no longer renders ${needle}`);
+  }
+  // The version is what makes "as asked" a fact rather than a claim.
+  if (!/\.version/.test(dossier)) {
+    problems.push("the drawer does not print the form version the answers were filed against");
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
 // The checks, in the spec's own numbering.
 // ---------------------------------------------------------------------------
 const CHECKS = [
@@ -2308,6 +2356,7 @@ const CHECKS = [
   ["21. The width reaches the browser, is refused at save, and has one map", check21],
   ["22. cvAnswers: the ask list a CV is read against, and the answers it may leave", check22],
   ["23. The CV autofill door, the model read behind it, and the wizard that keeps its blanks", check23],
+  ["24. The filed answers read back on the candidate's own row", check24],
 ];
 
 const ENTRY = Object.fromEntries(CHECKS.map(([name, fn], index) => [index + 1, { name, fn }]));
@@ -2775,8 +2824,28 @@ await mutation(
   async () => checkIsRed(23, async () => check23({ i18n: await mutated(i18nUrl) }))
 );
 
+// 34. The dossier query stops asking for the snapshot → check 24 red. The
+//     drawer then shows only the four fixed columns of a pre-044 application.
+await mutation(
+  "34. The dossier read drops the snapshot column, so the filed questions vanish → check 24 red",
+  DOSSIER_ACTIONS_REL,
+  "gate_answers, form_answers, job_openings",
+  "gate_answers, job_openings",
+  () => checkIsRed(24, async () => check24())
+);
+
+// 35. The answers are fetched but never printed → check 24 red. Both the
+//     duration pair and the blank-answer wording disappear with this line.
+await mutation(
+  "35. The drawer maps the snapshot but prints an empty cell instead of the answer → check 24 red",
+  DOSSIER_REL,
+  "                    {snapshotAnswer(field)}",
+  "                    {null}",
+  () => checkIsRed(24, async () => check24())
+);
+
 // ---------------------------------------------------------------------------
-// Run the twenty-three checks
+// Run the twenty-four checks
 // ---------------------------------------------------------------------------
 for (const [name, fn] of CHECKS) {
   results.push({ name, ...(await safe(fn)) });

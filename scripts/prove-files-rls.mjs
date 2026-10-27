@@ -1,6 +1,7 @@
 /*
- * Proves the eight `public.files` policies (db/schema.sql, Plan 2 Task 2)
- * enforce the same rules the vendor's eight `storage.objects` policies did, over
+ * Proves the twelve `public.files` policies — eight in db/schema.sql (Plan 2
+ * Task 2) plus the four `candidate-photos` policies of 043 and 044 — enforce the
+ * same rules the vendor's eight `storage.objects` policies did, over
  * the door that will actually carry them: the gateway, exactly as the File
  * Manager will call it.
  *
@@ -346,15 +347,20 @@ check("anon holds insert+select only, authenticated holds all four",
   anonAcl === "anon=ar/postgres" && authAcl === "authenticated=arwd/postgres",
   `anon [${anonAcl}], authenticated [${authAcl}]`);
 
-// --- 9. RLS is on, and the eight policies are the eight we wrote -------------
+// --- 9. RLS is on, and the policies are the ones we wrote --------------------
 const policyRows = await db.query(
   "select polname from pg_policy p join pg_class c on c.oid = p.polrelid " +
     "where c.relname = 'files' order by polname"
 );
 const installedNames = policyRows.rows.map((r) => r.polname).sort();
-// Compared against the eight names in db/schema.sql, not just a count: a
-// re-dump or a hand edit that renames one policy and adds another would keep the
-// count at eight while changing what the door actually permits.
+// Compared against the names, not just a count: a re-dump or a hand edit that
+// renames one policy and adds another would keep the count while changing what
+// the door actually permits. The count moved from eight to twelve when the
+// person spine claimed its own bucket — three policies in 043:967,977,982 for
+// the staff half of `candidate-photos` and one in 044:243 for the candidate's
+// own upload on the public form. `db/schema.sql` still carries only the original
+// eight, so this list is the union of the schema of record and those two
+// migrations; a policy added anywhere else has to land here on purpose.
 const expectedNames = [
   "candidate video uploads",
   "candidates upload cvs",
@@ -364,9 +370,13 @@ const expectedNames = [
   "staff read candidate cvs",
   "staff read candidate media",
   "staff upload candidate media",
+  "staff upload candidate photos",
+  "staff read candidate photos",
+  "staff delete candidate photos",
+  "candidates upload photos",
 ].sort();
 const rlson = await db.query("select relrowsecurity from pg_class where oid = 'public.files'::regclass");
-check("RLS is enabled on files and the eight expected policies are installed",
+check("RLS is enabled on files and the twelve expected policies are installed",
   rlson.rows[0]?.relrowsecurity === true &&
   installedNames.length === expectedNames.length &&
   expectedNames.every((n, i) => installedNames[i] === n),
