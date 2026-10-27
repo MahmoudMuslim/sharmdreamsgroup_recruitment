@@ -434,6 +434,11 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
   has("the page is not indexed", page, "robots: { index: false, follow: false }");
   has("the action re-verifies the link", actions, "verifyOfferToken");
   has(
+    "the answer door reads the company off the opening, not the application",
+    actions,
+    "job_openings ( tenant_id )"
+  );
+  has(
     "the answer is conditional on the offer still being open",
     actions,
     '.eq("state", "SENT")'

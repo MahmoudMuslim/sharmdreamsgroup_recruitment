@@ -157,7 +157,7 @@ export async function filePrivacyRequest(input: {
   const service = getServiceRestClient();
   const { data, error } = await service
     .from("applications")
-    .select("id, email, erased_at, tenant_id")
+    .select("id, email, erased_at, job_openings ( tenant_id )")
     .eq("id", verified.applicationId)
     .maybeSingle();
 
@@ -177,6 +177,14 @@ export async function filePrivacyRequest(input: {
       message: "That link no longer points at a record we hold. Ask for a new one below.",
     };
   }
+
+  // The company is the opening's, not the application's: `applications` has no
+  // tenant column, and asking it for one refuses the whole read.
+  const opening = Array.isArray(row.job_openings) ? row.job_openings[0] : row.job_openings;
+  const companyId =
+    typeof (opening as Record<string, unknown> | null)?.tenant_id === "string"
+      ? ((opening as Record<string, unknown>).tenant_id as string)
+      : null;
 
   const plan = planPrivacyRequest({
     kind: input.kind,
@@ -215,7 +223,7 @@ export async function filePrivacyRequest(input: {
     actorLabel: "Privacy request",
     actorId: null,
     via: "career site",
-    companyId: (row.tenant_id as string | null) ?? null,
+    companyId,
   });
 
   return {

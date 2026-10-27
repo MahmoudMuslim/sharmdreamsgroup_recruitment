@@ -479,6 +479,11 @@ const T = 1_800_000_000;
   const publicActions = read("src/app/privacy/actions.ts");
   has("the request door plans a request", publicActions, "planPrivacyRequest");
   has("a request is filed with the service role", publicActions, "getServiceRestClient");
+  has(
+    "the filing door reads the company off the opening, not the application",
+    publicActions,
+    "job_openings ( tenant_id )"
+  );
 
   const wizard = read("src/app/careers/apply/[id]/ApplyWizard.tsx");
   has("the applicant is asked for processing consent", wizard, "processingConsent");
@@ -497,6 +502,11 @@ const T = 1_800_000_000;
   has("erasure asks the blockers first", erasure, "erasureBlocker");
   has("it removes stored files", erasure, "remove");
   has("it calls the one database function", erasure, "erase_candidate_data");
+  has(
+    "the erasure trail reads the company off the opening, not the application",
+    erasure,
+    "job_openings ( tenant_id )"
+  );
 
   const cron = read("src/app/api/cron/retention/route.ts");
   has("the sweep is behind the cron secret", cron, "x-cron-secret");

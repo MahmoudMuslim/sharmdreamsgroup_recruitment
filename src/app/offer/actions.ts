@@ -147,7 +147,7 @@ export async function answerOffer(input: {
   const service = getServiceRestClient();
   const { data: application, error: applicationError } = await service
     .from("applications")
-    .select("id, erased_at, tenant_id")
+    .select("id, erased_at, job_openings ( tenant_id )")
     .eq("id", verified.applicationId)
     .maybeSingle();
 
@@ -231,6 +231,14 @@ export async function answerOffer(input: {
     console.error("[offers] activity stamp failed:", touched.error.message);
   }
 
+  // The company is the opening's: `applications` has no tenant column, and asking
+  // it for one refuses the whole read before any answer can be recorded.
+  const embedded = person.job_openings;
+  const opening = (Array.isArray(embedded) ? embedded[0] : embedded) as
+    | Record<string, unknown>
+    | null
+    | undefined;
+
   // The person is not named: this trail outlives the application, and the offer
   // id is enough for the desk to say which document was answered.
   await recordActivity({
@@ -245,7 +253,7 @@ export async function answerOffer(input: {
     actorLabel: "Offer answer",
     actorId: null,
     via: "career site",
-    companyId: (person.tenant_id as string | null) ?? null,
+    companyId: typeof opening?.tenant_id === "string" ? (opening.tenant_id as string) : null,
   });
 
   return {

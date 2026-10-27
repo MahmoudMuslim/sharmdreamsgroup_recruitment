@@ -341,14 +341,20 @@ export async function eraseApplication(
 
   const person = personId ? await erasePersonIfLast(service, personId) : null;
 
-  // The company is read from the row before the trail is written; after the
-  // function the row keeps its tenant, but reading it now keeps this call honest
-  // about which record it is filing against even if a later change drops it.
+  // The company is the opening's, read through the embed: `applications` has no
+  // tenant column, and asking it for one refuses the whole read. Reading it now,
+  // after the function, keeps this call honest about which record it files
+  // against even if a later change drops the opening.
   const { data: owner } = await service
     .from("applications")
-    .select("tenant_id")
+    .select("job_openings ( tenant_id )")
     .eq("id", applicationId)
     .maybeSingle();
+  const embedded = (owner as Record<string, unknown> | null)?.job_openings;
+  const ownerOpening = (Array.isArray(embedded) ? embedded[0] : embedded) as
+    | Record<string, unknown>
+    | null
+    | undefined;
 
   await recordActivity({
     area: "privacy",
@@ -369,7 +375,7 @@ export async function eraseApplication(
     actorLabel: input.actorLabel,
     actorId: input.actorId,
     via: input.via ?? (input.actorId ? "console" : "cron"),
-    companyId: (owner as Record<string, unknown> | null)?.tenant_id as string | null | undefined,
+    companyId: typeof ownerOpening?.tenant_id === "string" ? (ownerOpening.tenant_id as string) : null,
   });
 
   const erasedAt =
