@@ -76,6 +76,25 @@ export function ReportsView({
   const caveatCount = definition.caveats.length;
 
   /**
+   * Drop `form` from the address, keeping every other parameter.
+   *
+   * Next's native history API is the shallow update its own docs prescribe for a
+   * client component that owns its selection, so this rewrites the address
+   * without a navigation or a second read.
+   */
+  function forgetFormInUrl() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("form")) return;
+    params.delete("form");
+    const search = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`
+    );
+  }
+
+  /**
    * Load one list, carrying the form filter only where it means something.
    *
    * The filter rides in state rather than the address bar: a recruiter who
@@ -109,6 +128,11 @@ export function ReportsView({
         formId: result.formName == null ? null : nextForm,
         formName: result.formName ?? null,
       });
+      // The one move that changes what the address promises. Keeping the filter
+      // in state while stepping between lists is deliberate; keeping `form` in
+      // the URL after the reader widened the list is not — a reload would read
+      // it and narrow what the screen had just shown wide.
+      if (data.formId !== null && nextForm === null) forgetFormInUrl();
     });
   }
 
