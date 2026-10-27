@@ -35,6 +35,7 @@ export const ACTOR_KIND_LABELS: Record<ActorKind, string> = {
 export const ACTIVITY_SURFACES = [
   "console",
   "assistant",
+  "assistant voice",
   "career site",
   "assessment runner",
   "cron",

@@ -395,6 +395,19 @@ const FIGURES = [
       },
     ],
   },
+  {
+    // The form page's Applications figure: without migration 045 it is a floor over a
+    // bounded read, and the window that bounds it is the form builder's own constant.
+    route: "/forms",
+    want: "the usage tally's window",
+    guide: /the figure comes from the newest ([\d,]+) applications/,
+    sources: [
+      {
+        rel: "src/modules/form-builder/domain/formUsage.ts",
+        pattern: /export const USAGE_APPLICATIONS = ([\d_]+);/,
+      },
+    ],
+  },
 ];
 
 for (const figure of FIGURES) {

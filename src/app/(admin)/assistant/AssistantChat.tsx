@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   CornerUpLeft,
   FileText,
@@ -48,10 +48,24 @@ import { AssistantSettings } from "./AssistantSettings";
 import { ApprovalCard } from "./AssistantApprovalCard";
 import { Capabilities } from "./AssistantCapabilities";
 import { GeneratedFileCard, chartOf, filesOf } from "./AssistantFiles";
-import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredWeb, writeDraft, writeStoredEngine, writeStoredModel, writeStoredWeb } from "./AssistantPrefs";
+import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredSpeak, readStoredVoiceLanguage, readStoredWakePhrase, readStoredWeb, subscribeVoicePrefs, writeDraft, writeStoredEngine, writeStoredModel, writeStoredSpeak, writeStoredVoiceLanguage, writeStoredWakePhrase, writeStoredWeb, type VoiceLanguage } from "./AssistantPrefs";
 import { QuestionChoices, TypedAnswerNote, askBubble } from "./AssistantQuestions";
 import { SessionList } from "./AssistantSessions";
 import { FailureNote, StepChips } from "./AssistantSteps";
+import { VoiceButton } from "./voice/VoiceButton";
+import { transcribeClip } from "./voice/transcribe";
+import { useRecorder } from "./voice/useRecorder";
+import { useSpeech } from "./voice/useSpeech";
+import { useWakeWord } from "./voice/useWakeWord";
+import { VoiceStrip } from "./voice/VoiceStrip";
+import {
+  DEFAULT_WAKE_PHRASE,
+  matchWakePhrase,
+  spokenApproval,
+  spokenCodeIn,
+  spokenSummary,
+  wakeRemainder,
+} from "@/modules/assistant/domain/voice";
 
 /**
  * The assistant's conversation: transcript, tool-step chips, cards awaiting a
@@ -93,6 +107,12 @@ export interface AssistantChatProps {
   onSessionChange: (sessionId: string) => void;
   onNewConversation: () => void;
   variant: "docked" | "page";
+  /**
+   * `dictate` adds a microphone beside the composer; `console` is the voice
+   * console, which adds hands-free and speaks answers. Defaults to `dictate`,
+   * so the dock and the Assistant page need no prop of their own.
+   */
+  voiceMode?: "dictate" | "console";
 }
 
 export function AssistantChat({
@@ -100,6 +120,7 @@ export function AssistantChat({
   onSessionChange,
   onNewConversation,
   variant,
+  voiceMode = "dictate",
 }: AssistantChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraftState] = useState(() => readDraft());
@@ -132,6 +153,57 @@ export function AssistantChat({
   const [extracting, setExtracting] = useState(false);
   const [opening, setOpening] = useState(sessionId !== null);
 
+  /** Console-only: what the strip shows and whether the recognizer is armed. */
+  const [caption, setCaption] = useState("");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [handsFree, setHandsFree] = useState(false);
+  /*
+   * The three voice preferences live in the browser, so they are read through the
+   * external store the strip writes to: the server render shows the defaults and
+   * the saved values apply once hydrated. Restoring them with `setState` in an
+   * effect is what the React lint rules refuse, and reading `localStorage` in a
+   * `useState` initialiser would make the first client render disagree with the
+   * markup the server sent.
+   */
+  const storedWakePhrase = useSyncExternalStore(
+    subscribeVoicePrefs,
+    readStoredWakePhrase,
+    () => DEFAULT_WAKE_PHRASE
+  );
+  const voiceLanguage = useSyncExternalStore(
+    subscribeVoicePrefs,
+    readStoredVoiceLanguage,
+    () => "en" as VoiceLanguage
+  );
+  const speakReplies = useSyncExternalStore(
+    subscribeVoicePrefs,
+    () => readStoredSpeak() ?? voiceMode === "console",
+    () => voiceMode === "console"
+  );
+  /**
+   * The phrase as typed. The stored copy is trimmed, so a box reading straight
+   * from storage would swallow the space between "Hey" and "Jarvis".
+   */
+  const [typedWakePhrase, setTypedWakePhrase] = useState<string | null>(null);
+  const wakePhrase = typedWakePhrase ?? storedWakePhrase;
+
+  const speech = useSpeech();
+  const recorder = useRecorder({
+    onClip: async (clip) => {
+      setVoiceError(null);
+      setCaption("Transcribing…");
+      const result = await transcribeClip(clip);
+      if ("error" in result) {
+        setVoiceError(result.error);
+        setCaption("");
+        return;
+      }
+      setCaption(result.text);
+      insertTranscript(result.text);
+    },
+    onError: (message) => setVoiceError(message),
+  });
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -156,6 +228,46 @@ export function AssistantChat({
    * land in, and a first turn renames the thread while the box is still empty.
    */
   const draftRef = useRef(draft);
+
+  /**
+   * Whether a turn or a released approval is in flight, seen from outside React.
+   *
+   * One `onresult` from the hands-free recogniser can carry more than one final,
+   * and the loop delivers them back to back in the same synchronous pass, before
+   * any state those calls set is visible. `pending` alone cannot stop the second
+   * one, and two turns at once means double quota and an interleaved transcript.
+   * This is the same fact as `pending`, written where synchronous code can read
+   * it: set before the first await, cleared when the run ends.
+   */
+  const inFlightRef = useRef(false);
+
+  /**
+   * Whether the console is waiting for the utterance after the wake phrase.
+   *
+   * The same synchronous pass that makes `pending` unusable for a second turn
+   * makes it unusable here: a batch carrying "Hey Jarvis" and then the question
+   * would arm the wait on the first final and read the state as it was on the
+   * second, so the question would be dropped. Nothing on screen renders this, so
+   * it is only ever a ref — written where it is decided, read where the finals
+   * land.
+   */
+  const awaitingRef = useRef(false);
+
+  /**
+   * Whether this composer is on screen.
+   *
+   * A dictation already in flight when the dock closes resolves after this
+   * component unmounts; its words must not reach the saved draft the person
+   * never saw. Set in the effect rather than the initialiser so a StrictMode
+   * remount (cleanup then setup) leaves it true.
+   */
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   function setDraft(text: string) {
     draftRef.current = text;
@@ -329,6 +441,28 @@ export function AssistantChat({
   }
 
   /**
+   * A transcript lands where typing would: at the cursor, with the existing text
+   * kept. Dictation never replaces a draft that is already being written.
+   */
+  function insertTranscript(text: string) {
+    if (!mountedRef.current) return;
+    const box = inputRef.current;
+    const current = draftRef.current;
+    if (!box) {
+      setDraft(current ? `${current} ${text}` : text);
+      return;
+    }
+    const start = box.selectionStart ?? current.length;
+    const end = box.selectionEnd ?? current.length;
+    setDraft(`${current.slice(0, start)}${text}${current.slice(end)}`);
+    requestAnimationFrame(() => {
+      box.focus();
+      const at = start + text.length;
+      box.setSelectionRange(at, at);
+    });
+  }
+
+  /**
    * Put a question that was already sent back into the composer — after a failed
    * answer, or to ask the same thing of a different candidate. Only the click
    * does this: a turn that failed leaves the question where it is and nothing is
@@ -354,7 +488,7 @@ export function AssistantChat({
 
   async function send(promptRaw?: string) {
     const prompt = (promptRaw ?? draft).trim();
-    if (!prompt || pending || extracting) return;
+    if (!prompt || pending || extracting || inFlightRef.current) return;
 
     // Snapshot before appending: the question being asked is sent separately.
     const history = messages.map((message) => ({
@@ -381,6 +515,7 @@ export function AssistantChat({
     setPending(true);
     setShowCapabilities(false);
     setShowSessions(false);
+    inFlightRef.current = true;
 
     try {
       const result = await sendAssistantMessage({
@@ -402,21 +537,29 @@ export function AssistantChat({
         onSessionChange(result.sessionId);
       }
       setSaveError(result.saveError ?? null);
+      const answer = result.reply ?? "";
       setMessages((current) => [
         ...current,
         {
           id: nextId(),
           role: "assistant",
-          text: result.reply ?? "",
+          text: answer,
           steps: result.steps,
           model: result.model,
           provider: result.provider,
           note: result.note,
         },
       ]);
+      // The console reads the answer aloud when speaking is on. The dock and the
+      // page only do when the person switched it on there; the pref defaults to
+      // console-only for that reason.
+      if (voiceMode === "console" && speakReplies && answer) {
+        speech.speak(spokenSummary(answer));
+      }
     } catch {
       setError("The assistant could not be reached. Check the AI keys in Settings and try again.");
     } finally {
+      inFlightRef.current = false;
       setPending(false);
       inputRef.current?.focus();
     }
@@ -429,15 +572,22 @@ export function AssistantChat({
    * so this click cannot be steered at another record, and the outcome is
    * appended as its own turn — which is what makes the card stop being clickable.
    */
-  async function approve(approval: AssistantApproval) {
-    if (approving || pending) return;
+  async function approve(
+    approval: AssistantApproval,
+    code = "",
+    via: "assistant" | "assistant voice" = "assistant"
+  ) {
+    if (approving || pending || inFlightRef.current) return;
     setApproving(approval.id);
+    inFlightRef.current = true;
     setError(null);
 
     try {
       const result = await approveAssistantChange({
         approvalId: approval.id,
         sessionId: sessionId ?? null,
+        spokenCode: code.trim() || undefined,
+        via,
       });
       if (!result.reply) {
         setError(result.error ?? "The approval could not be applied. Nothing has changed.");
@@ -457,11 +607,144 @@ export function AssistantChat({
     } catch {
       setError("The approval could not be applied. Nothing has changed.");
     } finally {
+      inFlightRef.current = false;
       setApproving(null);
     }
   }
 
   const wide = variant === "page";
+
+  /**
+   * Why a spoken turn cannot be sent right now, or null when nothing is at risk.
+   *
+   * `send` empties the composer and detaches the file, so a spoken question
+   * would silently throw away anything typed or attached. It would also be
+   * dropped by the in-flight guard without a word. Both cases are refused here
+   * with the reason, before a caption can make the turn look sent.
+   */
+  function spokenTurnBlocked(): string | null {
+    if (draftRef.current.trim() || attachment) {
+      return "Not sent — clear or send what you typed first.";
+    }
+    if (pending || extracting || inFlightRef.current) {
+      return "Not sent — the assistant is still answering.";
+    }
+    return null;
+  }
+
+  /**
+   * One final utterance from the browser recognizer.
+   *
+   * The wake phrase may carry the question ("Hey Jarvis, who is waiting?") or
+   * stand alone, in which case the next utterance is the question. While a card
+   * is live, an approve/cancel phrase is a verdict instead — but only for a card
+   * minted under `code` or `open`. A `confirm` card is released by a click, so a
+   * spoken "approve" is acknowledged and nothing else.
+   */
+  function hearUtterance(text: string) {
+    // An empty box means "not customised", not "match nothing": the strip shows
+    // the default phrase and this matches the same one.
+    const phrase = wakePhrase.trim() || DEFAULT_WAKE_PHRASE;
+    const wake = matchWakePhrase(text, phrase);
+    if (wake.matched) {
+      awaitingRef.current = false;
+      if (wake.remainder) {
+        // The folded remainder is the recognizer-level match; the turn that is
+        // sent and stored is the person's own words after the phrase.
+        const question = wakeRemainder(text, phrase) || wake.remainder;
+        const blocked = spokenTurnBlocked();
+        if (blocked) {
+          setCaption(blocked);
+          speech.speak(blocked, "en");
+          return;
+        }
+        setCaption(question);
+        void send(question);
+      } else {
+        awaitingRef.current = true;
+        setCaption("Listening…");
+        speech.speak("Listening", "en");
+      }
+      return;
+    }
+    if (!awaitingRef.current) return;
+    // The console speaks while the recognizer is armed, so a final can be the
+    // assistant hearing itself: the cue it said, a refusal it read out, or the
+    // answer it just summarised aloud. `speaking` only covers the utterance
+    // still in flight; an echo that lands after it ended is caught by comparing
+    // the heard words to the strings spoken recently. `awaitingRef` stays true so
+    // the person's own next utterance is still heard.
+    if (speech.speaking || speech.echoedOwnVoice(text)) return;
+    awaitingRef.current = false;
+
+    const last = messages[messages.length - 1];
+    const live =
+      last?.role === "assistant"
+        ? last.steps?.find((step) => step.approval)?.approval ?? null
+        : null;
+    if (live) {
+      const verdict = spokenApproval(text, live.code ?? null);
+      if (verdict === "cancel") {
+        setCaption("Cancelled — the card stays live until it expires or you click it.");
+        speech.speak("Cancelled. The card has not been released.", "en");
+        return;
+      }
+      if (verdict === "approve") {
+        // A card minted under `confirm` is released by a click and never by a
+        // word, so saying "approve" only asks whether the card was heard. The
+        // card rehydrated from an older transcript carries no level, and an
+        // unknown level behaves like the safe one.
+        if ((live.autonomy ?? "confirm") === "confirm") {
+          setCaption(`Waiting for your click: ${live.summary}`);
+          speech.speak("That change is waiting for your click.", "en");
+          return;
+        }
+        // `code` reaches here only with the code said in the same utterance
+        // (`spokenApproval` refused it otherwise); `open` carries no code. The
+        // server compares one token, not a sentence, so the code is extracted
+        // from "approve K7Q2" rather than the whole phrase being sent as it was.
+        const saidCode = live.code ? spokenCodeIn(text, live.code) : null;
+        if (live.code && !saidCode) {
+          setCaption("Approval not sent — the code was not heard.");
+          speech.speak("Approval not sent. The code was not heard.", "en");
+          return;
+        }
+        // One release at a time: the recognizer can hand two verdicts in a
+        // single batch, and the second must not caption itself as though the
+        // change it names had run.
+        if (inFlightRef.current) {
+          setCaption("Not released — the first approval is still running.");
+          speech.speak("Not released. The first approval is still running.", "en");
+          return;
+        }
+        setCaption(`Approved: ${live.summary}`);
+        void approve(live, saidCode ?? "", "assistant voice");
+        return;
+      }
+    }
+
+    // "Send" spoken after dictating submits the composer rather than asking the
+    // assistant about the word "send".
+    if (/^(send|send it|أرسل|ارسال|إرسال)$/i.test(text.trim()) && draftRef.current.trim()) {
+      void send();
+      return;
+    }
+
+    const blocked = spokenTurnBlocked();
+    if (blocked) {
+      setCaption(blocked);
+      speech.speak(blocked, "en");
+      return;
+    }
+    setCaption(text);
+    void send(text);
+  }
+
+  const wake = useWakeWord({
+    enabled: voiceMode === "console" && handsFree,
+    language: voiceLanguage,
+    onUtterance: hearUtterance,
+  });
 
   /** The question a failure can put back in the box, newest first. */
   const lastQuestion = [...messages].reverse().find((message) => message.role === "user") ?? null;
@@ -698,7 +981,7 @@ export function AssistantChat({
                         approval={step.approval}
                         live={live}
                         busy={approving === step.approval.id}
-                        onApprove={(entry) => void approve(entry)}
+                        onApprove={(entry, entered) => void approve(entry, entered)}
                       />
                     ) : null
                   )}
@@ -746,6 +1029,47 @@ export function AssistantChat({
                 tone="soft"
                 message={saveError}
                 hint="The answer above is real — it is only missing from the list you open tomorrow."
+              />
+            )}
+
+            {voiceMode === "console" && (
+              <VoiceStrip
+                pushToTalk={() => {
+                  setVoiceError(null);
+                  if (recorder.state === "recording") recorder.stop();
+                  else void recorder.start();
+                }}
+                recording={recorder.state === "recording"}
+                transcribing={recorder.state === "transcribing" || recorder.state === "requesting"}
+                secondsLeft={recorder.secondsLeft}
+                hitLimit={recorder.hitLimit}
+                supported={wake.supported}
+                handsFree={handsFree}
+                onHandsFree={(next) => {
+                  setHandsFree(next);
+                  awaitingRef.current = false;
+                  setCaption("");
+                  if (!next) speech.stop();
+                }}
+                listening={wake.listening}
+                wakePhrase={wakePhrase}
+                onWakePhrase={(phrase) => {
+                  setTypedWakePhrase(phrase);
+                  writeStoredWakePhrase(phrase);
+                }}
+                language={voiceLanguage}
+                onLanguage={(next) => {
+                  writeStoredVoiceLanguage(next);
+                }}
+                speakReplies={speakReplies}
+                onSpeakReplies={(next) => {
+                  writeStoredSpeak(next);
+                  if (!next) speech.stop();
+                }}
+                speaking={speech.speaking}
+                onStopSpeaking={speech.stop}
+                caption={caption}
+                error={voiceError ?? wake.error ?? speech.error}
               />
             )}
 
@@ -820,6 +1144,12 @@ export function AssistantChat({
                   <Paperclip className="h-4 w-4" aria-hidden />
                 )}
               </button>
+              {voiceMode === "dictate" && (
+                <VoiceButton
+                  onTranscript={insertTranscript}
+                  disabled={pending || extracting}
+                />
+              )}
               <textarea
                 ref={inputRef}
                 rows={wide ? 3 : 2}

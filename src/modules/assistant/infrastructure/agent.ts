@@ -20,6 +20,7 @@ import {
   requiresApproval,
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
+import type { VoiceAutonomy } from "@/modules/assistant/domain/voice";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
 import {
   fileChipLine,
@@ -381,7 +382,8 @@ async function runTool(
   /** The recruiter this write is held for, so only their click can release it. */
   profileId: string,
   /** The panel's web switch — the only thing that lets a lookup leave the portal. */
-  allowWeb: boolean
+  allowWeb: boolean,
+  autonomy: VoiceAutonomy
 ): Promise<{ step: AssistantStep; result: string }> {
   const tool = toolByName(name);
 
@@ -417,7 +419,7 @@ async function runTool(
   // the recruiter approves are the arguments this turn asked with — nothing that
   // happens afterwards can rewrite them.
   if (requiresApproval(tool.name)) {
-    const approval = mintApproval(tool, args, profileId);
+    const approval = mintApproval(tool, args, profileId, autonomy);
     return {
       step: {
         tool: tool.name,
@@ -541,7 +543,12 @@ export async function runAssistantTurn(
    * model answering this conversation is free to be Gemini, DeepSeek or whatever
    * the routing table names while the lookup still happens.
    */
-  allowWeb = false
+  allowWeb = false,
+  /**
+   * The caller's stored voice-autonomy level. A write minted under `code` carries
+   * a challenge; under the other levels the click alone releases it.
+   */
+  autonomy: VoiceAutonomy = "confirm"
 ): Promise<AssistantTurn> {
   const chosen = modelOverride?.trim() || undefined;
   const messages: ChatCompletionMessage[] = [
@@ -589,7 +596,8 @@ export async function runAssistantTurn(
       answer.args,
       allowDestructive,
       profileId,
-      allowWeb
+      allowWeb,
+      autonomy
     );
     steps.push(step);
 

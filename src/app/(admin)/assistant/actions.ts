@@ -35,7 +35,8 @@ import {
   uploadTooLarge,
 } from "@/modules/assistant/domain/attachments";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
-import { requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
+import { checkApprovalCode, requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
+import { readVoiceAutonomy } from "@/modules/assistant/application/voiceSettings";
 import { resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { getModelCatalogue } from "@/modules/settings/application/credential-actions";
 import {
@@ -297,6 +298,11 @@ export async function sendAssistantMessage(input: {
   try {
     let turn: AssistantTurn | null = null;
     let note: string | undefined = modelNote ?? undefined;
+    // Read once, before any tool runs. The engines pass the level to every card
+    // they mint, so a write cannot be released by a click the server did not ask
+    // for a code under. Inside the try, because a settings read that fails is a
+    // failed turn like any other — not an unhandled throw before the handler.
+    const voice = await readVoiceAutonomy(staff.profileId);
 
     if (engine !== "gateway") {
       const status = await qoderEngineStatus();
@@ -314,7 +320,7 @@ export async function sendAssistantMessage(input: {
       } else {
         try {
           turn = await withActivityContext({ via: "assistant" }, () =>
-            runQoderAssistantTurn(history, allowDestructive, allowWeb, staff.profileId)
+            runQoderAssistantTurn(history, allowDestructive, allowWeb, staff.profileId, voice.level)
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
@@ -329,7 +335,7 @@ export async function sendAssistantMessage(input: {
     if (!turn) {
       try {
         turn = await withActivityContext({ via: "assistant" }, () =>
-          runAssistantTurn(history, allowDestructive, staff.profileId, model, allowWeb)
+          runAssistantTurn(history, allowDestructive, staff.profileId, model, allowWeb, voice.level)
         );
       } catch (error) {
         // The gateway's own message already names the models it tried and why each
@@ -422,12 +428,39 @@ export async function rebuildAssistantFile(
 export async function approveAssistantChange(input: {
   approvalId: string;
   sessionId?: string | null;
+  /** Said or typed with the click when the card carries a code. */
+  spokenCode?: string;
+  /**
+   * Which surface the click arrived through. The browser asserts this and the
+   * server only accepts the two values the portal itself uses; it labels the
+   * trail row, it does not widen what the click may do.
+   */
+  via?: "assistant" | "assistant voice";
 }): Promise<AssistantReply> {
   const staff = await requireStaff("/dashboard");
 
   const id = typeof input?.approvalId === "string" ? input.approvalId.trim() : "";
   if (!APPROVAL_ID_SHAPE.test(id)) {
     return { ok: false, error: "That is not an approval this assistant issued." };
+  }
+
+  const spokenCode = typeof input?.spokenCode === "string" ? input.spokenCode : null;
+  const verdict = checkApprovalCode(id, staff.profileId, spokenCode);
+  if (verdict === "missing") {
+    return {
+      ok: false,
+      error:
+        "That approval is no longer on the server — it was already used, it expired, or this answer is " +
+        "being served by a different process than the one that wrote it. Nothing has changed. Ask me " +
+        "again and I will put the card up once more.",
+    };
+  }
+  if (verdict === "mismatch") {
+    return {
+      ok: false,
+      error:
+        "That code did not match. Nothing has changed. The card and its code stay live until they expire.",
+    };
   }
 
   const held = takeApproval(id, staff.profileId);
@@ -441,7 +474,9 @@ export async function approveAssistantChange(input: {
     };
   }
 
-  const { step } = await withActivityContext({ via: "assistant" }, () =>
+  const via = input?.via === "assistant voice" ? "assistant voice" : "assistant";
+
+  const { step } = await withActivityContext({ via }, () =>
     runApprovedChange(held.tool, held.args)
   );
 

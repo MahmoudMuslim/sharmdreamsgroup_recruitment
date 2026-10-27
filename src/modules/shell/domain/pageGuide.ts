@@ -511,6 +511,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       `Ask for a file — “put those rows in an Excel workbook” — and a card appears under the answer naming what is in it, with a Download button. It writes: ${GENERATED_FORMAT_LABEL}.`,
       "Choose the answering engine at the top of the panel and the model behind Settings, and Rename, Delete or Reload a conversation.",
       "Edit and send again re-runs a turn you were not happy with.",
+      "The microphone button beside the message box, labelled “Dictate a question”, puts the words into the box and never sends them, so they can be corrected first. “Voice” in this page's header opens /assistant/voice, which is the same conversation with hands-free mode, spoken answers and the autonomy panel.",
     ],
     edges: [
       "Every read is capped, and the answer carries its own note saying what it left out; a long result is clipped.",
@@ -521,6 +522,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "The 97-2003 Office files (.doc, .xls, .ppt) and pictures are refused, with the door that works named: Save As .docx, .xlsx or .pptx, or paste the words. A file that opens but holds no text, like a scanned page, is refused the same way.",
       `A built file is handed to your browser and nowhere else: it is not stored, so after a reload the card offers Build again and makes the file once more from the same rows. Its own size ceiling is ${formatBytes(MAX_FILE_BYTES)}.`,
       "A file is made of rows a read tool returned in that conversation or lines from a file you attached — never of figures the model worked out — and whatever a ceiling cut short is printed on the card.",
+      "Audio is never stored. Push-to-talk sends one clip to the transcription model and keeps only the words; hands-free uses the browser's own recognizer, which sends what it hears to the browser vendor, and runs only on /assistant/voice, only while armed. The autonomy level lives on your account, so a browser cannot upgrade it; while db/migrations/046_assistant_voice_autonomy.sql is unapplied, only “confirm with a click” is offered and a code or hands-free level is refused by name.",
     ],
   },
 

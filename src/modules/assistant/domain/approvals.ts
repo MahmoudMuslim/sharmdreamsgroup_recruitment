@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { READ_ONLY_TOOLS, type AssistantTool, type ToolArgs } from "./tools";
+import { mintSpokenCode, normalizeSpokenCode, type VoiceAutonomy } from "./voice";
 
 /**
  * A change the assistant wants to make, held back until a person approves it.
@@ -43,6 +44,22 @@ export interface AssistantApproval {
   /** ISO instant the card stops being clickable. */
   expiresAt: string;
   destructive: boolean;
+  /**
+   * The four characters a `code`-mode card waits for.
+   *
+   * Absent on `confirm` and `open`. The browser is shown this — it is a challenge
+   * against an accidental or overheard word, not a secret kept from the device.
+   */
+  code?: string;
+  /**
+   * The level this card was minted under.
+   *
+   * The browser reads it to decide whether a spoken word may release the card —
+   * `confirm` never does, whatever was said. Optional because a card rehydrated
+   * from an older transcript predates the field, and an unknown level must behave
+   * like the safe one.
+   */
+  autonomy?: VoiceAutonomy;
 }
 
 interface PendingApproval extends AssistantApproval {
@@ -95,11 +112,23 @@ function prune(): void {
   }
 }
 
-/** Hold one write back for a click, bound to the person who is signed in. */
-export function mintApproval(tool: AssistantTool, args: ToolArgs, profileId: string): AssistantApproval {
+/**
+ * Hold one write back for a click, bound to the person who is signed in.
+ *
+ * `autonomy` is the person's stored level, read by the caller. Under `code` the
+ * card carries a fresh challenge; under `confirm` and `open` it carries none,
+ * because the click is the deliberate act.
+ */
+export function mintApproval(
+  tool: AssistantTool,
+  args: ToolArgs,
+  profileId: string,
+  autonomy: VoiceAutonomy = "confirm"
+): AssistantApproval {
   prune();
 
   const expiresMs = Date.now() + APPROVAL_TTL_MS;
+  const code = autonomy === "code" ? mintSpokenCode() : undefined;
   const approval: PendingApproval = {
     id: randomUUID(),
     tool: tool.name,
@@ -107,6 +136,8 @@ export function mintApproval(tool: AssistantTool, args: ToolArgs, profileId: str
     summary: summaryFor(tool, args),
     expiresAt: new Date(expiresMs).toISOString(),
     destructive: tool.destructive === true,
+    code,
+    autonomy,
     profileId,
     args,
     expiresMs,
@@ -120,12 +151,41 @@ export function mintApproval(tool: AssistantTool, args: ToolArgs, profileId: str
     summary: approval.summary,
     expiresAt: approval.expiresAt,
     destructive: approval.destructive,
+    code: approval.code,
+    autonomy: approval.autonomy,
   };
 }
 
 /** What the click hands back: the card's own words plus the payload behind it. */
 export interface ApprovedChange extends AssistantApproval {
   args: ToolArgs;
+}
+
+function sameCode(expected: string, given: string): boolean {
+  const a = Buffer.from(normalizeSpokenCode(expected));
+  const b = Buffer.from(normalizeSpokenCode(given));
+  if (a.length === 0 || a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Whether this click or utterance may release the card — without releasing it.
+ *
+ * `takeApproval` is single-use, so a wrong code checked by taking would destroy
+ * the card it failed to open. This only looks: `missing` covers a used, expired
+ * or foreign id (the caller cannot tell which), `mismatch` is a live card whose
+ * code was wrong or absent, `ok` is a card that may now be taken.
+ */
+export function checkApprovalCode(
+  id: string,
+  profileId: string,
+  spoken: string | null | undefined
+): "ok" | "missing" | "mismatch" {
+  const entry = pending.get(id);
+  if (!entry || entry.profileId !== profileId || entry.expiresMs <= Date.now()) return "missing";
+  if (!entry.code) return "ok";
+  if (!spoken || !sameCode(entry.code, spoken)) return "mismatch";
+  return "ok";
 }
 
 /**
@@ -157,6 +217,9 @@ export function approvalAsReply(approval: AssistantApproval): string {
     `**Nothing has run yet — this is waiting for you.**`,
     "",
     `${approval.label}: ${approval.summary}`,
+    ...(approval.code
+      ? ["", `Its code is **${approval.code}**. Say “approve ${approval.code}”, or type the code on the card.`]
+      : []),
     "",
     approval.destructive
       ? "Approving runs the delete you already switched on in this panel. Ignore this and the record stays as it is."

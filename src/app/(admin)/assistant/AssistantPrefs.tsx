@@ -1,6 +1,10 @@
 "use client";
 
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
+import {
+  DEFAULT_WAKE_PHRASE,
+  MAX_WAKE_PHRASE_CHARS,
+} from "@/modules/assistant/domain/voice";
 
 export const STARTERS = [
   "How is the pipeline looking this fortnight?",
@@ -150,4 +154,104 @@ export function writeDraft(text: string): void {
   } catch {
     // Storage blocked or full — the draft simply lives only in this panel.
   }
+}
+
+/* -------------------------------- Spoken --------------------------------- */
+
+const SPEAK_KEY = "sdg-assistant-speak";
+
+/**
+ * Whether answers are read aloud, and `null` while the person has never chosen.
+ *
+ * The console's own default is on; the dock's is off. `null` is what lets each
+ * surface pick its default without either one writing a preference the person
+ * did not choose.
+ */
+export function readStoredSpeak(): boolean | null {
+  try {
+    const raw = window.localStorage.getItem(SPEAK_KEY);
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeStoredSpeak(value: boolean): void {
+  try {
+    window.localStorage.setItem(SPEAK_KEY, value ? "1" : "0");
+  } catch {
+    // Storage blocked — the choice is not remembered.
+  }
+  notifyVoicePrefs();
+}
+
+/* ------------------------------- Wake phrase ----------------------------- */
+
+const WAKE_KEY = "sdg-assistant-wake";
+const VOICE_LANG_KEY = "sdg-assistant-voice-lang";
+
+/**
+ * The console's voice preferences are browser preferences, read through an
+ * external store for the same reason the rail is: `useSyncExternalStore` renders
+ * the default the server knows and then applies the saved value, where reading
+ * `localStorage` in a `useState` initialiser would make the first client render
+ * disagree with the markup the server sent. The strip writes through the
+ * functions below; each write notifies so the strip redraws without the panel
+ * holding a second copy of the preference.
+ */
+const voicePrefListeners = new Set<() => void>();
+
+function notifyVoicePrefs(): void {
+  voicePrefListeners.forEach((notify) => notify());
+}
+
+export function subscribeVoicePrefs(notify: () => void): () => void {
+  voicePrefListeners.add(notify);
+  // A phrase, language or playback choice changed in another tab is the same preference.
+  window.addEventListener("storage", notify);
+  return () => {
+    voicePrefListeners.delete(notify);
+    window.removeEventListener("storage", notify);
+  };
+}
+
+export function readStoredWakePhrase(): string {
+  try {
+    const raw = window.localStorage.getItem(WAKE_KEY)?.trim() ?? "";
+    return raw ? raw.slice(0, MAX_WAKE_PHRASE_CHARS) : DEFAULT_WAKE_PHRASE;
+  } catch {
+    return DEFAULT_WAKE_PHRASE;
+  }
+}
+
+export function writeStoredWakePhrase(phrase: string): void {
+  const clean = phrase.trim().slice(0, MAX_WAKE_PHRASE_CHARS);
+  try {
+    if (clean) window.localStorage.setItem(WAKE_KEY, clean);
+    else window.localStorage.removeItem(WAKE_KEY);
+  } catch {
+    // Storage blocked — the phrase is not remembered.
+  }
+  notifyVoicePrefs();
+}
+
+export type VoiceLanguage = "en" | "ar";
+
+export function readStoredVoiceLanguage(): VoiceLanguage {
+  try {
+    return window.localStorage.getItem(VOICE_LANG_KEY) === "ar" ? "ar" : "en";
+  } catch {
+    return "en";
+  }
+}
+
+export function writeStoredVoiceLanguage(value: VoiceLanguage): void {
+  try {
+    window.localStorage.setItem(VOICE_LANG_KEY, value === "ar" ? "ar" : "en");
+  } catch {
+    // Storage blocked — the choice is not remembered.
+  }
+  notifyVoicePrefs();
 }
