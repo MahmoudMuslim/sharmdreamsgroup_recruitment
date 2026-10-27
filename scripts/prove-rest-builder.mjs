@@ -243,3 +243,124 @@ if (wrapBad) process.exit(1);
 console.log(
   `PASS ${wrapped.length + padded.length + 1} wrapped and padded projections (no newline or bracket padding reaches the grammar)`
 );
+
+/* ------------------------------------------------------------------ *
+ * Half four: a LIKE pattern keeps its wildcard.
+ *
+ * The File Manager lists a folder with `.like("path", prefix + "*")`. A storage
+ * prefix always holds a `/` (and the bucket root is the bare `*`), so the value
+ * fails the transport's "safe bare literal" test and went out quoted:
+ * `path=like."persons/*"`. PostgREST reads a quoted value literally — measured on
+ * this stack, `title=like.*` answers rows and `title=like."*"` answers `[]` — so
+ * every bucket root and every folder listed zero objects while `public.files`
+ * held the rows and each byte was on disk. The wildcard is grammar, not data:
+ * a pattern must never be quoted, or the operator has no wildcard left.
+ * ------------------------------------------------------------------ */
+const likeCases = [
+  ["*", "like.*"],
+  ["persons/*", "like.persons/*"],
+  ["persons/7624d762-0902-4cf2-b305-ba9e4677d36a/*", "like.persons/7624d762-0902-4cf2-b305-ba9e4677d36a/*"],
+  ["applications/8c1f/*", "like.applications/8c1f/*"],
+  /* The change trail scopes a group with the SQL spelling (`ai.%`), and `%` is
+   * the same wildcard to the `~~` operator PostgREST hands the value to. A quoted
+   * one is a literal percent and the group reads as an empty trail. */
+  ["ai.%", "like.ai.%"],
+  ["assessment.%", "like.assessment.%"],
+];
+
+let likeBad = 0;
+for (const [pattern, expected] of likeCases) {
+  const qs = new URLSearchParams(q().select("path").like("path", pattern).toQuerystring().slice(1));
+  const got = qs.get("path");
+  if (got !== expected) {
+    likeBad++;
+    console.error(`FAIL  like pattern was rewritten\n  expected ${expected}\n  got      ${got}`);
+  }
+}
+if (likeBad) process.exit(1);
+console.log(`PASS ${likeCases.length} LIKE patterns reach PostgREST unquoted (the wildcard survives)`);
+
+/* ------------------------------------------------------------------ *
+ * Half five: a filter value is never wrapped in double quotes.
+ *
+ * Half four was one instance of a wider defect. `literal()` decided to quote any
+ * value holding a character outside a small safe set, reasoning that a comma
+ * would otherwise split the value into two filters. Measured against this stack's
+ * PostgREST 16.5, the quoting did not protect anything — it DESTROYED the match,
+ * because the single-value grammar takes the quotes as part of the value:
+ *
+ *   path=eq.a,b.png   → 1 row     path=eq."a,b.png"   → 0 rows
+ *   path=eq.a b.png   → 1 row     path=eq."a b.png"   → 0 rows
+ *   path=eq.a:b.png   → 1 row     path=eq."a:b.png"   → 0 rows
+ *   path=eq.a(b).png  → 1 row     path=eq."a(b).png"  → 0 rows
+ *   path=eq.persons/… → 1 row     path=eq."persons/…" → 0 rows
+ *
+ * A comma is only a separator inside a bracketed list (`in.(…)`, `or=(…)`), and
+ * `URLSearchParams` already percent-encodes the byte, so nothing reaches the
+ * grammar that could split the value. The consequence was silent and wide: every
+ * storage key contains `/`, so all eight `.eq(*_path, path)` reads in the File
+ * Manager — the owner lookup, the attachment delete, the form ledger, the
+ * `person_profiles.photo_path` clear — answered "no rows" about a row that was
+ * there. Deleting a profile photo removed the byte and reported "Nothing pointed
+ * at it" while the profile went on naming the dead key.
+ *
+ * The line the vendor's own client puts on the wire is `a=eq.b%2Cc` — bare value,
+ * percent-encoded by the querystring. This pins that shape for every operator, so
+ * a chained read can never quote its way into an empty result. `in.()` is the one
+ * place the quotes are grammar (a list member's separator is a comma), so its
+ * members stay quoted and are asserted here too.
+ * ------------------------------------------------------------------ */
+const valueCases = [
+  ["eq", "photo_path", "persons/7624d762-0902-4cf2-b305-ba9e4677d36a/ad60840d.png",
+    "photo_path", "eq.persons/7624d762-0902-4cf2-b305-ba9e4677d36a/ad60840d.png"],
+  ["eq", "path", "sdg-probe/a,b.png", "path", "eq.sdg-probe/a,b.png"],
+  ["eq", "path", "sdg-probe/a b.png", "path", "eq.sdg-probe/a b.png"],
+  ["eq", "path", "sdg-probe/a:b.png", "path", "eq.sdg-probe/a:b.png"],
+  ["eq", "path", "sdg-probe/a(b).png", "path", "eq.sdg-probe/a(b).png"],
+  ["eq", "storage_path", "applications/8c1f/cv final.pdf", "storage_path",
+    "eq.applications/8c1f/cv final.pdf"],
+  ["ilike", "name", "*O'Brien, J*", "name", "ilike.*O'Brien, J*"],
+  ["like", "full_name", "Abdel-Rahman Chahed", "full_name", "like.Abdel-Rahman Chahed"],
+  ["eq", "email", "owner.local@sharmdreams.test", "email", "eq.owner.local@sharmdreams.test"],
+  ["neq", "status", "WITHDRAWN", "status", "neq.WITHDRAWN"],
+  ["gte", "created_at", "2026-10-25T00:00:00.000Z", "created_at", "gte.2026-10-25T00:00:00.000Z"],
+  ["is", "archived_at", null, "archived_at", "is.null"],
+];
+
+let valueBad = 0;
+for (const [operator, column, value, key, expected] of valueCases) {
+  const params = new URLSearchParams(q().select("id").filter(column, operator, value).toQuerystring().slice(1));
+  const got = params.get(key);
+  if (got !== expected) {
+    valueBad++;
+    console.error(`FAIL  ${operator}(${column}) value was rewritten\n  expected ${expected}\n  got      ${got}`);
+  }
+}
+// The same through the typed helpers and the negated form, so no door to the
+// grammar keeps a quoting path of its own. One builder per key, because
+// `URLSearchParams.get` answers only the first of two `path=` entries.
+const helperCases = [
+  ["eq", (b) => b.eq("path", "a/b.png"), "path", "eq.a/b.png"],
+  ["neq", (b) => b.neq("bucket", "candidate-cvs"), "bucket", "neq.candidate-cvs"],
+  ["not", (b) => b.not("path", "eq", "x/y.png"), "path", "not.eq.x/y.png"],
+  ["match", (b) => b.match({ path: "a/b.png", bucket: "resumes" }), "path", "eq.a/b.png"],
+];
+
+for (const [label, build, key, expected] of helperCases) {
+  const got = new URLSearchParams(build(q().select("id")).toQuerystring().slice(1)).get(key);
+  if (got !== expected) {
+    valueBad++;
+    console.error(`FAIL  ${label}() chain rewrote ${key}\n  expected ${expected}\n  got      ${got}`);
+  }
+}
+// `in.(…)` is a list, and a list member's separator is a comma: there the quotes
+// are part of the grammar and must stay.
+const inParams = new URLSearchParams(q().select("id").in("id", ["a", "b,c"]).toQuerystring().slice(1));
+if (inParams.get("id") !== 'in.("a","b,c")') {
+  valueBad++;
+  console.error(`FAIL  in.() lost its member quotes\n  expected in.("a","b,c")\n  got      ${inParams.get("id")}`);
+}
+if (valueBad) process.exit(1);
+console.log(
+  `PASS ${valueCases.length + helperCases.length + 1} filter values reach PostgREST exactly as the vendor sends them (bare, percent-encoded)`
+);

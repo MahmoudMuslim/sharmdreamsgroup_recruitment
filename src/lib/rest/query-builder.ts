@@ -48,16 +48,30 @@ const FILTER_OPS = new Set([
 ]);
 
 /**
- * A value PostgREST must see quoted. Anything holding a character the grammar
- * owns (comma, bracket, dot) or leading/trailing whitespace gets double quotes,
- * because `eq.a,b` silently means two filters while `eq."a,b"` means one value.
+ * A single filter value, sent bare.
+ *
+ * This used to test the value against a safe-character set and wrap anything
+ * that failed it in double quotes, reasoning that `eq.a,b` silently means two
+ * filters. The measurement says the opposite: PostgREST's single-value grammar
+ * takes the quotes as PART of the value, so the quoted form matches nothing
+ * (against this stack's 16.5, for a row whose path is `sdg-probe/a,b.png`:
+ * `path=eq.a,b.png` answers 1 row and `path=eq."a,b.png"` answers 0 — the same
+ * for `/`, a space, `:` and parentheses, and `not.eq."…"` quietly excludes
+ * nothing). A comma is only a separator inside a bracketed list, which is
+ * `in()`'s own job — and there the quotes really are grammar and are kept
+ * (`in.("a","b,c")` answers both rows, measured). `URLSearchParams` percent-
+ * encodes everything that could otherwise reach the grammar as a delimiter,
+ * which is exactly the byte the vendor's client puts on the wire: `a=eq.b%2Cc`.
+ *
+ * The cost of the quoting was invisible and wide: every storage key contains a
+ * `/`, so all eight `.eq(*_path, path)` reads in the File Manager answered "no
+ * rows" about a row that existed. Deleting a profile photo removed the byte,
+ * wrote "Nothing pointed at it" in the audit, and left `person_profiles.photo_path`
+ * naming the dead key forever.
  */
 function literal(value: unknown): string {
   if (value === null) return "null";
-  if (typeof value === "boolean" || typeof value === "number") return String(value);
-  const s = String(value);
-  if (/^[A-Za-z0-9_:\-+.@ ]+$/.test(s) && s.trim() === s && s !== "") return s;
-  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  return String(value);
 }
 
 /**
@@ -67,6 +81,11 @@ function literal(value: unknown): string {
  * value containing a comma or a bracket would silently split into two members,
  * and quoting every member is exactly what the vendor's client sends, so the
  * 454 chains ported onto this builder keep the bytes they were written against.
+ *
+ * The two helpers are deliberate opposites: the bracketed-list grammar strips
+ * these quotes, the single-value grammar does not (see `literal()`). So
+ * `in.("a,b")` finds the row whose value is `a,b`, while `eq."a,b"` searches for
+ * one whose value carries quote marks and finds nothing.
  */
 function quoted(value: unknown): string {
   if (value === null) return "null";
