@@ -167,8 +167,13 @@ export function boardHref(view: BoardView): string {
  * `application_forms` is the report that carries one row per application with the
  * form it was asked; `form_questions` carries the question roll-up. The board links
  * to the applications, because the figure on the card is a count of applications.
+ *
+ * The window is `all`, not the report page's 90-day default: the figure beside the
+ * card was counted over every application the read held, so a 90-day report would
+ * print fewer rows than the number the reader clicked — the link promises "every
+ * application filed against this form", and this is the window that can keep it.
  * The id is escaped, so a malformed id cannot break the query it sits in.
  */
 export function formUsageHref(formId: string): string {
-  return `/reports?report=application_forms&window=90&form=${encodeURIComponent(formId)}`;
+  return `/reports?report=application_forms&window=all&form=${encodeURIComponent(formId)}`;
 }

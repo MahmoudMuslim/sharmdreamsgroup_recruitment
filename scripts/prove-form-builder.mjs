@@ -2507,6 +2507,16 @@ const check25 = async (mod = fb) => {
     }
   }
 
+  // The usage link opens the window the figure was counted over. The tally is not
+  // windowed, so the report page's 90-day default would list fewer rows than the
+  // number the reader clicked; the link promises every application.
+  if (
+    mod.formUsageHref("a b&c") !==
+    "/reports?report=application_forms&window=all&form=a%20b%26c"
+  ) {
+    problems.push("the usage link does not open all time, or does not escape the form id");
+  }
+
   // Pure module: no import of any kind, and the vocabulary is the union's own.
   if (/^\s*(import|export)\s.*from\s/m.test(rawOf(FORM_BOARD_REL))) {
     problems.push("formBoard.ts reaches outside itself");
@@ -4426,6 +4436,17 @@ await mutation(
   "revoke all on table public.form_usage from anon;",
   "grant select on table public.form_usage to anon;",
   () => checkIsRed(29, async () => check29())
+);
+
+// 79. The usage link narrows to the report page's 90-day default while the card's
+//     figure counts every application → check 25 red. The report would list fewer
+//     rows than the number the reader clicked, under a title that says "every".
+await mutation(
+  "79. The usage link opens 90 days while the figure counts every application → check 25 red",
+  FORM_BOARD_REL,
+  "window=all&form=",
+  "window=90&form=",
+  async () => checkIsRed(25, async () => check25(await mutated(boardUrl)))
 );
 
 // ---------------------------------------------------------------------------
