@@ -566,6 +566,112 @@ check(
   !robotText.includes('"/careers"')
 );
 
+sourceHas("the feed route serves RSS", "src/app/api/careers/feed.xml/route.ts", [
+  'await connection()',
+  "rssFeed(",
+  'application/rss+xml',
+  'Cache-Control": "no-store"',
+  "groupProfile(companies)",
+  "${base}/careers",
+]);
+sourceHas("the export route serves CSV", "src/app/api/careers/jobs.csv/route.ts", [
+  'await connection()',
+  "jobsCsv(",
+  'text/csv',
+  'attachment; filename="sharm-dreams-openings.csv"',
+]);
+for (const rel of ["src/app/api/careers/feed.xml/route.ts", "src/app/api/careers/jobs.csv/route.ts"]) {
+  const text = read(rel);
+  // The route may normalise a trailing slash; what it must never do is escape,
+  // because re-escaping what the module already escaped double-encodes every
+  // ampersand in a role description.
+  check(`${rel} writes no escaping of its own`, !/&amp;|&lt;|&quot;|CDATA|JSON\.stringify/.test(text));
+  check(`${rel} reads only the board's own published read`, text.includes("getPublicJobs()"));
+  check(`${rel} logs an undated role`, text.includes("role without a date is not published"));
+}
+
+// ---------------------------------------------------------------------------
+// 7. The live read: the same rows the board publishes, in all five formats.
+//    Skipped, not failed, when the local stack is not answering.
+// ---------------------------------------------------------------------------
+// The port comes from the stack's own env file, never a guess — the gateway has
+// moved ports before. Only the one key is read; nothing else in that file is
+// touched, and nothing from it is printed.
+const gatewayPort = (() => {
+  const line = readFileSync(path.join(root, "docker", ".env"), "utf8")
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith("LOCAL_GATEWAY_PORT="));
+  return line ? line.slice("LOCAL_GATEWAY_PORT=".length).trim() : "54321";
+})();
+const stackBase = `http://localhost:${gatewayPort}/rest/v1`;
+
+// A probe over a column that has always existed. If THIS fails, the stack is
+// down and the live section is skipped; if only the widened read below fails,
+// the column list is wrong and that is a failure, not a skip.
+const stackProblem = await (async () => {
+  try {
+    const probe = await fetch(`${stackBase}/job_openings?select=id&limit=1`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(3000),
+    });
+    return probe.ok ? null : `PostgREST answered ${probe.status}`;
+  } catch (error) {
+    return error.name === "TimeoutError" ? "the gateway timed out" : "PostgREST is not listening";
+  }
+})();
+
+if (stackProblem) {
+  console.log(`(skipping the live read: ${stackProblem})`);
+} else {
+  // An anonymous read through the same policy every surface uses. No writes, no
+  // token: `token: null` is exactly what `getAnonRestClient` sends, and RLS
+  // decides what comes back.
+  const response = await fetch(
+    `${stackBase}/job_openings?select=id,posted_at,created_at&status=eq.PUBLISHED&order=posted_at.desc`,
+    { headers: { Accept: "application/json" } }
+  );
+  const body = await response.text();
+  let rows = null;
+  try {
+    rows = JSON.parse(body);
+  } catch {
+    rows = null;
+  }
+
+  check(
+    "the widened read answers the anonymous role",
+    response.status === 200,
+    `status ${response.status}: ${body.slice(0, 160)}`
+  );
+  check("the public read returns rows the board can publish", Array.isArray(rows));
+  if (Array.isArray(rows)) {
+    const dated = rows.filter((row) => row.posted_at || row.created_at);
+    check(
+      "every published row can be dated, so no role is silently missing from a surface",
+      dated.length === rows.length,
+      `${rows.length - dated.length} published row(s) have neither posted_at nor created_at — they will be absent from all five surfaces`
+    );
+    // The REST row carries the three columns under test; the free-text fields
+    // are blanked because `jobPosting` reads them and this check is about the
+    // date rule, which is the one thing a widened select can break.
+    const asJob = (row) => ({
+      ...row,
+      title: "",
+      department: "",
+      sector: "",
+      location: "",
+      employment_type: "",
+      description: "",
+      requirements: [],
+      company_name: null,
+    });
+    check(
+      "the widened read still shapes a PublicJob the domain accepts",
+      rows.length === 0 || jobPosting(asJob(rows[0]), null, { baseUrl: "http://localhost:3000" }) !== null
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} failed, ${passed} passed`);
   for (const failure of failures) console.error(`  ✗ ${failure}`);

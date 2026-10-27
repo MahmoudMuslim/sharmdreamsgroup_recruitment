@@ -1,7 +1,7 @@
 # Job distribution to external boards
 
 **Date:** 2026-10-24
-**Status:** Approved design — implementation plan not yet written
+**Status:** Built — Tasks 1–10 of `docs/superpowers/plans/2026-10-25-job-distribution.md` are implemented and proven
 **Scope:** one slice — publish the platform's open roles in the formats external boards and crawlers can read, without credentials, without a new table, and without touching the candidate portal
 
 ---
