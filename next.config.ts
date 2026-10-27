@@ -5,6 +5,14 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   /**
+   * This app is upgraded on the security advisory's schedule, not the latest
+   * release's: `next upgrade --agent=security` reads this value, takes the patched
+   * version the advisory names, and writes a prompt for the choosing agent.
+   */
+  experimental: {
+    agentUpgrade: "security",
+  },
+  /**
    * The Qoder Agent SDK loads a ~33 MB worker runtime from its own directory on
    * disk, so bundling it would both bloat the server bundle and break the
    * relative path the runtime is resolved from. Left external, it is required
