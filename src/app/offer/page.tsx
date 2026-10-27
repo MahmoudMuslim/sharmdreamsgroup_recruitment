@@ -25,6 +25,12 @@ function first(value: string | string[] | undefined): string {
 }
 
 /**
+ * The offer is whichever one the mailed link names, so the page has nothing to
+ * say until the request arrives — it renders per request, like the apply page.
+ */
+export const instant = false;
+
+/**
  * The page a mailed offer link opens.
  *
  * The link is checked here before anything is read: a mangled or expired token is
