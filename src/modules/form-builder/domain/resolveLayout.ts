@@ -79,14 +79,29 @@ function byFieldOrder(a: FieldRow, b: FieldRow): number {
   return a.position - b.position || a.key.localeCompare(b.key) || a.id.localeCompare(b.id);
 }
 
-function stepsForForm(form: FormRow, rows: readonly FieldRow[]): ResolvedStep[] {
-  const steps: ResolvedStep[] = [];
-  let current: ResolvedStep | null = null;
+/** One step: the heading that opened it, and the questions filed under it. */
+export interface StepOf<T> {
+  heading: T | null;
+  fields: T[];
+}
 
-  for (const field of rows) {
-    const resolved: ResolvedField = { field, form };
-    if (field.type === "section_heading") {
-      current = { heading: resolved, fields: [] };
+/**
+ * The one step rule, shared by the resolved layout and the editor's step strip.
+ *
+ * A `section_heading` opens a step; everything after it belongs to that step
+ * until the next heading. Rows before a form's first heading (or a form with no
+ * heading at all) sit in a `null`-heading step. The heading row itself is not a
+ * question, so it names the step and does not appear in its `fields`.
+ */
+export function splitIntoSteps<T extends { type: FieldType }>(
+  rows: readonly T[],
+): StepOf<T>[] {
+  const steps: StepOf<T>[] = [];
+  let current: StepOf<T> | null = null;
+
+  for (const row of rows) {
+    if (row.type === "section_heading") {
+      current = { heading: row, fields: [] };
       steps.push(current);
       continue;
     }
@@ -94,20 +109,58 @@ function stepsForForm(form: FormRow, rows: readonly FieldRow[]): ResolvedStep[] 
       current = { heading: null, fields: [] };
       steps.push(current);
     }
-    current.fields.push(resolved);
+    current.fields.push(row);
   }
 
   return steps;
 }
+
+function stepsForForm(form: FormRow, rows: readonly FieldRow[]): ResolvedStep[] {
+  return splitIntoSteps(rows).map((step) => ({
+    heading: step.heading ? { field: step.heading, form } : null,
+    fields: step.fields.map((field) => ({ field, form })),
+  }));
+}
+
+/**
+ * Where a previewed, unassigned form sits among the forms an opening assigns.
+ *
+ * Below every position the console writes — `assignFormToJob` numbers the run
+ * from 0 — so the draft composes at the head of the assigned run, the slot
+ * assigning it first would give it, without the read inventing an order the
+ * recruiter has not chosen.
+ */
+const FIRST_PREVIEWED_SLOT = -1;
 
 export function resolveLayout(input: {
   forms: readonly FormRow[];
   fieldsByForm: Readonly<Record<string, readonly FieldRow[]>>;
   assignments: readonly AssignmentRow[];
   jobId: string;
+  /**
+   * The recruiter's preview (spec §6): the one form being written joins the walk
+   * even though it is still a draft and no opening asks it yet, so the author can
+   * see the application their page will become.
+   *
+   * It is an exception to the *status* and nothing else. A retired form joins
+   * nothing — retirement is not a question of publishing. Its key, its binding,
+   * its ceilings and the step it walks are decided by the same lines that decide
+   * them for an applicant, because a preview that flatters the draft is worse
+   * than no preview: the recruiter would only meet the collision on the opening.
+   */
+  includeFormId?: string;
 }): ResolvedLayout {
+  const preview =
+    input.includeFormId === undefined
+      ? undefined
+      : input.forms.find(
+          (form) => form.id === input.includeFormId && form.archivedAt === null,
+        );
+
   const published = input.forms.filter(
-    (form) => form.status === "PUBLISHED" && form.archivedAt === null,
+    (form) =>
+      (form.status === "PUBLISHED" && form.archivedAt === null) ||
+      (preview !== undefined && form.id === preview.id),
   );
   const byId = new Map(published.map((form) => [form.id, form]));
 
@@ -117,6 +170,10 @@ export function resolveLayout(input: {
 
   const assigned: { form: FormRow; position: number }[] = [];
   const seenAssigned = new Set<string>();
+  if (preview !== undefined && !preview.isGlobal) {
+    seenAssigned.add(preview.id);
+    assigned.push({ form: preview, position: FIRST_PREVIEWED_SLOT });
+  }
   for (const assignment of input.assignments) {
     if (assignment.jobId !== input.jobId || seenAssigned.has(assignment.formId)) continue;
     const form = byId.get(assignment.formId);

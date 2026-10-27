@@ -736,14 +736,30 @@ export type RowReportRead =
       scope: string;
       generatedAt: string;
       scoresHidden: boolean;
+      /** The form the list was narrowed to, when a filter was applied. */
+      formName: string | null;
       error: null;
     }
   | { error: string; sheet?: undefined };
 
-/** One row-level list, ready for the page to draw and the route to export. */
+/** What may narrow a row report. Only the two form reports read `formId`. */
+export interface RowReportFilters {
+  /** A form uuid, already validated by the caller; `null` is the whole list. */
+  formId?: string | null;
+}
+
+/**
+ * One row-level list, ready for the page to draw and the route to export.
+ *
+ * `formId` narrows the two form reports only: a form is matched by the id its
+ * snapshot recorded, so the list holds the applications that actually filed
+ * against it, including ones filed before a later edit or after a retirement. The
+ * other seven reports ignore it and say so by returning the whole window.
+ */
 export async function readRowReport(
   id: ReportId,
-  window: AnalyticsWindow
+  window: AnalyticsWindow,
+  filters: RowReportFilters = {}
 ): Promise<RowReportRead> {
   const definition = reportDefinition(id);
   if (!definition) return refusal("That report does not exist.");
@@ -755,6 +771,34 @@ export async function readRowReport(
     if (cutoff) query = query.gte(order, cutoff);
     return read<T>(query.order(order, { ascending: false }).limit(limit), limit, table);
   };
+
+  /* The filter's name is resolved once, before either form report reads: the
+   * scope line and the limitation both need it, and a form id that names no form
+   * is a refusal rather than a silently empty list. */
+  const formId =
+    filters.formId && (id === "application_forms" || id === "form_questions")
+      ? filters.formId
+      : null;
+  let formName: string | null = null;
+  if (formId) {
+    const formRow = await restClient
+      .from("application_forms")
+      .select("name")
+      .eq("id", formId)
+      .maybeSingle();
+    if (formRow.error) return refusal(`The form could not be read: ${formRow.error.message}`);
+    if (!formRow.data) return refusal("That form no longer exists, so the list cannot be narrowed to it.");
+    formName = text((formRow.data as { name: string }).name) ?? "";
+  }
+  const narrowed = formId
+    ? {
+        scope: `${context.scope} · only “${formName}”`,
+        limitation: `Only applications whose filed form was “${formName}” are in this list; applications filed against other forms share the window but not these rows.`,
+        formName,
+      }
+    : undefined;
+  const matchesForm = (snapshot: ReturnType<typeof parseSnapshot>) =>
+    formId === null || snapshot?.forms.some((form) => form.id === formId) === true;
 
   if (id === "pipeline") {
     const result = await scoped<Raw>(
@@ -900,44 +944,60 @@ export async function readRowReport(
   if (id === "application_forms") {
     const forms = await readFormProfileRows(window);
     if (!forms.rows) return refusal(forms.error);
-    const rows: ApplicationFormRow[] = forms.rows.applications.map((application) => {
-      const counts = formAnswerCounts(application.snapshot);
-      return {
-        candidate: application.candidate ?? "",
-        opening: application.opening ?? null,
-        stage: application.stage ?? "NEW",
-        applied_at: application.created_at ?? null,
-        form: snapshotLabel(application.snapshot),
-        asked: counts?.asked ?? null,
-        answered: counts?.answered ?? null,
-        attachments: forms.rows.attachments[application.id] ?? 0,
-        cv: application.has_cv,
-        processing_consent: application.consent.processing,
-        talent_pool_consent: application.consent.talent_pool,
-        notice_version: application.consent.notice_version,
-      };
-    });
+    const rows: ApplicationFormRow[] = forms.rows.applications
+      .filter((application) => matchesForm(application.snapshot))
+      .map((application) => {
+        const counts = formAnswerCounts(application.snapshot);
+        return {
+          candidate: application.candidate ?? "",
+          opening: application.opening ?? null,
+          stage: application.stage ?? "NEW",
+          applied_at: application.created_at ?? null,
+          form: snapshotLabel(application.snapshot),
+          asked: counts?.asked ?? null,
+          answered: counts?.answered ?? null,
+          attachments: forms.rows.attachments[application.id] ?? 0,
+          cv: application.has_cv,
+          processing_consent: application.consent.processing,
+          talent_pool_consent: application.consent.talent_pool,
+          notice_version: application.consent.notice_version,
+        };
+      });
     return deliver(
       definition,
       applicationFormSheet(rows, context),
       context,
       forms.floored.applications || forms.floored.files,
       LIMITS.applications,
-      "applications"
+      "applications",
+      narrowed
     );
   }
 
   if (id === "form_questions") {
     const forms = await readFormProfileRows(window);
     if (!forms.rows) return refusal(forms.error);
-    const report = reportFromRows(forms.rows);
+    /* A question list narrowed to one form counts the applications that filed
+     * it, not the whole window: the sheet is built from the same snapshot
+     * predicate, so its "Asked" column and the row count agree. */
+    const report = reportFromRows(
+      formId
+        ? {
+            ...forms.rows,
+            applications: forms.rows.applications.filter((application) =>
+              matchesForm(application.snapshot)
+            ),
+          }
+        : forms.rows
+    );
     return deliver(
       definition,
       questionSheet(report.questions, context),
       context,
       forms.floored.applications,
       LIMITS.applications,
-      "applications"
+      "applications",
+      narrowed
     );
   }
 
@@ -1031,7 +1091,8 @@ export async function readRowReport(
 export async function buildReportDocument(
   id: "analytics" | ReportId,
   window: AnalyticsWindow,
-  exportedBy: string
+  exportedBy: string,
+  formId: string | null = null
 ): Promise<{ document: ExportDocument } | { error: string }> {
   const baseName = `sharm-dreams-${id}-${window}-${new Date().toISOString().slice(0, 10)}`;
 
@@ -1050,7 +1111,7 @@ export async function buildReportDocument(
     };
   }
 
-  const result = await readRowReport(id, window);
+  const result = await readRowReport(id, window, { formId });
   if (result.error || !result.sheet) return { error: result.error };
 
   return {
@@ -1280,7 +1341,9 @@ function refusal(error: string): RowReportRead {
  * The rows plus every reason they are not the whole picture.
  *
  * The report's own caveats lead the list, because a reader who opens the Excel
- * file needs them before they need the row budget.
+ * file needs them before they need the row budget. `extra` is how a narrowed
+ * list says it is narrowed: the scope line names the form and the limitation
+ * sits with the budget line, so a reader never mistakes a slice for the window.
  */
 function deliver(
   definition: ReportDefinition,
@@ -1288,7 +1351,8 @@ function deliver(
   context: ReadContext,
   truncated: boolean,
   limit: number,
-  what: string
+  what: string,
+  extra: { scope?: string; limitation?: string; formName?: string | null } = {}
 ): RowReportRead {
   const limitations = [...definition.caveats];
   if (context.scoresHidden) {
@@ -1297,15 +1361,17 @@ function deliver(
     );
   }
   if (truncated) limitations.push(floor(limit, what));
+  if (extra.limitation) limitations.push(extra.limitation);
 
   return {
     definition,
     sheet,
     limitations,
     timeZone: context.timeZone,
-    scope: context.scope,
+    scope: extra.scope ?? context.scope,
     generatedAt: context.generatedAt,
     scoresHidden: context.scoresHidden,
+    formName: extra.formName ?? null,
     error: null,
   };
 }

@@ -378,6 +378,23 @@ const FIGURES = [
       },
     ],
   },
+  {
+    // The board's two ceilings: the forms it lists and the openings it offers the
+    // assign picker, each read off the constant its own query passes to `.limit`.
+    route: "/forms",
+    want: "the board's two ceilings",
+    guide: /The board reads at most ([\d,]+) forms and ([\d,]+) openings/,
+    sources: [
+      {
+        rel: "src/modules/form-builder/application/formActions.ts",
+        pattern: /const FORM_LIST_LIMIT = ([\d_]+);/,
+      },
+      {
+        rel: "src/modules/form-builder/application/formActions.ts",
+        pattern: /const JOB_LIST_LIMIT = ([\d_]+);/,
+      },
+    ],
+  },
 ];
 
 for (const figure of FIGURES) {

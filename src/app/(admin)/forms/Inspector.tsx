@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Trash2 } from "lucide-react";
 import { Field, Select, TextArea, TextInput } from "@/modules/analytics/presentation/Form";
 import { Button } from "@/modules/analytics/presentation/ui";
@@ -212,20 +213,21 @@ function CheckList<T extends string>({
  */
 export function Inspector({
   field,
-  htmlId,
   disabled,
   onChange,
   onTypeChange,
   onRemove,
 }: {
   field: FieldDraft;
-  /** Stable editor id: the field's key may be mid-edit and need not be unique yet. */
-  htmlId: string;
   disabled: boolean;
   onChange: (patch: Partial<FieldDraft>) => void;
   onTypeChange: (type: FieldType) => void;
   onRemove: () => void;
 }) {
+  // The id pairs a label with its control, so it must be the same string on the
+  // server render and the hydration. A value minted per row (`crypto.randomUUID()`)
+  // is not: the two renders disagree and React reports the tree as mismatched.
+  const htmlId = useId();
   const config = field.config ?? {};
   const heading = field.type === "section_heading";
   const takesRow = ALWAYS_FULL_TYPES.has(field.type);

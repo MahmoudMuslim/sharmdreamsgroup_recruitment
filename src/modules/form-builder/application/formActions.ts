@@ -1,7 +1,8 @@
 "use server";
 
 /**
- * Every read and write the `/forms` console makes (spec §6, plan Task 8).
+ * Every read and write the two `/forms` pages make (spec §6, plan Task 8): the
+ * board at `/forms` and one form's page at `/forms/[id]`.
  *
  * The rules live in the domain modules and this file only moves rows: `draftIssues`
  * refuses a layout before it is written, `resolveLayout` composes what an opening
@@ -46,6 +47,14 @@ import {
   type IdentityIssue,
 } from "@/modules/form-builder/domain/identityIssues";
 import { LIMITS } from "@/modules/form-builder/domain/limits";
+import { copyName, nameProblem } from "@/modules/form-builder/domain/formNaming";
+import {
+  tallyFormUsage,
+  USAGE_APPLICATIONS,
+  type FormUsage,
+  type UsageRow,
+} from "@/modules/form-builder/domain/formUsage";
+import { parseSnapshot } from "@/modules/form-builder/domain/snapshot";
 import {
   resolveLayout,
   type AssignmentRow,
@@ -71,15 +80,62 @@ export interface FormSummary {
   archivedAt: string | null;
 }
 
-export interface FormsConsoleData {
-  /** False while `044_application_forms.sql` is unapplied; the page says so. */
+/**
+ * The usage figures one board or editor read carries.
+ *
+ * `basis` is the answer the screen has to print: `"view"` means `045_form_usage.sql`
+ * is applied and the numbers are exact aggregates over every application; `"read"`
+ * means the view is absent and they are a count over the newest bounded window,
+ * whose `capped` flag turns every figure into a floor rather than a total.
+ */
+export interface FormUsageRead {
+  basis: "view" | "read";
+  /** How many rows the figures were counted from — forms for the view, applications for the read. */
+  read: number;
+  capped: boolean;
+  byForm: Record<string, FormUsage>;
+}
+
+/** The board's read (`/forms`): every form and the openings one may be assigned to. */
+export interface FormsBoardData {
+  /** False while `044_application_forms.sql` is unapplied, or if the read failed; `note` says which. */
   available: boolean;
   note?: string;
   canWrite: boolean;
   forms: FormSummary[];
-  /** The form the console opens, with the ordered drafts its editor holds. */
-  selected: { form: FormSummary; fields: FieldDraft[] } | null;
   jobs: { id: string; title: string; status: string }[];
+  /** True when the forms read filled its window, so the board says what it left out. */
+  formsAtCap: boolean;
+  /** True when the openings read filled its window, which also bounds the assignment labels. */
+  jobsAtCap: boolean;
+  /** `null` when the usage read itself failed; the board still draws without it. */
+  usage: FormUsageRead | null;
+  /** Why `usage` is null, in the console's own words. */
+  usageNote: string | null;
+}
+
+/** The editor page's read (`/forms/[id]`): this one form, its layout, and the openings. */
+export interface FormsEditorData {
+  available: boolean;
+  note?: string;
+  canWrite: boolean;
+  /** `null` when the id names no form here, which is the page's own 404. */
+  form: FormSummary | null;
+  fields: FieldDraft[];
+  jobs: { id: string; title: string; status: string }[];
+  usage: FormUsageRead | null;
+  usageNote: string | null;
+}
+
+/** What the editor component is handed: the read with the page's two questions —
+ *  the tables that are not here and the row that is not here — already answered. */
+export interface FormEditorProps {
+  canWrite: boolean;
+  form: FormSummary;
+  fields: FieldDraft[];
+  jobs: FormsEditorData["jobs"];
+  usage: FormsEditorData["usage"];
+  usageNote: FormsEditorData["usageNote"];
 }
 
 export interface FormMutation {
@@ -194,6 +250,17 @@ function refusal(error: { code?: string | null; message?: string | null }): stri
   return isMissingSchemaError(error) ? MISSING_TABLES : error.message ?? "The write did not land.";
 }
 
+/**
+ * Both `/forms` pages read the rows a write here changes — the board's list and the
+ * form's own page — so both are invalidated together. A literal path covers the
+ * board; the dynamic pattern with `"page"` covers every form's page, because
+ * `revalidatePath("/forms")` alone reaches only that one page.
+ */
+function revalidateForms() {
+  revalidatePath("/forms");
+  revalidatePath("/forms/[id]", "page");
+}
+
 async function formEditor(): Promise<
   { ok: true; client: Client } | { ok: false; error: string }
 > {
@@ -234,24 +301,106 @@ async function nextGlobalPosition(client: Client): Promise<number> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* The console's read                                                           */
+/* The two reads the two pages make                                             */
 /* -------------------------------------------------------------------------- */
 
+interface FormUsageViewRow {
+  form_id: string;
+  applications: number | string;
+  latest_at: string | null;
+}
+
 /**
- * Every form, plus the one the console opens.
+ * How many applications named each form — the board's usage figures.
  *
- * The selected form's fields are read on their own, in their authored order; the
- * other forms contribute a count from a projection of `form_id` alone, so opening
- * the console does not ship every layout's labels to a browser that will never
- * show them. Both reads are bounded: 200 forms, and the field-count projection at
- * the whole-estate ceiling (200 forms × 40 fields).
+ * Two reads, one answer. When `045_form_usage.sql` is applied the view aggregates
+ * the whole table, so the figures are exact and the board says "usage view
+ * (migration 045)". When it is not — the migration is owner-gated, so that is the
+ * normal state until it is approved — the read falls back to the newest
+ * `USAGE_APPLICATIONS` applications and counts what their snapshots recorded; every
+ * figure is then a **floor, not a total**, and the board prints the ceiling it
+ * counted from.
+ *
+ * Only a missing schema falls through: a view that exists and refuses is a real
+ * error, and answering it with a different number would hide the refusal. A failed
+ * usage read never fails the board — `usage: null` and a `usageNote` say so while
+ * the forms themselves still draw.
+ *
+ * The snapshot is the source of truth for both halves: a form is counted because
+ * an application filed against it, not because an opening asks it today.
  */
-export async function listForms(selectedId: string | null): Promise<FormsConsoleData> {
+async function readFormUsage(
+  client: Client,
+): Promise<{ usage: FormUsageRead | null; note: string | null }> {
+  const viewRead = await client
+    .from("form_usage")
+    .select("form_id, applications, latest_at")
+    .limit(FORM_LIST_LIMIT);
+
+  if (!viewRead.error) {
+    const byForm: Record<string, FormUsage> = {};
+    for (const row of (viewRead.data ?? []) as FormUsageViewRow[]) {
+      const applications = Number(row.applications);
+      byForm[row.form_id] = {
+        applications: Number.isFinite(applications) ? applications : 0,
+        latestAt: row.latest_at,
+      };
+    }
+    return {
+      usage: { basis: "view", read: Object.keys(byForm).length, capped: false, byForm },
+      note: null,
+    };
+  }
+
+  if (!isMissingSchemaError(viewRead.error)) {
+    return {
+      usage: null,
+      note: `The usage view could not be read: ${viewRead.error.message}. The forms below are unaffected.`,
+    };
+  }
+
+  const applicationRead = await client
+    .from("applications")
+    .select("form_answers, created_at")
+    .order("created_at", { ascending: false })
+    .limit(USAGE_APPLICATIONS);
+
+  if (applicationRead.error) {
+    return {
+      usage: null,
+      note: `The applications could not be read, so no usage figure is drawn: ${applicationRead.error.message}`,
+    };
+  }
+
+  const rows: UsageRow[] = (
+    (applicationRead.data ?? []) as { form_answers: unknown; created_at: string | null }[]
+  ).map((row) => ({
+    formIds: parseSnapshot(row.form_answers)?.forms.map((form) => form.id) ?? [],
+    createdAt: row.created_at,
+  }));
+  const tally = tallyFormUsage(rows);
+
+  return {
+    usage: { basis: "read", read: tally.read, capped: tally.capped, byForm: tally.byForm },
+    note: null,
+  };
+}
+
+/**
+ * The board (`/forms`): every form with its field count and the openings that ask
+ * it, plus the openings a form may be assigned to.
+ *
+ * No layout is read here — the counts come from a projection of `form_id` alone,
+ * so a board of two hundred forms does not ship two hundred sets of labels to a
+ * browser that shows one of them. Both reads are bounded: 200 forms, the
+ * projection at the whole-estate ceiling (200 forms × 40 fields), 500 openings.
+ */
+export async function listForms(): Promise<FormsBoardData> {
   await requireStaff("/forms");
   const client = await createServerRestClient();
   const canWrite = await hasPermissionForUser("jobs.manage");
 
-  const [formsResult, countResult, assignmentsResult, jobsResult] = await Promise.all([
+  const [formsResult, countResult, assignmentsResult, jobsResult, usageRead] = await Promise.all([
     client
       .from("application_forms")
       .select(FORM_COLUMNS)
@@ -273,6 +422,7 @@ export async function listForms(selectedId: string | null): Promise<FormsConsole
       .select("id, title, status")
       .order("title", { ascending: true })
       .limit(JOB_LIST_LIMIT),
+    readFormUsage(client),
   ]);
 
   if (formsResult.error && isMissingSchemaError(formsResult.error)) {
@@ -281,18 +431,24 @@ export async function listForms(selectedId: string | null): Promise<FormsConsole
       note: MISSING_TABLES,
       canWrite,
       forms: [],
-      selected: null,
       jobs: [],
+      formsAtCap: false,
+      jobsAtCap: false,
+      usage: null,
+      usageNote: null,
     };
   }
   if (formsResult.error) {
     return {
-      available: true,
-      note: `The form list could not be read: ${formsResult.error.message}`,
+      available: false,
+      note: `The form list could not be read: ${formsResult.error.message}. Nothing was written.`,
       canWrite,
       forms: [],
-      selected: null,
       jobs: [],
+      formsAtCap: false,
+      jobsAtCap: false,
+      usage: null,
+      usageNote: null,
     };
   }
 
@@ -330,32 +486,114 @@ export async function listForms(selectedId: string | null): Promise<FormsConsole
     archivedAt: row.archived_at,
   }));
 
-  // With no id asked for, the console opens the first active form rather than an
-  // empty right-hand pane; a retired form is only opened when it is named.
-  const summary = selectedId
-    ? forms.find((form) => form.id === selectedId) ?? null
-    : forms.find((form) => form.archivedAt === null) ?? forms[0] ?? null;
-  let selected: FormsConsoleData["selected"] = null;
-
-  if (summary) {
-    const { data } = await client
-      .from("application_form_fields")
-      .select(FIELD_COLUMNS)
-      .eq("form_id", summary.id)
-      .order("position", { ascending: true })
-      .order("key", { ascending: true });
-    selected = {
-      form: summary,
-      fields: ((data ?? []) as FieldDbRow[]).map(toDraft),
-    };
-  }
-
   return {
     available: true,
     canWrite,
     forms,
-    selected,
     jobs,
+    formsAtCap: formRows.length >= FORM_LIST_LIMIT,
+    jobsAtCap: jobs.length >= JOB_LIST_LIMIT,
+    usage: usageRead.usage,
+    usageNote: usageRead.note,
+  };
+}
+
+/**
+ * One form's own page (`/forms/[id]`): its row, its fields in authored order and
+ * the openings it is asked on — nothing about any other form.
+ *
+ * `jobs` is the whole bounded opening list rather than this form's assignments,
+ * because the assign picker has to offer what the form is *not* on. A retired form
+ * reads the same as a live one: its layout stays on screen, the write doors are the
+ * ones that refuse.
+ */
+export async function formEditorData(formId: string): Promise<FormsEditorData> {
+  await requireStaff("/forms");
+  const client = await createServerRestClient();
+  const canWrite = await hasPermissionForUser("jobs.manage");
+
+  const [formResult, fieldsResult, assignmentsResult, jobsResult, usageRead] = await Promise.all([
+    client.from("application_forms").select(FORM_COLUMNS).eq("id", formId).maybeSingle(),
+    client
+      .from("application_form_fields")
+      .select(FIELD_COLUMNS)
+      .eq("form_id", formId)
+      .order("position", { ascending: true })
+      .order("key", { ascending: true }),
+    client.from("job_application_forms").select("job_id, form_id, position").eq("form_id", formId),
+    client
+      .from("job_openings")
+      .select("id, title, status")
+      .order("title", { ascending: true })
+      .limit(JOB_LIST_LIMIT),
+    readFormUsage(client),
+  ]);
+
+  if (formResult.error && isMissingSchemaError(formResult.error)) {
+    return {
+      available: false,
+      note: MISSING_TABLES,
+      canWrite,
+      form: null,
+      fields: [],
+      jobs: [],
+      usage: null,
+      usageNote: null,
+    };
+  }
+  if (formResult.error) {
+    return {
+      available: false,
+      note: `This form could not be read: ${formResult.error.message}. Nothing was written.`,
+      canWrite,
+      form: null,
+      fields: [],
+      jobs: [],
+      usage: null,
+      usageNote: null,
+    };
+  }
+
+  const row = formResult.data as unknown as FormDbRow | null;
+  if (!row) {
+    return {
+      available: true,
+      canWrite,
+      form: null,
+      fields: [],
+      jobs: [],
+      usage: null,
+      usageNote: null,
+    };
+  }
+
+  const jobs = (jobsResult.data ?? []) as { id: string; title: string; status: string }[];
+  const jobById = new Map(jobs.map((job) => [job.id, job]));
+  const assignedJobs = ((assignmentsResult.data ?? []) as AssignmentDbRow[])
+    .map((entry) => jobById.get(entry.job_id))
+    .filter((job): job is { id: string; title: string; status: string } => Boolean(job))
+    .sort((a, b) => a.title.localeCompare(b.title));
+
+  return {
+    available: true,
+    canWrite,
+    form: {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      isGlobal: row.is_global,
+      status: row.status,
+      version: row.version,
+      globalPosition: row.global_position,
+      fieldCount: ((fieldsResult.data ?? []) as FieldDbRow[]).length,
+      assignedJobs,
+      updatedAt: row.updated_at,
+      archivedAt: row.archived_at,
+    },
+    fields: ((fieldsResult.data ?? []) as FieldDbRow[]).map(toDraft),
+    jobs,
+    usage: usageRead.usage,
+    usageNote: usageRead.note,
   };
 }
 
@@ -373,9 +611,8 @@ export async function createForm(input: {
   const { client } = guard;
 
   const name = input.name.trim();
-  if (name.length < 2 || name.length > 120) {
-    return { ok: false, error: "A form's name is 2–120 characters." };
-  }
+  const naming = nameProblem(name);
+  if (naming) return { ok: false, error: naming };
   const description = (input.description ?? "").trim();
   if (description.length > 2000) {
     return { ok: false, error: "A form's description is 2,000 characters or fewer." };
@@ -406,8 +643,101 @@ export async function createForm(input: {
     detail: { is_global: input.isGlobal === true, version: created.version },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true, id: created.id, version: created.version };
+}
+
+/**
+ * Copy a form: its name with the copy's suffix, its questions in their order, and
+ * nothing else.
+ *
+ * The copy is a DRAFT that no opening asks — `is_global: false` and no row written
+ * to `job_application_forms` — because a duplicate that arrives already hiring puts
+ * a second set of questions in front of every applicant the original was assigned
+ * to, before anyone has read the difference between them. The fields go through
+ * `layoutRows`, the builder a save uses, so the width, the candidate binding and
+ * the order of every question carry rather than being re-derived.
+ *
+ * The keys carry too, which is what makes a copy assigned beside its original a
+ * Publish refusal rather than a special case here: `resolveLayout` is the one
+ * composition authority and two forms holding one key is its call, not this
+ * function's. A copy whose fields failed to store is reported as the partial write
+ * it is — the form row is real, editable, and says what it is missing.
+ */
+export async function duplicateForm(formId: string): Promise<FormMutation> {
+  const guard = await formEditor();
+  if (!guard.ok) return { ok: false, error: guard.error };
+  const { client } = guard;
+
+  if (!UUID_PATTERN.test(formId)) return { ok: false, error: NOT_THERE };
+  const before = await readForm(client, formId);
+  if (!before) return { ok: false, error: NOT_THERE };
+  if (before.archived_at) return { ok: false, error: RETIRED };
+
+  const name = copyName(before.name);
+  const naming = nameProblem(name);
+  if (naming) return { ok: false, error: naming };
+
+  const { data: fieldRows } = await client
+    .from("application_form_fields")
+    .select(FIELD_COLUMNS)
+    .eq("form_id", formId)
+    .order("position", { ascending: true })
+    .order("key", { ascending: true });
+  const drafts = ((fieldRows ?? []) as FieldDbRow[]).map(toDraft);
+
+  const { data, error } = await client
+    .from("application_forms")
+    .insert({
+      name,
+      description: before.description,
+      is_global: false,
+      global_position: 0,
+    })
+    .select("id, version")
+    .single();
+  if (error) return { ok: false, error: refusal(error) };
+  const copy = data as unknown as { id: string; version: number };
+
+  let incomplete: string | null = null;
+  if (drafts.length > 0) {
+    const { error: fieldsError } = await client
+      .from("application_form_fields")
+      .insert(layoutRows(copy.id, drafts));
+    if (fieldsError) {
+      incomplete = refusal(fieldsError);
+    }
+  }
+
+  const count = `${drafts.length} question${drafts.length === 1 ? "" : "s"}`;
+  await recordActivity({
+    area: "forms",
+    action: "form_duplicate",
+    entity: "application form",
+    entityId: copy.id,
+    summary: incomplete
+      ? `Copied “${before.name}” to “${name}”, but its ${count} did not store — ${incomplete}`
+      : `Copied the application form “${before.name}” to “${name}” with ${count}, asked on no opening yet`,
+    detail: {
+      source_id: formId,
+      source_name: before.name,
+      source_version: before.version,
+      source_is_global: before.is_global,
+      fields: drafts.length,
+      incomplete,
+      version: copy.version,
+    },
+  });
+
+  revalidateForms();
+  return {
+    ok: true,
+    id: copy.id,
+    version: copy.version,
+    note: incomplete
+      ? `“${name}” exists, but its ${count} did not store (${incomplete}). Open it and save the layout again.`
+      : `“${name}” is a draft with ${count}, asked on no opening yet.`,
+  };
 }
 
 /**
@@ -521,9 +851,8 @@ export async function saveFormMeta(
   if (before.archived_at) return { ok: false, error: RETIRED };
 
   const name = input.name.trim();
-  if (name.length < 2 || name.length > 120) {
-    return { ok: false, error: "A form's name is 2–120 characters." };
-  }
+  const naming = nameProblem(name);
+  if (naming) return { ok: false, error: naming };
   const description = (input.description ?? "").trim();
   if (description.length > 2000) {
     return { ok: false, error: "A form's description is 2,000 characters or fewer." };
@@ -570,7 +899,7 @@ export async function saveFormMeta(
     },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true, version: before.version };
 }
 
@@ -694,7 +1023,7 @@ export async function saveFormLayout(
     },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true, version: nextVersion };
 }
 
@@ -938,7 +1267,7 @@ export async function publishForm(formId: string): Promise<FormMutation> {
     },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true, version: nextVersion };
 }
 
@@ -1049,7 +1378,7 @@ export async function assignFormToJob(
     detail: { job_id: jobId, position: nextPosition, version: form.version },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true };
 }
 
@@ -1094,7 +1423,7 @@ export async function unassignFormFromJob(
     detail: { job_id: jobId, version: form.version },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true };
 }
 
@@ -1135,6 +1464,6 @@ export async function retireForm(formId: string): Promise<FormMutation> {
     detail: { was_status: before.status, version: before.version },
   });
 
-  revalidatePath("/forms");
+  revalidateForms();
   return { ok: true, version: before.version };
 }

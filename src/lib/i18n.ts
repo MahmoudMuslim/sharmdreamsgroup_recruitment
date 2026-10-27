@@ -226,13 +226,15 @@ const en: Dictionary = {
   // ---- The stepped application. One screen at a time, so the words a step
   // owns live under `apply.` and the page that shows them owns nothing else.
   "apply.ctaTitle": "Apply for this role",
-  "apply.ctaNote":
-    "Four short steps — your details, your CV, this role's questions, and a review before anything is sent.",
+  "apply.ctaNote": "A short application, step by step, with a review before anything is sent.",
   "apply.ctaButton": "Start the application",
   "apply.ctaMinutes": "It takes a few minutes, and you get a tracking code at the end.",
   "apply.title": "Apply for {role}",
   "apply.exit": "Back to the role",
-  "apply.intro": "Four short steps. Nothing is sent until you submit on the last one.",
+  // The number is the rail's own, never a word typed here: an authored form can
+  // open any number of steps, so a fixed count would promise a different
+  // application than the one the candidate is standing in.
+  "apply.intro": "{total} steps. Nothing is sent until you submit on the last one.",
   "apply.stepOf": "Step {step} of {total}",
   "apply.steps.about": "About you",
   "apply.steps.cv": "Your CV",
@@ -367,6 +369,12 @@ const en: Dictionary = {
   // furniture around them.
   "apply.dyn.formStep": "Your application",
   "apply.dyn.required": "Please answer “{label}”.",
+  // The three verbs the submit door uses for the three kinds you cannot type an
+  // answer into, kept word-for-word the same so the step and the door refuse a
+  // blank field in one voice.
+  "apply.dyn.requiredPhoto": "Please attach a photo for “{label}”.",
+  "apply.dyn.requiredFile": "Please attach a file for “{label}”.",
+  "apply.dyn.requiredTick": "Please tick “{label}”.",
   "apply.dyn.badUrl": "Enter a full web address starting with http:// or https://.",
   "apply.dyn.agree": "I agree",
   "apply.dyn.ratherNot": "I'd rather not say",
@@ -887,13 +895,15 @@ const ar: Dictionary = {
   "careers.viewApply": "العرض والتقديم",
 
   "apply.ctaTitle": "قدّم على هذه الوظيفة",
-  "apply.ctaNote":
-    "أربع خطوات قصيرة — بياناتك، سيرتك الذاتية، أسئلة هذه الوظيفة، ثم مراجعة قبل أن يُرسل أي شيء.",
+  "apply.ctaNote": "طلب قصير، خطوة بخطوة، مع مراجعة قبل أن يُرسل أي شيء.",
   "apply.ctaButton": "ابدأ الطلب",
   "apply.ctaMinutes": "لا تستغرق سوى دقائق، وتحصل في نهايتها على رمز تتبّع.",
   "apply.title": "التقديم على {role}",
   "apply.exit": "العودة إلى الوظيفة",
-  "apply.intro": "أربع خطوات قصيرة. لا يُرسل شيء قبل أن تضغط إرسال في الخطوة الأخيرة.",
+  // The count sits after a colon, so it never has to agree with the word for
+  // "steps" — an authored form can open eleven of them, and the broken plural
+  // would read wrong at exactly the number a long form reaches.
+  "apply.intro": "مجموع الخطوات: {total}. لا يُرسل شيء قبل أن تضغط إرسال في الخطوة الأخيرة.",
   "apply.stepOf": "الخطوة {step} من {total}",
   "apply.steps.about": "بياناتك",
   "apply.steps.cv": "سيرتك الذاتية",

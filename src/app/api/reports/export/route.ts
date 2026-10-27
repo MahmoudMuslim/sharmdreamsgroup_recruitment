@@ -56,6 +56,13 @@ function safeFormat(value: string | null): ExportFormat | null {
   return EXPORT_FORMATS.some((format) => format.key === value) ? (value as ExportFormat) : null;
 }
 
+/** The form filter applies to the two form lists; anything not a uuid is dropped. */
+const FORM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function safeFormId(value: string | null): string | null {
+  return value !== null && FORM_ID.test(value) ? value : null;
+}
+
 /**
  * The candidates console's filters, as the toolbar holds them.
  *
@@ -108,7 +115,7 @@ export async function GET(request: Request): Promise<Response> {
     if (!window) {
       return json("A report, a window and a format are all required.", 400);
     }
-    built = await buildReportDocument(report, window, user.fullName);
+    built = await buildReportDocument(report, window, user.fullName, safeFormId(params.get("form")));
   }
   if ("error" in built) return json(built.error, 500);
 

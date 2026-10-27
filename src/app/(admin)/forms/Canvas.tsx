@@ -49,6 +49,9 @@ function readPayload(event: React.DragEvent): DragPayload | null {
  * applicant's wizard will render — the same map, the same packing, on both
  * sides. Pairing is a pointer affordance; the inspector's width control is the
  * keyboard path to the same fact.
+ *
+ * Each row is named `form-field-row-<index>` so the step strip above the canvas
+ * can scroll a step's heading into view.
  */
 export function Canvas({
   fields,
@@ -115,6 +118,7 @@ export function Canvas({
         return (
           <div
             key={`${index}-${field.key}`}
+            id={`form-field-row-${index}`}
             role="listitem"
             aria-current={selected ? "true" : undefined}
             draggable={!disabled}

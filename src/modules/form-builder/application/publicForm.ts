@@ -108,12 +108,15 @@ const FIELD_CEILING = FORM_CEILING * LIMITS.fields_per_form;
 /** Enough rows to report an over-assigned opening rather than truncate it. */
 const ASSIGNMENT_CEILING = LIMITS.forms_assigned_per_opening * 10;
 
-const FORM_COLUMNS =
+/** The library's columns, as both composition readers read them: the applicant's
+ *  route here, and the staff preview that shows that route before a form is saved
+ *  as anything. */
+export const COMPOSITION_FORM_COLUMNS =
   "id, name, is_global, global_position, status, archived_at, version";
-const FIELD_COLUMNS =
+export const COMPOSITION_FIELD_COLUMNS =
   "id, form_id, key, type, label, help_text, placeholder, required, config, system_key, position";
 
-interface FormDbRow {
+export interface CompositionFormRow {
   id: string;
   name: string;
   is_global: boolean;
@@ -123,7 +126,7 @@ interface FormDbRow {
   version: number;
 }
 
-interface FieldDbRow {
+export interface CompositionFieldRow {
   id: string;
   form_id: string;
   key: string;
@@ -137,13 +140,16 @@ interface FieldDbRow {
   position: number;
 }
 
-interface AssignmentDbRow {
+export interface CompositionAssignmentRow {
   job_id: string;
   form_id: string;
   position: number;
 }
 
-function toFormRow(row: FormDbRow): FormRow {
+/** The row shapes above are the library's; these are what `resolveLayout` asks for,
+ *  and both composition readers — the applicant's route and the staff preview —
+ *  need the same one. */
+export function toFormRow(row: CompositionFormRow): FormRow {
   return {
     id: row.id,
     name: row.name,
@@ -155,7 +161,7 @@ function toFormRow(row: FormDbRow): FormRow {
   };
 }
 
-function toFieldRow(row: FieldDbRow): FieldRow {
+export function toFieldRow(row: CompositionFieldRow): FieldRow {
   return {
     id: row.id,
     formId: row.form_id,
@@ -171,7 +177,14 @@ function toFieldRow(row: FieldDbRow): FieldRow {
   };
 }
 
-function violationSentence(violation: LayoutViolation): string {
+/**
+ * The one sentence a broken composition gets.
+ *
+ * Exported so the staff preview can report the same layout failure in the same
+ * words the apply page fell back with — a preview that softened the sentence
+ * would be a preview that lied about the walk.
+ */
+export function violationSentence(violation: LayoutViolation): string {
   switch (violation.kind) {
     case "duplicate_key":
       return `The key "${violation.key}" is asked by both “${violation.firstForm}” and “${violation.secondForm}”.`;
@@ -226,13 +239,13 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
   const [formsResult, fieldsResult, assignmentsResult] = await Promise.all([
     client
       .from("application_forms")
-      .select(FORM_COLUMNS, { count: "exact" })
+      .select(COMPOSITION_FORM_COLUMNS, { count: "exact" })
       .eq("status", "PUBLISHED")
       .is("archived_at", null)
       .limit(FORM_CEILING),
     client
       .from("application_form_fields")
-      .select(FIELD_COLUMNS, { count: "exact" })
+      .select(COMPOSITION_FIELD_COLUMNS, { count: "exact" })
       .limit(FIELD_CEILING),
     client
       .from("job_application_forms")
@@ -256,9 +269,9 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
     };
   }
 
-  const formRows = (formsResult.data ?? []) as unknown as FormDbRow[];
-  const fieldRows = (fieldsResult.data ?? []) as unknown as FieldDbRow[];
-  const assignmentRows = (assignmentsResult.data ?? []) as unknown as AssignmentDbRow[];
+  const formRows = (formsResult.data ?? []) as unknown as CompositionFormRow[];
+  const fieldRows = (fieldsResult.data ?? []) as unknown as CompositionFieldRow[];
+  const assignmentRows = (assignmentsResult.data ?? []) as unknown as CompositionAssignmentRow[];
 
   if (
     (formsResult.count ?? 0) > formRows.length ||

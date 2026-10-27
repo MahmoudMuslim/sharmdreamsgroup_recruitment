@@ -1,5 +1,6 @@
 /* scripts/prove-form-builder.mjs
  * Run: node --env-file=docker/.env --experimental-strip-types scripts/prove-form-builder.mjs
+ * A check that throws names only its message; PROVE_STACK=1 prints its stack too.
  *
  * Nothing here needs a database, a browser or a model. What is pinned is the
  * application form builder's correctness boundary: the one layout composition
@@ -15,16 +16,22 @@
  * the sentence that tells the author which half of a pair refused to — and the
  * public door that reads an attached CV into the questions a published layout
  * asks, the one model call behind it, and the wizard that fills only a blank
- * the candidate did not write in.
+ * the candidate did not write in — and, on the two staff pages, the forms board
+ * as a Kanban and a list over one filtered, ordered set with the whole view in
+ * the address, and the step strip that prints the walk the applicant actually
+ * gets because it splits with the wizard's own rule — and the same walk previewed
+ * beside the canvas from a draft no opening asks yet, through the one composition
+ * and the one projection, with the two refusals kept apart.
  *
  * Migrations 043 and 044 are applied on the local database, but nothing here
  * reads one: the checks that name a table, a policy or a CHECK are text pins
  * against those files (comments stripped, whitespace squashed), so the proof
  * runs the same on a machine with no stack up.
  *
- * The thirty-five mutation proofs are real edits: each one breaks a file,
- * re-runs the check that must notice, and restores the file in a `finally`. A
- * mutation that does not turn its check red fails the proof.
+ * The mutation proofs at the foot of this file are real edits: each one breaks a
+ * file, re-runs the check that must notice, and restores the file in a `finally`.
+ * A mutation that does not turn its check red fails the proof. The run prints
+ * how many held, so the count is never written down twice.
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -91,6 +98,7 @@ async function safe(fn) {
   try {
     return await fn();
   } catch (cause) {
+    if (process.env.PROVE_STACK) console.error(cause.stack);
     return { pass: false, detail: `threw: ${cause instanceof Error ? cause.message : String(cause)}` };
   }
 }
@@ -379,6 +387,8 @@ const snapshotUrl = pathToFileURL(path.join(root, "src/modules/form-builder/doma
 const writerUrl = pathToFileURL(path.join(root, "src/modules/candidates/application/personWriter.ts")).href;
 const i18nUrl = pathToFileURL(path.join(root, "src/lib/i18n.ts")).href;
 const publicUrl = pathToFileURL(path.join(root, "src/modules/form-builder/application/publicForm.ts")).href;
+const boardUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/formBoard.ts")).href;
+const editorStepsUrl = pathToFileURL(path.join(root, "src/modules/form-builder/domain/editorSteps.ts")).href;
 
 const rl = await import(resolveUrl);
 const ft = await import(typesUrl);
@@ -390,6 +400,8 @@ const writer = await import(writerUrl);
 const staticI18n = await import(i18nUrl);
 const pf = await import(publicUrl);
 const registry = await import(fieldsUrl);
+const fb = await import(boardUrl);
+const es = await import(editorStepsUrl);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1549,10 +1561,17 @@ const check15 = () => {
     return verdict(problems);
   }
   for (const full of consoleFiles) {
+    const rel = path.relative(root, full).split(path.sep).join("/");
     const source = stripCodeComments(readFileSync(full, "utf8"));
-    for (const forbidden of ["ConsentBox", "consentGroups", "apply.consent."]) {
-      if (source.includes(forbidden)) {
-        problems.push(`${path.basename(full)} produces ${forbidden} — the boxes belong to the wizard, not the builder`);
+    // The preview panel is the one console file that reads the projected
+    // `consentGroups` — check 27 requires it to picture the boxes the walk asks
+    // for. It may read them; nothing in the console may make a tickable box or
+    // reach into the wizard's own consent copy.
+    const forbidden = ["ConsentBox", "apply.consent."];
+    if (rel !== FORM_PREVIEW_UI_REL) forbidden.push("consentGroups");
+    for (const needle of forbidden) {
+      if (source.includes(needle)) {
+        problems.push(`${path.basename(full)} produces ${needle} — the boxes belong to the wizard, not the builder`);
       }
     }
     if (/export (function|const) ReviewStep/.test(source)) {
@@ -1932,7 +1951,7 @@ const check20 = async (injected) => {
 const WIDTH_SURFACES = [
   ["src/app/(admin)/forms/Canvas.tsx", ["GRID_CLASS", "SPAN_CLASS"]],
   ["src/app/(admin)/forms/Inspector.tsx", ["FIELD_WIDTHS", "ALWAYS_FULL_TYPES"]],
-  ["src/app/(admin)/forms/FormsConsole.tsx", ["beside", "widthOf"]],
+  ["src/app/(admin)/forms/FormEditor.tsx", ["beside", "widthOf"]],
   ["src/app/careers/apply/[id]/DynamicApplyWizard.tsx", ["GRID_CLASS", "SPAN_CLASS"]],
 ];
 
@@ -2330,6 +2349,1116 @@ const check24 = async () => {
 };
 
 // ---------------------------------------------------------------------------
+// 25. The forms board: one set of rows, two drawings, the whole view in the URL.
+//
+// `/forms` is a Kanban and a list over the same window `listForms` read, and both
+// read surface, rail, order and words off the address. So this check runs the
+// domain module on fixtures — what an unknown param does, which column a retired
+// form sits in, what each of the four orders returns, what a href leaves out —
+// and then pins the wiring that keeps the two drawings from drifting apart: the
+// list must filter and sort exactly like the columns, the rails must count the
+// whole window, and the same two writes must run from both.
+// ---------------------------------------------------------------------------
+const FORM_BOARD_REL = "src/modules/form-builder/domain/formBoard.ts";
+const FORMS_BOARD_REL = "src/app/(admin)/forms/FormsBoard.tsx";
+
+const boardRow = (id, overrides = {}) => ({
+  id,
+  name: id,
+  description: null,
+  isGlobal: false,
+  status: "DRAFT",
+  archivedAt: null,
+  fieldCount: 0,
+  assignedJobs: [],
+  updatedAt: "2026-10-01T00:00:00.000Z",
+  ...overrides,
+});
+
+/** Four rows, chosen so all four sorts answer with a different order. */
+const boardRows = () => [
+  boardRow("alpha", {
+    name: "Alpha",
+    status: "PUBLISHED",
+    fieldCount: 12,
+    updatedAt: "2026-10-05T00:00:00.000Z",
+    assignedJobs: [{ id: "j1" }, { id: "j2" }],
+  }),
+  boardRow("beta", {
+    name: "beta",
+    description: "for the front desk",
+    fieldCount: 3,
+    updatedAt: "2026-10-09T00:00:00.000Z",
+  }),
+  boardRow("gamma", {
+    name: "Gamma",
+    status: "PUBLISHED",
+    archivedAt: "2026-10-08T00:00:00.000Z",
+    fieldCount: 7,
+    isGlobal: true,
+  }),
+  boardRow("delta", { name: "Delta", fieldCount: 3, updatedAt: "2026-10-09T00:00:00.000Z" }),
+];
+
+const rowIds = (rows) => rows.map((row) => row.id);
+const rowKeys = (rows) => rows.map((row) => row.key);
+
+const check25 = async (mod = fb) => {
+  const problems = [];
+  const view = (qs) => mod.parseBoardView(new URLSearchParams(qs));
+
+  // The address is the whole view state, and an unknown value falls back.
+  if (!deepEqual(view(""), mod.DEFAULT_VIEW)) {
+    problems.push("a bare /forms is not the board, every state, A–Z, with no words");
+  }
+  if (
+    !deepEqual(view("view=list&state=retired&sort=questions&q=%20desk%20"), {
+      surface: "list",
+      state: "retired",
+      sort: "questions",
+      q: "desk",
+    })
+  ) {
+    problems.push("a fully-lit address does not reach the view it names (with the words trimmed)");
+  }
+  if (!deepEqual(view("view=grid&state=bogus&sort=sideways"), mod.DEFAULT_VIEW)) {
+    problems.push("an unknown value blanks the board instead of falling back");
+  }
+
+  // A retired form has no other column: the date is the fact, the status is not.
+  if (mod.stateOfForm(boardRows()[2]) !== "retired") {
+    problems.push("a retired form is counted by the status `retireForm` left alone");
+  }
+  for (const [row, expected] of [
+    [boardRow("d", { status: "DRAFT" }), "draft"],
+    [boardRow("p", { status: "PUBLISHED" }), "published"],
+    [boardRow("r", { status: "DRAFT", archivedAt: "2026-10-01" }), "retired"],
+  ]) {
+    if (mod.stateOfForm(row) !== expected) {
+      problems.push(`${row.id} does not sit in its own column`);
+    }
+  }
+
+  // The rail and the words, in that order.
+  const rows = boardRows();
+  const at = (state, q = "") =>
+    rowIds(mod.filterBoardRows(rows, { surface: "board", state, sort: "named", q }));
+  if (!deepEqual(at("all"), ["alpha", "beta", "gamma", "delta"])) {
+    problems.push("the unlit rail does not hold every form");
+  }
+  if (!deepEqual(at("published"), ["alpha"])) problems.push("the published rail holds the wrong rows");
+  if (!deepEqual(at("retired"), ["gamma"])) problems.push("the retired rail holds the wrong rows");
+  if (!deepEqual(at("draft"), ["beta", "delta"])) problems.push("the draft rail holds the wrong rows");
+  if (!deepEqual(at("all", "desk"), ["beta"])) {
+    problems.push("a word does not match the description a recruiter wrote for staff");
+  }
+  if (!deepEqual(at("all", "DEL"), ["delta"])) {
+    problems.push("the words are not matched case-insensitively");
+  }
+  if (!deepEqual(at("draft", "alpha"), [])) {
+    problems.push("the rail and the words are not applied together");
+  }
+
+  // Four orders, four different answers — and the caller's array stays put.
+  const named = rowIds(mod.sortBoardRows(rows, "named"));
+  const recent = rowIds(mod.sortBoardRows(rows, "recent"));
+  const questions = rowIds(mod.sortBoardRows(rows, "questions"));
+  const roles = rowIds(mod.sortBoardRows(rows, "roles"));
+  if (!deepEqual(named, ["alpha", "beta", "delta", "gamma"])) {
+    problems.push("`named` is not A–Z over the whole window, whatever the case");
+  }
+  if (!deepEqual(recent, ["beta", "delta", "alpha", "gamma"])) {
+    problems.push("`recent` does not count down from the newest change, tie broken at the id");
+  }
+  if (!deepEqual(questions, ["alpha", "gamma", "beta", "delta"])) {
+    problems.push("`questions` does not put the longest form first, tie broken at the id");
+  }
+  if (!deepEqual(roles, ["gamma", "alpha", "beta", "delta"])) {
+    problems.push("`roles` does not put a global form ahead of every count of openings");
+  }
+  if (new Set([named.join(), recent.join(), questions.join(), roles.join()]).size !== 4) {
+    problems.push("two of the four orders answer alike, so a fixture cannot tell them apart");
+  }
+  if (!deepEqual(rowIds(rows), ["alpha", "beta", "gamma", "delta"])) {
+    problems.push("sorting reordered the caller's rows instead of returning a new array");
+  }
+
+  // The rails count the window, never what the current view left standing.
+  if (
+    !deepEqual(mod.countBoardStates(rows), { all: 4, draft: 2, published: 1, retired: 1 })
+  ) {
+    problems.push("the rail counts do not describe the whole window");
+  }
+
+  // The href a control writes: defaults left out, a view worth pasting keeps them.
+  if (mod.boardHref(mod.DEFAULT_VIEW) !== "/forms") {
+    problems.push("the default view does not come back to the short link");
+  }
+  if (
+    mod.boardHref({ surface: "list", state: "retired", sort: "questions", q: "desk" }) !==
+    "/forms?view=list&state=retired&sort=questions&q=desk"
+  ) {
+    problems.push("a lit view loses part of itself, or leaves the address in another order");
+  }
+  for (const qs of ["", "view=list", "state=draft&sort=recent", "q=front%20desk&view=list"]) {
+    const roundTrip = mod.boardHref(view(qs));
+    if (!deepEqual(view(roundTrip.split("?")[1] ?? ""), view(qs))) {
+      problems.push(`${qs || "/forms"} does not survive href → parse → href`);
+    }
+  }
+
+  // Pure module: no import of any kind, and the vocabulary is the union's own.
+  if (/^\s*(import|export)\s.*from\s/m.test(rawOf(FORM_BOARD_REL))) {
+    problems.push("formBoard.ts reaches outside itself");
+  }
+  const boardCode = codeOf(FORM_BOARD_REL);
+  if (!deepEqual(unionMembers(boardCode, "BoardState"), ["all", ...mod.BOARD_STATES])) {
+    problems.push("the BoardState union no longer names `all` plus BOARD_STATES, in order");
+  }
+  if (!deepEqual(unionMembers(boardCode, "BoardSort"), [...mod.BOARD_SORTS])) {
+    problems.push("the BoardSort union and BOARD_SORTS no longer name the same orders");
+  }
+
+  // The wiring: one filtered, ordered set drawn two ways, on the same writes.
+  if (!existsSync(path.join(root, FORMS_BOARD_REL))) {
+    problems.push(`${FORMS_BOARD_REL} does not exist`);
+  } else {
+    const drawn = codeOf(FORMS_BOARD_REL);
+    for (const [needle, what] of [
+      ["parseBoardView(new URLSearchParams(qs))", "the board does not read its view state from the address"],
+      ["router.push(boardHref(next))", "a control no longer writes the whole view back to the address"],
+      ["sortBoardRows(filterBoardRows(data.forms, view), view.sort)", "the two surfaces no longer draw one filtered, ordered set"],
+      ["countBoardStates(data.forms)", "the rails no longer count the window the board loaded"],
+      ['view.surface === "list" ? (', "nothing switches the drawing to the list"],
+      ["<FormList", "the list surface is gone"],
+      ['className="board-cols flex gap-3 overflow-x-auto pb-2"', "the Kanban surface is gone"],
+      ['role="group" aria-label="Choose how the forms are drawn"', "the two drawings are not offered as one labelled group"],
+      ["aria-pressed={view.surface === surface.value}", "the surface control does not say which drawing is lit"],
+      ['id="forms-search"', "the search box has no address the assistant can link to"],
+      ['aria-label="Search forms"', "the search box names nothing to a screen reader"],
+      ['aria-label="Order the forms"', "the order control is not named"],
+      ["{rows.length} of {data.forms.length} listed", "the board stopped disclosing what the view left standing"],
+      ['(["all", ...BOARD_STATES] as const).map', "the rails no longer offer the unlit `all`"],
+    ]) {
+      if (!drawn.includes(needle)) problems.push(what);
+    }
+    // Both drawings arm the same destructive writes; neither pops a dialog.
+    if ((drawn.match(/<RetireAsk/g) ?? []).length !== 2) {
+      problems.push("the list and the card no longer arm retire through one shared control");
+    }
+    const formsFiles = filesMentioning("window.confirm").filter((rel) =>
+      rel.startsWith("src/app/(admin)/forms/"),
+    );
+    if (formsFiles.length > 0) {
+      problems.push(`a native dialog would block the owner's tab: ${formsFiles.join(", ")}`);
+    }
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 26. The step strip on a form's own page is the walk the applicant gets.
+//
+// `/forms/[id]` prints a chip per step. That is only honest if the split is the
+// one rule `resolveLayout` composes the wizard with, so this runs `splitIntoSteps`
+// directly, then proves the resolved layout's steps hold exactly its fields — and
+// does the same for the editor's canvas. Then the strip's own behaviour: which row
+// a chip selects, what an unheaded step is called, the group named once on the
+// first step that needs it, a draft binding the registry does not carry skipped
+// rather than thrown, and the words a chip's tooltip prints.
+// ---------------------------------------------------------------------------
+const EDITOR_STEPS_REL = "src/modules/form-builder/domain/editorSteps.ts";
+const FORM_EDITOR_REL = "src/app/(admin)/forms/FormEditor.tsx";
+const INSPECTOR_REL = "src/app/(admin)/forms/Inspector.tsx";
+const BINDING_PICKER_REL = "src/app/(admin)/forms/BindingPicker.tsx";
+const PERSON_FIELDS_REL = "src/modules/candidates/domain/person-fields.ts";
+
+const draft = (key, type, overrides = {}) => ({
+  key,
+  type,
+  label: overrides.label ?? key,
+  helpText: null,
+  placeholder: null,
+  required: false,
+  config: {},
+  systemKey: null,
+  ...overrides,
+});
+
+const heading = (key, label) => draft(key, "section_heading", { label });
+
+const check26 = async (esMod = es, rlMod = rl) => {
+  const problems = [];
+
+  // The rule itself: a heading opens a step, is not a question in it, and rows
+  // before the first heading still form one.
+  if (rlMod.splitIntoSteps([]).length !== 0) {
+    problems.push("an empty canvas yields a step");
+  }
+  const orphans = rlMod.splitIntoSteps([draft("q_one", "short_text"), draft("q_two", "short_text")]);
+  if (orphans.length !== 1 || orphans[0].heading !== null || orphans[0].fields.length !== 2) {
+    problems.push("rows before the first heading do not sit in one unheaded step");
+  }
+  const twoSteps = rlMod.splitIntoSteps([
+    heading("h_first", "Before you start"),
+    draft("q_one", "short_text"),
+    draft("q_two", "short_text"),
+    heading("h_second", "Your work"),
+    draft("q_three", "short_text"),
+  ]);
+  if (twoSteps.length !== 2 || twoSteps[0].heading?.key !== "h_first") {
+    problems.push("a heading does not open the step it names");
+  }
+  if (twoSteps.some((step) => step.fields.some((row) => row.type === "section_heading"))) {
+    problems.push("a heading is counted as one of its step's questions");
+  }
+  if (!deepEqual(rowKeys(twoSteps[1].fields), ["q_three"])) {
+    problems.push("the second heading's step holds the wrong questions");
+  }
+  const trailing = rlMod.splitIntoSteps([draft("q_one", "short_text"), heading("h_last", "Last")]);
+  if (trailing.length !== 2 || trailing[1].fields.length !== 0 || trailing[1].heading?.key !== "h_last") {
+    problems.push("a trailing heading does not open its own empty step");
+  }
+
+  // The composition the strip copies: every resolved row is in exactly one step,
+  // in order, and the heading that opened it sits first.
+  const input = orderLayout();
+  const layout = rlMod.resolveLayout(input);
+  const inSteps = layout.steps.flatMap((step) =>
+    [step.heading, ...step.fields].filter(Boolean).map((entry) => entry.field.id),
+  );
+  const inFields = layout.fields.map((entry) => entry.field.id);
+  if (!deepEqual(inSteps, inFields)) {
+    problems.push("the resolved steps do not hold the resolved fields, in order");
+  }
+
+  // The canvas, unheaded: one step named after the form.
+  const oneStep = esMod.stepsOfCanvas([draft("q_one", "short_text")], "Front desk intake");
+  if (
+    oneStep.length !== 1 ||
+    oneStep[0].name !== "Front desk intake" ||
+    oneStep[0].headed !== false ||
+    oneStep[0].focusIndex !== 0 ||
+    oneStep[0].rowStart !== 0 ||
+    oneStep[0].rowEnd !== 0 ||
+    oneStep[0].questionCount !== 1
+  ) {
+    problems.push("an unheaded canvas does not yield one step named after the form");
+  }
+  if (esMod.stepsOfCanvas([draft("q_one", "short_text")], "   ")[0]?.name !== "This form") {
+    problems.push("a blank form name leaves the strip with nothing to call the step");
+  }
+
+  // Orphaned leading rows, beside a headed canvas, are named for what they are.
+  const mixed = esMod.stepsOfCanvas(
+    [
+      draft("q_orphan", "short_text"),
+      heading("h_house", "  "),
+      draft("q_one", "short_text", { required: true }),
+      draft("q_two", "email", { systemKey: "email", required: true }),
+    ],
+    "Guard house",
+  );
+  if (mixed.length !== 2 || mixed[0].name !== "Before the first heading" || mixed[0].headed) {
+    problems.push("rows above the first heading are not named as orphans");
+  }
+  if (mixed[1].name !== "Untitled heading (h_house)") {
+    problems.push("a heading with no label prints nothing the author can find the row by");
+  }
+  if (mixed[1].focusIndex !== 1 || mixed[1].rowStart !== 1 || mixed[1].rowEnd !== 3) {
+    problems.push("a chip does not hold the canvas rows of its own step");
+  }
+  if (mixed[1].questionCount !== 2 || mixed[1].requiredCount !== 2) {
+    problems.push("the heading row is counted as a question, or the required count is wrong");
+  }
+  if (esMod.stepsOfCanvas([heading("h_empty", "Empty")], "Only a heading")[0].focusIndex !== 0) {
+    problems.push("a chip for an empty step cannot select its heading");
+  }
+  if (esMod.stepsOfCanvas([], "Nothing here").length !== 0) {
+    problems.push("an empty canvas prints a chip");
+  }
+
+  // A group is asked once, on the step that first needs it — the rule `project`
+  // uses, so a chip cannot promise a box the wizard will not show.
+  const consent = esMod.stepsOfCanvas(
+    [
+      heading("h_a", "A"),
+      draft("q_birth", "date", { systemKey: "person:date_of_birth" }),
+      draft("q_contact", "phone", { systemKey: "person:phone" }),
+      heading("h_b", "B"),
+      draft("q_second_contact", "address", { systemKey: "person:mailing_address" }),
+      draft("q_health", "select", { systemKey: "person:disability_status" }),
+      draft("q_ghost", "short_text", { systemKey: "person:not_in_the_registry" }),
+      draft("q_bare", "short_text", { systemKey: "name" }),
+    ],
+    "Consent",
+  );
+  if (!deepEqual(consent[0].groups, ["identity", "contact"])) {
+    problems.push(`the first step does not name the groups it first needs: ${JSON.stringify(consent[0].groups)}`);
+  }
+  if (!deepEqual(consent[1].groups, ["health"])) {
+    problems.push("a group already asked above is asked again on a later step");
+  }
+  if (consent.some((step) => step.groups.includes(undefined))) {
+    problems.push("a binding the registry does not carry became a consent group");
+  }
+
+  // What a chip says when the pointer rests on it.
+  const titled = esMod.stepTitle(mixed[1], 1);
+  if (titled !== "Step 2: Untitled heading (h_house) — 2 questions, 2 required") {
+    problems.push(`a chip's tooltip does not print its step, name and counts: ${titled}`);
+  }
+  if (esMod.stepTitle(consent[1], 1) !== "Step 2: B — 4 questions — asks consent for Health and disability") {
+    problems.push("a chip stopped naming the consent its step asks for");
+  }
+  const single = esMod.stepsOfCanvas([draft("q_one", "short_text")], "One")[0];
+  if (esMod.stepTitle(single, 0) !== "Step 1: One — 1 question") {
+    problems.push("one question is printed as plural");
+  }
+  const emptyStep = esMod.stepsOfCanvas([heading("h_e", "Empty")], "Empty form")[0];
+  if (esMod.stepTitle(emptyStep, 0) !== "Step 1: Empty — no questions yet") {
+    problems.push("an empty step does not say so");
+  }
+
+  // A pure module, reading the thrower-safe half of the registry.
+  const allowedImports = new Set([
+    "@/modules/candidates/domain/person-fields",
+    "./draftIssues",
+    "./resolveLayout",
+  ]);
+  const outside = [...codeOf(EDITOR_STEPS_REL).matchAll(/\bfrom\s+"([^"]+)"/g)]
+    .map((m) => m[1])
+    .filter((specifier) => !allowedImports.has(specifier));
+  if (outside.length > 0) {
+    problems.push(`editorSteps.ts reaches outside the three pure modules it may read: ${outside.join(", ")}`);
+  }
+  if (codeOf(EDITOR_STEPS_REL).includes("consentPurposeFor")) {
+    problems.push("the strip reads a binding through the thrower, so a mid-edit draft breaks the page");
+  }
+
+  // One table names a group to the two staff surfaces that show it — the picker's
+  // optgroups and the strip's chip. A consent-box label at the record door and a
+  // report heading are different words for a different reader, on purpose; this
+  // pins only that neither of *these* two carries its own copy of the table.
+  const labelTables = allSrc()
+    .filter((entry) => /export const PERSON_GROUP_LABELS\b/.test(entry.code))
+    .map((entry) => entry.rel);
+  if (!deepEqual(labelTables, [PERSON_FIELDS_REL])) {
+    problems.push(`the staff-facing group names are declared in more than one file: ${labelTables.join(", ")}`);
+  }
+  for (const [rel, what] of [
+    [BINDING_PICKER_REL, "the binding picker"],
+    [FORM_EDITOR_REL, "the step strip"],
+  ]) {
+    const file = codeOf(rel);
+    if (!file.includes("PERSON_GROUP_LABELS")) {
+      problems.push(`${what} no longer reads the one group-name table`);
+    }
+    if (/const GROUP_LABELS\b/.test(file)) {
+      problems.push(`${what} keeps a second table of group names`);
+    }
+  }
+
+  // The wiring: the strip is the module's output, and Ctrl+S reaches the save.
+  const editor = codeOf(FORM_EDITOR_REL);
+  for (const [needle, what] of [
+    ["stepsOfCanvas(fields, form.name)", "the strip is not built from the canvas rows in order"],
+    ["aria-label=\"The steps the applicant walks, in order\"", "the strip is not a named walk"],
+    ["stepTitle(step, index)", "a chip prints no tooltip"],
+    ["<Kbd>Ctrl/⌘ + S</Kbd>", "the shortcut is not on screen"],
+    ['event.key.toLowerCase() === "s"', "nothing listens for the save"],
+    ["(event.ctrlKey || event.metaKey)", "the shortcut is not the one both platforms have"],
+    ["`form-field-row-${step.focusIndex}`", "a chip does not scroll to the row it selects"],
+  ]) {
+    if (!editor.includes(needle)) problems.push(what);
+  }
+  if (!codeOf(CANVAS_REL).includes("`form-field-row-${index}`")) {
+    problems.push("the canvas rows are no longer named for the strip to jump to");
+  }
+  if (editor.includes("function stepsOnCanvas") || editor.includes("splitIntoSteps")) {
+    problems.push("FormEditor split its own steps instead of borrowing the one rule");
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 27. The staff preview: the walk an applicant would get, composed from a draft.
+//
+// `includeFormId` is the one exception `resolveLayout` makes for a recruiter: the
+// form being written joins the walk so a DRAFT can be seen before any opening
+// asks it. Every other rule — globals first, the ceiling, a colliding key, an
+// archived form — holds exactly as it does for the applicant, and the projection
+// the panel renders is the applicant's own `project()`, not a staff copy of it.
+// ---------------------------------------------------------------------------
+const FORM_PREVIEW_REL = "src/modules/form-builder/application/formPreview.ts";
+const FORM_PREVIEW_UI_REL = "src/app/(admin)/forms/FormPreview.tsx";
+const FORM_ID_PAGE_REL = "src/app/(admin)/forms/[id]/page.tsx";
+const FORM_ACTIONS_REL = "src/modules/form-builder/application/formActions.ts";
+
+/** `orderLayout()` plus one unassigned DRAFT (`f-mine`) that no opening asks. */
+const previewFixture = (overrides = {}) => {
+  const base = orderLayout();
+  const mine = form("f-mine", { name: "My draft", status: "DRAFT", ...overrides.form });
+  const mineFields =
+    overrides.fields ??
+    [
+      field("m0", "f-mine", "mine0", "short_text", { position: 0 }),
+      field("m1", "f-mine", "mine1", "short_text", { position: 1, systemKey: "person:phone" }),
+    ];
+  return {
+    forms: [...base.forms, mine],
+    fieldsByForm: { ...base.fieldsByForm, "f-mine": mineFields },
+    assignments: overrides.assignments ?? base.assignments,
+    jobId: base.jobId,
+  };
+};
+
+const askedKeys = (layout) => layout.fields.map((entry) => entry.field.key);
+
+/** Everything one plain question may carry to a browser — `PublicField`'s base. */
+const publicKeyShape = ["key", "label", "help", "placeholder", "type", "required", "width"];
+
+/** Does this file import `project` out of the one public projection module? */
+const importsProject = (code) =>
+  [...code.matchAll(/import\s*\{([\s\S]*?)\}\s*from\s*"@\/modules\/form-builder\/application\/publicForm"/g)].some(
+    (match) => /(^|[,{\s])project(\s*as\s+\w+|[,\s}])/.test(match[1]),
+  );
+
+const check27 = async (rlMod = rl, pfMod = pf) => {
+  const problems = [];
+  const applicantWalk = ["c0", "c0b", "c1", "zulu", "alpha", "alsog", "alphajob", "zeta"];
+
+  /* --- the domain exception, and everything it must not change -------------- */
+
+  // The applicant walk is the check-1 order with or without the key in hand.
+  const plain = rlMod.resolveLayout(previewFixture());
+  if (!deepEqual(askedKeys(plain), applicantWalk)) {
+    problems.push(`the applicant walk gained a row it never asks: [${askedKeys(plain)}]`);
+  }
+  const undefinedKey = rlMod.resolveLayout({ ...previewFixture(), includeFormId: undefined });
+  if (!deepEqual(askedKeys(undefinedKey), applicantWalk)) {
+    problems.push("passing an undefined preview key changed the applicant walk");
+  }
+  if (plain.violations.length > 0 || undefinedKey.violations.length > 0) {
+    problems.push("a clean fixture reported a violation");
+  }
+  // An id that names no form in the read is a no-op, not a crash.
+  const ghost = rlMod.resolveLayout({ ...previewFixture(), includeFormId: "f-no-such-form" });
+  if (!deepEqual(askedKeys(ghost), applicantWalk)) {
+    problems.push("previewing a form that is not in the read changed the walk");
+  }
+
+  // A DRAFT that no opening assigns joins after the globals, ahead of the forms
+  // the opening does assign — the composition tab the editor opens on.
+  const draft = rlMod.resolveLayout({ ...previewFixture(), includeFormId: "f-mine" });
+  const previewedWalk = ["c0", "c0b", "c1", "zulu", "alpha", "alsog", "mine0", "mine1", "alphajob", "zeta"];
+  if (!deepEqual(askedKeys(draft), previewedWalk)) {
+    problems.push(`a previewed draft is not composed after the globals: [${askedKeys(draft)}]`);
+  }
+  if (draft.violations.length > 0) {
+    problems.push(`the preview of a clean draft reported ${draft.violations.map((v) => v.kind).join(",")}`);
+  }
+  // It joins once, even on an opening that really does assign it.
+  const twice = rlMod.resolveLayout({
+    ...previewFixture({
+      assignments: [...previewFixture().assignments, { jobId: JOB, formId: "f-mine", position: 0 }],
+    }),
+    includeFormId: "f-mine",
+  });
+  if (askedKeys(twice).filter((key) => key.startsWith("mine")).length !== 2) {
+    problems.push("a form both assigned and previewed was asked twice in one walk");
+  }
+
+  // A global draft takes its place among the globals by its own position, rather
+  // than being parked at the end where a non-global preview sits.
+  const globalDraft = rlMod.resolveLayout({
+    ...previewFixture({ form: { isGlobal: true, globalPosition: 1 } }),
+    includeFormId: "f-mine",
+  });
+  const globalWalk = ["c0", "c0b", "c1", "mine0", "mine1", "zulu", "alpha", "alsog", "alphajob", "zeta"];
+  if (!deepEqual(askedKeys(globalDraft), globalWalk)) {
+    problems.push(`a previewed global draft did not sort among the globals: [${askedKeys(globalDraft)}]`);
+  }
+
+  // Retired is not a status a preview gets to compose around.
+  const retired = rlMod.resolveLayout({
+    ...previewFixture({ form: { archivedAt: "2026-10-01T00:00:00Z" } }),
+    includeFormId: "f-mine",
+  });
+  if (askedKeys(retired).some((key) => key.startsWith("mine"))) {
+    problems.push("a retired form was composed into a preview walk");
+  }
+
+  // The exception is status, not the rules: a key the draft shares with a global
+  // still names both forms, because the applicant would collide.
+  const colliding = rlMod.resolveLayout({
+    ...previewFixture({ fields: [field("m0", "f-mine", "c0", "short_text", { position: 0 })] }),
+    includeFormId: "f-mine",
+  });
+  if (!colliding.violations.some((v) => v.kind === "duplicate_key" && v.key === "c0")) {
+    problems.push("a key the previewed draft shares with a global went unreported");
+  }
+
+  // And not the ceiling: §11 counts the preview's walk, so a panel cannot compose
+  // an application no applicant could ever be shown.
+  const past = Array.from({ length: LIMITS.resolved_fields_per_application + 1 }, (_, index) =>
+    field(`x${index}`, "f-mine", `k${String(index).padStart(3, "0")}`, "short_text", { position: index }),
+  );
+  const over = rlMod.resolveLayout({
+    ...previewFixture({ fields: past }),
+    includeFormId: "f-mine",
+  });
+  if (!over.violations.some((v) => v.kind === "ceiling" && v.ceiling === "resolved_fields_per_application")) {
+    problems.push("the preview composed a walk past the resolved-field ceiling without saying so");
+  }
+  const under = rlMod.resolveLayout(previewFixture({ fields: past }));
+  if (under.violations.some((v) => v.kind === "ceiling")) {
+    problems.push("the applicant walk gained a ceiling from a form it never sees");
+  }
+
+  // The preview's own heading opens a step, so the panel shows the wizard's
+  // breaks and not one long column.
+  const stepped = rlMod.resolveLayout({
+    ...previewFixture({
+      fields: [
+        field("mh", "f-mine", "m_head", "section_heading", { position: 0, label: "About you" }),
+        field("m0", "f-mine", "mine0", "short_text", { position: 1 }),
+      ],
+    }),
+    includeFormId: "f-mine",
+  });
+  const myStep = stepped.steps.find((step) => step.heading?.form.id === "f-mine");
+  if (!myStep || myStep.heading.field.label !== "About you") {
+    problems.push("a heading on the previewed form does not open its own step");
+  }
+  if (myStep && myStep.fields.some((entry) => entry.field.id !== "m0")) {
+    problems.push("the previewed form's step holds a row from another form");
+  }
+
+  /* --- the projection the panel renders ------------------------------------- */
+
+  const shown = pfMod.project(draft);
+  const publicFields = shown.steps.flatMap((step) => step.fields);
+  if (!publicFields.some((entry) => entry.key === "mine0")) {
+    problems.push("the projected preview left the previewed form's own question out");
+  }
+  for (const entry of publicFields) {
+    const leaked = ["id", "formId", "systemKey", "config", "position"].filter((key) => key in entry);
+    if (leaked.length > 0) {
+      problems.push(`the preview shipped ${leaked.join(",")} to the browser on ${entry.key}`);
+    }
+    if (!deepEqual(Object.keys(entry).sort(), [...publicKeyShape].sort())) {
+      problems.push(`a previewed field is not the applicant's own field shape: ${Object.keys(entry).join(",")}`);
+    }
+  }
+  const mineStep = shown.steps.find((step) => step.fields.some((entry) => entry.key === "mine0"));
+  if (!mineStep || mineStep.heading !== "My draft") {
+    problems.push("a form with no heading is not named after itself in the preview, the way the wizard names it");
+  }
+  if (!shown.consentGroups.includes("contact")) {
+    problems.push("the preview does not show the consent box the binding will ask for");
+  }
+
+  /* --- the staff read ------------------------------------------------------- */
+
+  if (!existsSync(path.join(root, FORM_PREVIEW_REL))) {
+    problems.push(`${FORM_PREVIEW_REL} does not exist`);
+  } else {
+    const code = codeOf(FORM_PREVIEW_REL);
+    for (const [needle, what] of [
+      ['"use server"', "the preview reads are not server-only"],
+      ["requireStaff", "a staff preview read runs unguarded"],
+      ["includeFormId", "the composition tab does not ask resolveLayout for the one-form exception"],
+      ["resolveFormForJob", "the per-opening tab walks its own route instead of the applicant's"],
+      ["archived_at", "the preview read never looks at the retirement date"],
+      ["violationSentence", "the preview keeps a second sentence for a broken layout"],
+      ["identityIssues", "the preview never asks whether this walk could publish"],
+      ["PublicForm", "the preview payload is not the applicant's own shape"],
+    ]) {
+      if (!code.includes(needle)) problems.push(what);
+    }
+    if (!importsProject(code)) {
+      problems.push("the preview does not project through the applicant's own `project()`");
+    }
+    if (/\.(insert|update|upsert|delete)\s*\(/.test(code)) {
+      problems.push("the preview read writes");
+    }
+    if (/\.sort\s*\(/.test(code)) {
+      problems.push("the preview ordered the walk itself instead of leaving that to resolveLayout");
+    }
+    if (!/published gate|would not publish|publish/i.test(code)) {
+      problems.push("the preview does not separate a walk that cannot compose from one that cannot publish");
+    }
+  }
+
+  /* --- the panel ------------------------------------------------------------ */
+
+  if (!existsSync(path.join(root, FORM_PREVIEW_UI_REL))) {
+    problems.push(`${FORM_PREVIEW_UI_REL} does not exist`);
+  } else {
+    const ui = codeOf(FORM_PREVIEW_UI_REL);
+    if (!ui.includes('"use client"')) problems.push("the preview panel is not a client component");
+    for (const banned of ["<form", "onSubmit", "submitApplication", "fetch(", "DynamicApplyWizard"]) {
+      if (ui.includes(banned)) problems.push(`the preview panel reaches ${banned}: it is not read-only`);
+    }
+    for (const [needle, what] of [
+      ['role="tablist"', "the preview tabs are not a tablist"],
+      ["aria-selected", "a preview tab does not say which one is open"],
+      ["consentGroups", "the panel does not draw the consent boxes the walk asks for"],
+      ["step.heading", "the panel does not print the step headings"],
+      ["applicant", "the panel never says whose walk it is showing"],
+      ["accept", "a file question is previewed with nothing about what it takes"],
+      ["maxBytes", "the panel drops the size a question states on screen"],
+    ]) {
+      if (!ui.includes(needle)) problems.push(what);
+    }
+  }
+
+  /* --- the wiring ----------------------------------------------------------- */
+
+  const page = codeOf(FORM_ID_PAGE_REL);
+  if (!page.includes("previewFormLayout(")) {
+    problems.push("the form page does not read the preview itself, so the panel loads after the page");
+  }
+  if (!/preview=\{/.test(page)) {
+    problems.push("the form page reads the preview but never hands it to the editor");
+  }
+  const editor = codeOf(FORM_EDITOR_REL);
+  if (!editor.includes("<FormPreview")) {
+    problems.push("the form page's editor never draws the preview");
+  }
+  if (!editor.includes("previewFormOnOpening")) {
+    problems.push("a per-opening tab does not reach the applicant's own read");
+  }
+  // A label's `htmlFor`, a control's `id` and a radio group's `name` reach the
+  // DOM, so the string behind them has to be the one React keeps between the
+  // server render and the hydration. An id minted per row is a different string
+  // on each side, and then every form page opens with a hydration mismatch.
+  if (!codeOf(INSPECTOR_REL).includes("useId()")) {
+    problems.push("the inspector mints its own DOM ids instead of asking React for one");
+  }
+  if (editor.includes("htmlId={")) {
+    problems.push("the editor hands a per-row id into the inspector's DOM attributes");
+  }
+
+  /* --- one projection authority --------------------------------------------- */
+
+  const projectDecls = allSrc()
+    .filter((entry) => /export function project\b/.test(entry.code))
+    .map((entry) => entry.rel);
+  if (!deepEqual(projectDecls, [PUBLIC_FORM_REL])) {
+    problems.push(`the public projection is declared in more than one file: ${projectDecls.join(", ")}`);
+  }
+  const projectUsers = allSrc()
+    .filter((entry) => importsProject(entry.code))
+    .map((entry) => entry.rel)
+    .sort();
+  const expectedUsers = [FORM_PREVIEW_REL, "src/app/api/careers/form/route.ts", "src/app/careers/apply/[id]/page.tsx"]
+    .filter((rel) => projectUsers.includes(rel));
+  if (projectUsers.length !== expectedUsers.length) {
+    problems.push(`the projection has readers it did not before: ${projectUsers.join(", ")}`);
+  }
+  const sentenceDecls = allSrc()
+    .filter((entry) => /function violationSentence\b/.test(entry.code))
+    .map((entry) => entry.rel);
+  if (!sentenceDecls.includes(PUBLIC_FORM_REL)) {
+    problems.push("the applicant route no longer owns the violation sentence");
+  }
+  if (sentenceDecls.includes(FORM_PREVIEW_REL)) {
+    problems.push("the preview wrote its own violation sentence instead of borrowing the applicant's");
+  }
+  // Two audiences already had a wording before this slice: the route that fell
+  // back, and the console that refused a publish. A third is a third answer.
+  const otherSentences = sentenceDecls.filter(
+    (rel) => rel !== PUBLIC_FORM_REL && rel !== FORM_ACTIONS_REL,
+  );
+  if (otherSentences.length > 0) {
+    problems.push(`a violation sentence is now written down somewhere new: ${otherSentences.join(", ")}`);
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 28. The copy door: a form duplicated as a fresh draft, and one name rule that
+//     every door writing a name answers to.
+//
+// Two facts a copy must never change, and one number no door may own alone. The
+// copy is a DRAFT that no opening asks — `is_global: false` and no row written to
+// `job_application_forms` — because a duplicate that arrives already hiring is a
+// second set of questions sent to every applicant who was not meant to see them.
+// Its fields are the source's rows rebuilt through `layoutRows`, the same builder
+// a save uses, so width, bindings and order carry instead of being re-derived.
+// The name ceiling lives in `formNaming.ts` and is cross-checked here against
+// 044's own `char_length(btrim(name))` CHECK: a TS guard that had been widened
+// past the database refuses nothing and stores nothing, which is the worst of
+// both. And the suffix survives the clamp — a copy named like its source is a
+// copy no recruiter can tell from the original.
+// ---------------------------------------------------------------------------
+const NAMING_REL = "src/modules/form-builder/domain/formNaming.ts";
+const GUIDE_REL = "src/modules/shell/domain/pageGuide.ts";
+const namingUrl = pathToFileURL(path.join(root, NAMING_REL)).href;
+
+/** The 044 name CHECK, read out of the migration rather than remembered. */
+const migrationNameCheck = () => {
+  const match = /check \(char_length\(btrim\(name\)\) between (\d+) and (\d+)\)/.exec(
+    currentSql(MIGRATION_044),
+  );
+  return match ? { min: Number(match[1]), max: Number(match[2]) } : null;
+};
+
+const check28 = async (naming) => {
+  const problems = [];
+
+  if (!existsSync(path.join(root, NAMING_REL))) {
+    return { pass: false, detail: `${NAMING_REL} does not exist` };
+  }
+  let rule = naming;
+  if (!rule) {
+    try {
+      rule = await import(namingUrl);
+    } catch (cause) {
+      return {
+        pass: false,
+        detail: `formNaming.ts is not loadable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    }
+  }
+
+  /* --- the naming rule answers to 044, and to nothing else ------------------ */
+
+  const ceiling = migrationNameCheck();
+  if (!ceiling) problems.push("044 no longer CHECKs a form name's length");
+  const min = ceiling ? ceiling.min : NaN;
+  const max = ceiling ? ceiling.max : NaN;
+  if (rule.FORM_NAME_MIN !== min) problems.push(`FORM_NAME_MIN is ${rule.FORM_NAME_MIN}, 044 says ${min}`);
+  if (rule.FORM_NAME_MAX !== max) problems.push(`FORM_NAME_MAX is ${rule.FORM_NAME_MAX}, 044 says ${max}`);
+  if (typeof rule.COPY_SUFFIX !== "string" || !rule.COPY_SUFFIX.startsWith(" ")) {
+    problems.push(`COPY_SUFFIX is ${JSON.stringify(rule.COPY_SUFFIX)} — a suffix that glues onto the name`);
+  }
+  // A pure rule: it judges a string, so it reaches for nothing.
+  if (/^\s*import\s/m.test(codeOf(NAMING_REL))) {
+    problems.push("the naming rule imports something, so it is no longer the one place the ceiling is written");
+  }
+
+  if (typeof rule.nameProblem !== "function" || typeof rule.copyName !== "function") {
+    problems.push("formNaming exports neither nameProblem nor copyName");
+    return verdict(problems);
+  }
+
+  // Exactly what the CHECK refuses, at both edges.
+  if (rule.nameProblem("x".repeat(min)) !== null) problems.push(`a ${min}-character name is the shortest legal one`);
+  if (rule.nameProblem("x".repeat(max)) !== null) problems.push(`a ${max}-character name is the longest legal one`);
+  if (rule.nameProblem("x".repeat(max + 1)) === null) problems.push(`a ${max + 1}-character name passes, and 044 would reject the insert`);
+  if (rule.nameProblem("x".repeat(min - 1)) === null) problems.push(`a ${min - 1}-character name passes, and 044 would reject the insert`);
+  if (rule.nameProblem("   ") === null) problems.push("a name of only spaces passes the guard");
+  if (typeof rule.nameProblem("x".repeat(max + 1)) !== "string") problems.push("a name the guard refuses has no sentence to print");
+
+  const copy = rule.copyName("Front Desk Coordinator");
+  if (copy !== `Front Desk Coordinator${rule.COPY_SUFFIX}`) {
+    problems.push(`copyName named the copy ${JSON.stringify(copy)}`);
+  }
+  if (rule.copyName("  padded  ") !== `padded${rule.COPY_SUFFIX}`) {
+    problems.push("copyName copied the padding as well as the name");
+  }
+  // The clamp keeps the suffix, and the composed name is one the guard accepts.
+  for (const length of [1, min, 30, max - rule.COPY_SUFFIX.length, max - 1, max, max + 40]) {
+    const out = rule.copyName("n".repeat(length));
+    if (out.length > max) problems.push(`a copy of a ${length}-character name is ${out.length} long — past 044's ceiling`);
+    if (!out.endsWith(rule.COPY_SUFFIX)) problems.push(`a copy of a ${length}-character name lost its suffix: ${JSON.stringify(out)}`);
+    if (rule.nameProblem(out) !== null) problems.push(`a copy of a ${length}-character name is a name the guard refuses: ${JSON.stringify(out)}`);
+  }
+
+  /* --- the write ------------------------------------------------------------- */
+
+  const actions = codeOf(FORM_ACTIONS_REL);
+  if (!actions.includes("export async function duplicateForm")) {
+    problems.push("formActions.ts writes no duplicateForm");
+    return verdict(problems);
+  }
+  // Up to the next exported action, so the pins are about the copy and not its neighbours.
+  const block = blockBetween(actions, "export async function duplicateForm", "export async function ");
+  if (!block) problems.push("duplicateForm is the last thing in formActions.ts, so its block cannot be read");
+
+  if (!block.includes("await formEditor()")) problems.push("the copy door runs without the editor's guard");
+  if (!block.includes("readForm(")) problems.push("the copy is made from a name read off the request, not off the row");
+  if (!block.includes("before.archived_at") || !block.includes("error: RETIRED")) {
+    problems.push("a retired form can be copied, so its questions can be put back in front of applicants");
+  }
+  if (!block.includes("UUID_PATTERN.test(formId)")) problems.push("a non-id formId reaches the database");
+  if (!block.includes("is_global: false")) {
+    problems.push("the copy inherits the source's scope, so a copy of a global form joins every application on the first save");
+  }
+  if (block.includes("job_application_forms")) {
+    problems.push("the copy is assigned to openings, so it asks questions nobody published it to ask");
+  }
+  if (!block.includes('.from("application_form_fields")')) problems.push("the copy carries no questions — only a name");
+  if (!block.includes("layoutRows(")) {
+    problems.push("the copy builds its own field rows instead of the builder a save uses");
+  }
+  if (!block.includes("nameProblem(")) problems.push("the composed name is not checked before the insert");
+  if (!block.includes("recordActivity")) problems.push("a copy leaves no trace in the trail");
+  if (!block.includes("form_duplicate")) problems.push("the trail does not say the form was copied");
+  if (!block.includes("revalidateForms()")) problems.push("the board keeps showing the old window after a copy");
+
+  /* --- one name rule, no second answer --------------------------------------- */
+
+  const createBlock = blockBetween(actions, "export async function createForm", "export async function ");
+  const metaBlock = blockBetween(actions, "export async function saveFormMeta", "export async function ");
+  if (!createBlock.includes("nameProblem(")) problems.push("createForm still judges the name by itself");
+  if (!metaBlock.includes("nameProblem(")) problems.push("saveFormMeta still judges the name by itself");
+  if (/name\.length\s*[<>]/.test(actions)) problems.push("a name length test is written inline in formActions.ts again");
+  const ceilingFiles = filesMentioning(`FORM_NAME_MAX`).filter(
+    (rel) => rel !== NAMING_REL && rel !== FORM_ACTIONS_REL,
+  );
+  if (ceilingFiles.length > 0) {
+    problems.push(`the name ceiling is read by something outside the two doors: ${ceilingFiles.join(", ")}`);
+  }
+
+  /* --- the door on the board -------------------------------------------------- */
+
+  const board = codeOf(FORMS_BOARD_REL);
+  if (!board.includes("duplicateForm")) problems.push("the board never calls the copy action");
+  if (!/onDuplicate\(form\)/.test(board)) problems.push("no row or card offers Copy");
+  const doors = (board.match(/onDuplicate\(form\)/g) ?? []).length;
+  if (doors !== 2) problems.push(`the Copy door is drawn ${doors} times; the board has two drawings of one set`);
+  if (!/write\(\s*form\.id,\s*"Copy"/.test(board)) {
+    problems.push("the copy does not run through the board's one write path, so a refusal has nowhere to print");
+  }
+  const listBlock = blockBetween(board, "function FormList", "function FormCard");
+  if (listBlock && !/canWrite && !retired && \(\s*<Button[\s\S]{0,400}?onDuplicate\(form\)/.test(listBlock)) {
+    problems.push("a retired form's row still offers Copy");
+  }
+  const cardBlock = blockBetween(board, "function FormCard", null);
+  if (cardBlock && !/canWrite && !retired && \(\s*<Button[\s\S]{0,400}?onDuplicate\(form\)/.test(cardBlock)) {
+    problems.push("a retired form's card still offers Copy");
+  }
+
+  /* --- the Guide says what the two pages now do ------------------------------- */
+
+  const guide = blockBetween(codeOf("src/modules/shell/domain/pageGuide.ts"), '"/forms": {', '"/questions": {');
+  if (!guide) {
+    problems.push("the /forms Guide entry cannot be read");
+  } else {
+    if (!/[Cc]opy/.test(guide)) problems.push("the Guide does not tell a recruiter a form can be copied");
+    if (!/preview/i.test(guide)) problems.push("the Guide does not tell a recruiter the walk can be previewed as an applicant");
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
+// 29. Usage: a bounded tally that says its ceiling, the 045 view it prefers
+//     when that view exists, and one form as a filter on the two form reports.
+//
+// A usage figure is the one number on the board a recruiter will quote back, so
+// it may never be a silent guess. The tally counts the applications whose
+// snapshot actually named the form — not the openings it is assigned to, which
+// is a plan and not a use — over a bounded newest-first read, and the surface
+// says "newest N" whenever that ceiling was reached. 045 is authored here and
+// preferred by the read once it is applied, because the view counts every
+// application instead of the newest N; until then the bounded read is the
+// honest answer, and the board says which one it got.
+// ---------------------------------------------------------------------------
+const USAGE_REL = "src/modules/form-builder/domain/formUsage.ts";
+const MIGRATION_045 = "db/migrations/045_form_usage.sql";
+const usageUrl = pathToFileURL(path.join(root, USAGE_REL)).href;
+const REPORTS_PAGE_REL = "src/app/(admin)/reports/page.tsx";
+const REPORTS_VIEW_REL = "src/app/(admin)/reports/ReportsView.tsx";
+const REPORTS_ACTIONS_REL = "src/app/(admin)/reports/actions.ts";
+const REPORT_READER_REL = "src/modules/analytics/infrastructure/reportReader.ts";
+const EXPORT_ROUTE_REL = "src/app/api/reports/export/route.ts";
+// The set lives beside documents.ts rather than in it: the reports screen is a
+// client component and documents.ts is `server-only`. The assertion is the same —
+// the two form reports are named in one place and the screen consults that set.
+const REPORT_SCOPE_REL = "src/modules/analytics/domain/reportScope.ts";
+
+const check29 = async (usage) => {
+  const problems = [];
+
+  if (!existsSync(path.join(root, USAGE_REL))) {
+    return { pass: false, detail: `${USAGE_REL} does not exist` };
+  }
+  let tally = usage;
+  if (!tally) {
+    try {
+      tally = await import(usageUrl);
+    } catch (cause) {
+      return {
+        pass: false,
+        detail: `formUsage.ts is not loadable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    }
+  }
+
+  if (/^\s*import\s/m.test(codeOf(USAGE_REL))) {
+    problems.push("the usage tally imports something; it is a count over rows a caller read, not a read of its own");
+  }
+
+  /* --- the count, and the ceiling said out loud ----------------------------- */
+
+  const rows = [
+    { formIds: ["a"], createdAt: "2026-10-01T10:00:00Z" },
+    { formIds: ["a", "b"], createdAt: "2026-10-03T10:00:00Z" },
+    { formIds: ["a", "a"], createdAt: "2026-10-02T10:00:00Z" },
+    { formIds: [], createdAt: "2026-10-04T10:00:00Z" },
+    { formIds: ["b"], createdAt: null },
+  ];
+  if (typeof tally.tallyFormUsage !== "function") {
+    problems.push("formUsage exports no tallyFormUsage");
+  } else {
+    const out = tally.tallyFormUsage(rows, 100);
+    if (out.read !== rows.length) problems.push(`the read counted ${out.read} rows, not ${rows.length}`);
+    if (out.capped) problems.push("a read well under its ceiling still says it was capped");
+    if (out.byForm.a?.applications !== 3) {
+      problems.push(`form a counted ${out.byForm.a?.applications} applications; three named it, and two names in one snapshot are one application`);
+    }
+    if (out.byForm.b?.applications !== 2) {
+      problems.push(`form b counted ${out.byForm.b?.applications} applications, not 2`);
+    }
+    if (out.byForm.a?.latestAt !== "2026-10-03T10:00:00Z") {
+      problems.push(`form a's latest application is ${JSON.stringify(out.byForm.a?.latestAt)}, not the newest one that named it`);
+    }
+    if (out.byForm.a?.applications !== 3) {
+      problems.push("the application filed with no snapshot is counted against some form");
+    }
+    const atCeiling = tally.tallyFormUsage(rows.slice(0, 5), 5);
+    if (!atCeiling.capped) problems.push("a read exactly at its ceiling does not say so");
+    const under = tally.tallyFormUsage(rows.slice(0, 4), 5);
+    if (under.capped) problems.push("a read below its ceiling says it was capped");
+  }
+  if (!Number.isInteger(tally.USAGE_APPLICATIONS) || tally.USAGE_APPLICATIONS <= 0) {
+    problems.push(`USAGE_APPLICATIONS is ${JSON.stringify(tally.USAGE_APPLICATIONS)}, so the read has no ceiling`);
+  }
+
+  /* --- the read prefers 045, and falls back to the newest N ----------------- */
+
+  const actions = codeOf(FORM_ACTIONS_REL);
+  const usageBlock = blockBetween(actions, "async function readFormUsage", "export async function");
+  if (!usageBlock) {
+    problems.push("formActions.ts has no readFormUsage, so no page reads a usage figure");
+  } else {
+    if (!usageBlock.includes('.from("form_usage")')) {
+      problems.push("the read never asks the 045 view, so an applied migration would not be used");
+    }
+    if (!usageBlock.includes("isMissingSchemaError(")) {
+      problems.push("the view read is not guarded by the missing-schema check, so an unapplied 045 looks like a failed read");
+    }
+    if (!usageBlock.includes('.from("applications")')) {
+      problems.push("the fallback never reads an application, so there is nothing to count");
+    }
+    if (!usageBlock.includes('.order("created_at", { ascending: false })')) {
+      problems.push("the fallback is not newest-first, so its ceiling would drop the applications a recruiter asked about");
+    }
+    if (!/\.limit\(USAGE_APPLICATIONS\)/.test(usageBlock)) {
+      problems.push("the fallback read carries no named ceiling");
+    }
+    if (!usageBlock.includes("parseSnapshot(")) {
+      problems.push("the fallback does not read the snapshot, so a form is counted by something other than what the applicant filed");
+    }
+    if (!usageBlock.includes("tallyFormUsage(")) {
+      problems.push("the fallback counts rows here instead of in the one tally");
+    }
+    if (!usageBlock.includes('basis: "view"') || !usageBlock.includes('basis: "read"')) {
+      problems.push("the read does not say whether the figures are the view's or the bounded read's");
+    }
+  }
+
+  const listBlock = blockBetween(actions, "export async function listForms", "export async function formEditorData");
+  if (!listBlock.includes("readFormUsage(")) problems.push("the board's read draws no usage figure");
+  if (!/usage,/.test(listBlock) && !/usage: usage/.test(listBlock)) problems.push("the board's data carries no usage");
+  const editorBlock = blockBetween(actions, "export async function formEditorData", "export async function ");
+  if (!editorBlock.includes("readFormUsage(")) problems.push("one form's page draws no usage figure");
+
+  /* --- the board says where the figure came from ---------------------------- */
+
+  const board = codeOf(FORMS_BOARD_REL);
+  if (!board.includes("data.usage")) problems.push("the board never draws the usage it read");
+  if (!board.includes("formUsageHref(")) problems.push("no usage figure links to the report behind it");
+  if (!/usage view \(migration 045\)/.test(board)) problems.push("the board does not say when its counts came from 045");
+  if (!/newest/i.test(board)) problems.push("the board does not say the bounded read has a newest-N ceiling");
+  if (!/floor, not a total/.test(board)) problems.push("a capped figure is printed as a total");
+  if (!board.includes("usageNote")) problems.push("a failed usage read has nowhere to say so");
+
+  const editor = codeOf(FORM_EDITOR_REL);
+  if (!editor.includes("data.usage")) problems.push("one form's page never draws its usage");
+  if (!editor.includes("formUsageHref(")) problems.push("one form's page has no link to its report");
+
+  const guide = blockBetween(codeOf(GUIDE_REL), '"/forms": {', '"/questions": {');
+  if (!/bounded count/i.test(guide ?? "")) problems.push("the Guide does not say the usage figures are a bounded count");
+
+  /* --- 045: authored, exact, and owner-gated -------------------------------- */
+
+  if (!existsSync(path.join(root, MIGRATION_045))) {
+    problems.push(`${MIGRATION_045} does not exist`);
+  } else {
+    if (!/STATUS: authored here, NOT applied/.test(rawOf(MIGRATION_045))) {
+      problems.push("045 does not say it is authored and unapplied");
+    }
+    const sql = currentSql(MIGRATION_045);
+    if (!sql.includes("create or replace view public.form_usage")) problems.push("045 defines no form_usage view");
+    if (!/security_invoker\s*=\s*true/.test(sql)) problems.push("the view runs with its owner's rights, so it would count past the caller's row policies");
+    if (!sql.includes("jsonb_array_elements")) problems.push("the view does not open the snapshot's forms array");
+    if (!/entry ->> 'id' = f\.id::text/.test(sql)) problems.push("the view does not match a form by the id its snapshot recorded");
+    if (!sql.includes("grant select on table public.form_usage to authenticated")) problems.push("authenticated cannot read the view");
+    if (!sql.includes("revoke all on table public.form_usage from anon")) problems.push("the view is open to anon");
+    if (!sql.includes("notify pgrst, 'reload schema'")) problems.push("PostgREST is not told the view exists");
+  }
+
+  /* --- the form filter on the two form reports ------------------------------ */
+
+  const scope = codeOf(REPORT_SCOPE_REL);
+  if (!/export const FORM_REPORTS[^=]*=\s*new Set\(\[[^\]]*"application_forms"[^\]]*"form_questions"[^\]]*\]\)/.test(scope)) {
+    problems.push("reportScope.ts does not name the two reports a form filter may narrow");
+  }
+
+  const page = codeOf(REPORTS_PAGE_REL);
+  if (!/searchParams/.test(page)) problems.push("/reports ignores the address, so a deep link lands on the default tab");
+  if (!/pick\("form"\)/.test(page)) problems.push("/reports never reads the form in the address");
+
+  const view = codeOf(REPORTS_VIEW_REL);
+  if (!view.includes("FORM_REPORTS.has")) problems.push("the reports view applies a form filter to reports that do not carry one");
+  if (!/getRowReport\([^)]*form/i.test(view)) problems.push("the reports view never hands the form to the read");
+  if (!view.includes("&form=")) problems.push("a download started from a filtered report drops the filter");
+  if (!view.includes("formName")) problems.push("a filtered report does not print which form it is filtered to");
+
+  const action = codeOf(REPORTS_ACTIONS_REL);
+  // The signature wraps one parameter per line, so the newline between the
+  // opening parenthesis and the form id is whitespace, not a gap in the claim.
+  if (!/export async function getRowReport\([\s\S]{0,80}formId/.test(action)) {
+    problems.push("the reports action cannot be asked for one form's applications");
+  }
+  if (!action.includes("{ formId: form }")) problems.push("the reports action drops the form before the read");
+
+  const reader = codeOf(REPORT_READER_REL);
+  // The filter rides in a named object, so the claim is two halves: the type
+  // names a form id, and the read takes that type.
+  if (!/export interface RowReportFilters[\s\S]{0,120}formId/.test(reader)) {
+    problems.push("readRowReport's filters carry no form, so the screen and the file cannot both be narrowed");
+  }
+  if (!/export async function readRowReport\([\s\S]{0,160}RowReportFilters/.test(reader)) {
+    problems.push("readRowReport takes no form, so the screen and the file cannot both be narrowed");
+  }
+  if (!/snapshot\?\.forms\.some\(\(form\) => form\.id === formId\)/.test(reader)) {
+    problems.push("the form filter does not ask the snapshot, so it filters by something other than what was filed");
+  }
+  if (!reader.includes("formName")) problems.push("the read never returns the form's name, so the scope line cannot say it");
+  if (!/buildReportDocument\([\s\S]{0,200}formId/.test(reader)) {
+    problems.push("a report download cannot be narrowed to one form");
+  }
+
+  const route = codeOf(EXPORT_ROUTE_REL);
+  if (!route.includes('params.get("form")')) problems.push("the export route ignores the form in its address");
+  if (!/buildReportDocument\(report, window, user\.fullName, /.test(route)) {
+    problems.push("the export route drops the form before building the file");
+  }
+
+  return verdict(problems);
+};
+
+// ---------------------------------------------------------------------------
 // The checks, in the spec's own numbering.
 // ---------------------------------------------------------------------------
 const CHECKS = [
@@ -2357,6 +3486,11 @@ const CHECKS = [
   ["22. cvAnswers: the ask list a CV is read against, and the answers it may leave", check22],
   ["23. The CV autofill door, the model read behind it, and the wizard that keeps its blanks", check23],
   ["24. The filed answers read back on the candidate's own row", check24],
+  ["25. The forms board: two drawings of one set, the whole view in the URL", check25],
+  ["26. The step strip is the walk the applicant gets, and Ctrl+S saves it", check26],
+  ["27. The staff preview composes the applicant's walk, from a draft, through the one projection", check27],
+  ["28. The copy door: a fresh unassigned draft, one name rule answering to 044", check28],
+  ["29. Usage: a bounded tally that says its ceiling, the 045 view, and one form on the form reports", check29],
 ];
 
 const ENTRY = Object.fromEntries(CHECKS.map(([name, fn], index) => [index + 1, { name, fn }]));
@@ -2844,8 +3978,458 @@ await mutation(
   () => checkIsRed(24, async () => check24())
 );
 
+// 36. The heading row is counted as a question of its own step → checks 25 and
+//     26 red. The strip would print "4 questions" for three, and the resolved
+//     layout's steps would no longer hold exactly its fields.
+await mutation(
+  "36. A heading also sits among its own step's questions → check 26 red",
+  RESOLVE_REL,
+  "      steps.push(current);\n      continue;",
+  "      steps.push(current);",
+  () => checkIsRed(26, async () => check26(es, await mutated(resolveUrl)))
+);
+
+// 37. A retired form counted by the status `retireForm` left alone → check 25 red.
+//     The card leaves the retired column and lands back in the draft one.
+await mutation(
+  "37. The retired column is decided by the status, not the date → check 25 red",
+  FORM_BOARD_REL,
+  '  if (row.archivedAt) return "retired";\n  return row.status === "PUBLISHED" ? "published" : "draft";',
+  '  return row.status === "PUBLISHED" ? "published" : "draft";',
+  async () => checkIsRed(25, async () => check25(await mutated(boardUrl)))
+);
+
+// 38. The href writes the default rail → check 25 red. `/forms` would come back
+//     `/forms?state=all`, so the short link stops being the board.
+await mutation(
+  "38. A default value is written into every address → check 25 red",
+  FORM_BOARD_REL,
+  '  if (view.state !== DEFAULT_VIEW.state) params.set("state", view.state);',
+  '  params.set("state", view.state);',
+  async () => checkIsRed(25, async () => check25(await mutated(boardUrl)))
+);
+
+// 39. `roles` counts openings without putting a global form first → check 25 red.
+await mutation(
+  "39. The roles order counts openings, so a form on every desk lands mid-list → check 25 red",
+  FORM_BOARD_REL,
+  "      (b.isGlobal ? Number.MAX_SAFE_INTEGER : b.assignedJobs.length) -\n        (a.isGlobal ? Number.MAX_SAFE_INTEGER : a.assignedJobs.length) ||",
+  "      b.assignedJobs.length - a.assignedJobs.length ||",
+  async () => checkIsRed(25, async () => check25(await mutated(boardUrl)))
+);
+
+// 40. The rails count what the current view left standing → check 25 red. This is
+//     the mistake the count-beside-every-rail rule exists to prevent.
+await mutation(
+  "40. A rail counts only the rows the view still shows → check 25 red",
+  FORMS_BOARD_REL,
+  "  const counts = countBoardStates(data.forms);",
+  "  const counts = countBoardStates(rows);",
+  () => checkIsRed(25, async () => check25())
+);
+
+// 41. The list surface becomes unreachable → check 25 red. The rows are still
+//     filtered and ordered; only the drawing is gone.
+await mutation(
+  "41. The address says `list` but only the Kanban can ever be drawn → check 25 red",
+  FORMS_BOARD_REL,
+  'view.surface === "list" ? (',
+  'view.surface === "grid" ? (',
+  () => checkIsRed(25, async () => check25())
+);
+
+// 42. A second label table appears beside the registry → check 26 red. The picker
+//     and the strip would then disagree about what `health` is called, with
+//     nothing in either file saying which one wins.
+await mutationEdits(
+  "42. The group labels are copied into the picker instead of read from the registry → check 26 red",
+  BINDING_PICKER_REL,
+  [
+    [
+      "const TIER_WORDS: Record<PersonFieldTier, string> = {",
+      "const GROUP_LABELS: Record<PersonFieldGroup, string> = PERSON_GROUP_LABELS;\nconst TIER_WORDS: Record<PersonFieldTier, string> = {",
+    ],
+  ],
+  () => checkIsRed(26, async () => check26())
+);
+
+// 43. The strip stops naming itself a walk → check 26 red. The chips still draw,
+//     and a screen reader is left with a list of buttons and no order.
+await mutation(
+  "43. The step strip is no longer announced as the applicant's walk → check 26 red",
+  FORM_EDITOR_REL,
+  'aria-label="The steps the applicant walks, in order"',
+  'aria-label="Steps"',
+  () => checkIsRed(26, async () => check26())
+);
+
+// 44. The shortcut listens for a different letter → check 26 red. Saving is still
+//     wired; the key the author was told about does nothing.
+await mutation(
+  "44. Ctrl+S no longer reaches the save → check 26 red",
+  FORM_EDITOR_REL,
+  'event.key.toLowerCase() === "s"',
+  'event.key.toLowerCase() === "x"',
+  () => checkIsRed(26, async () => check26())
+);
+
+// 45. The preview exemption admits a retired form → check 27 red. Retirement is
+//     not a publishing question: an applicant is never asked a retired form's
+//     questions, so a preview that shows them is a walk no one takes.
+await mutation(
+  "45. A retired form is composed into the preview walk → check 27 red",
+  RESOLVE_REL,
+  "          (form) => form.id === input.includeFormId && form.archivedAt === null,",
+  "          (form) => form.id === input.includeFormId,",
+  () => checkIsRed(27, async () => check27(await mutated(resolveUrl)))
+);
+
+// 46. The previewed draft is parked at the end of the assigned run → check 27
+//     red. It would then sit behind forms the opening really assigns, which is
+//     not the walk the composition tab claims.
+await mutation(
+  "46. The previewed draft lands after the assigned forms → check 27 red",
+  RESOLVE_REL,
+  "const FIRST_PREVIEWED_SLOT = -1;",
+  "const FIRST_PREVIEWED_SLOT = 9_999;",
+  () => checkIsRed(27, async () => check27(await mutated(resolveUrl)))
+);
+
+// 47. The double-join guard dropped → check 27 red. A form both assigned and
+//     previewed would ask its questions twice in one application.
+await mutation(
+  "47. A form both assigned and previewed is asked twice → check 27 red",
+  RESOLVE_REL,
+  "    seenAssigned.add(preview.id);\n",
+  "",
+  () => checkIsRed(27, async () => check27(await mutated(resolveUrl)))
+);
+
+// 48. A previewed global pushed into the assigned run → check 27 red. It belongs
+//     among the globals by its own `global_position`, not at the head of the
+//     forms one opening assigns.
+await mutation(
+  "48. A previewed global form is placed with the assigned forms → check 27 red",
+  RESOLVE_REL,
+  "  if (preview !== undefined && !preview.isGlobal) {",
+  "  if (preview !== undefined) {",
+  () => checkIsRed(27, async () => check27(await mutated(resolveUrl)))
+);
+
+// 49. The staff read copies the applicant's projection → check 27 red. A second
+//     projection is a second security boundary, and the panel would drift from
+//     the page it claims to preview.
+await mutationEdits(
+  "49. The preview builds its own projection instead of the applicant's → check 27 red",
+  FORM_PREVIEW_REL,
+  [
+    ["  project,\n", ""],
+    ["    form: project(layout),", "    form: layout.asPublicForm,"],
+  ],
+  () => checkIsRed(27, async () => check27())
+);
+
+// 50. The projection gains the registry binding → check 27 red. `system_key`
+//     tells an applicant which spine column their answer lands in; it has never
+//     been in the browser's shape, and the preview renders that same shape.
+await mutation(
+  "50. The projected field carries its system binding to the browser → check 27 red",
+  PUBLIC_FORM_REL,
+  "    width: widthOf(field),\n  };",
+  "    width: widthOf(field),\n    systemKey: field.systemKey,\n  };",
+  () => checkIsRed(27, async () => check27(rl, await mutated(publicUrl)))
+);
+
+// 51. The panel grows a submit handler → check 27 red. The preview is a picture;
+//     a panel that can file an application is a second apply door nobody audited.
+await mutation(
+  "51. The preview panel takes an onSubmit → check 27 red",
+  FORM_PREVIEW_UI_REL,
+  '          <div role="tabpanel"',
+  '          <div role="tabpanel" onSubmit={() => undefined}',
+  () => checkIsRed(27, async () => check27())
+);
+
+// 52. The preview read orders its own tabs → check 27 red. The read that already
+//     answers the tab order is the one the console uses; a second sort in the
+//     preview is a second answer.
+await mutation(
+  "52. The preview tab list sorts the openings itself → check 27 red",
+  FORM_PREVIEW_REL,
+  "    for (const opening of openingRows) {",
+  "    openingRows.sort((a, b) => a.id.localeCompare(b.id));\n    for (const opening of openingRows) {",
+  () => checkIsRed(27, async () => check27())
+);
+
+// 53. The inspector mints its label id per render again → check 27 red. This is
+//     the bug the live pass found: an id from `crypto.randomUUID()` is a
+//     different string in the server render and in the hydration, so every form
+//     page opened with a hydration mismatch before it painted the panel.
+await mutation(
+  "53. The inspector mints its own DOM id instead of asking React for one → check 27 red",
+  INSPECTOR_REL,
+  "  const htmlId = useId();",
+  "  const htmlId = globalThis.crypto?.randomUUID?.() ?? \"row\";",
+  () => checkIsRed(27, async () => check27())
+);
+
+// 54. The copy inherits the source's scope → check 28 red. A copy of a global
+//     form that stays global joins every application the moment it is saved,
+//     before anyone has read a word of it.
+await mutation(
+  "54. The copy keeps the source's scope → check 28 red",
+  FORM_ACTIONS_REL,
+  "      description: before.description,\n      is_global: false,",
+  "      description: before.description,\n      is_global: before.is_global,",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 55. A retired form can be copied → check 28 red. Retiring is how a form's
+//     questions leave the list; a copy puts them back without a publish.
+await mutation(
+  "55. A retired form's questions come back through the copy door → check 28 red",
+  FORM_ACTIONS_REL,
+  "  if (before.archived_at) return { ok: false, error: RETIRED };\n",
+  "",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 56. The copy keeps its openings → check 28 red. An assignment chosen for the
+//     original is not a decision anyone made about the copy.
+await mutation(
+  "56. The copy is assigned to the source's openings → check 28 red",
+  FORM_ACTIONS_REL,
+  "  let incomplete: string | null = null;",
+  '  await client.from("job_application_forms").insert({ form_id: copy.id });\n  let incomplete: string | null = null;',
+  () => checkIsRed(28, async () => check28())
+);
+
+// 57. The copy builds field rows itself → check 28 red. `layoutRows` is where a
+//     save re-indexes position and carries the width; a hand-built set loses both.
+await mutation(
+  "57. The copy writes its own field rows instead of the save's builder → check 28 red",
+  FORM_ACTIONS_REL,
+  "      .insert(layoutRows(copy.id, drafts));",
+  "      .insert(drafts.map((draft) => ({ ...draft, form_id: copy.id })));",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 58. The ceiling drifts from 044 → check 28 red. The guard is the only place
+//     the length is read before the insert, so a wrong number is a 500 at best.
+await mutation(
+  "58. The name ceiling stops answering to 044 → check 28 red",
+  NAMING_REL,
+  "export const FORM_NAME_MAX = 120;",
+  "export const FORM_NAME_MAX = 160;",
+  () => checkIsRed(28, async () => check28(await mutated(namingUrl)))
+);
+
+// 59. The suffix glues onto the name → check 28 red. "Coordinator(copy)" is a
+//     name nobody typed, and a recruiter scanning the board reads it as one word.
+await mutation(
+  "59. The copy suffix loses its space → check 28 red",
+  NAMING_REL,
+  'export const COPY_SUFFIX = " (copy)";',
+  'export const COPY_SUFFIX = "(copy)";',
+  () => checkIsRed(28, async () => check28(await mutated(namingUrl)))
+);
+
+// 60. A retired card offers Copy → check 28 red. The board's two drawings must
+//     offer the same doors; a refusal the door knows about printed behind a
+//     button that should not be there is a dead end.
+await mutation(
+  "60. A retired form's card offers Copy → check 28 red",
+  FORMS_BOARD_REL,
+  "        {canWrite && !retired && (\n          <Button\n            size=\"sm\"\n            variant=\"ghost\"\n            disabled={pending}\n            onClick={() => onDuplicate(form)}",
+  "        {canWrite && (\n          <Button\n            size=\"sm\"\n            variant=\"ghost\"\n            disabled={pending}\n            onClick={() => onDuplicate(form)}",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 61. The copy skips the board's write path → check 28 red. `write` is what
+//     prints the refusal and spins the card; a call beside it reports nothing.
+await mutation(
+  "61. The Copy door calls the action without the board's write path → check 28 red",
+  FORMS_BOARD_REL,
+  '  const duplicate = (form: FormSummary) =>\n    write(\n      form.id,\n      "Copy",\n      () => duplicateForm(form.id),\n      (result) => result.note ?? `Copied “${form.name}” as a draft.`,\n    );',
+  "  const duplicate = (form: FormSummary) => {\n    void duplicateForm(form.id);\n  };",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 62. The Guide forgets the copy door → check 28 red. The manual is the only
+//     place a recruiter learns a variant starts from an existing form.
+await mutation(
+  "62. The Guide stops describing Copy → check 28 red",
+  GUIDE_REL,
+  '      "Copy makes a new draft out of any form that is not retired: the same questions, the same description, a name ending in (copy), and no opening assigned. It is the door for a variant — rewrite it on its own page, then publish and assign it — so nothing it holds reaches an applicant before you do. Retired forms offer no Copy, because their questions were taken off the list on purpose; copy the form you still use, or write a new one.",\n',
+  "",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 63. The Guide forgets the preview → check 28 red. A panel nobody is told
+//     about is a panel nobody opens.
+await mutation(
+  "63. The Guide stops describing the applicant's-eye preview → check 28 red",
+  GUIDE_REL,
+  "      \"Under the canvas, a preview of the applicant's own walk: one Composition tab holding every global form plus this one, and a tab for each opening this form is assigned to. Each tab lists the steps and questions in order, with the required marks, the file sizes and the accepted formats the apply page would render — it is the same projection the public page receives, read-only, with nothing that could file an application.\",\n",
+  "",
+  () => checkIsRed(28, async () => check28())
+);
+
+// 64. One application counts twice → check 29 red. A malformed snapshot that
+//     names the same form twice is still one application; a recruiter quoting
+//     the figure would be quoting a row, not a person.
+await mutation(
+  "64. A form named twice in one snapshot is counted twice → check 29 red",
+  USAGE_REL,
+  "    for (const formId of new Set(row.formIds)) {",
+  "    for (const formId of row.formIds) {",
+  () => checkIsRed(29, async () => check29(await mutated(usageUrl)))
+);
+
+// 65. The ceiling is read as one past the bound → check 29 red. A read of
+//     exactly `limit` rows cannot know a limit + 1th existed, so calling it
+//     uncapped prints a floor as a total.
+await mutation(
+  "65. A read exactly at its ceiling stops saying it is capped → check 29 red",
+  USAGE_REL,
+  "  return { byForm, read: rows.length, capped: rows.length >= limit };",
+  "  return { byForm, read: rows.length, capped: rows.length > limit };",
+  () => checkIsRed(29, async () => check29(await mutated(usageUrl)))
+);
+
+// 66. The fallback reads oldest-first → check 29 red. The ceiling then keeps the
+//     applications nobody is asking about and drops the newest ones.
+await mutation(
+  "66. The bounded read is oldest-first, so its ceiling keeps the wrong rows → check 29 red",
+  FORM_ACTIONS_REL,
+  '.order("created_at", { ascending: false })',
+  '.order("created_at", { ascending: true })',
+  () => checkIsRed(29, async () => check29())
+);
+
+// 67. The fallback stops reading snapshots → check 29 red. Counting nothing is
+//     not the same as counting what the applicant filed.
+await mutation(
+  "67. The fallback counts no snapshot at all → check 29 red",
+  FORM_ACTIONS_REL,
+  "    formIds: parseSnapshot(row.form_answers)?.forms.map((form) => form.id) ?? [],",
+  "    formIds: [],",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 68. The board stops saying the read has a newest ceiling → check 29 red. The
+//     window is the whole honesty of the bounded figure.
+await mutation(
+  "68. The board stops naming its newest ceiling → check 29 red",
+  FORMS_BOARD_REL,
+  "counted over the newest",
+  "counted over the recent",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 69. A capped figure is printed as a total → check 29 red. "floor, not a
+//     total" is the sentence a recruiter must quote alongside the number.
+await mutation(
+  "69. A capped figure is printed as a total → check 29 red",
+  FORMS_BOARD_REL,
+  "this is a floor, not a total.",
+  "this is the total.",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 70. A failed usage read has nowhere to say so → check 29 red. The board still
+//     draws, but silence would read as zero applications.
+await mutation(
+  "70. The board swallows a failed usage read → check 29 red",
+  FORMS_BOARD_REL,
+  "        ) : data.usageNote ? (\n          <span className=\"block\">{data.usageNote}</span>\n        ) : null}",
+  "        ) : null}",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 71. A download drops the form filter → check 29 red. The screen would say
+//     "narrowed to Careers" while the file carried every form.
+await mutation(
+  "71. A download started from a narrowed report drops the form → check 29 red",
+  REPORTS_VIEW_REL,
+  "&form=",
+  "&f=",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 72. The reports screen never hands the form to the read → check 29 red. The
+//     chip would name a form while the rows below came from every form.
+await mutation(
+  "72. The reports view stops passing the form to the read → check 29 red",
+  REPORTS_VIEW_REL,
+  "await getRowReport(report, window, nextForm);",
+  "await getRowReport(report, window, null);",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 73. The export route drops the form → check 29 red. A file is where a filter
+//     quietly disappearing does the most damage.
+await mutation(
+  "73. The export route drops the form → check 29 red",
+  EXPORT_ROUTE_REL,
+  'buildReportDocument(report, window, user.fullName, safeFormId(params.get("form")));',
+  "buildReportDocument(report, window, user.fullName, null);",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 74. The reports action drops the form before the read → check 29 red. The
+//     uuid check is the door; an empty filter is the widening behind it.
+await mutation(
+  "74. The reports action drops the form before the read → check 29 red",
+  REPORTS_ACTIONS_REL,
+  "{ formId: form }",
+  "{}",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 75. The filter asks the wrong question of the snapshot → check 29 red. A
+//     narrowed report must list the applications that named the form, not the
+//     ones that did not.
+await mutation(
+  "75. The form filter inverts itself → check 29 red",
+  REPORT_READER_REL,
+  "snapshot?.forms.some((form) => form.id === formId) === true",
+  "snapshot?.forms.some((form) => form.id !== formId) === true",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 76. The Guide forgets the bounded count → check 29 red. The manual is where
+//     a recruiter learns the figure has a window and a basis.
+await mutation(
+  "76. The Guide stops calling the usage figure a bounded count → check 29 red",
+  GUIDE_REL,
+  '      "Each form\'s Applications figure is a bounded count, not a lifetime total: it counts the applications whose filed snapshot named that form — a use, never the openings it is planned for — over the newest window the board could read. The footer says which basis it came from: with migration 045 applied the usage view counts every application, and without it the figure comes from the newest 500 applications and reads floor, not a total once it stops at that bound. The link beside the figure opens those applications on /reports, narrowed to this form, and the report says so at the top.",\n',
+  "",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 77. The view runs as its owner → check 29 red. security_invoker is the one
+//     clause that keeps the count inside the caller's RLS.
+await mutation(
+  "77. The usage view loses security_invoker → check 29 red",
+  MIGRATION_045,
+  "with (security_invoker = true)",
+  "with (security_invoker = false)",
+  () => checkIsRed(29, async () => check29())
+);
+
+// 78. The view is left open to anon → check 29 red. A usage count over
+//     candidate records is staff data, not public data.
+await mutation(
+  "78. The usage view stays readable by anon → check 29 red",
+  MIGRATION_045,
+  "revoke all on table public.form_usage from anon;",
+  "grant select on table public.form_usage to anon;",
+  () => checkIsRed(29, async () => check29())
+);
+
 // ---------------------------------------------------------------------------
-// Run the twenty-four checks
+// Run the checks
 // ---------------------------------------------------------------------------
 for (const [name, fn] of CHECKS) {
   results.push({ name, ...(await safe(fn)) });

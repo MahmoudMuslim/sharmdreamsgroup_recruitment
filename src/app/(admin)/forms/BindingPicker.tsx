@@ -2,6 +2,7 @@
 
 import {
   PERSON_FIELDS,
+  PERSON_GROUP_LABELS,
   personField,
   type PersonField,
   type PersonFieldGroup,
@@ -32,23 +33,6 @@ const BARE_KEYS: readonly { key: keyof typeof PINNED_TYPE; label: string; note: 
   { key: "linkedin", label: "LinkedIn link", note: "shown on the application" },
   { key: "photo", label: "Candidate's photo", note: "held apart from every AI prompt" },
 ];
-
-const GROUP_LABELS: Record<PersonFieldGroup, string> = {
-  identity: "Identity",
-  contact: "Contact",
-  work_history: "Work history",
-  education: "Education",
-  languages: "Languages",
-  skills: "Skills & certifications",
-  photo: "Photograph",
-  marital_status: "Marital status",
-  family_details: "Family details",
-  dependants: "Dependants",
-  emergency_contacts: "Emergency contacts",
-  health: "Health and disability",
-  housing: "Housing and commute",
-  extraction: "CV extraction",
-};
 
 const TIER_WORDS: Record<PersonFieldTier, string> = {
   1: "Tier 1 · operational",
@@ -150,7 +134,7 @@ export function BindingPicker({
         </optgroup>
 
         {groups.map(({ group, fields }) => (
-          <optgroup key={group} label={GROUP_LABELS[group]}>
+          <optgroup key={group} label={PERSON_GROUP_LABELS[group]}>
             {fields.map((personFieldEntry) => {
               const reason = reasonForPerson(personFieldEntry, field.type);
               const listNote =
@@ -201,7 +185,7 @@ export function BindingPicker({
             >
               {TIER_WORDS[selectedRegistry.tier]}
             </span>
-            <span className="text-[10px] text-brand-ink/45">{GROUP_LABELS[selectedRegistry.group]}</span>
+            <span className="text-[10px] text-brand-ink/45">{PERSON_GROUP_LABELS[selectedRegistry.group]}</span>
             {selectedRegistry.input === "list" && (
               <span className="rounded bg-brand-sand px-1.5 py-0.5 text-[9px] font-semibold text-brand-ink/60">
                 appends a row per choice

@@ -32,6 +32,34 @@ export type PersonFieldGroup =
 
 export type PersonFieldTier = 1 | 2 | 3;
 
+/**
+ * The staff-facing name of each group: the words a recruiter reads in the
+ * binding picker's optgroups and on the form editor's step strip. One table
+ * beside the union it names, because a second is how those two surfaces start
+ * disagreeing about what `health` is called. What the candidate is told is in
+ * `person-notice.ts`, and those words are deliberately not these — and so are
+ * the two other tables that name a group on purpose for a different reader: the
+ * consent box a candidate ticks at the record door, which says `Health
+ * (restricted)`, and the analytics report's column heading, which says `Health &
+ * accessibility`. Neither is a copy of these words waiting to be merged.
+ */
+export const PERSON_GROUP_LABELS: Record<PersonFieldGroup, string> = {
+  identity: "Identity",
+  contact: "Contact",
+  work_history: "Work history",
+  education: "Education",
+  languages: "Languages",
+  skills: "Skills & certifications",
+  photo: "Photograph",
+  marital_status: "Marital status",
+  family_details: "Family details",
+  dependants: "Dependants",
+  emergency_contacts: "Emergency contacts",
+  health: "Health and disability",
+  housing: "Housing and commute",
+  extraction: "CV extraction",
+};
+
 export type PersonCollection =
   | "education" | "employment" | "languages" | "skills" | "certifications"
   | "dependants" | "emergency_contacts";

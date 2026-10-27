@@ -27,8 +27,10 @@ export interface RowReportPreview {
   /** Rows the read actually returned, so the page can say what the preview left out. */
   totalRows?: number;
   limitations?: string[];
-  /** What the list is cut by, e.g. "90 days". */
+  /** What the list is cut by, e.g. "90 days · only “Careers”". */
   scope?: string;
+  /** The form the list was narrowed to, when `formId` named a live form. */
+  formName?: string | null;
   timeZone?: string;
   generatedAt?: string;
 }
@@ -44,14 +46,29 @@ function safeWindow(value: unknown): AnalyticsWindow | null {
     : null;
 }
 
+/** A form id arrives from a URL or a client component; only a uuid reaches the read. */
+const FORM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function safeFormId(value: unknown): string | null {
+  return typeof value === "string" && FORM_ID.test(value) ? value : null;
+}
+
 /**
  * One row-level report, re-checked on every call.
  *
  * The page renders the first tab server-side and this action serves the others,
  * so both paths ask the database for `analytics.view` rather than trusting the
  * caller — a server action is a public endpoint.
+ *
+ * `formId` narrows only the two form reports: `readRowReport` ignores it on the
+ * others, and a value that is not a uuid is dropped here so the screen can never
+ * ask the database to widen a query with junk.
  */
-export async function getRowReport(id: unknown, windowKey: unknown): Promise<RowReportPreview> {
+export async function getRowReport(
+  id: unknown,
+  windowKey: unknown,
+  formId: unknown = null
+): Promise<RowReportPreview> {
   await requireStaff("/reports");
 
   if (!(await hasPermissionForUser("analytics.view"))) {
@@ -62,7 +79,8 @@ export async function getRowReport(id: unknown, windowKey: unknown): Promise<Row
   const win = safeWindow(windowKey);
   if (!report || !win) return { ok: false, error: "That report or window does not exist." };
 
-  const result = await readRowReport(report, win);
+  const form = safeFormId(formId);
+  const result = await readRowReport(report, win, { formId: form });
   if (result.error || !result.sheet) {
     return { ok: false, error: result.error };
   }
@@ -78,6 +96,7 @@ export async function getRowReport(id: unknown, windowKey: unknown): Promise<Row
     totalRows: result.sheet.rows.length,
     limitations: result.limitations,
     scope: result.scope,
+    formName: result.formName,
     timeZone: result.timeZone,
     generatedAt: result.generatedAt,
   };

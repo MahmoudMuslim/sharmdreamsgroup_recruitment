@@ -519,7 +519,9 @@ export function ApplyWizard({
       <h1 className="mt-4 font-display text-2xl font-extrabold leading-tight tracking-tight sm:text-3xl">
         {t("apply.title", { role: job.title })}
       </h1>
-      <p className="mt-2 text-sm text-brand-ink/60">{t("apply.intro")}</p>
+      <p className="mt-2 text-sm text-brand-ink/60">
+        {t("apply.intro", { total: STEPS.length })}
+      </p>
 
       {/* ---------------------------------------------------------------- rail */}
       <ol className="mt-6 flex flex-wrap items-center gap-2">

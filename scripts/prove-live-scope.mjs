@@ -27,7 +27,7 @@
  *      longer claim to watch the rest of the portal.
  *
  * The counts are arithmetic over the table in this tree, not a database probe:
- * the watch list is a static table, and the pages it names are the eighteen staff
+ * the watch list is a static table, and the pages it names are the nineteen staff
  * routes. Whether a particular database can read a watched table is a fact about
  * that database, checked by the channel's own refusal path at runtime.
  */
@@ -79,7 +79,7 @@ const allAreas = LIVE_WATCH.map((watch) => watch.area);
 /* 1. The watch table                                                          */
 /* -------------------------------------------------------------------------- */
 
-check("the table watches thirteen areas", allAreas.length === 13, `got ${allAreas.length}`);
+check("the table watches fourteen areas", allAreas.length === 14, `got ${allAreas.length}`);
 check(
   "every area has its own name",
   new Set(allAreas).size === allAreas.length,
@@ -210,7 +210,7 @@ check(
   reads <= oldReads * 0.25,
   `${reads} reads across ${STAFF_ROUTES.length} pages vs ${oldReads} before`
 );
-equal("the per-page sum is the tree's 30", reads, 30);
+equal("the per-page sum is the tree's 31", reads, 31);
 check(
   "the reduction is at least 80 per cent",
   (oldReads - reads) / oldReads >= 0.8,

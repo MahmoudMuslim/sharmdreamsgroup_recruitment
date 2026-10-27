@@ -597,14 +597,17 @@ export function DynamicApplyWizard({
 
       if (field.type === "file" || field.type === "photo") {
         if (field.required && !uploads[field.key]) {
-          problems[field.key] = t("apply.dyn.required", { label: field.label });
+          problems[field.key] = t(
+            field.type === "photo" ? "apply.dyn.requiredPhoto" : "apply.dyn.requiredFile",
+            { label: field.label },
+          );
         }
         continue;
       }
 
       if (field.type === "checkbox") {
         if (field.required && answers[field.key] !== true) {
-          problems[field.key] = t("apply.dyn.required", { label: field.label });
+          problems[field.key] = t("apply.dyn.requiredTick", { label: field.label });
         }
         continue;
       }
@@ -876,7 +879,9 @@ export function DynamicApplyWizard({
       <h1 className="mt-4 font-display text-2xl font-extrabold leading-tight tracking-tight sm:text-3xl">
         {t("apply.title", { role: job.title })}
       </h1>
-      <p className="mt-2 text-sm text-brand-ink/60">{t("apply.intro")}</p>
+      <p className="mt-2 text-sm text-brand-ink/60">
+        {t("apply.intro", { total: steps.length })}
+      </p>
 
       {/* ---------------------------------------------------------------- rail */}
       <ol className="mt-6 flex flex-wrap items-center gap-2">
