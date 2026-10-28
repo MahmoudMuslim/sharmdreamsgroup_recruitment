@@ -21,10 +21,23 @@
 -- the payload down to that schema), and the settings change trail holds no row
 -- for it, so nothing here forgets a value anybody set.
 --
--- This migration is NOT applied to any database yet; the live application is the
--- owner's decision. Until it runs, `scripts/prove-settings-keys.mjs` carries the
--- key on a named waiting list and refuses to let that list grow or go stale — so
--- a second unread row fails the gate the same day it is added.
+-- This migration was authored to take the promise out of the table. The live
+-- application is the owner's decision.
+--
+-- APPLIED. The owner approved this file and it ran on the local database on
+-- 2026-10-28: `DELETE 1`, `app_settings` went 26 rows to 25, and the three keys
+-- still under `security.` are the ones the console shows
+-- (`mask_scores_for_reviewers`, `password_min_length`, `session_timeout_minutes`).
+-- The settings audit trail holds no row for the retired key, exactly as reasoned
+-- above, so nothing here forgets a value anybody set. `db/schema.sql` no longer
+-- seeds it either — the row is a `insert … on conflict (id) do nothing`, so
+-- leaving that line in place would re-create a deleted setting on any database
+-- rebuilt from the schema of record.
+--
+-- `scripts/prove-settings-keys.mjs` carried this key on a named waiting list
+-- while the file sat unapplied; the apply emptied that list, and the list is
+-- still checked for being real and stale, so a second unread row fails the gate
+-- the day it is added.
 -- ============================================================================
 
 delete from public.app_settings

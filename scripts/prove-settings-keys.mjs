@@ -11,9 +11,11 @@
  * `security.require_oauth` was the third kind: seeded by migration 001, described
  * as "Force single sign-on for all staff", read by nothing, and absent from the
  * console, so the promise lived in a table while the enforcement never existed.
- * db/migrations/036_retire_unused_oauth_setting.sql removes it and is NOT applied
- * yet; until it runs, the key sits on the waiting list below, and that list is
- * checked for being real, small and stale.
+ * db/migrations/036_retire_unused_oauth_setting.sql removed it and is applied on
+ * this database, so the waiting list below is empty — it stays because the list is
+ * what makes an unread row a decision rather than an accident, and it is checked
+ * for being real and stale so a second unread row fails the gate the day it is
+ * added.
  *
  * The reads are matched by call shape, not by the key appearing in a file: the
  * Guide names switches in prose, and a sentence cannot read a row.
@@ -168,10 +170,11 @@ const env = Object.fromEntries(
 // Rows the console cannot show and nothing reads, with the migration that removes
 // them. Each entry is re-proved below: still a row (so the migration really is
 // unapplied), still unread, and the named file exists. A list like this rots in
-// both directions, so it is checked as hard as the rule it excepts.
-const AWAITING_RETIREMENT = [
-  { key: "security.require_oauth", migration: "db/migrations/036_retire_unused_oauth_setting.sql" },
-];
+// both directions, so it is checked as hard as the rule it excepts — and an entry
+// that has landed is a FAIL telling you to drop it, which is how 036's retirement
+// was caught the day the delete ran. Empty means no retirement is pending; adding
+// a row here is the only way to keep one, and it has to name a real file.
+const AWAITING_RETIREMENT = [];
 
 const client = new Client({ connectionString: env.AUTH_DB_URL, connectionTimeoutMillis: 8000 });
 let reachable = false;
@@ -211,12 +214,19 @@ if (reachable) {
   );
   const waiting = new Set(AWAITING_RETIREMENT.map((w) => w.key));
   const unexplained = orphans.filter((k) => !waiting.has(k));
+  // The pass message lists the categories that made it pass, so it cannot claim a
+  // pending retirement when the list is empty — that sentence was true while 036
+  // sat unapplied and would read as one now.
   check(
     "the table holds no switch that no console shows and no code reads",
     unexplained.length === 0,
     unexplained.length
       ? `${unexplained.join(", ")} — a setting only a database query can see`
-      : `${globalKeys.length} rows, each a control, a wording row, or awaiting a named retirement`
+      : `${globalKeys.length} rows, ${
+          AWAITING_RETIREMENT.length
+            ? "each a control, a wording row, or awaiting a named retirement"
+            : "each a control or a wording row, with no retirement pending"
+        }`
   );
 
   for (const item of AWAITING_RETIREMENT) {
