@@ -500,11 +500,16 @@ test("the tool's copy promises only what the answer can carry", async () => {
   assert.match(h.description(), /applicants drawer/i);
 });
 
-test("the chat link lands on the opening whose queue was ranked", async () => {
+test("the chat link lands on that opening's drawer, already in the order the answer read", async () => {
   const h = harness();
   const answer = await h.rank();
   const link = h.linkFor("rank_candidates", { job_id: jobId }, answer);
-  assert.deepEqual(plain(link), { href: `/jobs?job=${jobId}`, label: "View the opening" });
+  // The answer above the link is an order, and a plain `?job=` link opens the
+  // drawer newest-first — so the link has to carry the order it is promising.
+  assert.deepEqual(plain(link), {
+    href: `/jobs?job=${jobId}&order=ranked`,
+    label: "Open the ranked shortlist",
+  });
 });
 
 test("rank_candidates is a read: no approval card between a recruiter and their queue", () => {

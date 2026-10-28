@@ -19,8 +19,19 @@
  *      them on the page. A row the database holds has to be visible to be refused.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import {
+  APPLICANT_ORDERS,
+  DEFAULT_APPLICANT_ORDER,
+  ORDER_PARAM,
+  RANKED_ORDER,
+  applicantOrderFromParams,
+  rankedApplicantsHref,
+} from "../src/modules/jobs/domain/applicantOrder.ts";
 import {
   SHORTLIST_COMPONENTS,
   SHORTLIST_LIMIT,
@@ -30,6 +41,9 @@ import {
   shortlistBasisNote,
   shortlistReason,
 } from "../src/modules/jobs/domain/shortlist.ts";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const read = (rel) => readFileSync(path.join(root, rel), "utf8");
 
 /** The smallest row that still carries a signal, so each test changes one thing. */
 function applicant(over = {}) {
@@ -490,4 +504,65 @@ test("what the row says about the person is never invented", () => {
   assert.equal(signals.name, "");
   assert.equal(signals.stage, "NEW", "a stage the row does not carry is the stage the column defaults to");
   assert.equal(signals.applicationId, "app-9");
+});
+
+// ————————————————————————————————————————————————————————————————————————————
+// the address that asks for the order
+// ————————————————————————————————————————————————————————————————————————————
+
+test("the order vocabulary is the two the drawer offers, and only those", () => {
+  assert.deepEqual([...APPLICANT_ORDERS], ["newest", "ranked"]);
+  assert.equal(DEFAULT_APPLICANT_ORDER, "newest", "the read's own order needs no second request");
+  assert.equal(RANKED_ORDER, "ranked");
+  assert.equal(ORDER_PARAM, "order");
+});
+
+test("an address asks for an order in one spelling, and a bad token falls back", () => {
+  assert.equal(applicantOrderFromParams(null), "newest");
+  assert.equal(applicantOrderFromParams(new URLSearchParams("")), "newest");
+  assert.equal(applicantOrderFromParams(new URLSearchParams("order=newest")), "newest");
+  assert.equal(applicantOrderFromParams(new URLSearchParams("order=ranked")), "ranked");
+  assert.equal(applicantOrderFromParams(new URLSearchParams("order=sort")), "newest");
+  assert.equal(applicantOrderFromParams(new URLSearchParams("order=")), "newest");
+  // The server hands `searchParams` a repeated key as an array; the first one wins,
+  // which is the same rule as the URL's own first value.
+  assert.equal(applicantOrderFromParams({ order: ["ranked", "newest"] }), "ranked");
+  assert.equal(applicantOrderFromParams({ order: undefined }), "newest");
+});
+
+test("the ranked address opens that opening, and reads back as the order it wrote", () => {
+  assert.equal(rankedApplicantsHref("job-7"), "/jobs?job=job-7&order=ranked");
+  const odd = rankedApplicantsHref("job 7/ü&x");
+  assert.equal(odd, `/jobs?job=${encodeURIComponent("job 7/ü&x")}&order=ranked`);
+  // Writer and reader are the same spelling: a link the chat builds is a link the
+  // grid understands, or the click lands on newest-first while the answer said ranked.
+  assert.equal(applicantOrderFromParams(new URLSearchParams(odd.split("?")[1])), "ranked");
+});
+
+test("the grid reads the order the address names, and seeds the drawer with it", () => {
+  const browser = read("src/app/(admin)/jobs/JobsBrowser.tsx");
+  assert.match(browser, /applicantOrderFromParams\(params\)/);
+  assert.match(
+    browser,
+    /order === RANKED_ORDER \? \(jobs\.find\(\(job\) => job\.id === focusId\) \?\? null\) : null/,
+    "a ranked link opens the drawer; a plain ?job= link only rings the card"
+  );
+  assert.match(browser, /initialOrder=\{order\}/);
+});
+
+test("the drawer's first order is the one the address asked for", () => {
+  const drawer = read("src/app/(admin)/jobs/JobApplicantsDrawer.tsx");
+  assert.match(drawer, /initialOrder = DEFAULT_APPLICANT_ORDER/);
+  assert.match(drawer, /useState<ApplicantOrder>\(initialOrder\)/);
+  assert.doesNotMatch(
+    drawer,
+    /useState<ApplicantOrder>\("newest"\)/,
+    "a drawer opened from a ranked link must not open on the other list"
+  );
+});
+
+test("the chat's ranking link carries the order it promised", () => {
+  const links = read("src/modules/assistant/domain/links.ts");
+  assert.match(links, /rankedApplicantsHref/);
+  assert.match(links, /case "rank_candidates"/);
 });

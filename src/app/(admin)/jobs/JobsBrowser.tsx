@@ -7,6 +7,10 @@ import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
+import {
+  applicantOrderFromParams,
+  RANKED_ORDER,
+} from "@/modules/jobs/domain/applicantOrder";
 import { gridWindowNote, isHireable } from "@/modules/jobs/domain/hireable";
 import {
   demandLine,
@@ -155,12 +159,20 @@ export function JobsBrowser({
   // still sees where it sits among the rest.
   const focusId = params.get("job");
 
+  // `?order=ranked` is where the chat's ranking answer lands: the same opening,
+  // with its applicants drawer open in the order that answer just listed. Without
+  // it the drawer stays closed and the link only rings the card, which is what
+  // every other `?job=` link promises.
+  const order = applicantOrderFromParams(params);
+
   // `?q=` seeds the box, so an assistant answer that searched for a role links to
   // a grid showing the same openings. The words stay local while they are typed:
   // the box is written into the URL by the next rail click, not per keystroke.
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
-  const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
+  const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(() =>
+    order === RANKED_ORDER ? (jobs.find((job) => job.id === focusId) ?? null) : null
+  );
   /** Which `?job=` link this grid has already turned a page for. */
   const jumpedFor = useRef<string | null>(null);
 
@@ -174,6 +186,20 @@ export function JobsBrowser({
   if (incomingQuery !== lastAppliedQuery) {
     setLastAppliedQuery(incomingQuery);
     setQuery(incomingQuery ?? "");
+  }
+
+  // Likewise for a ranked link clicked while this grid is already open: what the
+  // address names is applied on the render that sees it, and only a change of it
+  // opens anything — the drawer's own chips stay the recruiter's to press. Written
+  // like the box above rather than in an effect: which drawer is open is derived
+  // from the address, not a subscription to something outside React.
+  const arrival = `${focusId ?? ""}|${order}`;
+  const [lastAppliedArrival, setLastAppliedArrival] = useState(arrival);
+  if (arrival !== lastAppliedArrival) {
+    setLastAppliedArrival(arrival);
+    if (order === RANKED_ORDER) {
+      setApplicantsJob(jobs.find((job) => job.id === focusId) ?? null);
+    }
   }
 
   /**
@@ -223,6 +249,19 @@ export function JobsBrowser({
   function openRail(rail: { status?: string; company?: string }) {
     setApplicantsJob(null);
     writeView({ ...rail, job: null });
+  }
+
+  /**
+   * Closes the drawer, and takes a ranked address with it.
+   *
+   * A ranked link has said its piece once the drawer it opened is read; leaving
+   * `?order=ranked` behind would promise a reload a drawer the recruiter has just
+   * closed. A drawer opened by a click was never in the address, so closing it
+   * leaves the ring a plain `?job=` link put there alone.
+   */
+  function closeApplicants() {
+    setApplicantsJob(null);
+    if (order === RANKED_ORDER) writeView({ job: null });
   }
 
   const companyNames = useMemo(() => {
@@ -586,7 +625,8 @@ export function JobsBrowser({
           // The catalogue the match lines are named from — the same vocabulary the
           // editor's picker uses, so a skill reads the same in both drawers.
           skillLabels={options.skillLabels}
-          onClose={() => setApplicantsJob(null)}
+          initialOrder={order}
+          onClose={closeApplicants}
         />
       )}
     </div>

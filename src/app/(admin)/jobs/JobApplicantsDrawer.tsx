@@ -35,6 +35,10 @@ import {
 } from "@/modules/assessment/domain/skillEvidence";
 import { shortlistReason } from "@/modules/jobs/domain/shortlist";
 import {
+  DEFAULT_APPLICANT_ORDER,
+  type ApplicantOrder,
+} from "@/modules/jobs/domain/applicantOrder";
+import {
   getApplicantSubmission,
   getJobApplicants,
   type ApplicantSubmission,
@@ -580,18 +584,14 @@ function ApplicantDetail({
 }
 
 /**
- * The two orders a recruiter can ask this list for.
+ * The two orders a recruiter can ask this list for — `applicantOrder.ts` defines
+ * them and the address that asks for each.
  *
- * `newest` is the read's own order — the rows arrive stamped by `created_at`, so it
- * costs nothing and answers "who applied last". `ranked` is a second read: the
- * shortlist is computed from the signals each application carries, and its failure
- * is its own message rather than a silently unranked list.
- *
- * Held in the drawer rather than the address bar on purpose: nothing outside this
- * drawer can open it, so a `?rank=` in a copied link would name a view the address
- * cannot bring up — the applicants list is reached by a click on the opening.
+ * The order starts as the address names it, because a chat link can now open this
+ * drawer already ranked (`/jobs?job=<id>&order=ranked`). Switching the chip here
+ * stays local, like the grid's search box: the address seeds the view a link
+ * promises, and typing over it is the recruiter's, not the link's.
  */
-type ApplicantOrder = "newest" | "ranked";
 
 /**
  * Every applicant for one opening, with their submission and the stage decision.
@@ -604,6 +604,7 @@ export function JobApplicantsDrawer({
   job,
   canDecide,
   skillLabels,
+  initialOrder = DEFAULT_APPLICANT_ORDER,
   onClose,
 }: {
   job: { id: string; title: string; status: string; required_skills: RequiredSkill[] };
@@ -611,6 +612,8 @@ export function JobApplicantsDrawer({
   canDecide: boolean;
   /** The catalogue with its retired rows, so a required skill is named rather than shown as an id. */
   skillLabels: CatalogueSkill[];
+  /** The order the address asked for — ranked when a chat link opened this drawer. */
+  initialOrder?: ApplicantOrder;
   onClose: () => void;
 }) {
   const [applicants, setApplicants] = useState<JobApplicant[] | null>(null);
@@ -618,7 +621,7 @@ export function JobApplicantsDrawer({
   const [openId, setOpenId] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<Record<string, ApplicantSubmission | null>>({});
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
-  const [order, setOrder] = useState<ApplicantOrder>("newest");
+  const [order, setOrder] = useState<ApplicantOrder>(initialOrder);
   const [shortlist, setShortlist] = useState<JobShortlist | null>(null);
   const [shortlistError, setShortlistError] = useState<string | null>(null);
 

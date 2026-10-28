@@ -1,5 +1,6 @@
 import { PIPELINE_STAGES, APPLICATION_SOURCES } from "@/modules/candidates/domain/listFilters";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
+import { rankedApplicantsHref } from "@/modules/jobs/domain/applicantOrder";
 import {
   OUTBOX_BUCKETS,
   PROSPECT_STAGES,
@@ -560,10 +561,18 @@ export function linkForTool(
     case "set_job_status":
     case "set_required_skills":
     case "get_job":
-    case "get_job_applicants":
-    case "rank_candidates": {
+    case "get_job_applicants": {
       const id = fromArgs(args, "job_id");
       return id ? { href: `/jobs?job=${id}`, label: JOB_VIEW.label } : null;
+    }
+    case "rank_candidates": {
+      const id = fromArgs(args, "job_id");
+      // The answer above the link is an order; the drawer opens newest-first
+      // unless the address says otherwise, so the link carries the order it is
+      // promising — otherwise the click would contradict the sentence it follows.
+      return id
+        ? { href: rankedApplicantsHref(id), label: "Open the ranked shortlist" }
+        : null;
     }
     case "record_candidate": {
       // A create reports its id nested under `candidate`, where `fromResult`
