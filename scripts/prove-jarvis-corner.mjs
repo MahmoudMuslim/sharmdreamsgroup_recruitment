@@ -26,6 +26,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DOCK = "src/app/(admin)/assistant/AssistantDock.tsx";
 const PRESENCE = "src/modules/assistant/presentation/JarvisPresence.tsx";
 const REACTOR = "src/modules/assistant/presentation/JarvisReactor.tsx";
+const APPEARANCE = "src/modules/assistant/domain/jarvisAppearance.ts";
 const GUIDE = "src/modules/shell/domain/pageGuide.ts";
 
 function read(rel) {
@@ -70,7 +71,10 @@ function check1() {
 function check2() {
   const reactor = read(REACTOR);
   expect(reactor.includes("ariaExpanded?: boolean;"), "the reactor does not accept the expanded state");
-  expect(reactor.includes("aria-expanded={ariaExpanded}"), "the orb's button never says whether it is expanded");
+  expect(
+    reactor.includes("aria-expanded={preview ? undefined : ariaExpanded}"),
+    "the orb's button never says whether it is expanded, or a preview claims it is"
+  );
   const presence = read(PRESENCE);
   expect(presence.includes("ariaExpanded={ui.open}"), "the presence does not pass the conversation's open state");
 }
@@ -137,23 +141,61 @@ function check5() {
   );
 }
 
+/**
+ * The six default palettes, as the domain file writes them.
+ *
+ * Parsed rather than matched one literal at a time: the claim is about which
+ * states are gold and which one is red, so a recolour that keeps that shape stays
+ * green and a state quietly turned cyan does not.
+ */
+function defaultPalettes() {
+  const block = read(APPEARANCE).split("export const DEFAULT_JARVIS_APPEARANCE")[1] ?? "";
+  return [...block.matchAll(/(\w+): \{\s*\n\s*palette: \{([^}]*)\}/g)].map(([, state, body]) => ({
+    state,
+    colors: [...body.matchAll(/(\w+): "(#[0-9a-fA-F]{6})"/g)].map(([, key, hex]) => ({ key, hex })),
+  }));
+}
+
+const GOLD = ["#b38f6f", "#d4b393", "#a87c52", "#8a6237", "#6b4a28", "#c19a76", "#e8d5bd", "#f2f1ed",
+  "#faf9f6", "#fffdf9", "#fff8ee", "#fffaf3", "#f5f4f0", "#161616", "#1c1b1a", "#241a10"];
+const REDDISH = ["#ef4444", "#dc2626", "#fca5a5", "#fff1f2", "#450a0a"];
+
 function check6() {
+  const palettes = defaultPalettes();
+  expect(palettes.length === 6, `the default appearance describes ${palettes.length} states, not six`);
+  const gold = palettes.filter(({ state }) => state !== "alert");
+  expect(gold.length === 5, "fewer than five states are left to wear the gold family");
+  for (const { state, colors } of gold) {
+    expect(colors.length === 5, `${state} has ${colors.length} colors, not the five the renderer takes`);
+    for (const { hex } of colors) {
+      expect(GOLD.includes(hex), `${state} wears ${hex}, outside the portal's gold family`);
+    }
+  }
   const reactor = read(REACTOR);
-  for (const hex of ["0xb38f6f", "0xd4b393", "0xa87c52", "0x161616", "0xfaf9f6"]) {
-    expect(reactor.includes(hex), `the portal's ${hex} is not in the palette`);
-  }
-  for (const foreign of ["0x00f0ff", "0x67e8f9", "0x0891b2", "0x38bdf8", "0x8b5cf6", "0x10b981"]) {
-    expect(!reactor.includes(foreign), `${foreign} is still worn by the orb`);
-  }
-  expect(reactor.includes("#b38f6f"), "the no-WebGL fallback does not wear the portal's gold");
+  expect(
+    !/#[0-9a-fA-F]{6}|0x[0-9a-fA-F]{6}/.test(reactor),
+    "the reactor colours the orb with a colour of its own"
+  );
 }
 
 function check7() {
+  const palettes = defaultPalettes();
+  expect(palettes.length === 6, "there is no default appearance to read a red out of");
+  const alert = palettes.find(({ state }) => state === "alert");
+  expect(alert && alert.colors.length === 5, "alert does not describe the five colours the renderer takes");
+  for (const { hex } of alert.colors) {
+    expect(REDDISH.includes(hex), `alert wears ${hex}, which is not the red kept for it`);
+  }
+  for (const { state, colors } of palettes) {
+    if (state === "alert") continue;
+    expect(!colors.some(({ hex }) => REDDISH.includes(hex)), `${state} wears a red that belongs to alert alone`);
+  }
   const reactor = read(REACTOR);
-  expect(reactor.includes("primary: 0xef4444"), "alert is no longer the one red");
-  expect(reactor.includes("bg-brand-gold/"), "the backdrop is not the portal's gold");
+  expect(
+    reactor.includes("${visual.palette.primary}33") && reactor.includes("${visual.palette.primary}66"),
+    "the glow and the ring no longer follow the appearance that was saved"
+  );
   expect(reactor.includes("text-brand-gold-dark"), "the status line is not in the brand's ink");
-  expect(reactor.includes("border-brand-gold/40"), "the ping ring is not in the brand's gold");
   for (const foreign of ["bg-cyan-500", "bg-sky-500", "bg-amber-500", "bg-emerald-500", "bg-violet-500"]) {
     expect(!reactor.includes(foreign), `${foreign} is still behind the orb`);
   }
@@ -292,27 +334,27 @@ await mutation(
 );
 
 await mutation(
-  "8. The orb wears cyan again → check 6 red",
-  REACTOR,
-  "primary: 0xb38f6f,",
-  "primary: 0x00f0ff,",
+  "8. A gold state wears cyan → check 6 red",
+  APPEARANCE,
+  'primary: "#b38f6f",',
+  'primary: "#00f0ff",',
   async () => checkIsRed(6)
 );
 
 await mutation(
   "9. Alert stops being the one red → check 7 red",
-  REACTOR,
-  "primary: 0xef4444,",
-  "primary: 0xb38f6f,",
+  APPEARANCE,
+  'primary: "#ef4444",',
+  'primary: "#c19a76",',
   async () => checkIsRed(7)
 );
 
 await mutation(
-  "10. The backdrop returns to cyan → check 7 red",
+  "10. The reactor puts a colour of its own back behind the orb → check 6 red",
   REACTOR,
-  'idle: "bg-brand-gold/15"',
-  'idle: "bg-cyan-500/15"',
-  async () => checkIsRed(7)
+  "backgroundColor: `${visual.palette.primary}33`",
+  'backgroundColor: "#00f0ff33"',
+  async () => checkIsRed(6)
 );
 
 await mutation(

@@ -6,9 +6,11 @@ import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
 import {
   getJarvisPresence,
+  getJarvisAppearance,
   type PresenceRead,
-} from "@/app/(admin)/assistant/jarvis/actions";
+} from "@/app/(admin)/settings/jarvis-actions";
 import {
+  DEFAULT_SPEECH_RATE,
   DEFAULT_WAKE_PHRASE,
   matchWakePhrase,
 } from "@/modules/assistant/domain/voice";
@@ -28,13 +30,16 @@ import {
   toggleJarvisOpen,
 } from "@/lib/jarvis-ui";
 import {
+  readStoredSpeechRate,
+  readStoredVoiceId,
   readStoredVoiceLanguage,
   readStoredWakePhrase,
   subscribeVoicePrefs,
   type VoiceLanguage,
 } from "@/app/(admin)/assistant/AssistantPrefs";
-import { useWakeWord } from "@/app/(admin)/assistant/voice/useWakeWord";
-import { JarvisReactor, type ReactorState } from "./JarvisReactor";
+import { useWakeWord } from "@/modules/assistant/presentation/voice/useWakeWord";
+import { DEFAULT_JARVIS_APPEARANCE, type JarvisAppearance, type ReactorState } from "@/modules/assistant/domain/jarvisAppearance";
+import { JarvisReactor } from "./JarvisReactor";
 import { useJarvisMeter } from "./useJarvisMeter";
 import { useJarvisVoice } from "./useJarvisVoice";
 import { useJarvisWatcher } from "./useJarvisWatcher";
@@ -95,6 +100,10 @@ export interface JarvisPresenceProps {
 export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   const ui = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
   const [presence, setPresence] = useState<PresenceRead | null>(null);
+  // What the orb looks like, read from the same row that says what it may do. The
+  // portal default is drawn until the read answers, so an absent or unreadable
+  // 049 leaves the orb wearing the portal's own gold rather than nothing.
+  const [appearance, setAppearance] = useState<JarvisAppearance>(DEFAULT_JARVIS_APPEARANCE);
   const [stopped, setStopped] = useState(false);
   // The note card is fed by several sources that outlive a click — a briefing that
   // was given, the recogniser's refusal, the prefs read. None of them is a piece of
@@ -117,15 +126,29 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
     readStoredVoiceLanguage,
     () => "en" as VoiceLanguage
   );
+  // The same browser-level pair the chat speaks with, so the orb and the answers it
+  // reads aloud cannot sound like two different people on one machine.
+  const voiceId = useSyncExternalStore(subscribeVoicePrefs, readStoredVoiceId, () => "");
+  const speechRate = useSyncExternalStore(
+    subscribeVoicePrefs,
+    readStoredSpeechRate,
+    () => DEFAULT_SPEECH_RATE
+  );
 
   const prefs = presence?.ok ? presence.prefs : null;
-  const voice = useJarvisVoice();
+  const voice = useJarvisVoice({ voiceId, rate: speechRate });
   const { wakeAudio, tone, say, stop, notice, dismissNotice, heardOwnVoice } = voice;
 
   useEffect(() => {
     let alive = true;
     void getJarvisPresence().then((read) => {
       if (alive) setPresence(read);
+    });
+    // The console bumps `prefsEpoch` after either save, so an appearance written
+    // on Settings → Assistant reaches this orb without a reload — the shell, and so
+    // this component, survives every in-app navigation.
+    void getJarvisAppearance().then((read) => {
+      if (alive) setAppearance(read.appearance);
     });
     return () => {
       alive = false;
@@ -238,7 +261,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
    * nobody started — a briefing has no question behind it.
    *
    * An unapplied 047 is not among the things it says: every switch defaults to off,
-   * so the orb's silence is the honest state, and the panel at /assistant/jarvis is
+   * so the orb's silence is the honest state, and the panel at Settings → Assistant is
    * where the missing table is named. Pinning a migration path over every admin
    * screen would tell a recruiter about a file they cannot act on. An unreadable
    * table is different — that is an outage, and it is said once.
@@ -330,6 +353,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
       >
         <JarvisReactor
           state={state}
+          appearance={appearance}
           size={ui.open ? 76 : 104}
           level={meter.armed ? meter.read : undefined}
           showStatus={!resting}
