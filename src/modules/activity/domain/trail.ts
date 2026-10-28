@@ -44,7 +44,12 @@ export const ACTIVITY_SURFACES = [
 ] as const;
 export type ActivitySurface = (typeof ACTIVITY_SURFACES)[number];
 
-/** Which part of the portal a change touched. Every writer picks one of these. */
+/**
+ * Which part of the portal a change touched. Every writer picks one of these.
+ *
+ * `exports` is the one area that records a disclosure rather than a change: a
+ * report handed to a person moved no row, and that is precisely why it needs one.
+ */
 export const ACTIVITY_AREAS = [
   "candidates",
   "jobs",
@@ -55,6 +60,7 @@ export const ACTIVITY_AREAS = [
   "sourcing",
   "gate questions",
   "files",
+  "exports",
   "messaging",
   "time",
   "settings",
@@ -81,6 +87,7 @@ export const ACTIVITY_ENTITIES = [
   "credential",
   "currency",
   "department",
+  "export",
   "gate question",
   "interview",
   "job opening",

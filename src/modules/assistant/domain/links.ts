@@ -560,7 +560,8 @@ export function linkForTool(
     case "set_job_status":
     case "set_required_skills":
     case "get_job":
-    case "get_job_applicants": {
+    case "get_job_applicants":
+    case "rank_candidates": {
       const id = fromArgs(args, "job_id");
       return id ? { href: `/jobs?job=${id}`, label: JOB_VIEW.label } : null;
     }

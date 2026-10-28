@@ -352,6 +352,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   "get_job",
   "list_candidates",
   "get_job_applicants",
+  "rank_candidates",
   "get_application",
   "read_offer",
   "list_assessment_suites",

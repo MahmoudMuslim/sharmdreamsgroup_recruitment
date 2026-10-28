@@ -7,6 +7,17 @@
  * re-checks `analytics.export` before a single byte is rendered. Handing the
  * browser a copy of the report and letting it build the file would make the
  * grant decorative.
+ *
+ * And it writes one row to the change trail before the file goes. A report is
+ * somebody's data in the hands of whoever asked for it, so the record of the
+ * disclosure is part of the grant, not a courtesy afterwards: if the trail will
+ * not take the row, this route does not send the file.
+ *
+ * `analytics.export` opens this door; it does not decide what is through it. An
+ * applicant's email address, phone number and a message's recipient are cut by
+ * `candidates.read` — the permission the candidate page and the files door already
+ * use — and that cut happens one floor down, in the reader that builds the sheets,
+ * so this route describes the gate it was handed rather than re-deciding it.
  */
 
 import {
@@ -22,6 +33,7 @@ import {
   type CandidateExportFilters,
 } from "@/modules/analytics/infrastructure/reportReader";
 import { reportDefinition, type ReportId } from "@/modules/analytics/domain/documents";
+import type { SheetAccess } from "@/modules/analytics/domain/sheetAccess";
 import {
   isApplicationSource,
   isCandidateSort,
@@ -30,6 +42,12 @@ import {
   type CandidateSort,
 } from "@/modules/candidates/domain/listFilters";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import { recordActivity } from "@/modules/activity/application/record";
+import {
+  exportAuditDenied,
+  exportTrailEntry,
+  type ExportCutPart,
+} from "@/modules/activity/domain/exportTrail";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 
 /** A download is a file, not a page — `requireStaff()` would redirect instead of refusing. */
@@ -102,22 +120,53 @@ export async function GET(request: Request): Promise<Response> {
   const format = safeFormat(params.get("format"));
   if (!report || !format) return json("A report and a format are both required.", 400);
 
-  let built: { document: ExportDocument } | { error: string };
+  /* The cut is described to the audit in the same words the reader used, so the
+   * row matches the file. The free-text search is offered and refused by the
+   * builder — a name typed into a box does not belong in a record that outlives
+   * the screen it was typed on. */
+  const cut: ExportCutPart[] = [{ key: "report", value: report }];
+
+  let built: { document: ExportDocument; gate: SheetAccess } | { error: string };
   if (report === "candidates") {
     /* The candidates list is cut by its filters, not by a window: there is no
      * window on that screen to carry into a file. */
-    built = await buildCandidateExport(
-      candidateFilters(params),
-      user.fullName
+    const filters = candidateFilters(params);
+    cut.push(
+      { key: "stage", value: filters.stage },
+      { key: "source", value: filters.source },
+      { key: "company", value: filters.company },
+      { key: "query", value: filters.query },
+      { key: "sort", value: filters.sort },
+      { key: "archived", value: filters.archived },
+      { key: "ungraded", value: filters.ungraded }
     );
+    built = await buildCandidateExport(filters, user.fullName);
   } else {
     const window = safeWindow(params.get("window"));
     if (!window) {
       return json("A report, a window and a format are all required.", 400);
     }
-    built = await buildReportDocument(report, window, user.fullName, safeFormId(params.get("form")));
+    const form = safeFormId(params.get("form"));
+    cut.push({ key: "window", value: window }, { key: "form", value: form });
+    built = await buildReportDocument(report, window, user.fullName, form);
   }
   if ("error" in built) return json(built.error, 500);
+
+  /* Both facts come from the gate the reader worked under, not from a second read
+   * beside it: the columns were filtered once, inside the builder, and a fresh
+   * answer here could disagree with the bytes about to go out — leaving a row that
+   * describes a file that is not the one sent. */
+  const written = await recordActivity(
+    exportTrailEntry({
+      door: "reports",
+      format,
+      document: built.document,
+      scores: built.gate.scoresHidden ? "masked" : "open",
+      contacts: built.gate.contactsHidden ? "withheld" : "included",
+      cut,
+    })
+  );
+  if (!written.ok) return json(exportAuditDenied(written.error ?? "the trail gave no reason"), 503);
 
   const file = await buildExport(built.document, format);
   return new Response(file.bytes as BodyInit, {

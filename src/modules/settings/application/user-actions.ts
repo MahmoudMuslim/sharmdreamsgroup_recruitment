@@ -5,13 +5,28 @@ import { revalidatePath } from "next/cache";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
-import { canCreateStaffUsers, canManageStaffUsers } from "@/modules/settings/infrastructure/permissions";
+import {
+  canCreateStaffUsers,
+  canManageStaffUsers,
+  hasPermissionForUser,
+} from "@/modules/settings/infrastructure/permissions";
 import { getNumberSetting } from "@/modules/settings/infrastructure/settingsReader";
 import {
   ASSIGNABLE_ROLE_KEYS,
   DEFAULT_PASSWORD_MIN_LENGTH,
 } from "@/modules/settings/domain/schema";
-import type { AssignableStaffRole, StaffInvite } from "@/modules/settings/domain/types";
+import {
+  PERMISSION_OVERRIDES_TABLE,
+  isMissingTable,
+  overrideTrail,
+  overrideWriteProblem,
+  type OverrideSource,
+} from "@/modules/settings/domain/accountGrants";
+import type {
+  AssignableStaffRole,
+  PermissionKey,
+  StaffInvite,
+} from "@/modules/settings/domain/types";
 /**
  * The service client, typed from the seam itself rather than from the vendor.
  *
@@ -118,6 +133,28 @@ interface Actor {
 async function requireStaffManager(): Promise<Actor | null> {
   const session = await requireStaff("/settings");
   if (!(await canManageStaffUsers())) return null;
+
+  const restClient = getServiceRestClient();
+  const { data: profile } = await restClient
+    .from("user_profiles")
+    .select("id")
+    .eq("auth_user_id", session.authUserId)
+    .maybeSingle();
+
+  return profile ? { profileId: profile.id as string } : null;
+}
+
+/**
+ * Identifies the signed-in staff member for a per-account permission write.
+ *
+ * The permission itself is not checked here: `overrideWriteProblem` below is what
+ * refuses, so the console shows the domain's sentence rather than a second copy of
+ * the same rule. What this does have to prove is that the caller is a staff account
+ * with a profile, because `isSelf` — one of 048's three fences — is a comparison
+ * against that id, and it cannot be answered from a request body.
+ */
+async function requireStaffActor(): Promise<Actor | null> {
+  const session = await requireStaff("/settings");
 
   const restClient = getServiceRestClient();
   const { data: profile } = await restClient
@@ -434,6 +471,24 @@ export interface StaffConsoleState {
   accessError: string | null;
   /** Why pending invites could not be read, or null. */
   invitesError: string | null;
+  /**
+   * profile id → that account's own lines, exactly as the table holds them.
+   *
+   * Every member's lines come back in one read because the console lists them all;
+   * a panel for one row is a slice of this map, never a query of its own. Absent
+   * for a member who has never been given a line, which is most of them — and
+   * that is the role standing as seeded, not a refusal.
+   */
+  overrides: Record<string, StaffPermissionLine[]>;
+  /** Whether the per-account layer could be consulted at all. */
+  overridesSource: OverrideSource;
+}
+
+/** One line of `user_permission_overrides`, as the console reads it. */
+export interface StaffPermissionLine {
+  permission_key: PermissionKey;
+  granted: boolean;
+  note: string | null;
 }
 
 const STAFF_ROLE_KEYS = ["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"];
@@ -451,12 +506,22 @@ const STAFF_ROLE_KEYS = ["SUPER_ADMIN", "RECRUITER", "HIRING_MANAGER"];
 export async function loadStaffConsole(): Promise<StaffConsoleState> {
   await requireStaff("/settings");
   if (!(await canManageStaffUsers())) {
-    return { invites: [], access: {}, accessError: null, invitesError: null };
+    // Nothing was consulted, so nothing is claimed. `unreadable` is the honest
+    // answer: the panel shows the role's decision and refuses to show a line as
+    // absent, which is the same fail-closed reading the resolver gives.
+    return {
+      invites: [],
+      access: {},
+      accessError: null,
+      invitesError: null,
+      overrides: {},
+      overridesSource: "unreadable",
+    };
   }
 
   const restClient = getServiceRestClient();
 
-  const [inviteRead, profileRead] = await Promise.all([
+  const [inviteRead, profileRead, overrideRead] = await Promise.all([
     restClient
       .from("user_invites")
       .select("id, email, full_name, role, company_id, status, expires_at, created_at")
@@ -466,7 +531,31 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
       .from("user_profiles")
       .select("id, auth_user_id")
       .in("role", STAFF_ROLE_KEYS),
+    restClient
+      .from(PERMISSION_OVERRIDES_TABLE)
+      .select("profile_id, permission_key, granted, note, updated_at"),
   ]);
+
+  // Two failures, two answers — the same reading the resolver makes, through the
+  // same helper. A missing table leaves every account its role and tells the
+  // console which file would change that; an outage says only that nothing is known.
+  const overridesSource: OverrideSource = !overrideRead.error
+    ? "applied"
+    : isMissingTable(String(overrideRead.error.message))
+      ? "absent"
+      : "unreadable";
+
+  const overrides: Record<string, StaffPermissionLine[]> = {};
+  for (const row of overrideRead.data ?? []) {
+    const profileId = row.profile_id as string;
+    const lines = overrides[profileId] ?? [];
+    lines.push({
+      permission_key: row.permission_key as PermissionKey,
+      granted: Boolean(row.granted),
+      note: (row.note as string | null) ?? null,
+    });
+    overrides[profileId] = lines;
+  }
 
   const access: Record<string, string | null> = {};
   let accessError: string | null = profileRead.error?.message ?? null;
@@ -499,6 +588,8 @@ export async function loadStaffConsole(): Promise<StaffConsoleState> {
     access,
     accessError,
     invitesError: inviteRead.error?.message ?? null,
+    overrides,
+    overridesSource,
   };
 }
 
@@ -688,6 +779,131 @@ export async function updateStaffRole(
     entityId: profileId,
     summary: `Changed ${target.full_name}’s role from ${roleWord(target.role)} to ${roleWord(role)}`,
     detail: { email: target.email, role: `${roleWord(target.role)} → ${roleWord(role)}` },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+/**
+ * Puts, changes or clears one line on one account's permissions.
+ *
+ * Three fences stand in front of this write and all three are re-read here before
+ * the ask goes out, because 048's own policies enforce exactly them: the caller
+ * holds `settings.manage_roles`, the line is not on the caller's own account, and
+ * the account is not a Super Admin's. Re-reading is not courtesy toward the
+ * database — a click that the policy refuses comes back as a PostgREST code, and
+ * the member sitting at the console has no way to work out from `42501` that the
+ * person they were editing is the one role that takes no lines. The domain decides
+ * the sentence, so the console and the door cannot drift apart on what a refusal
+ * is called.
+ *
+ * `granted: null` is the third answer and the one an editor forgets: it deletes
+ * the line, which hands the permission back to the role rather than revoking it.
+ * The trail records it that way for the same reason — an auditor who reads
+ * "Revoked Export data" would go looking for a decision nobody made.
+ */
+export async function setStaffPermission(
+  profileId: string,
+  permissionKey: PermissionKey,
+  granted: boolean | null,
+  note?: string | null
+): Promise<StaffActionResult> {
+  const actor = await requireStaffActor();
+  if (!actor) return { ok: false, error: "Sign in as a staff member to edit permissions." };
+
+  // The gate is the key 048's policies check, and the refusal is the domain's
+  // sentence — `updateRolePermission` answers to the same key for the same reason.
+  const canManageRoles = await hasPermissionForUser("settings.manage_roles");
+
+  const restClient = getServiceRestClient();
+  const target = await loadTargetProfile(restClient, profileId);
+  if (!target) return { ok: false, error: "That team member no longer exists." };
+
+  // The label comes from the catalogue rather than from the caller, so the trail
+  // quotes the words the permission matrix shows; the same read answers whether
+  // the key is one the portal offers at all.
+  const { data: permission } = await restClient
+    .from("permissions")
+    .select("key, label, group_name")
+    .eq("key", permissionKey)
+    .maybeSingle();
+
+  // The layer's condition and the line's own answer, from one read of this
+  // account's lines. Only a missing table is refused from the condition: an
+  // unreadable one may still take the write, and a write that fails has its own
+  // reason to report.
+  const linesRead = await restClient
+    .from(PERMISSION_OVERRIDES_TABLE)
+    .select("permission_key, granted")
+    .eq("profile_id", profileId);
+  const source: OverrideSource = !linesRead.error
+    ? "applied"
+    : isMissingTable(String(linesRead.error.message))
+      ? "absent"
+      : "unreadable";
+  const held = (linesRead.data ?? []).find((row) => row.permission_key === permissionKey);
+  const from = held ? Boolean(held.granted) : null;
+
+  const problem = overrideWriteProblem({
+    canManageRoles,
+    isSelf: profileId === actor.profileId,
+    targetIsSuperAdmin: target.role === "SUPER_ADMIN",
+    source,
+    keyIsKnown: Boolean(permission),
+    note: note ?? null,
+  });
+  if (problem) return { ok: false, error: problem };
+
+  // Setting a line to what it already says writes nothing and records nothing: a
+  // trail row for a no-op would have an auditor read a decision that changed no
+  // answer.
+  if (from === granted) return { ok: true };
+
+  const { error } =
+    granted === null
+      ? await restClient
+          .from(PERMISSION_OVERRIDES_TABLE)
+          .delete()
+          .eq("profile_id", profileId)
+          .eq("permission_key", permissionKey)
+      : await restClient
+          .from(PERMISSION_OVERRIDES_TABLE)
+          .upsert(
+            {
+              profile_id: profileId,
+              permission_key: permissionKey,
+              granted,
+              note: note ?? null,
+              updated_by: actor.profileId,
+            },
+            { onConflict: "profile_id, permission_key" }
+          );
+  if (error) return { ok: false, error: error.message };
+
+  await auditStaffChange(restClient, {
+    key: `staff.permissions:${profileId}:${permissionKey}`,
+    previous: { granted: from },
+    next: { granted },
+    changedBy: actor.profileId,
+  });
+
+  const trail = overrideTrail({
+    memberName: target.full_name,
+    roleKey: target.role,
+    roleLabel: roleWord(target.role),
+    permissionKey,
+    permissionLabel: (permission?.label as string | undefined) ?? permissionKey,
+    from,
+    to: granted,
+  });
+  await recordActivity({
+    area: "access",
+    action: trail.action,
+    entity: "staff user",
+    entityId: profileId,
+    summary: trail.summary,
+    detail: trail.detail,
   });
 
   revalidatePath("/settings");

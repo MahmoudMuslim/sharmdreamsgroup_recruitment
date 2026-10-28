@@ -248,6 +248,11 @@ export default async function SettingsPage({
               accessError={staffConsole.accessError}
               invitesError={staffConsole.invitesError}
               companies={bundle.companies}
+              permissions={bundle.permissions}
+              grants={bundle.grants}
+              overrides={staffConsole.overrides}
+              overridesSource={staffConsole.overridesSource}
+              canManageRoles={canManageRoles}
               passwordMinLength={passwordMinLength}
               canManage={canManageStaff}
               canCreate={canCreateStaff}

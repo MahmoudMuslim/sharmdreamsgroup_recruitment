@@ -67,6 +67,10 @@ import {
 } from "@/modules/analytics/domain/documents";
 import type { ExportDocument, ExportSheet } from "@/modules/analytics/domain/exportDocument";
 import {
+  accessNotes,
+  type SheetAccess,
+} from "@/modules/analytics/domain/sheetAccess";
+import {
   candidateSortLabel,
   filterCandidates,
   sortCandidates,
@@ -159,20 +163,35 @@ function monthsLabel(months: number | null): string | null {
   return parts.length === 0 ? "Less than a month" : parts.join(" ");
 }
 
+/**
+ * The two gates a report is cut by, plus the clock it is stamped with.
+ *
+ * Scores leave with the masking setting. An applicant's email address, phone
+ * number and a message's recipient leave with `candidates.read` — the same
+ * permission that guards them on the candidate page and at the files door. A
+ * download is not a second, unlatched door: `analytics.export` says this account
+ * may take a report out of the building, and the permission that hides a phone
+ * number on screen still hides it in the file.
+ */
+async function reportAccess(): Promise<SheetAccess & { timeZone: string }> {
+  const [timeZone, scoresHidden, mayReadContacts] = await Promise.all([
+    getOrganisationTimeZone(),
+    scoresAreMaskedForCurrentUser(),
+    hasPermissionForUser("candidates.read"),
+  ]);
+  return { timeZone, scoresHidden, contactsHidden: !mayReadContacts };
+}
+
 /** The scope, the clock and the masking decision every report is stamped with. */
 async function contextFor(
   window: AnalyticsWindow
 ): Promise<{ context: ReadContext; cutoff: string | null }> {
-  const [timeZone, scoresHidden] = await Promise.all([
-    getOrganisationTimeZone(),
-    scoresAreMaskedForCurrentUser(),
-  ]);
+  const access = await reportAccess();
   return {
     context: {
+      ...access,
       scope: windowLabel(window),
-      timeZone,
       generatedAt: new Date().toISOString(),
-      scoresHidden,
     },
     cutoff: windowCutoff(window, new Date()),
   };
@@ -735,7 +754,8 @@ export type RowReportRead =
       /** "90 days" — what the page says this list is cut by. */
       scope: string;
       generatedAt: string;
-      scoresHidden: boolean;
+      /** The two gates this list was cut by, so the audit can say what left. */
+      gate: SheetAccess;
       /** The form the list was narrowed to, when a filter was applied. */
       formName: string | null;
       error: null;
@@ -1087,27 +1107,40 @@ export async function readRowReport(
 
 /* ------------------------------------------------------------- documents -- */
 
-/** The same report the page shows, as the file the download route hands back. */
+/**
+ * The same report the page shows, as the file the download route hands back.
+ *
+ * The `gate` is the access this file was actually cut by, and it travels with the
+ * document to the audit row: a route that re-read the masking setting beside a
+ * reader that already filtered the columns could describe a file that is not the
+ * one it sent.
+ */
 export async function buildReportDocument(
   id: "analytics" | ReportId,
   window: AnalyticsWindow,
   exportedBy: string,
   formId: string | null = null
-): Promise<{ document: ExportDocument } | { error: string }> {
+): Promise<{ document: ExportDocument; gate: SheetAccess } | { error: string }> {
   const baseName = `sharm-dreams-${id}-${window}-${new Date().toISOString().slice(0, 10)}`;
 
   if (id === "analytics") {
     const { report, error } = await readAnalyticsReport(window);
     if (error || !report) return { error: error ?? "The report could not be read." };
+    /* The aggregates carry no address and no phone number, but the gate named in
+     * the audit row is still this account's — a record of a disclosure says what
+     * the reader may see, not only what the sheet happened to have room for. */
+    const { contactsHidden } = await reportAccess();
+    const gate = { scoresHidden: report.scoresHidden, contactsHidden };
     return {
       document: analyticsDocument(report, {
         scope: report.windowLabel,
         timeZone: report.timeZone,
         generatedAt: report.generatedAt,
-        scoresHidden: report.scoresHidden,
+        ...gate,
         exportedBy,
         baseName,
       }),
+      gate,
     };
   }
 
@@ -1119,10 +1152,11 @@ export async function buildReportDocument(
       scope: result.scope,
       timeZone: result.timeZone,
       generatedAt: result.generatedAt,
-      scoresHidden: result.scoresHidden,
+      ...result.gate,
       exportedBy,
       baseName,
     }, result.limitations),
+    gate: result.gate,
   };
 }
 
@@ -1251,11 +1285,8 @@ function toCandidateRow(row: Raw, scoresHidden: boolean): CandidateListRow {
 export async function buildCandidateExport(
   filters: CandidateExportFilters,
   exportedBy: string
-): Promise<{ document: ExportDocument } | { error: string }> {
-  const [timeZone, scoresHidden] = await Promise.all([
-    getOrganisationTimeZone(),
-    scoresAreMaskedForCurrentUser(),
-  ]);
+): Promise<{ document: ExportDocument; gate: SheetAccess } | { error: string }> {
+  const { timeZone, scoresHidden, contactsHidden } = await reportAccess();
   const restClient = await createServerRestClient();
 
   /* The rail is quoted by name in the file's own "Covers" line, so it is looked
@@ -1302,11 +1333,8 @@ export async function buildCandidateExport(
   const kept = sortCandidates(filterCandidates(rows, filters), filters.sort);
 
   const limitations = [...CANDIDATE_LIST.caveats];
-  if (scoresHidden) {
-    limitations.push(
-      "Score columns are left out of this file: the score-masking setting withholds test and AI scores from your account."
-    );
-  }
+  const gate = { scoresHidden, contactsHidden };
+  limitations.push(...accessNotes(gate, "this file"));
   if (result.truncated) {
     limitations.push(floor(LIMITS.applications, "applications", "matching these filters"));
   }
@@ -1316,17 +1344,18 @@ export async function buildCandidateExport(
   return {
     document: rowReportDocument(
       CANDIDATE_LIST,
-      candidateListSheet(kept, { timeZone, scoresHidden }),
+      candidateListSheet(kept, { ...gate, timeZone }),
       {
         scope: candidateScope(filters, companyName),
         timeZone,
         generatedAt,
-        scoresHidden,
+        ...gate,
         exportedBy,
         baseName: `sharm-dreams-candidates-${view}-${generatedAt.slice(0, 10)}`,
       },
       limitations
     ),
+    gate,
   };
 }
 
@@ -1344,6 +1373,10 @@ function refusal(error: string): RowReportRead {
  * file needs them before they need the row budget. `extra` is how a narrowed
  * list says it is narrowed: the scope line names the form and the limitation
  * sits with the budget line, so a reader never mistakes a slice for the window.
+ *
+ * The withheld-column notes come from `accessNotes`, which is handed the very
+ * `SheetAccess` the sheet was filtered with — so a file cannot carry a column and
+ * apologise for dropping it, nor drop one and stay silent about it.
  */
 function deliver(
   definition: ReportDefinition,
@@ -1355,11 +1388,7 @@ function deliver(
   extra: { scope?: string; limitation?: string; formName?: string | null } = {}
 ): RowReportRead {
   const limitations = [...definition.caveats];
-  if (context.scoresHidden) {
-    limitations.push(
-      "Score columns are left out of this report: the score-masking setting withholds test and AI scores from your account."
-    );
-  }
+  limitations.push(...accessNotes(context, "this report"));
   if (truncated) limitations.push(floor(limit, what));
   if (extra.limitation) limitations.push(extra.limitation);
 
@@ -1370,7 +1399,7 @@ function deliver(
     timeZone: context.timeZone,
     scope: extra.scope ?? context.scope,
     generatedAt: context.generatedAt,
-    scoresHidden: context.scoresHidden,
+    gate: { scoresHidden: context.scoresHidden, contactsHidden: context.contactsHidden },
     formName: extra.formName ?? null,
     error: null,
   };

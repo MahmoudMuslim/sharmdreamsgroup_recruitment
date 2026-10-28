@@ -228,6 +228,11 @@ function harness(which, options = {}) {
   };
   hooks.useCallback = (fn, deps) => hooks.useMemo(() => fn, deps);
   hooks.useLayoutEffect = hooks.useEffect;
+  // React's own request memoizer. The drawer's gated reads reach
+  // `settings/infrastructure/permissions`, which calls `cache()` while it is still
+  // being loaded, so the shim has to answer it — and passing the function through
+  // unchanged is the honest reading here: nothing in this proof is served twice.
+  hooks.cache = (fn) => fn;
 
   /**
    * Every read and every write, deferred on purpose.

@@ -51,6 +51,7 @@ import {
   getFollowUpRules,
   getJobApplicants,
   getJobOpening,
+  getJobShortlist,
   getLedger,
   getMasterData,
   getModelCatalogue,
@@ -93,6 +94,7 @@ import {
   searchQueue,
   searchSettings,
   searchSuites,
+  shortlistReason,
   settingReadNote,
   settingSearchWords,
   settingsTrailNote,
@@ -440,6 +442,43 @@ export const reads: readonly AssistantTool[] = [
     run: async (args) => {
       const result = await getJobApplicants(str(args, "job_id"));
       return result.ok ? result.applicants : { ok: false, error: result.error };
+    },
+  },
+  {
+    name: "rank_candidates",
+    label: "Ranking applicants",
+    description:
+      "One opening's applicants ordered by fit, each line carrying the signals behind its number. Answer `basis_note` and `note` before naming anyone: a component with nothing behind it is missing, not zero, and a component withheld from this account never ranked anyone — its weight moves onto what the account can read. The order is built over the most recent 200 live applicants at most, and `note` says so when the queue is longer. When `shown_note` is present this answer lists only the top lines and the rest are on the applicants drawer, where the same order is drawn.",
+    args: { job_id: "string — the opening's id, from `list_jobs` or `get_job`" },
+    run: async (args) => {
+      const result = await getJobShortlist(str(args, "job_id"));
+      if (!result.ok) return { ok: false, error: result.error };
+      const { lines, basis_note, note, scores_hidden } = result.shortlist;
+      const shown = lines.slice(0, ANSWER_ROWS);
+      return {
+        ok: true,
+        basis_note,
+        note,
+        scores_hidden,
+        applicants: shown.map((line, index) => ({
+          rank: index + 1,
+          application_id: line.applicationId,
+          name: line.name,
+          stage: line.stage,
+          score: line.score,
+          basis: line.basis,
+          missing: line.missing,
+          hidden: line.hidden,
+          gate_failed: line.gateFailed,
+          // The drawer's own sentence, so the chat and the screen explain the same
+          // line in the same words rather than two paraphrases of one number.
+          reason: shortlistReason(line),
+        })),
+        shown_note:
+          lines.length > ANSWER_ROWS
+            ? `This answer lists the top ${ANSWER_ROWS} of ${lines.length.toLocaleString()} ranked applicants — the applicants drawer shows the rest.`
+            : null,
+      };
     },
   },
   {

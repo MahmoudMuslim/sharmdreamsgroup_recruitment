@@ -10,6 +10,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  ShieldCheck,
   Trash2,
   UserCheck,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import { UserCreatePanel } from "./UserCreatePanel";
 import { MemberEditPanel } from "./MemberEditPanel";
 import { InviteEditPanel } from "./InviteEditPanel";
 import { CredentialReveal } from "./CredentialReveal";
+import { MemberGrantsPanel } from "./MemberGrantsPanel";
 import { Button, Badge } from "@/modules/analytics/presentation/ui";
 import { ASSIGNABLE_ROLE_KEYS, ASSIGNABLE_STAFF_ROLES } from "@/modules/settings/domain/schema";
 import {
@@ -28,11 +30,15 @@ import {
   updateStaffCompany,
   updateStaffRole,
   type StaffActionResult,
+  type StaffPermissionLine,
 } from "@/modules/settings/application/user-actions";
 import { formatInZone } from "@/lib/timezone";
+import type { OverrideSource } from "@/modules/settings/domain/accountGrants";
 import type {
   AssignableStaffRole,
   CompanyChoice,
+  Permission,
+  RoleGrant,
   StaffInvite,
   StaffMember,
 } from "@/modules/settings/domain/types";
@@ -51,6 +57,19 @@ interface TeamSectionProps {
   canManage: boolean;
   /** The `users.create` half of the staff gate — the Add member door alone. */
   canCreate: boolean;
+  /**
+   * The permission catalogue and every role's rows, as the matrix above holds them.
+   * The per-account panel draws both beside each person's own lines, so a revocation
+   * and a permission the role never granted cannot look the same.
+   */
+  permissions: Permission[];
+  grants: RoleGrant[];
+  /** profile id → that account's own lines, empty for everybody with none. */
+  overrides: Record<string, StaffPermissionLine[]>;
+  /** Whether the per-account layer was readable at all — three answers, three sentences. */
+  overridesSource: OverrideSource;
+  /** The matrix's own gate; a member may read the team and still not write lines. */
+  canManageRoles: boolean;
   viewerAuthUserId: string;
   timeZone: string;
 }
@@ -89,12 +108,18 @@ export function TeamSection({
   passwordMinLength,
   canManage,
   canCreate,
+  permissions,
+  grants,
+  overrides,
+  overridesSource,
+  canManageRoles,
   viewerAuthUserId,
   timeZone,
 }: TeamSectionProps) {
   const [userPanelOpen, setUserPanelOpen] = useState(false);
   const [editingMember, setEditingMember] = useState<StaffMember | null>(null);
   const [editingInvite, setEditingInvite] = useState<StaffInvite | null>(null);
+  const [grantsFor, setGrantsFor] = useState<string | null>(null);
   const router = useRouter();
   const companyName = new Map(companies.map((c) => [c.id, c.name]));
   const enabledCount = staff.filter((m) => !access[m.id]).length;
@@ -162,6 +187,15 @@ export function TeamSection({
                 companies={companies}
                 companyName={companyName}
                 canManage={canManage}
+                permissions={permissions}
+                grants={grants}
+                lines={overrides[member.id] ?? []}
+                overridesSource={overridesSource}
+                canManageRoles={canManageRoles}
+                grantsOpen={grantsFor === member.id}
+                onToggleGrants={() =>
+                  setGrantsFor((current) => (current === member.id ? null : member.id))
+                }
                 onEdit={() => setEditingMember(member)}
                 onChanged={() => router.refresh()}
               />
@@ -265,6 +299,13 @@ function MemberRow({
   companies,
   companyName,
   canManage,
+  permissions,
+  grants,
+  lines,
+  overridesSource,
+  canManageRoles,
+  grantsOpen,
+  onToggleGrants,
   onEdit,
   onChanged,
 }: {
@@ -275,6 +316,13 @@ function MemberRow({
   companies: CompanyChoice[];
   companyName: Map<string, string>;
   canManage: boolean;
+  permissions: Permission[];
+  grants: RoleGrant[];
+  lines: StaffPermissionLine[];
+  overridesSource: OverrideSource;
+  canManageRoles: boolean;
+  grantsOpen: boolean;
+  onToggleGrants: () => void;
   onEdit: () => void;
   onChanged: () => void;
 }) {
@@ -398,6 +446,21 @@ function MemberRow({
             type="button"
             className={ACTION}
             disabled={pending !== null}
+            aria-expanded={grantsOpen}
+            onClick={onToggleGrants}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+            {grantsOpen ? "Hide own permissions" : "Own permissions"}
+            {lines.length > 0 && (
+              <span className="rounded-md bg-brand-sand px-1.5 py-0.5 text-[10px] font-bold text-brand-ink/60">
+                {lines.length}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            className={ACTION}
+            disabled={pending !== null}
             onClick={() =>
               run(
                 "Reset password",
@@ -474,6 +537,20 @@ function MemberRow({
             </span>
           )}
         </div>
+      )}
+
+      {grantsOpen && (
+        <MemberGrantsPanel
+          profileId={member.id}
+          memberName={member.full_name}
+          roleKey={member.role}
+          permissions={permissions}
+          grants={grants}
+          lines={lines}
+          source={overridesSource}
+          canManageRoles={canManageRoles}
+          onSaved={onChanged}
+        />
       )}
 
       {credential && (

@@ -13,6 +13,10 @@
  * Security decides what is in the download exactly as it decides what is on the
  * page, and the window and scope are resolved by the same `ledgerCut()` both
  * halves call.
+ *
+ * Before the bytes go, the download writes one row to the change trail — hours
+ * name the person who worked them, so a ledger taken out of the portal is a
+ * disclosure worth recording. A trail that refuses the row refuses the file.
  */
 
 import {
@@ -24,6 +28,8 @@ import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { dayKeyInZone } from "@/lib/timezone";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
+import { recordActivity } from "@/modules/activity/application/record";
+import { exportAuditDenied, exportTrailEntry } from "@/modules/activity/domain/exportTrail";
 import { ledgerCut, readLedger, LEDGER_ROW_LIMIT } from "@/modules/timelog/application/ledger";
 import { ledgerDocument } from "@/modules/timelog/domain/document";
 import { TRACK_DENIED, timeWindow } from "@/modules/timelog/domain/ledger";
@@ -103,6 +109,25 @@ export async function GET(request: Request): Promise<Response> {
     )}`,
     limitations,
   });
+
+  /* Hours are not scores, so the audit says nothing about them; nor does a
+   * timesheet hold an applicant's address, so it says nothing about those either.
+   * The cut is the window and whether this is the caller's own ledger or the
+   * team's, because that is the difference between taking a timesheet and taking
+   * everyone's. */
+  const written = await recordActivity(
+    exportTrailEntry({
+      door: "time",
+      format,
+      document,
+      scores: "absent",
+      contacts: "absent",
+      cut: [{ key: "window", value: cut.window }, { key: "scope", value: cut.scope }],
+    })
+  );
+  if (!written.ok) {
+    return json(exportAuditDenied(written.error ?? "the trail gave no reason"), 503);
+  }
 
   const file = await buildExport(document, format);
   return new Response(file.bytes as BodyInit, {

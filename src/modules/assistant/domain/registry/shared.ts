@@ -74,6 +74,7 @@ import {
   OPENING_SKILLS_MIGRATION,
   SKILL_SOURCES,
 } from "@/modules/jobs/domain/openingSkills";
+import { shortlistReason } from "@/modules/jobs/domain/shortlist";
 import {
   APPLICATION_SOURCES,
   PIPELINE_STAGES,
@@ -173,6 +174,7 @@ import {
   type JobDraft,
   getApplicantSubmission,
   getJobApplicants,
+  getJobShortlist,
   saveOpeningSkills,
   deleteProspect,
   getProspectPool,
@@ -1031,6 +1033,8 @@ export { roundLabel };
 export { scorecardAverage };
 export { scorecardsFor };
 export { getJobApplicants };
+export { getJobShortlist };
+export { shortlistReason };
 export { getJobOpening };
 export { getMasterData };
 export { getModelCatalogue };

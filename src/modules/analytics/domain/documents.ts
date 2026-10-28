@@ -9,6 +9,11 @@
  *
  * Both produce the same `ExportDocument`, which is why CSV, Excel and PDF of
  * one report cannot disagree: they are three renderings of one cell grid.
+ *
+ * Which columns a reader is handed is a separate decision from which rows, and it
+ * is made in `sheetAccess.ts` at the moment the file is built. A page can hide a
+ * button; only the document knows whether an applicant's address went out with the
+ * spreadsheet beside it.
  */
 
 import "server-only";
@@ -18,6 +23,7 @@ import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import type { ExportCell, ExportDocument, ExportSheet } from "./exportDocument";
 import type { FormQuestionRow, UnclaimedFieldRow } from "./formAndProfile";
 import type { AnalyticsReport } from "./report";
+import { columnKept, type SheetAccess } from "./sheetAccess";
 
 export type ReportId =
   | "pipeline"
@@ -79,7 +85,7 @@ export const REPORTS: {
     id: "messages",
     label: "Every candidate message",
     blurb:
-      "One row per message the portal sent: channel, recipient, subject, and whether it landed.",
+      "One row per message the portal sent: channel, subject, and whether it landed, plus the recipient for an account that holds the View candidates permission.",
     caveats: [
       "Delivered is the state the row holds now, not a record of every attempt; a message that failed twice then went through reads as delivered.",
       "An email or campaign also writes a row for the copy it leaves in the candidate's inbox; that notice row is counted as logged, never as a delivery, because a notice is written rather than sent.",
@@ -171,7 +177,7 @@ export interface ListDefinition {
 export const CANDIDATE_LIST: ListDefinition = {
   label: "Candidate pipeline",
   blurb:
-    "One row per application matching the filters on the candidates screen: contact details, the role and the company it was filed under, where the candidate stands, what the AI and the test said, and whether a panel is booked.",
+    "One row per application matching the filters on the candidates screen: the role and the company it was filed under, where the candidate stands, what the AI and the test said, and whether a panel is booked. The email and phone columns ride only with an account that holds the View candidates permission.",
   caveats: [
     `The candidates screen lists the newest ${CANDIDATE_ROW_LIMIT} applications its filters match, while its rail counts cover the whole set. This file is built from every application matching the same filters, so it can hold more rows than were on screen.`,
     "Stage dates are not kept. A move overwrites the row, so Applied and Last update are the only history a stage column sits between.",
@@ -181,9 +187,8 @@ export const CANDIDATE_LIST: ListDefinition = {
 };
 
 /** Shared context every sheet needs: whose clock the stamps use, and what must be hidden. */
-export interface SheetContext {
+export interface SheetContext extends SheetAccess {
   timeZone: string;
-  scoresHidden: boolean;
 }
 
 function stamp(iso: string | null, timeZone: string): string {
@@ -360,6 +365,8 @@ interface ReportColumn<T> {
   value: (row: T) => ExportCell;
   /** Dropped entirely when score masking applies to this reader. */
   masked?: boolean;
+  /** Dropped entirely when this account may not read candidate contact details. */
+  contacts?: boolean;
 }
 
 function sheet<T>(
@@ -369,8 +376,10 @@ function sheet<T>(
   rows: T[]
 ): ExportSheet {
   /* Score columns leave with the scores: an average in a spreadsheet is just
-   * another way of showing a number the reader is not allowed to see. */
-  const visible = columns.filter((column) => !(column.masked && context.scoresHidden));
+   * another way of showing a number the reader is not allowed to see. Contact
+   * columns leave with the addresses: `analytics.export` opens the door, and the
+   * permission that guards an applicant's phone number on screen guards it here. */
+  const visible = columns.filter((column) => columnKept(column, context));
   return {
     name,
     columns: visible.map((column) => column.header),
@@ -384,8 +393,8 @@ export function pipelineSheet(rows: PipelineRow[], context: SheetContext): Expor
     context,
     [
       { header: "Candidate", value: (row) => row.full_name },
-      { header: "Email", value: (row) => row.email },
-      { header: "Phone", value: (row) => row.phone },
+      { header: "Email", contacts: true, value: (row) => row.email },
+      { header: "Phone", contacts: true, value: (row) => row.phone },
       { header: "Opening", value: (row) => row.opening },
       { header: "Stage", value: (row) => (row.archived_at ? `${row.stage} (archived)` : row.stage) },
       { header: "Source", value: (row) => row.source },
@@ -445,7 +454,7 @@ export function sourcingSheet(rows: SourcedRow[], context: SheetContext): Export
       { header: "Headline", value: (row) => row.headline },
       { header: "Company", value: (row) => row.company },
       { header: "Location", value: (row) => row.location },
-      { header: "Email", value: (row) => row.email },
+      { header: "Email", contacts: true, value: (row) => row.email },
       { header: "Origin", value: (row) => row.origin },
       { header: "Stage", value: (row) => row.stage },
       { header: "Added", value: (row) => stamp(row.created_at, context.timeZone) },
@@ -466,7 +475,7 @@ export function messageSheet(rows: MessageRow[], context: SheetContext): ExportS
       { header: "Sent", value: (row) => stamp(row.created_at, context.timeZone) },
       { header: "Channel", value: (row) => row.channel },
       { header: "Direction", value: (row) => row.direction },
-      { header: "Recipient", value: (row) => row.recipient },
+      { header: "Recipient", contacts: true, value: (row) => row.recipient },
       { header: "Subject", value: (row) => row.subject },
       { header: "Candidate", value: (row) => row.full_name },
       { header: "Opening", value: (row) => row.opening },
@@ -613,8 +622,8 @@ export function candidateListSheet(
     [
       { header: "Candidate", value: (row) => row.full_name },
       { header: "Tracking code", value: (row) => row.tracking_code },
-      { header: "Email", value: (row) => row.email },
-      { header: "Phone", value: (row) => row.phone },
+      { header: "Email", contacts: true, value: (row) => row.email },
+      { header: "Phone", contacts: true, value: (row) => row.phone },
       { header: "Role", value: (row) => row.job_title },
       { header: "Company", value: (row) => row.company_name },
       {

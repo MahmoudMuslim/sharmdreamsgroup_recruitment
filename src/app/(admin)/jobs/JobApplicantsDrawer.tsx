@@ -33,12 +33,14 @@ import {
   skillEvidenceSentence,
   type SkillEvidenceLine,
 } from "@/modules/assessment/domain/skillEvidence";
+import { shortlistReason } from "@/modules/jobs/domain/shortlist";
 import {
   getApplicantSubmission,
   getJobApplicants,
   type ApplicantSubmission,
   type JobApplicant,
 } from "./applicant-actions";
+import { getJobShortlist, type JobShortlist } from "./shortlist-actions";
 
 function stageTone(stage: string) {
   if (stage === "HIRED") return "success" as const;
@@ -578,6 +580,20 @@ function ApplicantDetail({
 }
 
 /**
+ * The two orders a recruiter can ask this list for.
+ *
+ * `newest` is the read's own order — the rows arrive stamped by `created_at`, so it
+ * costs nothing and answers "who applied last". `ranked` is a second read: the
+ * shortlist is computed from the signals each application carries, and its failure
+ * is its own message rather than a silently unranked list.
+ *
+ * Held in the drawer rather than the address bar on purpose: nothing outside this
+ * drawer can open it, so a `?rank=` in a copied link would name a view the address
+ * cannot bring up — the applicants list is reached by a click on the opening.
+ */
+type ApplicantOrder = "newest" | "ranked";
+
+/**
  * Every applicant for one opening, with their submission and the stage decision.
  *
  * Mounted from a job card so a recruiter works a role's shortlist in order: read
@@ -602,6 +618,9 @@ export function JobApplicantsDrawer({
   const [openId, setOpenId] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<Record<string, ApplicantSubmission | null>>({});
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const [order, setOrder] = useState<ApplicantOrder>("newest");
+  const [shortlist, setShortlist] = useState<JobShortlist | null>(null);
+  const [shortlistError, setShortlistError] = useState<string | null>(null);
 
   // Load on open. The shortlist belongs to the opening that was clicked, so a
   // new drawer instance always fetches its own rather than reusing a stale list.
@@ -617,6 +636,45 @@ export function JobApplicantsDrawer({
       active = false;
     };
   }, [job.id]);
+
+  // Asked for the ranked order, and only then: the newest-first list is what a
+  // recruiter opens the drawer to read, and the second read costs a request.
+  useEffect(() => {
+    if (order !== "ranked" || shortlist || shortlistError) return;
+    let active = true;
+    void (async () => {
+      const result = await getJobShortlist(job.id);
+      if (!active) return;
+      if (result.ok) setShortlist(result.shortlist);
+      else setShortlistError(result.error);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [order, job.id, shortlist, shortlistError]);
+
+  /**
+   * The list in the order the address bar asked for.
+   *
+   * The rows stay the drawer's own — email, attempt badge, stage — because the
+   * ranking decides only who comes first. An applicant the shortlist does not name
+   * keeps their place at the bottom rather than vanishing: a row the read returned
+   * has to stay visible for the recruiter to act on it.
+   */
+  const rows = (() => {
+    if (order !== "ranked" || !shortlist || !applicants) return applicants ?? [];
+    const position = new Map(shortlist.lines.map((line, index) => [line.applicationId, index]));
+    return [...applicants].sort((a, b) => {
+      const left = position.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const right = position.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      if (left !== right) return left - right;
+      return a.full_name.localeCompare(b.full_name);
+    });
+  })();
+  const lineFor = (applicant: JobApplicant) =>
+    order === "ranked"
+      ? (shortlist?.lines.find((line) => line.applicationId === applicant.id) ?? null)
+      : null;
 
   async function toggle(applicant: JobApplicant) {
     if (openId === applicant.id) {
@@ -686,6 +744,43 @@ export function JobApplicantsDrawer({
       }
     >
       <FormMessage error={listError} />
+      <FormMessage error={shortlistError} />
+
+      {applicants && applicants.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="flex rounded-xl border border-brand-line bg-white p-0.5">
+            {(["newest", "ranked"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setOrder(mode)}
+                aria-pressed={order === mode}
+                className={cn(
+                  "rounded-[10px] px-3 py-1.5 text-xs font-semibold transition",
+                  order === mode
+                    ? "bg-brand-ink text-white"
+                    : "text-brand-ink/60 hover:bg-brand-cream"
+                )}
+              >
+                {mode === "newest" ? "Newest first" : "Ranked by fit"}
+              </button>
+            ))}
+          </div>
+          {order === "ranked" && !shortlist && !shortlistError && (
+            <span className="flex items-center gap-1.5 text-xs text-brand-ink/55">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              Ranking…
+            </span>
+          )}
+        </div>
+      )}
+
+      {shortlist && (
+        <div className="mb-3 space-y-1 rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5">
+          <p className="text-xs font-semibold text-brand-ink/75">{shortlist.basis_note}</p>
+          {shortlist.note && <p className="text-xs text-brand-ink/60">{shortlist.note}</p>}
+        </div>
+      )}
 
       {!applicants && !listError && (
         <p className="flex items-center gap-2 py-6 text-sm text-brand-ink/50">
@@ -702,9 +797,9 @@ export function JobApplicantsDrawer({
         />
       )}
 
-      {applicants && applicants.length > 0 && (
+      {rows.length > 0 && (
         <ul className="divide-y divide-brand-line rounded-xl border border-brand-line bg-white">
-          {applicants.map((applicant) => {
+          {rows.map((applicant) => {
             const expanded = openId === applicant.id;
             // Same rule as the detail panel: a stale list row must not out-vote a masked submission read.
             const masked =
@@ -714,6 +809,7 @@ export function JobApplicantsDrawer({
               applicant.demonstrated,
               skillLabels
             );
+            const line = lineFor(applicant);
             return (
               <li key={applicant.id}>
                 <button
@@ -735,6 +831,12 @@ export function JobApplicantsDrawer({
                     <span className="mt-0.5 block truncate text-xs text-brand-ink/55">
                       {applicant.email} · applied {formatDateTime(applicant.applied_at)}
                     </span>
+                    {line && (
+                      <span className="mt-1 block text-[11px] text-brand-ink/55">
+                        {shortlistReason(line)}
+                        {line.gateFailed && " · below the gate"}
+                      </span>
+                    )}
                     <RequiredSkillLines
                       lines={skillLines}
                       masked={masked}
@@ -743,6 +845,17 @@ export function JobApplicantsDrawer({
                   </span>
 
                   <span className="flex shrink-0 items-center gap-2">
+                    {line && (
+                      <span
+                        className={cn(
+                          "font-display text-sm font-bold tabular-nums",
+                          line.score === null ? "text-brand-ink/35" : "text-brand-ink"
+                        )}
+                        title={line.score === null ? "Nothing recorded to rank on" : "Shortlist score"}
+                      >
+                        {line.score === null ? "—" : `${line.score}%`}
+                      </span>
+                    )}
                     {applicant.attempt_token && (
                       <Badge tone={attemptTone(applicant.attempt_status ?? "NOT_STARTED")}>
                         {humanizeStage(applicant.attempt_status ?? "NOT_STARTED")}

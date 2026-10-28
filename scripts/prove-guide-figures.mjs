@@ -189,6 +189,17 @@ const FIGURES = [
     ],
   },
   {
+    route: "/jobs",
+    want: "the shortlist's read bound",
+    guide: /built from the newest ([\d,]+) live applicants at most/,
+    sources: [
+      {
+        rel: "src/modules/jobs/domain/shortlist.ts",
+        pattern: /export const SHORTLIST_LIMIT = ([\d_]+);/,
+      },
+    ],
+  },
+  {
     route: "/assessments",
     want: "the picker window",
     guide: /The opening dropdown holds the newest ([\d,]+) roles/,

@@ -31,6 +31,7 @@ import {
   getApplicantSubmission,
   getJobApplicants,
 } from "@/app/(admin)/jobs/applicant-actions";
+import { getJobShortlist } from "@/app/(admin)/jobs/shortlist-actions";
 import { saveOpeningSkills } from "@/app/(admin)/jobs/opening-skills-actions";
 import {
   deleteProspect,
@@ -236,6 +237,7 @@ export { setJobStatus };
 export { updateJobOpening };
 export { getApplicantSubmission };
 export { getJobApplicants };
+export { getJobShortlist };
 export { saveOpeningSkills };
 export { deleteProspect };
 export { getProspectPool };
