@@ -126,7 +126,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Export the filtered set as CSV, Excel or PDF.",
     ],
     edges: [
-      "Downloads are on the trail too: the exports area lists every file anyone took, with its format, row count, and whether scores and contact details were withheld, carried, or simply not in that kind of report. A download that could not be recorded was not sent.",
+      "Downloads are on the trail too: the Downloads area (stored as `exports`) lists every file anyone took, with its format, row count, and whether scores and contact details were withheld, carried, or simply not in that kind of report. Picking it in the Area filter is how an auditor asks for every download; the fields under a row name the action that was recorded. A download that could not be recorded was not sent.",
       "The free-text search box is not written into that row — a name typed into a box belongs to a person, and this record is read by more roles than the screen it came from.",
       "The trail is on this database: db/migrations/024_activity_log.sql is applied, so the console lists real rows. On a database that has not applied it, the page says the trail has not been created yet and reads nothing.",
       "Needs the Manage platform settings permission.",

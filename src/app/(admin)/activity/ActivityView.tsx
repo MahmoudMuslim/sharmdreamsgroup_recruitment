@@ -21,7 +21,9 @@ import {
   ACTIVITY_AREAS,
   ACTIVITY_SURFACES,
   ACTOR_KIND_LABELS,
+  areaLabel,
   describeActor,
+  prettyAction,
   recordHref,
   TRAIL_WINDOWS,
   type ActivityRow,
@@ -120,7 +122,7 @@ function DetailList({ row, timeZone }: { row: ActivityRow; timeZone: string }) {
   return (
     <div className="border-t border-brand-line bg-brand-cream/60 px-4 py-3">
       <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
-        {row.action.replace(/[_.]/g, " ")}
+        {prettyAction(row.action)}
         {!row.detail && " — no field values were recorded for this change"}
       </p>
       {entries.length > 0 && (
@@ -187,7 +189,7 @@ function TrailRow({
           </p>
           <p className="mt-0.5 text-sm leading-relaxed text-brand-ink/75">{row.summary}</p>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-brand-ink/45">
-            <span className="rounded-full bg-brand-sand px-2 py-0.5 font-semibold">{row.area}</span>
+            <span className="rounded-full bg-brand-sand px-2 py-0.5 font-semibold">{areaLabel(row.area)}</span>
             <span>{row.entity}</span>
             {row.entity_id && (
               <button
@@ -376,7 +378,7 @@ export function ActivityView({
             <option value="">Everything</option>
             {ACTIVITY_AREAS.map((area) => (
               <option key={area} value={area}>
-                {area}
+                {areaLabel(area)}
               </option>
             ))}
           </select>

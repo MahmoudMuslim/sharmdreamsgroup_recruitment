@@ -74,6 +74,40 @@ export const ACTIVITY_AREAS = [
 ] as const;
 export type ActivityArea = (typeof ACTIVITY_AREAS)[number];
 
+/**
+ * The area keys as the screens print them.
+ *
+ * The key is what a row stores and what a filter accepts; the label is what a
+ * reader sees. `exports` is the one that cannot go without a word of its own:
+ * a download is the only row in that area, and "exports" beside a file's row
+ * reads like the file's format rather than the door it left through.
+ *
+ * A total `Record` rather than a partial one, so adding an area without its
+ * words fails the typecheck instead of shipping a raw key to the screen.
+ */
+export const ACTIVITY_AREA_LABELS: Record<ActivityArea, string> = {
+  candidates: "Candidates",
+  jobs: "Jobs",
+  forms: "Forms",
+  assessments: "Assessments",
+  interviews: "Interviews",
+  onboarding: "Onboarding",
+  sourcing: "Sourcing",
+  "gate questions": "Gate questions",
+  files: "Files",
+  exports: "Downloads",
+  messaging: "Messaging",
+  time: "Time ledger",
+  settings: "Settings",
+  team: "Team",
+  access: "Access",
+  "master data": "Master data",
+  "career site": "Career site",
+  referrals: "Referrals",
+  privacy: "Privacy",
+  system: "System",
+};
+
 /** The record a row points at, used to pull one candidate's or job's history. */
 export const ACTIVITY_ENTITIES = [
   "application",
@@ -427,7 +461,22 @@ export const TRAIL_LIST = {
 
 /** The verb phrase shown beside the actor, derived from the stored action key. */
 export function prettyAction(action: string): string {
-  return action.replace(/[_.]/g, " ").replace(/^\w/, (c) => c.toUpperCase()).toLowerCase();
+  return action
+    .replace(/[_.]/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/**
+ * The words for an area a row carries, whatever era wrote it.
+ *
+ * Rows are read back from the table, so the value is a plain string: an area
+ * this build has never heard of still has to read as words rather than as an
+ * underscored key, and must never print empty.
+ */
+export function areaLabel(area: string): string {
+  const known = (ACTIVITY_AREA_LABELS as Record<string, string | undefined>)[area];
+  return known ?? (prettyAction(area) || "Unnamed area");
 }
 
 /**

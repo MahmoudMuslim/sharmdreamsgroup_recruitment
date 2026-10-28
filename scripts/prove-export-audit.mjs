@@ -127,6 +127,69 @@ test("the new vocabulary appears once, and is not the last resort", () => {
 });
 
 // ————————————————————————————————————————————————————————————————————————————
+// the words the console prints for an area
+// ————————————————————————————————————————————————————————————————————————————
+
+/* The area is stored as a key and filtered by that key; what a reader sees is
+ * the label. `exports` is the one key that cannot be read as itself: beside a
+ * file's row it names a format, not the door the file left through. */
+const areaWords = async () => {
+  const trail = await import(fresh("../src/modules/activity/domain/trail.ts"));
+  const labels = trail.ACTIVITY_AREA_LABELS;
+
+  assert.deepEqual(
+    Object.keys(labels).sort(),
+    [...trail.ACTIVITY_AREAS].sort(),
+    "every area a row can carry needs its words, and no area may be invented"
+  );
+  for (const [key, label] of Object.entries(labels)) {
+    assert.ok(typeof label === "string" && label.trim(), `“${key}” has no words`);
+    assert.equal(label.includes("_"), false, `“${key}” is labelled with a key`);
+    assert.match(label, /^[A-Z]/, `“${key}” is labelled “${label}”, which does not read as words`);
+  }
+
+  assert.equal(labels.exports, "Downloads", "the area a download lands in must not read as a format");
+  assert.equal(trail.areaLabel("exports"), "Downloads");
+  // A row is read back from the table, so a key this build has never heard of
+  // still has to print as words rather than as an underscored name.
+  assert.equal(trail.areaLabel("a_future_area"), "A future area");
+  assert.equal(trail.areaLabel(""), "Unnamed area", "an empty area must never print as nothing");
+};
+
+test("every area a row can carry has words, and downloads have their own", areaWords);
+
+const theConsolePrintsThoseWords = () => {
+  const view = read("src/app/(admin)/activity/ActivityView.tsx");
+  assert.match(view, /areaLabel\(area\)/, "the Area filter still offers the stored key");
+  assert.match(view, /areaLabel\(row\.area\)/, "a row's area pill still prints the stored key");
+  assert.doesNotMatch(view, /\{row\.area\}/, "the row prints the raw area somewhere the label missed");
+
+  /* The cut the reader is shown and the cut the download carries are the same
+   * sentence from the same function, so the words have to reach both. */
+  assert.match(
+    read("src/modules/activity/domain/trailQuery.ts"),
+    /areaLabel\(applied\.area\)/,
+    "the scope line hands the reader the stored key"
+  );
+  assert.match(
+    read("src/modules/activity/domain/document.ts"),
+    /areaLabel\(row\.area\)/,
+    "the trail's own file holds the stored key where every other column holds words"
+  );
+};
+
+test("the console, the scope line and the trail's file all speak the labels", theConsolePrintsThoseWords);
+
+test("the Guide names the area by the word the screen prints", () => {
+  const guide = read("src/modules/shell/domain/pageGuide.ts");
+  assert.match(
+    guide,
+    /the Downloads area \(stored as `exports`\) lists every file anyone took/,
+    "the manual names an area the Area filter does not print"
+  );
+});
+
+// ————————————————————————————————————————————————————————————————————————————
 // what the row says
 // ————————————————————————————————————————————————————————————————————————————
 
@@ -580,6 +643,13 @@ const MUTATIONS = [
     needle: '  if (documentCarriesContacts(facts.document)) return "included";',
     replace: "  if (false) return null;",
     check: fileOutranksTheDoorsWord,
+  },
+  {
+    label: "6. the downloads area goes back to printing its stored key → the words check red",
+    rel: "src/modules/activity/domain/trail.ts",
+    needle: '  exports: "Downloads",',
+    replace: '  exports: "exports",',
+    check: areaWords,
   },
 ];
 
