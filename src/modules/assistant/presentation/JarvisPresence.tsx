@@ -87,6 +87,12 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   const ui = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
   const [presence, setPresence] = useState<PresenceRead | null>(null);
   const [stopped, setStopped] = useState(false);
+  // The note card is fed by several sources that outlive a click — a briefing that
+  // was given, the recogniser's refusal, the prefs read. None of them is a piece of
+  // state this component owns, so closing the card is remembered here, by the text
+  // that was showing: a note the person closed stays closed, and a different one
+  // still arrives.
+  const [dismissedAnnouncement, setDismissedAnnouncement] = useState<string | null>(null);
 
   const wakePhrase = useSyncExternalStore(
     subscribeVoicePrefs,
@@ -220,7 +226,15 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   /**
    * The newest thing the presence has to say, shown without opening a conversation
    * nobody started — a briefing has no question behind it.
+   *
+   * An unapplied 047 is not among the things it says: every switch defaults to off,
+   * so the orb's silence is the honest state, and the panel at /assistant/jarvis is
+   * where the missing table is named. Pinning a migration path over every admin
+   * screen would tell a recruiter about a file they cannot act on. An unreadable
+   * table is different — that is an outage, and it is said once.
    */
+  const readProblem =
+    presence && !presence.ok && presence.reason !== "absent-table" ? presence.message : null;
   const lines = notice
     ? null
     : stopped
@@ -228,8 +242,8 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
       : watcher.briefing.length
         ? watcher.briefing.join(". ")
         : briefingSentences(watcher.recent)[0] ?? null;
-  const announcement =
-    notice ?? lines ?? watcher.error ?? wake.error ?? (presence && !presence.ok ? presence.message : null);
+  const candidate = notice ?? lines ?? watcher.error ?? wake.error ?? readProblem;
+  const announcement = candidate && candidate !== dismissedAnnouncement ? candidate : null;
 
   return (
     <div
@@ -249,6 +263,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
             <button
               type="button"
               onClick={() => {
+                setDismissedAnnouncement(announcement);
                 dismissNotice();
                 setStopped(false);
               }}
