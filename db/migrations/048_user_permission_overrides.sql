@@ -9,6 +9,18 @@
 --   the Team console says so in the member panel, naming this file. No account
 --   is quietly wider or narrower than its role while the file waits.
 --
+-- REHEARSED, not against a scratch schema but against a clone of the live
+--   applied one (pg_dump --schema-only, then the four real profiles and the real
+--   permission catalogue), so the fences below were tested by the same rows the
+--   portal will write: a manager's own colleague row was accepted, a self row and
+--   both directions of a Super Admin row were refused by RLS, an invented
+--   permission key was refused by the foreign key, a 241-character note by the
+--   check, and a row with no decision by the not-null; the writer's update
+--   restamped `updated_at` and its delete cleared the override; a recruiter
+--   without `settings.manage_roles` was refused the write and allowed the read, a
+--   candidate saw no rows and could not write, and anon was refused at the grant
+--   before it ever reached a policy. The throwaway database was dropped.
+--
 -- Why a portal needs this at all: `role_permissions` is global — one row for
 --   `RECRUITER` answers for every recruiter — so a company that wants one
 --   recruiter to read the outbox and not the payroll-shaped reports has to
