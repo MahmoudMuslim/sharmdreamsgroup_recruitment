@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Loader2, SlidersHorizontal } from "lucide-react";
+import { Loader2, SlidersHorizontal, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { AssistantModelChoice } from "./actions";
 
@@ -26,6 +26,7 @@ export function AssistantSettings({
   onAllowWeb,
   allowDestructive,
   onAllowDestructive,
+  speak,
 }: {
   /** "" is default routing: the table in Settings → AI models answers. */
   model: string;
@@ -38,6 +39,16 @@ export function AssistantSettings({
   onAllowWeb: (value: boolean) => void;
   allowDestructive: boolean;
   onAllowDestructive: (value: boolean) => void;
+  /**
+   * The read-aloud switch for every surface except the voice console, which
+   * owns the same preference in fuller form in its own strip.
+   */
+  speak: {
+    on: boolean;
+    speaking: boolean;
+    set: (value: boolean) => void;
+    stop: () => void;
+  } | null;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -81,10 +92,14 @@ export function AssistantSettings({
   }, [models]);
 
   const label = model || (routedModel ? `Default · ${routedModel}` : "Default routing");
-  const switchesOn = [allowWeb && "web search", allowDestructive && "deletions"].filter(Boolean);
+  const switchesOn = [
+    allowWeb && "web search",
+    allowDestructive && "deletions",
+    speak?.on && "spoken answers",
+  ].filter(Boolean);
 
   return (
-    <div ref={wrapRef} className="relative mb-2">
+    <div ref={wrapRef} className="relative mb-2 flex items-center gap-2">
       <button
         ref={buttonRef}
         type="button"
@@ -110,6 +125,17 @@ export function AssistantSettings({
           </span>
         )}
       </button>
+
+      {speak?.speaking && (
+        <button
+          type="button"
+          onClick={speak.stop}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-brand-line px-2 py-1 text-[11px] font-bold text-brand-ink/60 transition hover:bg-brand-sand"
+        >
+          <VolumeX className="h-3 w-3" aria-hidden />
+          Stop reading
+        </button>
+      )}
 
       {open && (
         <div
@@ -167,6 +193,24 @@ export function AssistantSettings({
           )}
 
           <div className="my-2 border-t border-brand-line" />
+
+          {speak && (
+            <label className="mb-2 flex items-start gap-2 text-[11px] leading-snug text-brand-ink/55">
+              <input
+                type="checkbox"
+                checked={speak.on}
+                onChange={(event) => speak.set(event.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-gold-dark"
+              />
+              <span>
+                Read answers aloud — this device reads each answer out in its own voice, so
+                nothing is sent anywhere a second time. The voice console starts with this on;
+                this panel starts with it off, and whichever you choose is remembered in this
+                browser. A machine with no voice for the answer&apos;s language leaves it on
+                screen and says so.
+              </span>
+            </label>
+          )}
 
           <label className="mb-2 flex items-start gap-2 text-[11px] leading-snug text-brand-ink/55">
             <input

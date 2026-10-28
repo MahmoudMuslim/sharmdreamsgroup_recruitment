@@ -118,8 +118,9 @@ export interface AssistantChatProps {
   variant: "docked" | "page";
   /**
    * `dictate` adds a microphone beside the composer; `console` is the voice
-   * console, which adds hands-free and speaks answers. Defaults to `dictate`,
-   * so the dock and the Assistant page need no prop of their own.
+   * console, which also adds hands-free and starts with answers read aloud.
+   * Defaults to `dictate`, so the dock and the Assistant page need no prop of
+   * their own — either surface reads answers once its settings switch is on.
    */
   voiceMode?: "dictate" | "console";
 }
@@ -560,10 +561,10 @@ export function AssistantChat({
           note: result.note,
         },
       ]);
-      // The console reads the answer aloud when speaking is on. The dock and the
-      // page only do when the person switched it on there; the pref defaults to
-      // console-only for that reason.
-      if (voiceMode === "console" && speakReplies && answer) {
+      // The answer is read whenever reading is switched on. The console starts
+      // with it on and keeps its own switch; the dock and the Assistant page start
+      // with it off and carry the same switch inside Answering settings.
+      if (speakReplies && answer) {
         speech.speak(spokenSummary(answer));
       }
     } catch {
@@ -1149,7 +1150,22 @@ export function AssistantChat({
               }}
               allowDestructive={allowDestructive}
               onAllowDestructive={setAllowDestructive}
+              speak={voiceMode === "console" ? null : {
+                on: speakReplies,
+                speaking: speech.speaking,
+                set: (next) => {
+                  writeStoredSpeak(next);
+                  if (!next) speech.stop();
+                },
+                stop: speech.stop,
+              }}
             />
+
+            {voiceMode !== "console" && speakReplies && speech.error && (
+              <p role="status" className="mb-2 text-[10px] leading-relaxed text-brand-ink/45">
+                {speech.error}
+              </p>
+            )}
 
             {modelListError && (
               <FailureNote

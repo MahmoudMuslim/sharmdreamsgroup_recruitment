@@ -673,15 +673,33 @@ async function check11() {
   }
 
   const chat = read("src/app/(admin)/assistant/AssistantChat.tsx");
-  // Hands-free is armed by the console and nowhere else, and the console's
-  // answers are the only ones that speak on their own. Pinned as the whole
-  // statement, so a second `voiceMode === "console" && speakReplies` expression
-  // elsewhere could not satisfy this while the send path stopped speaking.
+  // Hands-free is armed by the console and nowhere else.
   if (!chat.includes('enabled: voiceMode === "console" && handsFree')) {
     problems.push("hands-free is not confined to the console");
   }
-  if (!chat.includes('if (voiceMode === "console" && speakReplies && answer) {')) {
-    problems.push("the console does not speak its answers");
+  // Every surface reads an answer when reading is switched on. The gate used to
+  // name the console by hand, so the dock and the Assistant page had no voice at
+  // all — the whole of the bug this slice fixes.
+  if (!chat.includes("if (speakReplies && answer) {")) {
+    problems.push("the chat does not speak an answer when reading is on");
+  }
+  if (chat.includes('voiceMode === "console" && speakReplies')) {
+    problems.push("spoken answers are still confined to the voice console");
+  }
+  // The console keeps its own strip switch. Every other surface reaches the same
+  // remembered preference through Answering settings, and only a surface that
+  // passes that object renders the switch.
+  if (!chat.includes('speak={voiceMode === "console" ? null : {')) {
+    problems.push("the dock and the Assistant page have no read-aloud switch");
+  }
+  const settings = read("src/app/(admin)/assistant/AssistantSettings.tsx");
+  for (const needle of [
+    "Read answers aloud",
+    "checked={speak.on}",
+    "speak.set(event.target.checked)",
+    "Stop reading",
+  ]) {
+    if (!settings.includes(needle)) problems.push(`the settings panel is missing: ${needle}`);
   }
   // A card minted under `confirm` is released by a click, never by a word.
   // Pinned as the whole test, not the `?? "confirm"` fragment: an inverted
@@ -1063,6 +1081,53 @@ async function check14() {
 }
 
 // ---------------------------------------------------------------------------
+// 15. The presence holds a sentence until the device names its voices
+// ---------------------------------------------------------------------------
+const JARVIS_VOICE_REL = "src/modules/assistant/presentation/useJarvisVoice.ts";
+
+async function check15() {
+  const problems = [];
+  // Comments are stripped: the file explains the empty-list rule in prose, and a
+  // substring scan would read the explanation as the code that breaks it.
+  const code = read(JARVIS_VOICE_REL)
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ");
+  // `getVoices()` answers with an empty list on the first call while the platform
+  // loads its voices. That is not a voiceless machine, and the presence used to
+  // say so, drop the sentence and leave a briefing unspoken on a device that
+  // could have read it. The words are held for the `voiceschanged` pass instead.
+  for (const needle of [
+    "const waiting = useRef<string | null>(null);",
+    "waiting.current = text;",
+    "if (!held || deviceVoices.current.length === 0) return;",
+    "speakOnDevice(held)",
+    "const outcome = speakOnDevice(sentence);",
+  ]) {
+    if (!code.includes(needle)) problems.push(`useJarvisVoice is missing: ${needle}`);
+  }
+  // A list that never arrives is not a list still loading: after the grace the
+  // hold is given up with the sentence the machine can act on — the note.
+  if (!code.includes("This device has no voice installed, so the sentence stays on screen.")) {
+    problems.push("a voice list that never arrives leaves the sentence held forever");
+  }
+  // The specific reason must survive `say()`: it used to be overwritten with a
+  // generic "nothing to say out loud" by the caller that had just set it.
+  if (code.includes("The assistant has nothing to say out loud in this tab yet.")) {
+    problems.push("say() overwrites the device-voice notice with a generic one");
+  }
+  // The empty list must not set the notice on the spot.
+  if (/if \(voices\.length === 0\) \{\s*setNotice/.test(code)) {
+    problems.push("a still-loading voice list is reported as no voice installed");
+  }
+  // A Stop cancels held words, or the list arriving later replays a sentence the
+  // person already silenced.
+  if (!/const stop = useCallback\(\(\) => \{[\s\S]{0,400}?waiting\.current = null;/.test(code)) {
+    problems.push("a Stop leaves held words to play when the voice list arrives");
+  }
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
 const CHECKS = [
@@ -1080,6 +1145,7 @@ const CHECKS = [
   ["12. A spoken code and a spoken question reach the server as said", check12],
   ["13. The microphone reports what it is doing, and a refusal stops", check13],
   ["14. The console cannot hear itself, and one turn runs at a time", check14],
+  ["15. The presence holds a sentence until the device names its voices", check15],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1412,9 +1478,9 @@ await mutation(
 );
 
 await mutation(
-  "29. The console's answers stop being spoken → check 11 red",
+  "29. The chat stops speaking its answers → check 11 red",
   CHAT_REL,
-  'if (voiceMode === "console" && speakReplies && answer) {',
+  "if (speakReplies && answer) {",
   "if (false) {",
   async () => checkIsRed(11)
 );
@@ -1731,6 +1797,60 @@ await mutation(
   "if (speech.speaking || speech.echoedOwnVoice(text)) return;\n    markAwaiting(false);",
   "markAwaiting(false);\n    if (speech.speaking || speech.echoedOwnVoice(text)) return;",
   async () => checkIsRed(14)
+);
+
+// The voice slice this round fixes: every surface speaks when reading is on, the
+// switch that turns it on exists outside the console, and a voice list still
+// loading is no longer reported as a voiceless machine.
+
+const SETTINGS_REL = "src/app/(admin)/assistant/AssistantSettings.tsx";
+
+await mutation(
+  "66. Spoken answers are confined to the console again → check 11 red",
+  CHAT_REL,
+  "if (speakReplies && answer) {",
+  'if (voiceMode === "console" && speakReplies && answer) {',
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "67. The settings panel's read-aloud switch is stuck off → check 11 red",
+  SETTINGS_REL,
+  "checked={speak.on}",
+  "checked={false}",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "68. The dock and the Assistant page are given no switch at all → check 11 red",
+  CHAT_REL,
+  'speak={voiceMode === "console" ? null : {',
+  "speak={true ? null : {",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "69. A loading voice list is called a voiceless device again → check 15 red",
+  JARVIS_VOICE_REL,
+  "        waiting.current = text;",
+  '        setNotice("This device has no voice installed, so the sentence stays on screen.");',
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "70. Nothing replays a held sentence → check 15 red",
+  JARVIS_VOICE_REL,
+  "      if (!held || deviceVoices.current.length === 0) return;",
+  "      return;",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "71. say() overwrites the note the device voice just wrote → check 15 red",
+  JARVIS_VOICE_REL,
+  "      const outcome = speakOnDevice(sentence);",
+  '      const outcome = speakOnDevice(sentence);\n      if (outcome === "failed") setNotice("The assistant has nothing to say out loud in this tab yet.");',
+  async () => checkIsRed(15)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
