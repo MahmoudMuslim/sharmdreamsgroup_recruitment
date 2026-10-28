@@ -38,7 +38,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 | `src/modules/assistant/domain/listening.ts` | create — the four gate constants, `sampleGate`, the quota mirror | 3 |
 | `src/modules/assistant/presentation/useJarvisMeter.ts` | modify — the stream it owns is handed out | 4 |
 | `src/modules/assistant/presentation/voice/useWakeListening.ts` | create — the gate, the recorder, `useMicrophoneAvailable` | 4 |
-| `src/modules/assistant/presentation/voice/useWakeWord.ts` | **delete** | 4 |
+| `src/modules/assistant/presentation/voice/useWakeWord.ts` | **delete** (in Task 5, when its last import goes) | 5 |
 | `src/modules/assistant/presentation/JarvisPresence.tsx` | modify — the dependency flip, the account phrase, the new hook | 5 |
 | `src/app/(admin)/assistant/AssistantChat.tsx` | modify — the new hook, the account phrase, no language | 5, 6 |
 | `src/modules/assistant/presentation/voice/VoiceStrip.tsx` | modify — the selector and its props are gone; the listening line is true | 6 |
@@ -335,12 +335,14 @@ export function canArmAmbient(prefs: JarvisPrefs): boolean {
 ```ts
   if (next.wakePhrase !== previous.wakePhrase) {
     parts.push(
-      next.wakePhrase === null ? "wake phrase (back to the default)" : "wake phrase"
+      next.wakePhrase === null
+        ? "wake phrase (back to the default)"
+        : `wake phrase “${next.wakePhrase}”`
     );
   }
 ```
 
-The proof only requires the joined sentence to contain `wake phrase` when the field moved and not when it did not.
+The proof requires the joined sentence to contain `wake phrase` *and the phrase itself* when the field moved, and neither when it did not — which is how every other field in this sentence already reads (`briefing from 09:00`, `quiet 22:00-08:00`). The trail names the words a person chose; it never copies the row.
 
 - [ ] **Step 4: Run the proofs and confirm green**
 
@@ -913,7 +915,7 @@ git commit -m "feat(assistant): the energy gate that decides what is worth a tra
 **Files:**
 - Create: `src/modules/assistant/presentation/voice/useWakeListening.ts`
 - Modify: `src/modules/assistant/presentation/useJarvisMeter.ts`
-- Delete: `src/modules/assistant/presentation/voice/useWakeWord.ts`
+- Delete: `src/modules/assistant/presentation/voice/useWakeWord.ts` — **not in this task.** Three files still import it until Task 5, so removing it here would break `tsc` mid-slice; this task only stops referring to it.
 - Modify: `scripts/prove-assistant-voice.mjs` (the `WAKE_HOOK_REL` block and check 13's hook needles)
 
 **Interfaces:**
