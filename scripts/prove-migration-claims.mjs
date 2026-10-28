@@ -93,6 +93,18 @@ const MIGRATIONS = [
     asks:
       "select exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'question_type' and e.enumlabel = 'CODING') as present",
   },
+  {
+    file: "046_assistant_voice_autonomy.sql",
+    asks: "select to_regclass('public.assistant_voice_autonomy') is not null as present",
+  },
+  {
+    file: "047_assistant_jarvis_prefs.sql",
+    asks: "select to_regclass('public.assistant_jarvis_prefs') is not null as present",
+  },
+  {
+    file: "048_user_permission_overrides.sql",
+    asks: "select to_regclass('public.user_permission_overrides') is not null as present",
+  },
 ];
 
 // ---------------------------------------------------------------------------
