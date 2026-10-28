@@ -8,6 +8,6 @@ import type { VoiceAutonomy } from "@/modules/assistant/domain/voice";
 export async function setVoiceAutonomy(
   level: string
 ): Promise<{ ok: true; level: VoiceAutonomy } | { ok: false; error: string }> {
-  await requireStaff("/assistant/voice");
+  await requireStaff("/assistant");
   return saveVoiceAutonomy(level);
 }

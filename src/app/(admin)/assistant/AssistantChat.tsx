@@ -48,18 +48,19 @@ import { AssistantSettings } from "./AssistantSettings";
 import { ApprovalCard } from "./AssistantApprovalCard";
 import { Capabilities } from "./AssistantCapabilities";
 import { GeneratedFileCard, chartOf, filesOf } from "./AssistantFiles";
-import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredSpeak, readStoredVoiceLanguage, readStoredWakePhrase, readStoredWeb, subscribeVoicePrefs, writeDraft, writeStoredEngine, writeStoredModel, writeStoredSpeak, writeStoredVoiceLanguage, writeStoredWakePhrase, writeStoredWeb, type VoiceLanguage } from "./AssistantPrefs";
+import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredSpeechRate, readStoredSpeak, readStoredVoiceId, readStoredVoiceLanguage, readStoredWakePhrase, readStoredWeb, subscribeVoicePrefs, writeDraft, writeStoredEngine, writeStoredModel, writeStoredSpeak, writeStoredVoiceLanguage, writeStoredWakePhrase, writeStoredWeb, type VoiceLanguage } from "./AssistantPrefs";
 import { QuestionChoices, TypedAnswerNote, askBubble } from "./AssistantQuestions";
 import { SessionList } from "./AssistantSessions";
 import { FailureNote, StepChips } from "./AssistantSteps";
-import { VoiceButton } from "./voice/VoiceButton";
-import { transcribeClip } from "./voice/transcribe";
-import { useRecorder } from "./voice/useRecorder";
-import { useSpeech } from "./voice/useSpeech";
-import { useWakeWord } from "./voice/useWakeWord";
-import { useJarvisAwaitingWriter, useJarvisHandoff } from "./voice/useJarvisHandoff";
-import { VoiceStrip } from "./voice/VoiceStrip";
+import { VoiceButton } from "@/modules/assistant/presentation/voice/VoiceButton";
+import { transcribeClip } from "@/modules/assistant/presentation/voice/transcribe";
+import { useRecorder } from "@/modules/assistant/presentation/voice/useRecorder";
+import { useSpeech } from "@/modules/assistant/presentation/voice/useSpeech";
+import { useWakeWord } from "@/modules/assistant/presentation/voice/useWakeWord";
+import { useJarvisAwaitingWriter, useJarvisHandoff } from "@/modules/assistant/presentation/voice/useJarvisHandoff";
+import { VoiceStrip } from "@/modules/assistant/presentation/voice/VoiceStrip";
 import {
+  DEFAULT_SPEECH_RATE,
   DEFAULT_WAKE_PHRASE,
   matchWakePhrase,
   spokenApproval,
@@ -116,12 +117,7 @@ export interface AssistantChatProps {
   onSessionChange: (sessionId: string) => void;
   onNewConversation: () => void;
   variant: "docked" | "page";
-  /**
-   * `dictate` adds a microphone beside the composer; `console` is the voice
-   * console, which also adds hands-free and starts with answers read aloud.
-   * Defaults to `dictate`, so the dock and the Assistant page need no prop of
-   * their own — either surface reads answers once its settings switch is on.
-   */
+  /** `dictate` adds a microphone; `console` also offers opt-in hands-free controls. */
   voiceMode?: "dictate" | "console";
 }
 
@@ -187,8 +183,16 @@ export function AssistantChat({
   );
   const speakReplies = useSyncExternalStore(
     subscribeVoicePrefs,
-    () => readStoredSpeak() ?? voiceMode === "console",
-    () => voiceMode === "console"
+    () => readStoredSpeak() ?? false,
+    () => false
+  );
+  // Which of this machine's voices reads an answer, and how fast. Same browser
+  // preference the presence orb speaks with, so one person hears one assistant.
+  const voiceId = useSyncExternalStore(subscribeVoicePrefs, readStoredVoiceId, () => "");
+  const speechRate = useSyncExternalStore(
+    subscribeVoicePrefs,
+    readStoredSpeechRate,
+    () => DEFAULT_SPEECH_RATE
   );
   /**
    * The phrase as typed. The stored copy is trimmed, so a box reading straight
@@ -197,7 +201,7 @@ export function AssistantChat({
   const [typedWakePhrase, setTypedWakePhrase] = useState<string | null>(null);
   const wakePhrase = typedWakePhrase ?? storedWakePhrase;
 
-  const speech = useSpeech();
+  const speech = useSpeech({ voiceId, rate: speechRate });
   const recorder = useRecorder({
     onClip: async (clip) => {
       setVoiceError(null);
@@ -561,9 +565,6 @@ export function AssistantChat({
           note: result.note,
         },
       ]);
-      // The answer is read whenever reading is switched on. The console starts
-      // with it on and keeps its own switch; the dock and the Assistant page start
-      // with it off and carry the same switch inside Answering settings.
       if (speakReplies && answer) {
         speech.speak(spokenSummary(answer));
       }
@@ -681,7 +682,7 @@ export function AssistantChat({
         const blocked = spokenTurnBlocked();
         if (blocked) {
           setCaption(blocked);
-          speech.speak(blocked, "en");
+          speech.speakNow(blocked, "en");
           return;
         }
         setCaption(question);
@@ -689,7 +690,7 @@ export function AssistantChat({
       } else {
         markAwaiting(true);
         setCaption("Listening…");
-        speech.speak("Listening", "en");
+        speech.speakNow("Listening", "en");
       }
       return;
     }
@@ -708,7 +709,7 @@ export function AssistantChat({
       const verdict = spokenApproval(text, live.code ?? null);
       if (verdict === "cancel") {
         setCaption("Cancelled — the card stays live until it expires or you click it.");
-        speech.speak("Cancelled. The card has not been released.", "en");
+        speech.speakNow("Cancelled. The card has not been released.", "en");
         return;
       }
       if (verdict === "approve") {
@@ -718,7 +719,7 @@ export function AssistantChat({
         // unknown level behaves like the safe one.
         if ((live.autonomy ?? "confirm") === "confirm") {
           setCaption(`Waiting for your click: ${live.summary}`);
-          speech.speak("That change is waiting for your click.", "en");
+          speech.speakNow("That change is waiting for your click.", "en");
           return;
         }
         // `code` reaches here only with the code said in the same utterance
@@ -728,7 +729,7 @@ export function AssistantChat({
         const saidCode = live.code ? spokenCodeIn(text, live.code) : null;
         if (live.code && !saidCode) {
           setCaption("Approval not sent — the code was not heard.");
-          speech.speak("Approval not sent. The code was not heard.", "en");
+          speech.speakNow("Approval not sent. The code was not heard.", "en");
           return;
         }
         // One release at a time: the recognizer can hand two verdicts in a
@@ -736,7 +737,7 @@ export function AssistantChat({
         // change it names had run.
         if (inFlightRef.current) {
           setCaption("Not released — the first approval is still running.");
-          speech.speak("Not released. The first approval is still running.", "en");
+          speech.speakNow("Not released. The first approval is still running.", "en");
           return;
         }
         setCaption(`Approved: ${live.summary}`);
@@ -755,7 +756,7 @@ export function AssistantChat({
     const blocked = spokenTurnBlocked();
     if (blocked) {
       setCaption(blocked);
-      speech.speak(blocked, "en");
+      speech.speakNow(blocked, "en");
       return;
     }
     setCaption(text);

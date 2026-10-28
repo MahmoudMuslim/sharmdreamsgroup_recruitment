@@ -2,8 +2,10 @@
 
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import {
+  DEFAULT_SPEECH_RATE,
   DEFAULT_WAKE_PHRASE,
   MAX_WAKE_PHRASE_CHARS,
+  normaliseSpeechRate,
 } from "@/modules/assistant/domain/voice";
 
 export const STARTERS = [
@@ -160,13 +162,7 @@ export function writeDraft(text: string): void {
 
 const SPEAK_KEY = "sdg-assistant-speak";
 
-/**
- * Whether answers are read aloud, and `null` while the person has never chosen.
- *
- * The console's own default is on; the dock's is off. `null` is what lets each
- * surface pick its default without either one writing a preference the person
- * did not choose.
- */
+/** Whether answers are read aloud, and `null` while the person has never chosen. */
 export function readStoredSpeak(): boolean | null {
   try {
     const raw = window.localStorage.getItem(SPEAK_KEY);
@@ -250,6 +246,65 @@ export function readStoredVoiceLanguage(): VoiceLanguage {
 export function writeStoredVoiceLanguage(value: VoiceLanguage): void {
   try {
     window.localStorage.setItem(VOICE_LANG_KEY, value === "ar" ? "ar" : "en");
+  } catch {
+    // Storage blocked — the choice is not remembered.
+  }
+  notifyVoicePrefs();
+}
+
+/* ------------------------- Which voice, how fast ------------------------- */
+
+const VOICE_ID_KEY = "sdg-assistant-voice-id";
+const SPEECH_RATE_KEY = "sdg-assistant-speech-rate";
+/** A `voiceURI` is a name this device gave; nothing this long is one. */
+const MAX_VOICE_ID_CHARS = 200;
+
+/**
+ * The voice this browser reads with, by `voiceURI`, or empty for the default.
+ *
+ * The empty string is a real choice, not a missing one: it means "the first voice
+ * the device has for the language being spoken", which is what a person who never
+ * opened the panel gets. A name carried to a machine that does not have that voice
+ * simply stops matching, and the hooks fall back the same way.
+ */
+export function readStoredVoiceId(): string {
+  try {
+    return (window.localStorage.getItem(VOICE_ID_KEY) ?? "").trim().slice(0, MAX_VOICE_ID_CHARS);
+  } catch {
+    return "";
+  }
+}
+
+export function writeStoredVoiceId(voiceId: string): void {
+  const clean = voiceId.trim().slice(0, MAX_VOICE_ID_CHARS);
+  try {
+    if (clean) window.localStorage.setItem(VOICE_ID_KEY, clean);
+    else window.localStorage.removeItem(VOICE_ID_KEY);
+  } catch {
+    // Storage blocked — the choice is not remembered.
+  }
+  notifyVoicePrefs();
+}
+
+/**
+ * How fast the device speaks, as a factor of normal.
+ *
+ * Clamped through the domain rule on the way out of storage, so a value a stale tab
+ * or a hand-edited store left behind cannot make the assistant unintelligible.
+ */
+export function readStoredSpeechRate(): number {
+  try {
+    return normaliseSpeechRate(window.localStorage.getItem(SPEECH_RATE_KEY));
+  } catch {
+    return DEFAULT_SPEECH_RATE;
+  }
+}
+
+export function writeStoredSpeechRate(rate: number): void {
+  const clean = normaliseSpeechRate(rate);
+  try {
+    if (clean === DEFAULT_SPEECH_RATE) window.localStorage.removeItem(SPEECH_RATE_KEY);
+    else window.localStorage.setItem(SPEECH_RATE_KEY, String(clean));
   } catch {
     // Storage blocked — the choice is not remembered.
   }

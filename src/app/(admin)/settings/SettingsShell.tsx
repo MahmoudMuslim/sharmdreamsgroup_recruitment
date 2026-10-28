@@ -11,6 +11,7 @@ import {
   Languages,
   MapPin,
   Network,
+  Palette,
   Shield,
   SlidersHorizontal,
   Sparkles,
@@ -36,6 +37,7 @@ const ICONS: Record<string, LucideIcon> = {
   sliders: SlidersHorizontal,
   network: Network,
   pin: MapPin,
+  palette: Palette,
   briefcase: BriefcaseBusiness,
   cap: GraduationCap,
   coins: CircleDollarSign,
@@ -71,7 +73,7 @@ function CountPill({ value, muted }: { value: number; muted?: boolean }) {
 }
 
 /**
- * Settings navigation: a vertical dock on the left with the four areas and,
+ * Settings navigation: a vertical dock on the left with the five areas and,
  * expanded under the active one, its sections.
  *
  * It used to be a horizontal strip of four buttons sitting above a second

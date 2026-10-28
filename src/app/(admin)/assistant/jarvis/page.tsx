@@ -1,38 +1,41 @@
-import { Ear } from "lucide-react";
 import { connection } from "next/server";
+import { redirect } from "next/navigation";
 import { requireStaff } from "@/lib/auth/session";
-import { PageHeader } from "@/modules/analytics/presentation/ui";
-import { PageTransition } from "@/modules/shell/presentation/PageTransition";
-import { readJarvisPrefs } from "@/modules/assistant/application/jarvisSettings";
-import { PresenceConsole } from "./PresenceConsole";
+import { jarvisSettingsHref } from "@/modules/settings/domain/settingsNav";
 
 export const metadata = {
   title: "JARVIS · Assistant",
-  description: "Decide when the assistant may listen in the background, speak first, and stay quiet",
+  description: "JARVIS settings now live in Settings → Assistant",
 };
 
-/** Auth-gated route: every switch is one person's own row. */
+/** Auth-gated route: the address it hands over is one person's own console. */
 export const instant = false;
 
-export default async function AssistantJarvisPage() {
-  await connection();
-  const staff = await requireStaff("/assistant/jarvis");
-  const state = await readJarvisPrefs(staff.profileId);
+/** The half of the moved page an old bookmark asked for. */
+type SearchParams = Promise<{ [key: string]: string | string[] | undefined }>;
 
-  return (
-    <PageTransition>
-      <PageHeader
-        eyebrow="Operations assistant"
-        title="JARVIS"
-        description="The presence on every admin screen: what it may hear, when it may speak first, and the hours it must stay quiet — stored on your account, never in this browser."
-        actions={
-          <span className="inline-flex items-center gap-2 rounded-full border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink/60">
-            <Ear className="h-3.5 w-3.5 text-brand-gold" aria-hidden />
-            Off until you arm it
-          </span>
-        }
-      />
-      <PresenceConsole initial={state} />
-    </PageTransition>
+/**
+ * The old JARVIS page: one line that says where the two halves went.
+ *
+ * `/assistant/jarvis?tab=appearance` was a page with two tabs; both are now
+ * sections of the Settings dock, so the tab name becomes a section and the `state`
+ * a deep link carried travels with the half that edits colours. The translating
+ * mapper lives in `settingsNav` because the chat, the alerts and this redirect all
+ * have to write the same address.
+ *
+ * A `permanent: true` redirect in `next.config` could not do this: the destination
+ * renames a parameter, and a config redirect that drops the query would send every
+ * bookmark to Presence. The address is also the post-login return, so someone
+ * signed out on this URL comes back to the section they asked for.
+ */
+export default async function AssistantJarvisPage({ searchParams }: { searchParams: SearchParams }) {
+  await connection();
+  const params = await searchParams;
+  const href = jarvisSettingsHref(
+    typeof params.tab === "string" ? params.tab : null,
+    typeof params.state === "string" ? params.state : null
   );
+
+  await requireStaff(href);
+  redirect(href);
 }

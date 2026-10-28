@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
-import { Bell, Clock, Ear, Loader2, Mic, Moon, ShieldCheck, Sparkles } from "lucide-react";
+import { Bell, Clock, Ear, Loader2, Mic, Moon, Play, ShieldCheck, Sparkles, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   JARVIS_QUEUES,
@@ -10,12 +10,28 @@ import {
   summarizeJarvisChange,
   type JarvisPrefs,
 } from "@/modules/assistant/domain/jarvis";
+import {
+  DEFAULT_SPEECH_RATE,
+  SPEECH_RATE_MAX,
+  SPEECH_RATE_MIN,
+  pickDeviceVoice,
+} from "@/modules/assistant/domain/voice";
+import { useDeviceVoices } from "@/modules/assistant/presentation/voice/useDeviceVoices";
 import { refreshJarvisPresence } from "@/lib/jarvis-ui";
-import { useRecognizerSupported } from "../voice/useWakeWord";
-import { setJarvisPresence } from "./actions";
+import { useRecognizerSupported } from "@/modules/assistant/presentation/voice/useWakeWord";
+import {
+  readStoredSpeechRate,
+  readStoredVoiceId,
+  subscribeVoicePrefs,
+  writeStoredSpeechRate,
+  writeStoredVoiceId,
+} from "@/app/(admin)/assistant/AssistantPrefs";
+import { setJarvisPresence } from "./jarvis-actions";
 
 /**
- * `/assistant/jarvis`: every switch the presence obeys, in one place.
+ * The Presence half of Settings → Assistant
+ * (`/settings?area=assistant&section=presence`): every switch the presence obeys,
+ * in one place.
  *
  * The orb, the wake word and the briefing run in the browser, but none of them
  * decides its own reach — each reads this person's row on the server. This panel
@@ -33,6 +49,12 @@ import { setJarvisPresence } from "./actions";
  *   assumed about what the person chose.
  * - **No row yet** — the table works and this person has never chosen. Every
  *   switch is off, every control is usable, and the panel says so.
+ *
+ * One pair of controls sits outside all three states: which voice reads a sentence
+ * and how fast it reads it. Those are facts about the machine in front of the
+ * person, not about their account, so they live in this browser and keep working
+ * when the row cannot be written — a panel that disabled them would be offering no
+ * choice at all, on a setting that never touched the database.
  */
 export interface PresenceConsoleProps {
   initial: {
@@ -47,6 +69,16 @@ const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const hourLabel = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
 
 const spokenLabel = (phrase: string) => phrase.charAt(0).toUpperCase() + phrase.slice(1);
+
+/**
+ * What the preview says.
+ *
+ * Two rules the words have to obey: no wake phrase — the recogniser is running on
+ * this very page whenever the wake word is armed, and a preview that contained it
+ * would hand the microphone a turn the person never asked for — and no barge-in
+ * word, or previewing the voice would stop the voice.
+ */
+const PREVIEW_SENTENCE = "Two offers are waiting for an answer today.";
 
 function Switch({
   checked,
@@ -147,6 +179,50 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
   const [consentOpen, setConsentOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const supported = useRecognizerSupported();
+
+  // Which voice reads, and how fast: the same browser-level pair the orb speaks its
+  // briefing with and the Assistant page reads its answers with, so the two surfaces
+  // cannot sound like two different people on one machine. Read through the store so
+  // a change made here reaches both of them while they are open.
+  const devices = useDeviceVoices();
+  const voiceId = useSyncExternalStore(subscribeVoicePrefs, readStoredVoiceId, () => "");
+  const speechRate = useSyncExternalStore(
+    subscribeVoicePrefs,
+    readStoredSpeechRate,
+    () => DEFAULT_SPEECH_RATE
+  );
+  const [previewProblem, setPreviewProblem] = useState<string | null>(null);
+
+  /** A saved name this machine does not have is a fallback, and the panel says so. */
+  const voiceMissing = voiceId !== "" && !devices.some((voice) => voice.voiceURI === voiceId);
+
+  /**
+   * Read the sample in the voice and at the pace just chosen.
+   *
+   * The panel owns no queue and issues no `cancel()`. `speechSynthesis` is one
+   * global voice per tab: a preview that silenced it to get its turn would cut a
+   * briefing mid-sentence, which is the defect this whole surface was built to stop.
+   * So the sample rides behind whatever is already being read, as any second sentence
+   * does.
+   */
+  function hearThisVoice() {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const voice = pickDeviceVoice(devices, voiceId, "en");
+    if (!voice) {
+      setPreviewProblem(
+        devices.length === 0
+          ? "This browser has not given up a voice list, so there is nothing to hear."
+          : "This machine has no English voice, so there is nothing to hear."
+      );
+      return;
+    }
+    setPreviewProblem(null);
+    const utterance = new SpeechSynthesisUtterance(PREVIEW_SENTENCE);
+    utterance.voice = voice;
+    utterance.lang = voice.lang;
+    utterance.rate = speechRate;
+    window.speechSynthesis.speak(utterance);
+  }
 
   /** A switch that cannot be stored cannot be obeyed, so the panel closes all of them. */
   const writable = problem === null;
@@ -253,9 +329,10 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
 
       {problem === "absent" && (
         <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold leading-relaxed text-amber-800">
-          db/migrations/047_assistant_jarvis_prefs.sql is authored but not applied, so nothing here
-          can be stored or armed yet. Every switch is off until that table exists on this database,
-          and no control below will write.
+          db/migrations/047_assistant_jarvis_prefs.sql is authored but not applied, so no setting on
+          your account can be stored or armed yet. Every switch is off until that table exists on
+          this database, and no account control below will write. The voice and the pace are this
+          browser&apos;s own choice and still save.
         </p>
       )}
       {problem === "unreadable" && (
@@ -360,7 +437,8 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
         <p className="py-2.5 text-[11px] leading-relaxed text-brand-ink/55">
           Sentences are read by the voice installed on the machine you are looking at; nothing is
           sent to a speech service. A machine with no voice for the sentence&apos;s language says so
-          and leaves the words on screen.
+          and leaves the words on screen. Which voice that is, and how fast it reads, is chosen in
+          The voice and the pace below.
         </p>
         <SwitchRow
           checked={form.briefing}
@@ -444,6 +522,115 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
           {form.watchQueues.length === 0 && (
             <p className="mt-2 text-[11px] font-semibold text-amber-700">
               No queue is ticked, so threshold alerts will stay silent even while the switch is on.
+            </p>
+          )}
+        </div>
+      </Section>
+
+      <Section
+        icon={<Volume2 className="h-3.5 w-3.5" aria-hidden />}
+        title="The voice and the pace"
+        hint="Which of this machine's own voices reads a sentence, and how fast it reads it. Remembered in this browser rather than on your account: the orb's briefing and the answers you have read aloud on the Assistant page both obey them, and neither one goes to a speech service."
+      >
+        <div className="py-3">
+          <p className="text-xs font-bold text-brand-ink">Voice</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-brand-ink/55">
+            The names below are the voices installed on the machine you are looking at. A chosen
+            voice reads every sentence in whichever language it arrives; with no choice made the
+            device answers in its own voice for that language, and a name this machine no longer
+            has falls back the same way.
+          </p>
+          <select
+            value={voiceMissing ? "" : voiceId}
+            aria-label="Voice"
+            onChange={(event) => {
+              setPreviewProblem(null);
+              writeStoredVoiceId(event.target.value);
+            }}
+            className="mt-2 w-full rounded-xl border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold text-brand-ink"
+          >
+            <option value="">The device&apos;s own voice for each language</option>
+            {devices.map((voice, index) => (
+              <option key={`${voice.voiceURI}-${index}`} value={voice.voiceURI}>
+                {voice.name} — {voice.lang}
+              </option>
+            ))}
+          </select>
+          {devices.length === 0 && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-brand-ink/55">
+              No voice list has arrived from this browser yet. Chrome and Edge give one a moment
+              after the page opens, and this panel updates when it does.
+            </p>
+          )}
+          {voiceMissing && (
+            <p className="mt-1.5 text-[11px] font-semibold leading-relaxed text-amber-700">
+              “{voiceId}” is not on this machine, so the device&apos;s own voice is answering for
+              now. Choosing it again puts it back.
+            </p>
+          )}
+        </div>
+
+        <div className="py-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-bold text-brand-ink">Speaking pace</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-brand-ink/55">
+                A factor of normal, from {SPEECH_RATE_MIN.toFixed(1)}× to {SPEECH_RATE_MAX}×. A
+                change reaches the next sentence, not the one already in the air.
+              </p>
+            </div>
+            <p className="shrink-0 rounded-full border border-brand-line bg-brand-cream px-2.5 py-1 text-xs font-bold tabular-nums text-brand-ink">
+              {speechRate.toFixed(1)}×
+            </p>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-[10px] font-semibold text-brand-ink/50">slower</span>
+            <input
+              type="range"
+              min={SPEECH_RATE_MIN}
+              max={SPEECH_RATE_MAX}
+              step={0.1}
+              value={speechRate}
+              aria-label="Speaking pace"
+              onChange={(event) => {
+                setPreviewProblem(null);
+                writeStoredSpeechRate(Number(event.target.value));
+              }}
+              className="h-1.5 w-full accent-brand-gold-dark"
+            />
+            <span className="text-[10px] font-semibold text-brand-ink/50">faster</span>
+          </div>
+          {speechRate !== DEFAULT_SPEECH_RATE && (
+            <button
+              type="button"
+              onClick={() => writeStoredSpeechRate(DEFAULT_SPEECH_RATE)}
+              className="mt-2 rounded-full border border-brand-line bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
+            >
+              Back to a normal pace
+            </button>
+          )}
+        </div>
+
+        <div className="py-3">
+          <p className="text-xs font-bold text-brand-ink">Hear it now</p>
+          <p className="mt-0.5 text-[11px] leading-relaxed text-brand-ink/55">
+            The sample is read once, by this machine, in the voice and at the pace chosen above. If
+            the presence is mid-sentence it waits its turn rather than cutting the other one short.
+          </p>
+          <p className="mt-1.5 rounded-xl border border-brand-line bg-brand-cream/70 px-2.5 py-1.5 text-[11px] italic leading-relaxed text-brand-ink/70">
+            “{PREVIEW_SENTENCE}”
+          </p>
+          <button
+            type="button"
+            onClick={hearThisVoice}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-brand-ink px-3 py-1.5 text-[11px] font-bold text-brand-cream transition hover:bg-brand-ink/90"
+          >
+            <Play className="h-3 w-3" aria-hidden />
+            Hear this voice
+          </button>
+          {previewProblem && (
+            <p className="mt-1.5 text-[11px] font-semibold leading-relaxed text-amber-700">
+              {previewProblem}
             </p>
           )}
         </div>

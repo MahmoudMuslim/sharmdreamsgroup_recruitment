@@ -7,6 +7,11 @@ import { PermissionMatrixCard } from "./PermissionMatrixCard";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
 import { LanguagesConsole } from "./LanguagesConsole";
+import { AppearanceConsole } from "./JarvisAppearanceConsole";
+import { PresenceConsole } from "./JarvisPresenceConsole";
+import { readJarvisPrefs } from "@/modules/assistant/application/jarvisSettings";
+import { readJarvisAppearance } from "@/modules/assistant/application/jarvisAppearanceSettings";
+import { REACTOR_STATES, type ReactorState } from "@/modules/assistant/domain/jarvisAppearance";
 import { loadStoredTranslations } from "@/modules/i18n/application/translationOverrides";
 import { translationRows } from "@/modules/i18n/domain/translations";
 import { loadSettings } from "./actions";
@@ -105,6 +110,36 @@ async function LanguagesPanel({ editable }: { editable: boolean }) {
   return <LanguagesConsole rows={rows} editable={editable} />;
 }
 
+/**
+ * The Assistant area's panel, with its own read.
+ *
+ * Both halves are one person's row, and the dock shows one half at a time, so
+ * exactly one read runs — the way the change trail reads only on `section=trail`.
+ * Neither read belongs in the `Promise.all` above: a recruiter on the model
+ * catalogue has no orb to describe, and a row that cannot be read would put a
+ * failure notice on a screen that never shows one.
+ *
+ * The `?state=` a chat link writes is checked against the six states the editor
+ * actually has tabs for, and only on the half that edits colours — a presence
+ * address naming `alert` would ask for a view that does not exist.
+ */
+async function AssistantPanel({
+  profileId,
+  section,
+  state,
+}: {
+  profileId: string;
+  section: string;
+  state: string | null;
+}) {
+  if (section !== "appearance") return <PresenceConsole initial={await readJarvisPrefs(profileId)} />;
+
+  const openOn: ReactorState | null =
+    REACTOR_STATES.find((entry) => entry === state) ?? null;
+
+  return <AppearanceConsole initialState={openOn} initial={await readJarvisAppearance(profileId)} />;
+}
+
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -115,6 +150,7 @@ export default async function SettingsPage({
     trail?: string | string[];
     page?: string | string[];
     find?: string | string[];
+    state?: string | string[];
   }>;
 }) {
   // Admin content is per-session; stop the static shell before any rendering so
@@ -276,6 +312,14 @@ export default async function SettingsPage({
           scope={credentialScope}
           page={pageNumber}
           find={searchWords}
+        />
+      )}
+
+      {area.id === "assistant" && (
+        <AssistantPanel
+          profileId={user.profileId}
+          section={section.id}
+          state={typeof params.state === "string" ? params.state : null}
         />
       )}
     </SettingsShell>

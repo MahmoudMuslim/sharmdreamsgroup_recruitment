@@ -14,7 +14,7 @@ import type { NotificationChannel } from "./types";
  * state, so the panels stay server-rendered and a deep link to
  * `/settings?area=providers&section=models` opens exactly what it says.
  */
-export type SettingsAreaId = "platform" | "organisation" | "access" | "providers";
+export type SettingsAreaId = "platform" | "organisation" | "access" | "providers" | "assistant";
 
 export interface SettingsNavSection {
   id: string;
@@ -120,6 +120,31 @@ const PROVIDER_SECTIONS: SettingsNavSection[] = [
 ];
 
 /**
+ * The Assistant area's two sections — the orb's behaviour and its look.
+ *
+ * They sit here rather than on a page of their own because both are one person's
+ * own settings row (`assistant_jarvis_prefs`), and the portal already keeps
+ * per-account choices under this dock. They are not in `SETTINGS_SCHEMA`: those
+ * rows are `app_settings`, shared by every account and gated on
+ * `settings.manage_platform`, while these switches and colours belong to the
+ * signed-in person and are open to them whatever their role.
+ */
+const ASSISTANT_SECTIONS: SettingsNavSection[] = [
+  {
+    id: "presence",
+    label: "JARVIS presence",
+    hint: "What the orb may hear on any admin screen, when it may speak first, and the hours it stays quiet.",
+    icon: "sparkles",
+  },
+  {
+    id: "appearance",
+    label: "JARVIS appearance",
+    hint: "The orb's five colours, eight motions, quality and breath, previewed before they are saved.",
+    icon: "palette",
+  },
+];
+
+/**
  * The Platform area's last dock entry: the trail of what this console wrote.
  *
  * Not a control, so not in `SETTINGS_SCHEMA` and it carries no count pill. It is
@@ -172,6 +197,13 @@ export const SETTINGS_NAV: readonly SettingsNavArea[] = [
     blurb: "Credentials and per-task model routing for the AI providers and channels in use.",
     sections: PROVIDER_SECTIONS,
   },
+  {
+    id: "assistant",
+    label: "Assistant",
+    icon: "sparkles",
+    blurb: "Your own orb: when it may listen or speak, and what it looks like while it does.",
+    sections: ASSISTANT_SECTIONS,
+  },
 ];
 
 export const DEFAULT_AREA: SettingsAreaId = "platform";
@@ -180,6 +212,7 @@ export const DEFAULT_SECTION: Record<SettingsAreaId, string> = {
   organisation: "departments",
   access: "permissions",
   providers: "credentials",
+  assistant: "presence",
 };
 
 export function areaById(id: string | undefined | null): SettingsNavArea {
@@ -293,4 +326,20 @@ export function templatesTab(id: string | undefined | null): TemplatesTabId {
  */
 export function credentialsTab(id: string | undefined | null): ProviderGroup | null {
   return PROVIDER_GROUPS.find((group) => group.id === id)?.id ?? null;
+}
+
+/**
+ * The Assistant area's two sections, and the address the old JARVIS page means.
+ *
+ * `/assistant/jarvis?tab=appearance` was one page with two tabs; the same two
+ * halves are now sections of this dock, so the tab name has to be translated to a
+ * section rather than appended as a parameter nobody reads. The `state` a deep link
+ * carried travels only with Appearance — Presence has no colours to open on — and
+ * is passed through unvalidated, because the settings page is where the six states
+ * are checked and a second copy of that rule here could disagree with it.
+ */
+export function jarvisSettingsHref(tab: string | undefined | null, state?: string | undefined | null): string {
+  const section = tab === "appearance" ? "appearance" : "presence";
+  const colour = section === "appearance" && typeof state === "string" && state !== "" ? state : null;
+  return settingsHref("assistant", section) + (colour === null ? "" : `&state=${encodeURIComponent(colour)}`);
 }

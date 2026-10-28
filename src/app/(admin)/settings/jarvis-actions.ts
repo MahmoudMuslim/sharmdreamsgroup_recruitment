@@ -8,6 +8,22 @@ import {
   type SavedJarvisPrefs,
 } from "@/modules/assistant/application/jarvisSettings";
 import type { JarvisPrefs } from "@/modules/assistant/domain/jarvis";
+import {
+  readJarvisAppearance,
+  saveJarvisAppearance,
+  type JarvisAppearanceRead,
+  type SavedJarvisAppearance,
+} from "@/modules/assistant/application/jarvisAppearanceSettings";
+
+export async function getJarvisAppearance(): Promise<JarvisAppearanceRead> {
+  const user = await requireStaff("/assistant");
+  return readJarvisAppearance(user.profileId);
+}
+
+export async function setJarvisAppearance(draft: unknown): Promise<SavedJarvisAppearance> {
+  await requireStaff("/settings?area=assistant&section=appearance");
+  return saveJarvisAppearance(draft);
+}
 
 /**
  * What the presence may do, as the browser is allowed to see it.
@@ -38,6 +54,6 @@ export async function setJarvisPresence(
   draft: Record<string, unknown>,
   consentGiven: boolean
 ): Promise<SavedJarvisPrefs> {
-  await requireStaff("/assistant/jarvis");
+  await requireStaff("/settings?area=assistant&section=presence");
   return saveJarvisPrefs(draft, { consentGiven: consentGiven === true });
 }

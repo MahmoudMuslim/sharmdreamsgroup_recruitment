@@ -6,7 +6,7 @@ import {
   DEFAULT_WAKE_PHRASE,
   MAX_WAKE_PHRASE_CHARS,
 } from "@/modules/assistant/domain/voice";
-import type { VoiceLanguage } from "../AssistantPrefs";
+import type { VoiceLanguage } from "@/app/(admin)/assistant/AssistantPrefs";
 
 /**
  * The voice console's controls, above its composer.

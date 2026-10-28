@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, History, Loader2, Pencil, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { Check, History, Loader2, Pencil, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import { Card, EmptyState } from "@/modules/analytics/presentation/ui";
 import { whenLabel } from "@/modules/assistant/presentation/whenLabel";
 import { cn } from "@/lib/utils";
@@ -26,11 +26,22 @@ import {
  * you can hand a colleague a link to and land back on from the dock.
  */
 
-export function AssistantConsole({ initialSessionId }: { initialSessionId: string | null }) {
+export function AssistantConsole({
+  initialSessionId,
+  initialQuery = "",
+}: {
+  initialSessionId: string | null;
+  /**
+   * Words the address came with (`/assistant?q=pipeline`), so an answer that
+   * named a conversation can hand over a rail already narrowed to its name.
+   */
+  initialQuery?: string;
+}) {
   const router = useRouter();
 
   const [sessions, setSessions] = useState<AssistantSessionSummary[] | null>(null);
   const [selected, setSelected] = useState<string | null>(initialSessionId);
+  const [query, setQuery] = useState(initialQuery);
   const [listError, setListError] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -40,6 +51,7 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
   const [reloadToken, setReloadToken] = useState(0);
 
   const request = useRef(0);
+  const reportedSession = useRef(initialSessionId);
 
   async function refresh() {
     const token = ++request.current;
@@ -72,6 +84,7 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
   }, []);
 
   function open(id: string | null) {
+    reportedSession.current = id;
     setSelected(id);
     setConfirmingId(null);
     setEditingId(null);
@@ -86,8 +99,11 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
    * reload of the page, which would throw away the composer state.
    */
   function onSessionChange(sessionId: string) {
-    setSelected(sessionId);
-    router.replace(`/assistant?session=${encodeURIComponent(sessionId)}`, { scroll: false });
+    if (reportedSession.current !== sessionId) {
+      reportedSession.current = sessionId;
+      setSelected(sessionId);
+      router.replace(`/assistant?session=${encodeURIComponent(sessionId)}`, { scroll: false });
+    }
     void refresh();
   }
 
@@ -109,6 +125,13 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
 
   const active = sessions?.find((session) => session.id === selected) ?? null;
 
+  // The rail narrows over the rows it already holds — your 60 most recent
+  // conversations, newest first — so the box never claims to search older ones.
+  const words = query.trim().toLowerCase();
+  const shown = words
+    ? (sessions ?? []).filter((session) => session.title.toLowerCase().includes(words))
+    : sessions ?? [];
+
   return (
     <div className="grid gap-5 lg:grid-cols-[19rem_minmax(0,1fr)]">
       <aside className="min-w-0">
@@ -126,6 +149,30 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
               <Plus className="h-3 w-3" aria-hidden />
               New
             </button>
+          </div>
+
+          <div className="shrink-0 border-b border-brand-line px-2 pb-2">
+            <label className="flex items-center gap-2 rounded-lg border border-brand-line bg-brand-cream/70 px-2 py-1.5 focus-within:border-brand-gold">
+              <Search className="h-3.5 w-3.5 shrink-0 text-brand-ink/35" aria-hidden />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search by name"
+                aria-label="Search saved conversations by name"
+                className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-brand-ink/40"
+              />
+              {query !== "" && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear the search"
+                  className="shrink-0 rounded-md p-1 text-brand-ink/45 transition hover:bg-white hover:text-brand-ink"
+                >
+                  <X className="h-3 w-3" aria-hidden />
+                </button>
+              )}
+            </label>
           </div>
 
           <div className="rail-scroll min-h-0 flex-1 overflow-y-auto p-2">
@@ -156,8 +203,21 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
               />
             )}
 
-            <ul className="space-y-1">
-              {(sessions ?? []).map((session) => {
+            {words !== "" && sessions !== null && sessions.length > 0 && shown.length === 0 && (
+              <p className="p-3 text-xs leading-relaxed text-brand-ink/55">
+                None of your {sessions.length} saved {sessions.length === 1 ? "name" : "names"} hold
+                “{query.trim()}”. Clear the box to see the whole rail again.
+              </p>
+            )}
+
+            {words !== "" && shown.length > 0 && (
+              <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-brand-gold-dark">
+                {shown.length} of {sessions?.length ?? 0} names match
+              </p>
+            )}
+
+            <ul className="space-y-1" aria-label="Your saved conversations">
+              {shown.map((session) => {
                 const isActive = session.id === selected;
                 const isEditing = session.id === editingId;
 
@@ -266,9 +326,11 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
         </Card>
 
         <p className="mt-3 px-1 text-[11px] leading-relaxed text-brand-ink/45">
-          Only you see these. A conversation records what was asked, what the assistant did to
-          answer it and which model replied — it is not the audit trail of the changes themselves,
-          which stays with the screens they were made from.
+          Only you see these. The rail lists your 60 most recent conversations newest first, and the
+          box narrows those rows — an older one is not searched away, it simply is not on this list.
+          A conversation records what was asked, what the assistant did to answer it and which model
+          replied — it is not the audit trail of the changes themselves, which stays with the screens
+          they were made from.
         </p>
       </aside>
 
@@ -297,6 +359,7 @@ export function AssistantConsole({ initialSessionId }: { initialSessionId: strin
         <AssistantChat
           key={reloadToken}
           variant="page"
+          voiceMode="console"
           sessionId={selected}
           onSessionChange={onSessionChange}
           onNewConversation={() => open(null)}

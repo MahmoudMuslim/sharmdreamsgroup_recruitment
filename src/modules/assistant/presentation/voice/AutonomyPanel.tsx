@@ -10,7 +10,7 @@ import {
   type VoiceAutonomy,
   type VoiceAutonomyState,
 } from "@/modules/assistant/domain/voice";
-import { setVoiceAutonomy } from "./actions";
+import { setVoiceAutonomy } from "@/app/(admin)/assistant/voice-actions";
 
 /**
  * What a spoken word may release.
