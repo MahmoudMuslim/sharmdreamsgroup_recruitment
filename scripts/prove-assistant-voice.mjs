@@ -1013,13 +1013,24 @@ async function check14() {
   // phrase and the question as two finals in one synchronous pass, and the state
   // the first writes is not visible to the second. So the wait for the utterance
   // after a bare "Hey Jarvis" is read where the finals land, not as render state.
+  // The writes go through `markAwaiting`, the one writer that also mirrors the
+  // wait to the presence orb — it must still write the ref first, for that same
+  // synchronous pass.
   for (const needle of [
     "const awaitingRef = useRef(false);",
-    "awaitingRef.current = false;",
-    "awaitingRef.current = true;",
+    "const markAwaiting = useJarvisAwaitingWriter(awaitingRef);",
+    "markAwaiting(true);",
+    "markAwaiting(false);",
     "if (!awaitingRef.current) return;",
   ]) {
     if (!chat.includes(needle)) problems.push(`the wake-follow state is not a ref: ${needle}`);
+  }
+  const awaitingWriter = read("src/app/(admin)/assistant/voice/useJarvisHandoff.ts");
+  if (
+    !awaitingWriter.includes("awaitingRef.current = awaiting;") ||
+    !awaitingWriter.includes("setJarvisAwaiting(awaiting);")
+  ) {
+    problems.push("the chat's wait is not written to both the ref and the orb");
   }
   if (/const \[awaiting, setAwaiting\] = useState/.test(chat)) {
     problems.push("the wake-follow latch is still React state");
@@ -1028,7 +1039,7 @@ async function check14() {
   // wake phrase over an answer that was cut off is still answering the cue they
   // gave. Pinned as the guard *followed by* the reset, so a reset moved above the
   // guard — which would swallow the person's next utterance — cannot pass.
-  if (!/if \(speech\.speaking \|\| speech\.echoedOwnVoice\(text\)\) return;\n\s*awaitingRef\.current = false;/.test(chat)) {
+  if (!/if \(speech\.speaking \|\| speech\.echoedOwnVoice\(text\)\) return;\n\s*markAwaiting\(false\);/.test(chat)) {
     problems.push("an echo of the console's own voice ends the wait for the person's words");
   }
   for (const needle of [
@@ -1411,7 +1422,7 @@ await mutation(
 await mutation(
   "30. Hands-free armed outside the console → check 11 red",
   CHAT_REL,
-  'enabled: voiceMode === "console" && handsFree,',
+  'enabled: voiceMode === "console" && handsFree && !ambientArmed,',
   "enabled: handsFree,",
   async () => checkIsRed(11)
 );
@@ -1717,8 +1728,8 @@ await mutation(
 await mutation(
   "65. An echo ends the wait for the person's own next words → check 14 red",
   CHAT_REL,
-  "if (speech.speaking || speech.echoedOwnVoice(text)) return;\n    awaitingRef.current = false;",
-  "awaitingRef.current = false;\n    if (speech.speaking || speech.echoedOwnVoice(text)) return;",
+  "if (speech.speaking || speech.echoedOwnVoice(text)) return;\n    markAwaiting(false);",
+  "markAwaiting(false);\n    if (speech.speaking || speech.echoedOwnVoice(text)) return;",
   async () => checkIsRed(14)
 );
 
