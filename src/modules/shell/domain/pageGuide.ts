@@ -521,6 +521,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "Choose the answering engine at the top of the panel and the model behind Settings, and Rename, Delete or Reload a conversation.",
       "Edit and send again re-runs a turn you were not happy with.",
       "The microphone button beside the message box, labelled “Dictate a question”, puts the words into the box and never sends them, so they can be corrected first. “Voice” in this page's header opens /assistant/voice, which is the same conversation with hands-free mode, spoken answers and the autonomy panel.",
+      "The orb at the corner of every admin screen is the presence: click it, or press Ctrl+Space anywhere, to open this same conversation. “JARVIS” in this page's header opens /assistant/jarvis, where you decide whether it may listen for a wake phrase on every admin screen, speak a morning briefing, alert on queues above their thresholds, and the hours it must stay silent. Every switch is stored on your account and trailed; while db/migrations/047_assistant_jarvis_prefs.sql is unapplied the panel names it and takes no writes.",
     ],
     edges: [
       "Every read is capped, and the answer carries its own note saying what it left out; a long result is clipped.",
@@ -533,6 +534,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       `A built file is handed to your browser and nowhere else: it is not stored, so after a reload the card offers Build again and makes the file once more from the same rows. Its own size ceiling is ${formatBytes(MAX_FILE_BYTES)}.`,
       "A file is made of rows a read tool returned in that conversation or lines from a file you attached — never of figures the model worked out — and whatever a ceiling cut short is printed on the card.",
       "Audio is never stored. Push-to-talk sends one clip to the transcription model and keeps only the words; hands-free uses the browser's own recognizer, which sends what it hears to the browser vendor, and runs only on /assistant/voice, only while armed. The autonomy level lives on your account, so a browser cannot upgrade it; while db/migrations/046_assistant_voice_autonomy.sql is unapplied, only “confirm with a click” is offered and a code or hands-free level is refused by name.",
+      "The wake phrase on /assistant/jarvis is the same browser recognizer, armed on any admin screen, and it carries the same disclosure: while the tab is visible the recognizer streams the microphone to the browser vendor's speech service, independently of this portal. It is off by default, only the account it belongs to can arm it, hiding the tab releases the microphone, and no audio reaches a table, a bucket or a log — only the transcript of a turn you send is saved, exactly as if typed.",
     ],
   },
 

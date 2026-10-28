@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Mic, Sparkles } from "lucide-react";
+import { Ear, Mic, Sparkles } from "lucide-react";
 import { AssistantConsole } from "./AssistantConsole";
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
@@ -38,6 +38,13 @@ export default async function AssistantPage({ searchParams }: { searchParams: Se
             >
               <Mic className="h-3.5 w-3.5 text-brand-gold" aria-hidden />
               Voice
+            </Link>
+            <Link
+              href="/assistant/jarvis"
+              className="inline-flex items-center gap-2 rounded-full border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
+            >
+              <Ear className="h-3.5 w-3.5 text-brand-gold" aria-hidden />
+              JARVIS
             </Link>
             <span className="inline-flex items-center gap-2 rounded-full border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink/60">
               <Sparkles className="h-3.5 w-3.5 text-brand-gold" aria-hidden />

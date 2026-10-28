@@ -43,6 +43,17 @@ const recognizerInThisBrowser = () => recognitionCtor() !== null;
 const recognizerOnServer = () => false;
 
 /**
+ * Whether this browser has a speech recognizer at all.
+ *
+ * The presence console reads this to disable the wake-word switch with a reason
+ * rather than offering one that cannot work; the hook below reads it to decide
+ * whether arming means anything.
+ */
+export function useRecognizerSupported(): boolean {
+  return useSyncExternalStore(subscribeToNothing, recognizerInThisBrowser, recognizerOnServer);
+}
+
+/**
  * The browser's own recognizer, and only while the console is armed.
  *
  * Chrome and Edge implement this; Firefox does not, and the strip says so rather
@@ -67,11 +78,7 @@ export function useWakeWord({
   language: "en" | "ar";
   onUtterance: (text: string) => void;
 }) {
-  const supported = useSyncExternalStore(
-    subscribeToNothing,
-    recognizerInThisBrowser,
-    recognizerOnServer
-  );
+  const supported = useRecognizerSupported();
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const onUtteranceRef = useRef(onUtterance);
