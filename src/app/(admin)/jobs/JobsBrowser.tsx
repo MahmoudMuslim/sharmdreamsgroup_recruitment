@@ -9,6 +9,7 @@ import { formatSalaryRange } from "@/lib/currency";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
 import {
   applicantOrderFromParams,
+  ORDER_PARAM,
   RANKED_ORDER,
 } from "@/modules/jobs/domain/applicantOrder";
 import { gridWindowNote, isHireable } from "@/modules/jobs/domain/hireable";
@@ -240,7 +241,10 @@ export function JobsBrowser({
     if (words.trim()) next.set("q", words);
     if (target > 1) next.set(PAGE_PARAM, String(target));
     const ringed = "job" in view ? view.job : focusId;
-    if (ringed) next.set("job", ringed);
+    if (ringed) {
+      next.set("job", ringed);
+      if (order === RANKED_ORDER) next.set(ORDER_PARAM, RANKED_ORDER);
+    }
     const search = next.toString();
     window.history.replaceState(null, "", search ? `${pathname}?${search}` : pathname);
   }
@@ -619,7 +623,7 @@ export function JobsBrowser({
 
       {applicantsJob && (
         <JobApplicantsDrawer
-          key={applicantsJob.id}
+          key={`${applicantsJob.id}|${order}`}
           job={applicantsJob}
           canDecide={canDecide}
           // The catalogue the match lines are named from — the same vocabulary the

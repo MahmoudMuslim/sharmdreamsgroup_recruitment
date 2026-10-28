@@ -43,6 +43,8 @@ import {
   OPENING_SKILLS_SCHEMA_NOTE,
   SKILL_LEVELS,
 } from "../src/modules/jobs/domain/openingSkills.ts";
+import { PAGE_ROWS } from "../src/lib/paging.ts";
+import { rankApplicants, shortlistBasisNote } from "../src/modules/jobs/domain/shortlist.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -53,6 +55,7 @@ const surfaces = {
   picker: ["JobSkillsField", "JobSkillsField"],
   form: ["JobFormDrawer", "JobFormDrawer"],
   applicants: ["JobApplicantsDrawer", "JobApplicantsDrawer"],
+  browser: ["JobsBrowser", "JobsBrowser"],
 };
 
 /* -------------------------------------------------------------------------- */
@@ -107,6 +110,16 @@ const job = (overrides = {}) => ({
   required_skills: [],
   ...overrides,
 });
+
+const openings = (count = 1) => Array.from({ length: count }, (_, index) => job({
+  id: `job-${index + 1}`,
+  posted_at: "2026-10-20T09:00:00Z",
+  closing_at: null,
+  applicants: [{ count: 1 }],
+  pipeline: [{ count: 1 }],
+  hired: [{ count: 0 }],
+  positions_needed: null,
+}));
 
 const formOptions = (overrides = {}) => ({
   companies: [{ id: "t-1", name: "Dreams Group", sector: "HOSPITALITY" }],
@@ -189,13 +202,31 @@ const EVIDENCE_LINE = {
 function harness(which, options = {}) {
   assert.ok(surfaces[which], `unknown surface ${which}`);
   const slots = [], effects = [], requests = [], saves = [], changes = [], cache = new Map();
+  const history = [], scrolls = [];
   let cursor = 0, dirty = true, mounted = true, tree, lateWrites = 0, closes = 0, refreshes = 0;
+  let url = new URL(options.url ?? "/jobs", "https://portal.invalid");
+  let params = url.searchParams;
+  const navigate = (href) => { url = new URL(href, url); params = url.searchParams; dirty = true; };
+  // Next's patched history updates useSearchParams without remounting the grid.
+  const window = { history: { replaceState: (_state, _unused, href) => { history.push(href); navigate(href); } } };
+  const document = { getElementById: (id) => nodes(tree).some((node) => node.props.id === id)
+    ? { scrollIntoView: (options) => scrolls.push({ id, options }) } : null };
 
   const catalogue = options.catalogue ?? CATALOGUE;
   const labels = options.labels ?? LABELS;
 
   let props;
-  if (which === "picker") {
+  if (which === "browser") {
+    props = {
+      jobs: options.jobs ?? openings(),
+      scopeTotal: options.jobs?.length ?? 1,
+      headcountUnavailable: false,
+      termsNote: null,
+      options: options.formOptions ?? formOptions(),
+      canManage: false,
+      canDecide: false,
+    };
+  } else if (which === "picker") {
     props = {
       skills: catalogue,
       labels,
@@ -216,6 +247,7 @@ function harness(which, options = {}) {
       job: { id: "job-1", title: "Revenue manager", status: "DRAFT", required_skills: options.required ?? [] },
       canDecide: options.canDecide ?? false,
       skillLabels: labels,
+      initialOrder: options.initialOrder,
       onClose: () => { closes++; },
     };
   }
@@ -228,11 +260,6 @@ function harness(which, options = {}) {
   };
   hooks.useCallback = (fn, deps) => hooks.useMemo(() => fn, deps);
   hooks.useLayoutEffect = hooks.useEffect;
-  // React's own request memoizer. The drawer's gated reads reach
-  // `settings/infrastructure/permissions`, which calls `cache()` while it is still
-  // being loaded, so the shim has to answer it — and passing the function through
-  // unchanged is the honest reading here: nothing in this proof is served twice.
-  hooks.cache = (fn) => fn;
 
   /**
    * Every read and every write, deferred on purpose.
@@ -280,7 +307,9 @@ function harness(which, options = {}) {
     if (!existsSync(file)) return {};
     const loaded = { exports: {} };
     cache.set(file, loaded.exports);
-    const code = ts.transpileModule(readFileSync(file, "utf8"), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(source, /^\s*["']use server["']/m, `server action must be stubbed: ${file}`);
+    const code = ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
     const local = (name) => {
       if (name === "react") return hooks;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment };
@@ -289,17 +318,20 @@ function harness(which, options = {}) {
       if (name === "next/navigation") {
         return {
           useRouter: () => ({ refresh: () => { refreshes++; }, push: offLimits("router.push"), replace: offLimits("router.replace") }),
-          usePathname: () => "/jobs",
-          useSearchParams: () => new URLSearchParams(),
+          usePathname: () => url.pathname,
+          useSearchParams: () => params,
         };
       }
-      if (name === "server-only") return {};
+      if (name === "server-only") return offLimits("server-only")();
       if (name === "./applicant-actions") return actions;
+      if (name === "./shortlist-actions") return { getJobShortlist: (id) => deferred("shortlist", id) };
       if (name === "@/app/(admin)/candidates/candidate-actions") return candidateWrites;
       if (name === "./job-actions") return openingWrites;
       if (name === "./opening-skills-actions") return skillsWrites;
+      if (name === "./JobCardActions") return { JobCardActions: offLimits("JobCardActions") };
       if (name === "./JobApplicantsDrawer") {
-        return { JobApplicantsDrawer: (props) => jsx("applicants-drawer", props) };
+        // Keep the key on the actual component boundary, not a rendered descendant.
+        return { JobApplicantsDrawer: "applicants-drawer" };
       }
       if (name.endsWith("/Drawer")) {
         return {
@@ -318,7 +350,7 @@ function harness(which, options = {}) {
       }
       return require(name);
     };
-    new Function("require", "module", "exports", code)(local, loaded, loaded.exports);
+    new Function("require", "module", "exports", "window", "document", code)(local, loaded, loaded.exports, window, document);
     return loaded.exports;
   }
 
@@ -358,7 +390,9 @@ function harness(which, options = {}) {
   function want(name) { render(); const node = controlled(name); assert.ok(node, `control ${name} exists`); return node; }
 
   const ui = {
-    requests, saves, changes,
+    requests, saves, changes, history, scrolls,
+    get params() { return params; },
+    arrive(href) { navigate(href); render(); },
     text: (node = tree) => text(node),
     textOf: (node) => text(node),
     nodes: () => nodes(tree),
@@ -958,6 +992,179 @@ test("a capped read says the figure covers what it read, even with no line to sh
   });
   assert.match(ui.textOf(evidenceSection(ui)), /500 most recent graded responses/);
   ui.unmount();
+});
+
+// ---------------------------------------------------------------------------
+// Ranked links: execute the grid, then the real drawer at its keyed boundary.
+// ---------------------------------------------------------------------------
+function grid(t, options = {}) {
+  const ui = harness("browser", options);
+  t.after(() => ui.unmount());
+  return ui;
+}
+const drawerNode = (ui) => ui.find((node) => node.type === "applicants-drawer");
+const hasDrawer = (ui) => ui.nodes().some((node) => node.type === "applicants-drawer");
+const pageTwoJob = `job-${PAGE_ROWS + 1}`;
+
+test("ranked link: automatic jump to a page-2 opening preserves order in the URL", (t) => {
+  const ui = grid(t, { jobs: openings(PAGE_ROWS + 1), url: `/jobs?job=${pageTwoJob}&order=ranked` });
+  assert.equal(ui.history.length, 1, "the off-page opening caused one history replacement");
+  assert.equal(ui.params.get("page"), "2");
+  assert.equal(ui.params.get("job"), pageTwoJob);
+  assert.ok(ui.scrolls.some(({ id }) => id === `opening-${pageTwoJob}`));
+  assert.equal(ui.params.get("order"), "ranked", "automatic page jump must retain order=ranked");
+  assert.equal(drawerNode(ui).props.initialOrder, "ranked");
+});
+
+test("ranked link: manual pagination preserves order without repeating the jump", (t) => {
+  // Jump on a plain link first so this tests the pager independently of the ranked jump.
+  const ui = grid(t, { jobs: openings(PAGE_ROWS + 1), url: `/jobs?job=${pageTwoJob}` });
+  assert.equal(ui.params.get("page"), "2");
+  ui.arrive(`/jobs?page=2&job=${pageTwoJob}&order=ranked`);
+  assert.equal(drawerNode(ui).props.initialOrder, "ranked");
+  ui.click("Newer");
+  assert.equal(ui.history.length, 2, "manual pagination must not trigger another automatic jump");
+  assert.equal(ui.params.get("page"), null, "Newer reached page 1");
+  assert.equal(ui.params.get("job"), pageTwoJob);
+  assert.equal(ui.params.get("order"), "ranked", "manual page change must retain order=ranked");
+  assert.equal(drawerNode(ui).props.initialOrder, "ranked");
+});
+
+for (const action of ["close", "status rail", "company rail"]) {
+  test(`ranked link: ${action} drops both job and order`, (t) => {
+    const jobs = openings(2);
+    jobs[1].tenant_id = "t-2";
+    const ui = grid(t, {
+      jobs,
+      url: "/jobs?job=job-1&order=ranked&q=Revenue",
+      formOptions: formOptions({ companies: [...formOptions().companies, { id: "t-2", name: "Other Group" }] }),
+    });
+    assert.equal(drawerNode(ui).props.initialOrder, "ranked");
+    if (action === "close") {
+      drawerNode(ui).props.onClose();
+      ui.render();
+    } else {
+      ui.click(action === "status rail" ? "Draft2" : "Other Group1");
+    }
+    assert.equal(hasDrawer(ui), false);
+    assert.equal(ui.params.has("job"), false);
+    assert.equal(ui.params.has("order"), false);
+    assert.equal(ui.params.get("q"), "Revenue");
+    if (action === "status rail") assert.equal(ui.params.get("status"), "DRAFT");
+    if (action === "company rail") assert.equal(ui.params.get("company"), "t-2");
+  });
+}
+
+test("ranked link: a plain job link rings the card without opening a drawer", (t) => {
+  const ui = grid(t, { url: "/jobs?job=job-1" });
+  assert.equal(hasDrawer(ui), false);
+  assert.match(ui.find((node) => node.props.id === "opening-job-1").props.className, /ring-2/);
+  assert.equal(ui.scrolls[0].id, "opening-job-1");
+  assert.equal(ui.history.length, 0);
+});
+
+test("ranked link: an incoming link opens the already-mounted grid's drawer", (t) => {
+  const ui = grid(t);
+  assert.equal(hasDrawer(ui), false);
+  ui.arrive("/jobs?job=job-1&order=ranked");
+  assert.equal(drawerNode(ui).props.job.id, "job-1");
+  assert.equal(drawerNode(ui).props.initialOrder, "ranked");
+  assert.equal(ui.history.length, 0);
+});
+
+test("ranked link: same-id manual drawer remounts and selects ranked on arrival", async (t) => {
+  const ui = grid(t, { url: "/jobs?job=job-1" });
+  ui.find((node) => node.type === "button" && node.props.title === "Everyone who applied to this role, and what they submitted").props.onClick();
+  const before = drawerNode(ui);
+  assert.equal(before.props.initialOrder, "newest");
+  let drawer = await desk([], [applicant()], { initialOrder: before.props.initialOrder });
+  t.after(() => drawer.unmount());
+  assert.equal(drawer.button("Newest first").props["aria-pressed"], true);
+
+  ui.arrive("/jobs?job=job-1&order=ranked");
+  const after = drawerNode(ui);
+  const remounted = before.type !== after.type || before.key !== after.key;
+  // Same type/key updates props; a changed key mounts the real drawer afresh.
+  if (remounted) {
+    drawer.unmount();
+    drawer = await desk([], [applicant()], { initialOrder: after.props.initialOrder });
+  } else {
+    drawer.update({ initialOrder: after.props.initialOrder });
+  }
+  assert.deepEqual({
+    job: after.props.job.id,
+    initialOrder: after.props.initialOrder,
+    remounted,
+    rankedPressed: drawer.button("Ranked by fit").props["aria-pressed"],
+  }, { job: "job-1", initialOrder: "ranked", remounted: true, rankedPressed: true },
+  "a same-id ranked arrival needs a new drawer identity to reapply initialOrder");
+});
+
+test("ranked link: an empty grid does not open a missing job or invent a page", (t) => {
+  const ui = grid(t, { jobs: [], url: "/jobs?job=missing&order=ranked" });
+  assert.match(ui.text(), /No openings yet/);
+  assert.equal(hasDrawer(ui), false);
+  assert.equal(ui.history.length, 0);
+});
+
+const shortlistApplicants = [applicant(), applicant({ id: "app-2", full_name: "Candidate 2" })];
+const shortlistLines = rankApplicants(shortlistApplicants.map((row, index) => ({
+  applicationId: row.id, name: row.full_name, stage: row.stage,
+  aiScore: index === 0 ? 20 : 90, skills: null, gate: null, test: null, interview: null,
+})), { scoresHidden: false });
+const shortlistResult = { ok: true, shortlist: {
+  lines: shortlistLines, basis_note: shortlistBasisNote(shortlistLines), scores_hidden: false, note: null,
+} };
+const applicantIds = (ui) => ui.nodes().filter((node) => node.type === "li" && node.key?.startsWith("app-")).map((node) => node.key);
+
+for (const initialOrder of ["newest", "ranked"]) {
+  test(`drawer order: ${initialOrder} seed and both chips use only stubbed reads`, async (t) => {
+    const ui = await desk([], shortlistApplicants, { initialOrder });
+    t.after(() => ui.unmount());
+    assert.equal(ui.button("Newest first").props["aria-pressed"], initialOrder === "newest");
+    assert.equal(ui.button("Ranked by fit").props["aria-pressed"], initialOrder === "ranked");
+    assert.equal(ui.requests.filter((request) => request.kind === "shortlist").length, initialOrder === "ranked" ? 1 : 0);
+    assert.deepEqual(applicantIds(ui), ["app-1", "app-2"]);
+    if (initialOrder === "newest") ui.click("Ranked by fit");
+    assert.match(ui.text(), /Ranking…/);
+    const request = ui.requests.find((entry) => entry.kind === "shortlist");
+    assert.equal(request.detail, "job-1");
+    request.resolve(shortlistResult);
+    await ui.settle();
+    assert.deepEqual(applicantIds(ui), ["app-2", "app-1"]);
+    assert.equal(ui.button("Ranked by fit").props["aria-pressed"], true);
+    ui.click("Newest first");
+    ui.update({ initialOrder });
+    assert.equal(ui.button("Newest first").props["aria-pressed"], true, "unchanged URL seed must not override a chip choice");
+    assert.deepEqual(applicantIds(ui), ["app-1", "app-2"]);
+    ui.click("Ranked by fit");
+    assert.deepEqual(applicantIds(ui), ["app-2", "app-1"]);
+    assert.deepEqual(ui.requests.map(({ kind }) => kind), ["applicants", "shortlist"]);
+  });
+}
+
+test("drawer order: shortlist refusal keeps applicants visible and newest usable", async (t) => {
+  const ui = await desk([], shortlistApplicants, { initialOrder: "ranked" });
+  t.after(() => ui.unmount());
+  ui.requests.find(({ kind }) => kind === "shortlist").resolve({ ok: false, error: "The shortlist could not be loaded. Please retry." });
+  await ui.settle();
+  assert.match(ui.text(), /The shortlist could not be loaded/);
+  assert.doesNotMatch(ui.text(), /Ranking…/);
+  assert.deepEqual(applicantIds(ui), ["app-1", "app-2"]);
+  ui.click("Newest first");
+  assert.equal(ui.button("Newest first").props["aria-pressed"], true);
+});
+
+test("drawer order: an empty ranked read shows no applications, not a loading spinner", async (t) => {
+  const ui = await desk([], [], { initialOrder: "ranked" });
+  t.after(() => ui.unmount());
+  ui.requests.find(({ kind }) => kind === "shortlist").resolve({ ok: true, shortlist: {
+    lines: [], basis_note: shortlistBasisNote([]), scores_hidden: false, note: null,
+  } });
+  await ui.settle();
+  assert.match(ui.text(), /No applications yet/);
+  assert.doesNotMatch(ui.text(), /Loading applicants|Ranking…/);
+  assert.deepEqual(applicantIds(ui), []);
 });
 
 // ---------------------------------------------------------------------------
