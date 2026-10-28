@@ -1,9 +1,32 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
+import { useEffect, useState } from "react";
+import type { JarvisPaletteValues, JarvisStateTarget } from "jarvis-ai-web-animation";
 
 /**
- * What the reactor is doing, in the six words the canvas knows how to paint.
+ * The one thing this portal could not draw for itself: the orb.
+ *
+ * The standalone applet's reactor is `jarvis-ai-web-animation` — a Three.js scene
+ * of particles, filaments, rings and a shader core. A hand-drawn 2D canvas standing
+ * beside it is a different object wearing the same colours, and that is what the
+ * first version of this file was. The orb is now the package's own component, and
+ * this file is only the portal's wrapper around it.
+ *
+ * The import is dynamic and client-only. Three.js is bundled inside that package
+ * (about 210 KB gzipped), which is a lot to pay on a page that may never open the
+ * assistant — code splitting keeps it out of the route's own bundle, and a missing
+ * WebGL context or `prefers-reduced-motion` lands on the package's own gradient
+ * fallback rather than on an error.
+ */
+
+const LazyOrb = dynamic(
+  () => import("jarvis-ai-web-animation").then((module) => ({ default: module.JarvisOrb })),
+  { ssr: false, loading: () => null }
+);
+
+/**
+ * What the reactor is doing, in the six words this portal knows how to paint.
  *
  * `idle` is not `ready`: a ring that spun because the assistant *could* answer would
  * be indistinguishable from one spinning because it *is*. Every state here is a fact
@@ -18,23 +41,124 @@ export type ReactorState =
   | "approval"
   | "alert";
 
-interface Palette {
-  /** The `rgba(` prefix each stroke is completed with, exactly as the applet does it. */
-  glow: string;
-  core: string;
-  /** Multiplier on all three rotation speeds, and the tell for a state worth painting at full rate. */
-  speed: number;
-}
+/**
+ * The applet's own palettes, plus violet for `approval`.
+ *
+ * The package's built-in `ember` is an alert colour, and the portal already spends
+ * red on `alert`; a waiting card is not a failure, so it gets the one hue these
+ * admin pages do not use elsewhere. Each palette carries the gradient the package
+ * paints when WebGL is unavailable, so a failed canvas still shows the right mood.
+ */
+const PALETTE: Record<ReactorState, JarvisPaletteValues> = {
+  idle: {
+    core: 0xecfeff,
+    primary: 0x00f0ff,
+    secondary: 0x0891b2,
+    tertiary: 0x67e8f9,
+    deep: 0x083344,
+    fallback:
+      "radial-gradient(circle at 50% 50%, #ecfeff 0%, #00f0ff 30%, #083344 75%, transparent)",
+  },
+  listening: {
+    core: 0xf0f9ff,
+    primary: 0x38bdf8,
+    secondary: 0x0284c7,
+    tertiary: 0x7dd3fc,
+    deep: 0x0c4a6e,
+    fallback:
+      "radial-gradient(circle at 50% 50%, #f0f9ff 0%, #38bdf8 30%, #0c4a6e 75%, transparent)",
+  },
+  thinking: {
+    core: 0xfffdf4,
+    primary: 0xfbbf24,
+    secondary: 0xd97706,
+    tertiary: 0xfcd34d,
+    deep: 0x78350f,
+    fallback:
+      "radial-gradient(circle at 50% 50%, #fffdf4 0%, #fbbf24 30%, #78350f 75%, transparent)",
+  },
+  speaking: {
+    core: 0xecfdf5,
+    primary: 0x10b981,
+    secondary: 0x059669,
+    tertiary: 0x6ee7b7,
+    deep: 0x064e3b,
+    fallback:
+      "radial-gradient(circle at 50% 50%, #ecfdf5 0%, #10b981 30%, #064e3b 75%, transparent)",
+  },
+  approval: {
+    core: 0xf5f3ff,
+    primary: 0x8b5cf6,
+    secondary: 0x7c3aed,
+    tertiary: 0xc4b5fd,
+    deep: 0x2e1065,
+    fallback:
+      "radial-gradient(circle at 50% 50%, #f5f3ff 0%, #8b5cf6 30%, #2e1065 75%, transparent)",
+  },
+  alert: {
+    core: 0xfff1f2,
+    primary: 0xef4444,
+    secondary: 0xdc2626,
+    tertiary: 0xfca5a5,
+    deep: 0x450a0a,
+    fallback:
+      "radial-gradient(circle at 50% 50%, #fff1f2 0%, #ef4444 30%, #450a0a 75%, transparent)",
+  },
+};
 
-const PALETTE: Record<ReactorState, Palette> = {
-  idle: { glow: "rgba(0, 240, 255, ", core: "#00f0ff", speed: 1 },
-  listening: { glow: "rgba(56, 189, 248, ", core: "#38bdf8", speed: 1.6 },
-  thinking: { glow: "rgba(251, 191, 36, ", core: "#fbbf24", speed: 2.8 },
-  speaking: { glow: "rgba(16, 185, 129, ", core: "#10b981", speed: 1.4 },
-  // A click is owed, not a failure: violet is the one colour these admin pages do not
-  // already spend on an error, so a waiting card cannot be read as a broken portal.
-  approval: { glow: "rgba(139, 92, 246, ", core: "#8b5cf6", speed: 2.2 },
-  alert: { glow: "rgba(239, 68, 68, ", core: "#ef4444", speed: 2.2 },
+/**
+ * Moods, as the applet wrote them — with one deliberate exception.
+ *
+ * `idle` and `thinking` use the package's named targets, which do not revert on
+ * their own. Every other mood is a custom target: the built-in `alert` and
+ * `success` names fall back to idle after about a second, and this portal keeps
+ * speaking, waiting for a click or reporting a queue for as long as the fact holds.
+ * The objects are module constants so their identity is stable and the orb's state
+ * effect fires only when the mood actually changes.
+ */
+const MOOD: Record<ReactorState, JarvisStateTarget | "idle" | "thinking"> = {
+  idle: "idle",
+  listening: {
+    energy: 1.4,
+    rotationSpeed: 0.6,
+    particleSpeed: 1.6,
+    shellRadius: 1.08,
+    ringSpread: 1.0,
+    filamentOpacity: 0.7,
+    coreScale: 1.1,
+    bloom: 0.9,
+  },
+  thinking: "thinking",
+  speaking: {
+    energy: 1.0,
+    rotationSpeed: 0.35,
+    particleSpeed: 0.9,
+    shellRadius: 1.02,
+    ringSpread: 0.9,
+    filamentOpacity: 0.6,
+    coreScale: 1.0,
+    bloom: 0.6,
+  },
+  approval: {
+    energy: 1.35,
+    rotationSpeed: 0.9,
+    particleSpeed: 1.1,
+    shellRadius: 1.1,
+    ringSpread: 1.08,
+    filamentOpacity: 0.6,
+    coreScale: 1.1,
+    bloom: 0.9,
+  },
+  alert: {
+    energy: 1.8,
+    rotationSpeed: 1.2,
+    particleSpeed: 2.2,
+    shellRadius: 1.15,
+    ringSpread: 1.25,
+    filamentOpacity: 0.85,
+    coreScale: 1.15,
+    bloom: 1.0,
+  },
 };
 
 const BACKDROP: Record<ReactorState, string> = {
@@ -65,17 +189,16 @@ const STATE_LINE: Record<ReactorState, string> = {
 
 export interface JarvisReactorProps {
   state: ReactorState;
-  /** Square canvas size in CSS pixels; the applet's proportions hold at any size. */
+  /** Square size in CSS pixels; the orb's canvas follows its container. */
   size?: number;
   /**
    * Loudness from 0 to 1, pulled from a ref-based meter rather than passed as a
-   * number: a prop would re-render this component sixty times a second, and the only
-   * reader of the value is the paint loop.
+   * number. Absent means no capture is open, and the orb runs on its mood alone.
    */
   level?: () => number;
   /** Replaces the state line while the conversation is asking a follow-up. */
   line?: string | null;
-  /** Whether the status line is drawn under the canvas. */
+  /** Whether the status line is drawn under the orb. */
   showStatus?: boolean;
   onClick?: () => void;
   /** Sentence for assistive technology — the portal's wording, not the HUD's. */
@@ -83,24 +206,14 @@ export interface JarvisReactorProps {
 }
 
 /**
- * The JARVIS reactor, ported from the standalone applet's `ArcReactor.tsx`.
+ * The JARVIS reactor: the applet's own orb, wrapped in the portal's chrome.
  *
- * Four layers, each turning on its own: a perimeter of tick marks, a ring of eight arc
- * segments with a node dot on each, an inner ring with four cardinal brackets, and a
- * radial-gradient core that breathes. A spoken turn pushes the core outward and grows
- * the twelve wave bursts around it, which is what makes the thing read as alive rather
- * than as a spinner.
- *
- * Three changes from the original, all deliberate:
- *
- * - The colors, speeds and geometry are the applet's, but `approval` and `alert` split
- *   its single `alert`, because this portal has two genuinely different reasons to
- *   interrupt a person.
- * - The paint loop reads its inputs from refs and is set up once. The applet lists its
- *   live `audioLevel` in the effect's dependencies, so every new loudness value tore
- *   down and rebuilt the loop — the reason its orb stuttered.
- * - `prefers-reduced-motion` gets one frame, repainted when the state moves, and a
- *   hidden tab stops painting altogether.
+ * The loudness sample is taken on a slow clock and quantised before it is handed
+ * over. Reading the meter on every animation frame would re-render this component
+ * sixty times a second for a number the renderer consumes as one value; 8 Hz is
+ * faster than an eye reads a breathing core, and a difference under 0.02 is not
+ * visible in the bloom. A silent room sits at the low end of the range instead of
+ * zero, because an orb that goes dark while its microphone is open reads as broken.
  */
 export function JarvisReactor({
   state,
@@ -111,200 +224,20 @@ export function JarvisReactor({
   onClick,
   ariaLabel,
 }: JarvisReactorProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const given = useRef({ state, level });
-  const paintRef = useRef<(() => void) | null>(null);
-
-  // Written after commit, never during render: the loop reads it a frame later, which
-  // is exactly when the newest state is the one worth painting.
-  useEffect(() => {
-    given.current = { state, level };
-  });
+  const metered = level !== undefined && (state === "listening" || state === "speaking");
+  const [sampled, setSampled] = useState(0.55);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    if (!metered || !level) return;
+    const timer = setInterval(() => {
+      const loud = Math.max(0, Math.min(1, level()));
+      const next = 0.55 + loud * 1.25;
+      setSampled((previous) => (Math.abs(previous - next) < 0.02 ? previous : next));
+    }, 120);
+    return () => clearInterval(timer);
+  }, [metered, level]);
 
-    const ratio = window.devicePixelRatio || 1;
-    canvas.width = size * ratio;
-    canvas.height = size * ratio;
-
-    let angle1 = 0;
-    let angle2 = 0;
-    let angle3 = 0;
-    let pulse = 0;
-    let frame: number | null = null;
-    let tick = 0;
-
-    const render = () => {
-      const { state: current, level: meter } = given.current;
-      const palette = PALETTE[current];
-      const width = canvas.width;
-      const height = canvas.height;
-      const centerX = width / 2;
-      const centerY = height / 2;
-      const radius = Math.min(centerX, centerY) - 16 * ratio;
-
-      ctx.clearRect(0, 0, width, height);
-
-      pulse += 0.04;
-      const loud = meter ? meter() : 0;
-      const dynamicAudio = loud * 24;
-      const breathing = Math.sin(pulse) * 4 + dynamicAudio;
-
-      // 1. Outer orbit ring with tick marks.
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(angle1);
-      ctx.beginPath();
-      ctx.arc(0, 0, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = palette.glow + "0.18)";
-      ctx.lineWidth = 1.5 * ratio;
-      ctx.stroke();
-      for (let i = 0; i < 36; i += 1) {
-        const rad = (i * 2 * Math.PI) / 36;
-        const tickLength = (i % 3 === 0 ? 9 : 4) * ratio;
-        ctx.beginPath();
-        ctx.moveTo(Math.cos(rad) * (radius - tickLength), Math.sin(rad) * (radius - tickLength));
-        ctx.lineTo(Math.cos(rad) * radius, Math.sin(rad) * radius);
-        ctx.strokeStyle = i % 3 === 0 ? palette.glow + "0.6)" : palette.glow + "0.25)";
-        ctx.lineWidth = (i % 3 === 0 ? 2 : 1) * ratio;
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      // 2. Middle arc segments, turning against the orbit.
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(-angle2);
-      const midRadius = radius * 0.72;
-      for (let i = 0; i < 8; i += 1) {
-        const startRad = (i * 2 * Math.PI) / 8;
-        const arcSize = (Math.PI * 2) / 8 - 0.22;
-        ctx.beginPath();
-        ctx.arc(0, 0, midRadius, startRad, startRad + arcSize);
-        ctx.strokeStyle = palette.glow + "0.45)";
-        ctx.lineWidth = 4 * ratio;
-        ctx.stroke();
-        const dotRad = startRad + arcSize / 2;
-        ctx.beginPath();
-        ctx.arc(
-          Math.cos(dotRad) * (midRadius - 8 * ratio),
-          Math.sin(dotRad) * (midRadius - 8 * ratio),
-          2.5 * ratio,
-          0,
-          Math.PI * 2
-        );
-        ctx.fillStyle = palette.core;
-        ctx.fill();
-      }
-      ctx.restore();
-
-      // 3. Inner ring with four cardinal brackets.
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(angle3);
-      const innerRadius = radius * 0.48;
-      ctx.beginPath();
-      ctx.arc(0, 0, innerRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = palette.glow + "0.3)";
-      ctx.lineWidth = 2 * ratio;
-      ctx.stroke();
-      for (let i = 0; i < 4; i += 1) {
-        const bRad = (i * Math.PI) / 2;
-        ctx.beginPath();
-        ctx.arc(0, 0, innerRadius + 6 * ratio, bRad - 0.15, bRad + 0.15);
-        ctx.strokeStyle = palette.glow + "0.8)";
-        ctx.lineWidth = 3 * ratio;
-        ctx.stroke();
-      }
-      ctx.restore();
-
-      // 4. The core, and the twelve wave bursts a voice pushes out of it.
-      ctx.save();
-      ctx.translate(centerX, centerY);
-      const coreRadius = Math.max(12 * ratio, radius * 0.26 + breathing * ratio);
-      const grad = ctx.createRadialGradient(0, 0, 2 * ratio, 0, 0, coreRadius * 1.6);
-      grad.addColorStop(0, "#ffffff");
-      grad.addColorStop(0.35, palette.core);
-      grad.addColorStop(0.7, palette.glow + "0.4)");
-      grad.addColorStop(1, palette.glow + "0)");
-      ctx.beginPath();
-      ctx.arc(0, 0, coreRadius * 1.5, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(0, 0, coreRadius * 0.75, 0, Math.PI * 2);
-      ctx.fillStyle = palette.core;
-      ctx.shadowColor = palette.core;
-      ctx.shadowBlur = (20 + dynamicAudio * 2) * ratio;
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(0, 0, coreRadius * 0.45, 0, Math.PI * 2);
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2 * ratio;
-      ctx.shadowBlur = 10 * ratio;
-      ctx.stroke();
-
-      if (current === "listening" || current === "speaking") {
-        for (let i = 0; i < 12; i += 1) {
-          const wAngle = (i * 2 * Math.PI) / 12;
-          const len = (6 + (Math.sin(pulse * 3 + i) + 1) * (dynamicAudio + 6)) * ratio;
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(wAngle) * coreRadius * 0.9, Math.sin(wAngle) * coreRadius * 0.9);
-          ctx.lineTo(
-            Math.cos(wAngle) * (coreRadius * 0.9 + len),
-            Math.sin(wAngle) * (coreRadius * 0.9 + len)
-          );
-          ctx.strokeStyle = "#ffffff";
-          ctx.lineWidth = 2 * ratio;
-          ctx.stroke();
-        }
-      }
-      ctx.restore();
-
-      angle1 += 0.005 * palette.speed;
-      angle2 += 0.008 * palette.speed;
-      angle3 += 0.012 * palette.speed;
-    };
-
-    paintRef.current = render;
-    render();
-
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      // Nothing spins; the state change above is what repaints it.
-      return () => {
-        paintRef.current = null;
-      };
-    }
-
-    const loop = () => {
-      tick += 1;
-      const busy = PALETTE[given.current.state].speed > 1;
-      // Half rate in standby. The spin carries information while the assistant is
-      // working, listening or speaking; on every other screen it is a background
-      // process costing the browser a frame per sixteenth of a second.
-      if ((busy || tick % 2 === 0) && document.visibilityState !== "hidden") render();
-      frame = requestAnimationFrame(loop);
-    };
-    loop();
-
-    return () => {
-      if (frame !== null) cancelAnimationFrame(frame);
-      paintRef.current = null;
-    };
-  }, [size]);
-
-  // Under reduced motion this is the only thing that repaints, so it runs for every
-  // state. While animating it hands the loop one extra frame, which it would have
-  // painted a few milliseconds later anyway.
-  useEffect(() => {
-    paintRef.current?.();
-  }, [state]);
+  const label = ariaLabel ?? STATE_LINE[state];
 
   return (
     <div className="relative flex flex-col items-center">
@@ -315,10 +248,21 @@ export function JarvisReactor({
       <button
         type="button"
         onClick={onClick}
-        aria-label={ariaLabel ?? STATE_LINE[state]}
-        className="group relative z-10 cursor-pointer rounded-full transition-transform duration-300 hover:scale-[1.04]"
+        aria-label={label}
+        className="group relative z-10 cursor-pointer rounded-full transition-transform duration-300 hover:scale-[1.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-current"
       >
-        <canvas ref={canvasRef} style={{ width: size, height: size }} className="block" />
+        <div style={{ width: size, height: size }}>
+          <LazyOrb
+            size="avatar"
+            state={MOOD[state]}
+            palette={PALETTE[state]}
+            quality="auto"
+            intensity={metered ? sampled : undefined}
+            breathing
+            interactive={false}
+            ariaLabel={label}
+          />
+        </div>
         <span
           aria-hidden
           className={`absolute inset-0 m-auto h-1/2 w-1/2 rounded-full border border-cyan-400/30 ${

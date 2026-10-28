@@ -114,7 +114,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [ui.prefsEpoch]);
 
   const watcher = useJarvisWatcher({
     enabled: prefs !== null && (prefs.watching || prefs.briefing),
@@ -271,7 +271,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
         <JarvisReactor
           state={state}
           size={ui.open ? 76 : 104}
-          level={meter.read}
+          level={meter.armed ? meter.read : undefined}
           showStatus
           line={ui.awaiting ? "AWAKE · SAY YOUR QUESTION" : null}
           ariaLabel={`${STATE_LABEL[state]}${meter.error ? ` — ${meter.error}` : ""}`}

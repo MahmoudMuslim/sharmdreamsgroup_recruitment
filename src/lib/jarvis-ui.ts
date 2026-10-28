@@ -31,6 +31,8 @@ export interface JarvisUiState {
   /** The conversation is reading aloud — the chat's own voice, not the presence's. */
   speaking: boolean;
   pendingUtterance: JarvisUtterance | null;
+  /** Increases when the person's saved preferences changed and the presence should re-read them. */
+  prefsEpoch: number;
 }
 
 const IDLE: JarvisUiState = {
@@ -41,6 +43,7 @@ const IDLE: JarvisUiState = {
   thinking: false,
   speaking: false,
   pendingUtterance: null,
+  prefsEpoch: 0,
 };
 
 let state: JarvisUiState = IDLE;
@@ -157,4 +160,15 @@ export function setJarvisAwaiting(awaiting: boolean): void {
 export function setJarvisApproval(summary: string | null): void {
   if (state.pendingApproval === summary) return;
   emit({ ...state, pendingApproval: summary });
+}
+
+/**
+ * Tells a mounted presence that the person's saved row changed.
+ *
+ * The settings console writes the row; the orb read it once when the shell
+ * mounted, and the shell survives every in-app navigation. Without this, a saved
+ * switch would only take effect after a full reload of the portal.
+ */
+export function refreshJarvisPresence(): void {
+  emit({ ...state, prefsEpoch: state.prefsEpoch + 1 });
 }
