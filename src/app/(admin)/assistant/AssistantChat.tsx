@@ -57,6 +57,7 @@ import { transcribeClip } from "./voice/transcribe";
 import { useRecorder } from "./voice/useRecorder";
 import { useSpeech } from "./voice/useSpeech";
 import { useWakeWord } from "./voice/useWakeWord";
+import { useJarvisAwaitingWriter, useJarvisHandoff } from "./voice/useJarvisHandoff";
 import { VoiceStrip } from "./voice/VoiceStrip";
 import {
   DEFAULT_WAKE_PHRASE,
@@ -77,6 +78,14 @@ import {
  * the same in each, so an answer cannot read differently depending on where it
  * was asked. Only the dock adds the saved-conversations panel, since the page
  * already carries that list beside the box.
+ *
+ * The presence orb is a third door, and it is deliberately not a third
+ * conversation: it owns the microphone while ambient listening is armed and owns
+ * no interpretation at all. What it hears arrives here through
+ * `useJarvisHandoff`, into the same `hearUtterance` the console's own recogniser
+ * calls, so "Hey Jarvis" means the same thing whoever carried it. What the orb
+ * shows — amber for a turn in flight, green for an answer being read, violet for a
+ * card owed a click — is this component's state, mirrored there and nowhere else.
  *
  * The transcript is stored as it is written (`sessionId` names the saved
  * conversation), which is what lets a question asked in the dock be picked up
@@ -249,9 +258,10 @@ export function AssistantChat({
    * would arm the wait on the first final and read the state as it was on the
    * second, so the question would be dropped. Nothing on screen renders this, so
    * it is only ever a ref — written where it is decided, read where the finals
-   * land.
+   * land. Write it through `markAwaiting`, which mirrors it to the orb.
    */
   const awaitingRef = useRef(false);
+  const markAwaiting = useJarvisAwaitingWriter(awaitingRef);
 
   /**
    * Whether this composer is on screen.
@@ -615,6 +625,21 @@ export function AssistantChat({
   const wide = variant === "page";
 
   /**
+   * The change this transcript is waiting for a click on, or null.
+   *
+   * Only the newest assistant turn carries a live card: releasing one appends its
+   * outcome, so a card from an older turn has already been answered or expired. Both
+   * the spoken verdict in `hearUtterance` and the orb's amber state read this one
+   * value, so a person looking at the reactor and a person speaking at it are talking
+   * about the same card.
+   */
+  const newest = messages[messages.length - 1];
+  const liveApproval =
+    newest?.role === "assistant"
+      ? newest.steps?.find((step) => step.approval)?.approval ?? null
+      : null;
+
+  /**
    * Why a spoken turn cannot be sent right now, or null when nothing is at risk.
    *
    * `send` empties the composer and detaches the file, so a spoken question
@@ -647,7 +672,7 @@ export function AssistantChat({
     const phrase = wakePhrase.trim() || DEFAULT_WAKE_PHRASE;
     const wake = matchWakePhrase(text, phrase);
     if (wake.matched) {
-      awaitingRef.current = false;
+      markAwaiting(false);
       if (wake.remainder) {
         // The folded remainder is the recognizer-level match; the turn that is
         // sent and stored is the person's own words after the phrase.
@@ -661,7 +686,7 @@ export function AssistantChat({
         setCaption(question);
         void send(question);
       } else {
-        awaitingRef.current = true;
+        markAwaiting(true);
         setCaption("Listening…");
         speech.speak("Listening", "en");
       }
@@ -675,13 +700,9 @@ export function AssistantChat({
     // the heard words to the strings spoken recently. `awaitingRef` stays true so
     // the person's own next utterance is still heard.
     if (speech.speaking || speech.echoedOwnVoice(text)) return;
-    awaitingRef.current = false;
+    markAwaiting(false);
 
-    const last = messages[messages.length - 1];
-    const live =
-      last?.role === "assistant"
-        ? last.steps?.find((step) => step.approval)?.approval ?? null
-        : null;
+    const live = liveApproval;
     if (live) {
       const verdict = spokenApproval(text, live.code ?? null);
       if (verdict === "cancel") {
@@ -740,8 +761,26 @@ export function AssistantChat({
     void send(text);
   }
 
+  /**
+   * The conversation the orb is having, mirrored outward and handed inward.
+   *
+   * The reactor is mounted by the shell, several components above this one, and the
+   * dock may be closed while a turn runs — so it cannot read any of this from here.
+   * These three values are the only things it can honestly show: a question in
+   * flight, an answer being read aloud, and a card owed a click.
+   */
+  const { ambientArmed } = useJarvisHandoff({
+    onUtterance: hearUtterance,
+    thinking: pending || approving !== null,
+    speaking: speech.speaking,
+    approvalSummary: liveApproval?.summary ?? null,
+  });
+
   const wake = useWakeWord({
-    enabled: voiceMode === "console" && handsFree,
+    // One microphone per tab. While the orb's ambient recogniser is running it owns
+    // the capture and delivers every utterance through the handoff above; a second
+    // continuous recogniser here would hear the same person twice and ask twice.
+    enabled: voiceMode === "console" && handsFree && !ambientArmed,
     language: voiceLanguage,
     onUtterance: hearUtterance,
   });
@@ -1047,11 +1086,12 @@ export function AssistantChat({
                 handsFree={handsFree}
                 onHandsFree={(next) => {
                   setHandsFree(next);
-                  awaitingRef.current = false;
+                  markAwaiting(false);
                   setCaption("");
                   if (!next) speech.stop();
                 }}
                 listening={wake.listening}
+                ambientArmed={ambientArmed}
                 wakePhrase={wakePhrase}
                 onWakePhrase={(phrase) => {
                   setTypedWakePhrase(phrase);

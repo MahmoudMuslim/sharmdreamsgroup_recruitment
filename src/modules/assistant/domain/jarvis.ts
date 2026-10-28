@@ -141,6 +141,31 @@ export function crossedQueues(
   return out.sort((a, b) => a.rank - b.rank);
 }
 
+/**
+ * What is news at this moment, whether or not it just became news.
+ *
+ * The watcher interrupts only on a crossing, but a briefing is a summary read at
+ * a chosen hour: the queues standing above their threshold then are what the
+ * person asked to hear, including the ones that crossed while they were away. A
+ * queue at its threshold is still not news here either.
+ */
+export function newsQueues(readings: QueueReading[]): QueueCrossing[] {
+  const out: QueueCrossing[] = [];
+  for (const reading of readings) {
+    const rule = queueRule(reading.id);
+    if (!rule) continue;
+    if (reading.count <= rule.threshold) continue;
+    out.push({
+      id: rule.id,
+      count: reading.count,
+      threshold: rule.threshold,
+      spoken: rule.spoken,
+      rank: rule.rank,
+    });
+  }
+  return out.sort((a, b) => a.rank - b.rank);
+}
+
 // ---------------------------------------------------------------------------
 // Speech: counts as words, three lines at most
 // ---------------------------------------------------------------------------
@@ -367,4 +392,194 @@ function voiceName(value: unknown): string {
  */
 export function canArmAmbient(prefs: JarvisPrefs): boolean {
   return prefs.ambient === true && typeof prefs.ambientConsentAt === "string" && prefs.ambientConsentAt.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// The row a save is allowed to write
+// ---------------------------------------------------------------------------
+
+/**
+ * Every column a person's own row may carry, and nothing else.
+ *
+ * `profile_id` and `updated_at` are absent on purpose: the writer adds them from
+ * the session and the clock, so a draft that names another profile or a stamp of
+ * its own making cannot reach the database. `ambient_consent_at` is absent for
+ * the same reason in the other direction — only the server may write it, and only
+ * from a consent event it is told about.
+ */
+export const JARVIS_PREF_COLUMNS: readonly string[] = Object.freeze([
+  "ambient",
+  "ambient_consent_at",
+  "briefing",
+  "briefing_hour",
+  "watching",
+  "watch_queues",
+  "quiet_from",
+  "quiet_to",
+  "voice",
+  "neural_voice",
+]);
+
+/** Draft field names, camelCase and the row's own spelling alike, to columns. */
+const COLUMN_BY_DRAFT_KEY: Record<string, string> = {
+  ambient: "ambient",
+  briefing: "briefing",
+  briefingHour: "briefing_hour",
+  briefing_hour: "briefing_hour",
+  watching: "watching",
+  watchQueues: "watch_queues",
+  watch_queues: "watch_queues",
+  quietFrom: "quiet_from",
+  quiet_from: "quiet_from",
+  quietTo: "quiet_to",
+  quiet_to: "quiet_to",
+  voice: "voice",
+  neuralVoice: "neural_voice",
+  neural_voice: "neural_voice",
+};
+
+/** A prefs value back in the row's own shape, so a merge is one normalize. */
+export function prefsToRow(prefs: JarvisPrefs): Record<string, unknown> {
+  return {
+    ambient: prefs.ambient,
+    ambient_consent_at: prefs.ambientConsentAt,
+    briefing: prefs.briefing,
+    briefing_hour: prefs.briefingHour,
+    watching: prefs.watching,
+    watch_queues: prefs.watchQueues,
+    quiet_from: prefs.quietFrom,
+    quiet_to: prefs.quietTo,
+    voice: prefs.voice,
+    neural_voice: prefs.neuralVoice,
+  };
+}
+
+/**
+ * One draft value, accepted only if the field can actually express it.
+ *
+ * The stored choice is the fallback, not the default: a switch sent as a string
+ * or a clock typed as `9am` was not a request to reset that field, and quietly
+ * moving a person's quiet window back to six o'clock would make the assistant
+ * speak at an hour nobody chose.
+ */
+function draftValue(column: string, value: unknown, previous: JarvisPrefs): unknown {
+  switch (column) {
+    case "ambient":
+      return typeof value === "boolean" ? value : previous.ambient;
+    case "briefing":
+      return typeof value === "boolean" ? value : previous.briefing;
+    case "watching":
+      return typeof value === "boolean" ? value : previous.watching;
+    case "neural_voice":
+      return typeof value === "boolean" ? value : previous.neuralVoice;
+    case "briefing_hour":
+      return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 23
+        ? value
+        : previous.briefingHour;
+    case "quiet_from":
+      return readClock(value) === null ? previous.quietFrom : value;
+    case "quiet_to":
+      return readClock(value) === null ? previous.quietTo : value;
+    case "voice":
+      return typeof value === "string" && value.trim() ? value : previous.voice;
+    // An empty list is the safe answer to a list nothing in it names: a watcher
+    // that knows no queue says nothing, which is what nobody asked for but never
+    // what a garbled field should cause.
+    case "watch_queues":
+      return uniqueKnownQueues(value);
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The row to write for a draft, over the state the server holds.
+ *
+ * Three things are true of the result and of nothing else in this slice:
+ *
+ * - It carries exactly `JARVIS_PREF_COLUMNS`, so a draft cannot introduce a
+ *   column the table does not have or claim a different `profile_id`.
+ * - Only the names in `COLUMN_BY_DRAFT_KEY` are read from the draft, each through
+ *   the same ceilings `normalizeJarvisPrefs` applies to a row, and a value that
+ *   fails its ceiling leaves the stored choice where it was rather than falling
+ *   back to a default the person never picked.
+ * - `ambient` is on only where a consent stamp exists: one the server already
+ *   wrote, or one this request earned by accepting the audio explanation. A
+ *   switch flipped without either is written as off, so the microphone never arms
+ *   on a value the person did not agree to.
+ *
+ * Turning the switch off deliberately keeps the stamp. The explanation was heard
+ * once, and a later re-arming is that same consent, not a new one.
+ */
+export function jarvisRowToSave(
+  draft: Record<string, unknown>,
+  previous: JarvisPrefs,
+  consent: { given: boolean; stamp: string }
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = prefsToRow(previous);
+  for (const key of Object.keys(draft)) {
+    const column = COLUMN_BY_DRAFT_KEY[key];
+    if (!column) continue;
+    merged[column] = draftValue(column, draft[key], previous);
+  }
+
+  const next = normalizeJarvisPrefs(merged);
+  const heard = consentStamp(consent.stamp);
+  const earned = consent.given === true && heard !== null;
+
+  if (next.ambient) {
+    if (earned) next.ambientConsentAt = heard;
+    else if (next.ambientConsentAt === null) {
+      next.ambient = false;
+      next.ambientConsentAt = null;
+    }
+  }
+
+  return prefsToRow(next);
+}
+
+// ---------------------------------------------------------------------------
+// What the activity trail is allowed to claim about a save
+// ---------------------------------------------------------------------------
+
+const SWITCH_LABELS: Record<"ambient" | "briefing" | "watching" | "neuralVoice", string> = {
+  ambient: "wake word listening",
+  briefing: "morning briefing",
+  watching: "threshold alerts",
+  neuralVoice: "neural voice",
+};
+
+/**
+ * The fields a person moved, in words, and nothing else.
+ *
+ * Two rules here are about the record rather than the setting:
+ *
+ * - A switch that did not move is not named. The trail is read by whoever can
+ *   read it, and "presence settings changed: wake word" beside a save that left
+ *   the wake word alone is a false statement in a record people rely on.
+ * - `ambientConsentAt` is never named. It is a timestamp the server writes when
+ *   the audio explanation is accepted, and the explanation itself is the record
+ *   of that moment; the trail says the switch moved, which is the fact a reader
+ *   is looking for.
+ *
+ * The row is never copied into the summary either: a voice name is free text, and
+ * a queue list is a claim about what the assistant may say about other people's
+ * applications.
+ */
+export function summarizeJarvisChange(previous: JarvisPrefs, next: JarvisPrefs): string {
+  const parts: string[] = [];
+
+  for (const key of Object.keys(SWITCH_LABELS) as (keyof typeof SWITCH_LABELS)[]) {
+    if (previous[key] !== next[key]) parts.push(`${SWITCH_LABELS[key]} ${next[key] ? "on" : "off"}`);
+  }
+  if (previous.briefingHour !== next.briefingHour) parts.push(`briefing from ${next.briefingHour}:00`);
+  if (previous.watchQueues.join(",") !== next.watchQueues.join(",")) {
+    parts.push(next.watchQueues.length ? `${next.watchQueues.length} queues watched` : "no queues watched");
+  }
+  if (previous.quietFrom !== next.quietFrom || previous.quietTo !== next.quietTo) {
+    parts.push(`quiet ${next.quietFrom}-${next.quietTo}`);
+  }
+  if (previous.voice !== next.voice) parts.push(`voice “${next.voice}”`);
+
+  return parts.length ? `Assistant presence: ${parts.join(", ")}` : "Assistant presence settings saved";
 }

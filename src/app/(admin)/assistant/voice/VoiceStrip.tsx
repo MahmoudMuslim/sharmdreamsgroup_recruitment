@@ -26,6 +26,7 @@ export function VoiceStrip({
   handsFree,
   onHandsFree,
   listening,
+  ambientArmed,
   wakePhrase,
   onWakePhrase,
   language,
@@ -47,6 +48,13 @@ export function VoiceStrip({
   handsFree: boolean;
   onHandsFree: (next: boolean) => void;
   listening: boolean;
+  /**
+   * True while the presence orb's own recogniser holds the microphone on this page.
+   *
+   * One capture per tab: this console stands its recognizer down then, and the strip
+   * has to say who is listening instead of claiming nothing is.
+   */
+  ambientArmed: boolean;
   wakePhrase: string;
   onWakePhrase: (phrase: string) => void;
   language: VoiceLanguage;
@@ -150,13 +158,15 @@ export function VoiceStrip({
       <p className="mt-1.5 text-[10px] leading-relaxed text-brand-ink/55">
         {recording
           ? "Recording — this clip goes to the transcription model, and is discarded once the words come back."
-          : handsFree
-            ? listening
-              ? `Listening for “${shownPhrase}” — the browser sends what it hears to its own speech service.`
-              : error
-                ? "Listening stopped — the error below says why."
-                : "Arming the microphone…"
-            : "Nothing is being recorded."}
+          : ambientArmed
+            ? "The assistant's orb is holding this browser's microphone, so it hears the wake phrase from the room and brings the question here."
+            : handsFree
+              ? listening
+                ? `Listening for “${shownPhrase}” — the browser sends what it hears to its own speech service.`
+                : error
+                  ? "Listening stopped — the error below says why."
+                  : "Arming the microphone…"
+              : "Nothing is being recorded."}
         {caption ? ` ${caption}` : ""}
       </p>
 

@@ -13,6 +13,7 @@ import { NavigationPending } from "@/modules/shell/presentation/NavigationPendin
 import { navForward } from "@/modules/shell/domain/navTransition";
 import { LiveChrome } from "@/modules/live/presentation/Live";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
+import { JarvisPresence } from "@/modules/assistant/presentation/JarvisPresence";
 import {
   expandedOnServer,
   readCollapsed,
@@ -404,6 +405,7 @@ export function AdminShell({
       </div>
 
       <LiveChrome />
+      <JarvisPresence user={user} timeZone={timeZone} />
       <AssistantDock />
     </div>
   );

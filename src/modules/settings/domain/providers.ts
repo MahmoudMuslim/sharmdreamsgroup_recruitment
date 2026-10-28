@@ -336,6 +336,38 @@ export const PROVIDERS: ProviderDefinition[] = [
       },
     ],
   },
+  {
+    id: "elevenlabs",
+    displayName: "ElevenLabs (voice)",
+    group: "other",
+    envVar: "ELEVENLABS_API_KEY",
+    description:
+      "The neural voice the assistant's presence speaks with. This is a text-to-speech key, not a model: nothing in the portal routes a prompt through it, and a sentence spoken here is thrown away as soon as the browser has played it. Without a key the presence uses the voice your device already has.",
+    docsUrl: "https://elevenlabs.io/docs/api-reference/text-to-speech",
+    verify: {
+      url: "https://api.elevenlabs.io/v1/voices",
+      method: "GET",
+      header: "xi-api-key",
+    },
+    fields: [
+      {
+        key: "api_key",
+        label: "API Key",
+        kind: "text",
+        placeholder: "sk_...",
+        required: true,
+        secret: true,
+      },
+      {
+        key: "voice_id",
+        label: "Voice ID",
+        kind: "text",
+        placeholder: "b9e3c2d41f7777e882aaf024",
+        required: false,
+        hint: "The id of a voice in your own ElevenLabs account, from the list Verify returns. Falls back to ELEVENLABS_VOICE_ID. A voice name is not an id and is never sent.",
+      },
+    ],
+  },
 ];
 
 /** Fallback models when the OpenRouter catalogue is unreachable. */

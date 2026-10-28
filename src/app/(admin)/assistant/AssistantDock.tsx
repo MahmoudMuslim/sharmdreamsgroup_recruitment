@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
 import { Maximize2, Minimize2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  jarvisUiOnServer,
+  readJarvisUi,
+  setJarvisOpen,
+  subscribeJarvisUi,
+  toggleJarvisOpen,
+} from "@/lib/jarvis-ui";
 import { AssistantChat } from "./AssistantChat";
 
 /**
@@ -18,6 +25,10 @@ import { AssistantChat } from "./AssistantChat";
  * Turns are stored as they are written, so closing the panel or refreshing the
  * page is not the end of a conversation: this reopens the last one, and all of
  * them are listed on the Assistant page.
+ *
+ * Whether the panel is open lives in `jarvis-ui.ts`, not here: the presence orb
+ * has to be able to pull this panel up over the page you are looking at when it
+ * hears something, and it is mounted by the shell several components above.
  */
 
 /**
@@ -86,7 +97,11 @@ function readSession(): string | null {
 
 export function AssistantDock() {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
+  const open = useSyncExternalStore(
+    subscribeJarvisUi,
+    () => readJarvisUi().open,
+    () => jarvisUiOnServer().open
+  );
   const [sessionId, setSessionId] = useState<string | null>(readSession);
 
   const [mode, setMode] = useState<"docked" | "full">(() =>
@@ -99,7 +114,7 @@ export function AssistantDock() {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setJarvisOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -156,7 +171,7 @@ export function AssistantDock() {
     <>
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
+        onClick={toggleJarvisOpen}
         aria-expanded={open}
         aria-label={open ? "Close the assistant" : "Open the assistant"}
         className={cn(
@@ -224,7 +239,7 @@ export function AssistantDock() {
               </button>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => setJarvisOpen(false)}
                 aria-label="Close the assistant"
                 className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand-line bg-white text-brand-ink/60 transition hover:bg-brand-sand"
               >

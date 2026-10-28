@@ -25,10 +25,41 @@ import { registerHooks } from "node:module";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => readFileSync(path.join(root, rel), "utf8");
 
-// The domain module imports nothing, so only `@/` needs resolving. `server-only`
-// is stubbed because the application half that grows beside it does import it.
+// The five stubs the server half reaches for. `@/lib/data-api/server` is the one
+// REST door the reader and the writer share, so a check decides what the table
+// said — absent, unreadable, a row, nothing — without a database behind it.
 const STUB_SOURCES = {
   "server-only": "export {};",
+  "next/server": `
+    export class NextResponse extends Response {
+      static json(body, init = {}) {
+        return new Response(JSON.stringify(body), {
+          status: init.status ?? 200,
+          headers: { "Content-Type": "application/json", ...(init.headers ?? {}) },
+        });
+      }
+    }
+  `,
+  "@/lib/auth/session": `
+    export const getSessionUser = () => globalThis.__jarvisUser ?? null;
+    export const isStaff = (role) =>
+      role === "SUPER_ADMIN" || role === "RECRUITER" || role === "HIRING_MANAGER";
+  `,
+  "@/lib/data-api/server": `
+    export const createServerRestClient = async () => globalThis.__jarvisRest;
+  `,
+  "@/modules/activity/application/record": `
+    export const recordActivity = async (entry) => {
+      (globalThis.__jarvisTrail ??= []).push(entry);
+    };
+  `,
+  "@/modules/settings/infrastructure/credentialResolver": `
+    export const resolveSecret = async (provider) => {
+      (globalThis.__jarvisKeys ??= []).push(provider);
+      return globalThis.__jarvisSecret ?? null;
+    };
+    export const resolveConfig = async () => globalThis.__jarvisConfig ?? {};
+  `,
 };
 const STUB_URLS = Object.fromEntries(
   Object.entries(STUB_SOURCES).map(([specifier, source]) => [
@@ -82,13 +113,125 @@ function expect(problems, label, actual, expected) {
 const DOMAIN_REL = "src/modules/assistant/domain/jarvis.ts";
 const MIGRATION_REL = "db/migrations/047_assistant_jarvis_prefs.sql";
 const FEED_REL = "src/modules/shell/application/shell-actions.ts";
+const SETTINGS_REL = "src/modules/assistant/application/jarvisSettings.ts";
+const SPEECH_REL = "src/modules/assistant/infrastructure/speech.ts";
+const SPEAK_ROUTE_REL = "src/app/api/assistant/speak/route.ts";
+const PROVIDERS_REL = "src/modules/settings/domain/providers.ts";
 
 const DOMAIN_URL = pathToFileURL(path.join(root, DOMAIN_REL)).href;
+const SETTINGS_URL = pathToFileURL(path.join(root, SETTINGS_REL)).href;
+const SPEECH_URL = pathToFileURL(path.join(root, SPEECH_REL)).href;
+const SPEAK_ROUTE_URL = pathToFileURL(path.join(root, SPEAK_ROUTE_REL)).href;
+const PROVIDERS_URL = pathToFileURL(path.join(root, PROVIDERS_REL)).href;
 // A fresh URL on every load, so a check reads the bytes now on disk: a monotonic
 // counter, because two Date.now() calls in one millisecond would hand a mutated
 // run the module imported before the mutation.
 let loadCount = 0;
 const load = (url) => import(`${url}?v=${(loadCount += 1)}`);
+
+// The server half is proved against the stubs above, so every check starts from
+// a clean room: no session, no table, no key, no trail left over by its
+// neighbour. A check that forgets this inherits the previous one's identity, and
+// an inherited identity is exactly the bug these checks exist to catch.
+const GLOBAL_KEYS = [
+  "__jarvisUser",
+  "__jarvisRest",
+  "__jarvisTrail",
+  "__jarvisKeys",
+  "__jarvisSecret",
+  "__jarvisConfig",
+];
+function resetGlobals(patch = {}) {
+  for (const key of GLOBAL_KEYS) delete globalThis[key];
+  Object.assign(globalThis, patch);
+}
+
+/**
+ * The one REST door the reader and the writer share, with every call recorded.
+ *
+ * `read` and `write` answer whatever the table is meant to do in a case: a row,
+ * nothing, or the error code PostgREST gives a table that was never created.
+ * `throwOn` breaks the door itself, which is how a check tells "the table is
+ * absent" from "the table could not be reached".
+ */
+function fakeRest({ read = { data: null, error: null }, write = { error: null }, throwOn = null } = {}) {
+  const calls = [];
+  const client = {
+    from(table) {
+      const entry = { table };
+      calls.push(entry);
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => {
+          if (throwOn === "read") throw new Error("the read door blew up");
+          entry.op = "read";
+          return typeof read === "function" ? read(entry) : read;
+        },
+        upsert: async (payload, opts) => {
+          entry.op = "upsert";
+          entry.payload = payload;
+          entry.opts = opts;
+          if (throwOn === "write") throw new Error("the write door blew up");
+          return typeof write === "function" ? write(entry) : write;
+        },
+      };
+      return chain;
+    },
+  };
+  return { client, calls };
+}
+
+/** The error shape a table that was never created answers with. */
+const ABSENT = { code: "42P01", message: 'relation "public.assistant_jarvis_prefs" does not exist' };
+const UNREADABLE = { code: "PGRST802", message: "connection reset by peer" };
+
+/** A POST as the browser sends it, so the door is read the way it is reached. */
+function speakRequest(body, user) {
+  // Only the identity changes here: a check sets the key and the voice id around a
+  // series of calls, and a request must not quietly wipe them.
+  globalThis.__jarvisUser = user;
+  return new Request("http://localhost:3001/api/assistant/speak", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  });
+}
+
+/** Captures console.error for one call, so a leak is caught rather than assumed absent. */
+async function withLogCapture(run) {
+  const lines = [];
+  const original = console.error;
+  console.error = (...args) => lines.push(args.map(String).join(" "));
+  try {
+    const value = await run();
+    return { value, lines };
+  } finally {
+    console.error = original;
+  }
+}
+
+/**
+ * The JSON a door answered with, or a named problem.
+ *
+ * `response.json()` throws on an answer that is not JSON, and a check that throws
+ * proves nothing about the rule it was reading: the failure disappears into the
+ * harness. So the body is read once as text and a refusal to parse it becomes an
+ * assertion of its own — which is also what a person's client would have to decide.
+ */
+async function jsonAnswer(response, label, problems) {
+  const text = await response.text().catch(() => null);
+  if (text === null) {
+    problems.push(`${label}: its ${response.status} body could not be read`);
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    problems.push(`${label}: its ${response.status} body is not JSON (${JSON.stringify(text.slice(0, 40))})`);
+    return {};
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 1. The queues, and the feed that issues them
@@ -460,6 +603,627 @@ async function check10() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 11. What a draft may write, and what only the server may write
+// ---------------------------------------------------------------------------
+async function check11() {
+  const jarvis = await load(DOMAIN_URL);
+  const problems = [];
+  const {
+    jarvisRowToSave,
+    prefsToRow,
+    normalizeJarvisPrefs,
+    DEFAULT_JARVIS_PREFS,
+    JARVIS_PREF_COLUMNS,
+    canArmAmbient,
+  } = jarvis;
+  const columns = [...JARVIS_PREF_COLUMNS].sort();
+  const noConsent = { given: false, stamp: "" };
+  const save = (draft, previous = DEFAULT_JARVIS_PREFS, consent = noConsent) =>
+    jarvisRowToSave(draft, previous, consent);
+  const prefs = (row) => normalizeJarvisPrefs(row);
+
+  // The row is the table's columns and nothing else: no `profile_id` a draft
+  // could point at another person, no `updated_at` the browser could date, no
+  // invented column the write would then have to refuse.
+  expect(problems, "exactly the table's own columns", Object.keys(save({})).sort(), columns);
+  expect(
+    problems,
+    "a row that names another profile does not carry it",
+    Object.keys(save({ profile_id: "deadbeef-0000-0000-0000-000000000000", id: 7, updated_at: "2020-01-01" })).sort(),
+    columns
+  );
+  // A prefs value survives the trip through the row's own shape, or the merge
+  // would silently reset whatever it could not name.
+  const merged = prefs(save({ briefing: true, briefing_hour: 6, watch_queues: ["ungraded"] }));
+  expect(problems, "round trip", prefs(prefsToRow(merged)), merged);
+
+  // The microphone is the one switch that needs more than a value.
+  expect(problems, "arming without a stamp is refused", save({ ambient: true }).ambient, false);
+  expect(
+    problems,
+    "arming with a stamp the server cannot read is refused",
+    prefs(save({ ambient: true }, DEFAULT_JARVIS_PREFS, { given: true, stamp: "tomorrow" })).ambientConsentAt,
+    null
+  );
+  expect(
+    problems,
+    "a consent word that is not a boolean does not arm",
+    save({ ambient: true }, DEFAULT_JARVIS_PREFS, { given: "yes", stamp: "2026-10-28T06:00:00.000Z" }).ambient,
+    false
+  );
+  const armed = prefs(save({ ambient: true }, DEFAULT_JARVIS_PREFS, { given: true, stamp: "2026-10-28T06:00:00.000Z" }));
+  expect(problems, "consent heard by the server arms", [armed.ambient, armed.ambientConsentAt], [
+    true,
+    "2026-10-28T06:00:00.000Z",
+  ]);
+  expect(problems, "the armed row passes the arm door", canArmAmbient(armed), true);
+
+  // Consent is one-time: a stored stamp is that same agreement, not a new one,
+  // and switching off must not erase the record that it was given.
+  const once = { ...DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: "2026-10-01T09:00:00.000Z" };
+  const rearmed = prefs(save({ ambient: true }, once));
+  expect(problems, "re-arming keeps the stamp already on the row", [rearmed.ambient, rearmed.ambientConsentAt], [
+    true,
+    "2026-10-01T09:00:00.000Z",
+  ]);
+  expect(
+    problems,
+    "a fresh stamp refreshes it",
+    prefs(save({ ambient: true }, once, { given: true, stamp: "2026-10-28T06:00:00.000Z" })).ambientConsentAt,
+    "2026-10-28T06:00:00.000Z"
+  );
+  const off = prefs(save({ ambient: false }, once));
+  expect(problems, "off keeps the consent record", [off.ambient, off.ambientConsentAt], [
+    false,
+    "2026-10-01T09:00:00.000Z",
+  ]);
+
+  // A stamp the browser invents is not consent, and must not be written into the
+  // row for the server to mistake for the real one later: the microphone stays
+  // off, with no stamp on it either way.
+  const forged = prefs(save({ ambient: true, ambient_consent_at: "2020-01-01T00:00:00.000Z" }));
+  expect(problems, "a draft's own consent stamp does not arm", [forged.ambient, forged.ambientConsentAt], [
+    false,
+    null,
+  ]);
+
+  // Every ceiling a hand-edited row already faced applies to a draft, and the
+  // safe direction is silence: an unknown queue names nothing.
+  const widened = prefs(
+    save(
+      {
+        ambient: "yes",
+        briefing_hour: 41,
+        quiet_from: "9am",
+        quiet_to: "1260",
+        watch_queues: ["payroll-access", "ungraded", "ungraded"],
+        voice: "x".repeat(90),
+        neural_voice: "true",
+      },
+      { ...DEFAULT_JARVIS_PREFS, briefingHour: 7, quietFrom: "20:00", quietTo: "07:00" }
+    )
+  );
+  expect(problems, "a string is not a switch", widened.ambient, false);
+  expect(problems, "an hour outside the day keeps the stored one", widened.briefingHour, 7);
+  expect(problems, "an unreadable clock falls back to the row's own window", [widened.quietFrom, widened.quietTo], [
+    "20:00",
+    "07:00",
+  ]);
+  expect(problems, "an unknown queue names nothing", widened.watchQueues, ["ungraded"]);
+  expect(problems, "a voice name is cut", widened.voice.length <= 48, true);
+  expect(problems, "a string is not a neural switch", widened.neuralVoice, DEFAULT_JARVIS_PREFS.neuralVoice);
+
+  // The safe direction is the person's own value, never a default nobody chose:
+  // a garbled field must not move a quiet window, reset an hour, or flip off a
+  // microphone that was already agreed to.
+  const garbled = prefs(
+    save(
+      { ambient: "yes", briefing_hour: 99, quiet_from: "9am", quiet_to: "evening", voice: "   " },
+      { ...once, briefingHour: 7, quietFrom: "20:00", quietTo: "07:00", voice: "clara" }
+    )
+  );
+  expect(problems, "a string switch does not reset a stored one", garbled.ambient, true);
+  expect(problems, "an impossible hour does not reset a stored one", garbled.briefingHour, 7);
+  expect(problems, "an unreadable clock does not reset a stored one", [garbled.quietFrom, garbled.quietTo], [
+    "20:00",
+    "07:00",
+  ]);
+  expect(problems, "a blank voice does not reset a stored one", garbled.voice, "clara");
+
+  // A draft that names nothing changes nothing: every value stays the server's.
+  expect(problems, "an empty draft keeps the stored choice", prefs(save({}, once)), once);
+  // The trail sentence says what moved and nothing more — it cannot claim a
+  // switch flipped, and never names the consent stamp, which is a fact about when
+  // a person heard an explanation rather than a setting anybody changes.
+  expect(problems, "a change is named by what it did", jarvis.summarizeJarvisChange(DEFAULT_JARVIS_PREFS, prefs(save({ briefing: true }, DEFAULT_JARVIS_PREFS))), "Assistant presence: morning briefing on");
+  expect(problems, "and a save that moved nothing claims nothing", jarvis.summarizeJarvisChange(once, once), "Assistant presence settings saved");
+  expect(problems, "never the consent stamp", /consent/i.test(jarvis.summarizeJarvisChange(DEFAULT_JARVIS_PREFS, armed)), false);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 12. The reader, and the two failures it must not confuse
+// ---------------------------------------------------------------------------
+async function check12() {
+  const jarvis = await load(DOMAIN_URL);
+  const settings = await load(SETTINGS_URL);
+  const problems = [];
+
+  const absent = fakeRest({ read: { error: ABSENT } });
+  resetGlobals({ __jarvisRest: absent.client });
+  expect(
+    problems,
+    "an unapplied 047 reads as everything off and names itself",
+    await settings.readJarvisPrefs("staff-1"),
+    { prefs: jarvis.DEFAULT_JARVIS_PREFS, stored: false, problem: "absent" }
+  );
+  expect(problems, "the read is on the prefs table", absent.calls.map((c) => c.table), ["assistant_jarvis_prefs"]);
+
+  resetGlobals({ __jarvisRest: fakeRest({ read: { error: UNREADABLE } }).client });
+  expect(
+    problems,
+    "an outage is a different answer from an unapplied file",
+    await settings.readJarvisPrefs("staff-1"),
+    { prefs: jarvis.DEFAULT_JARVIS_PREFS, stored: false, problem: "unreadable" }
+  );
+
+  resetGlobals({ __jarvisRest: fakeRest({ read: { data: null, error: null } }).client });
+  expect(problems, "no row is not a problem", await settings.readJarvisPrefs("staff-1"), {
+    prefs: jarvis.DEFAULT_JARVIS_PREFS,
+    stored: false,
+    problem: null,
+  });
+
+  const row = {
+    profile_id: "staff-1",
+    ambient: true,
+    ambient_consent_at: "2026-10-28T06:00:00.000Z",
+    briefing: true,
+    briefing_hour: 7,
+    watching: true,
+    watch_queues: ["ungraded"],
+    quiet_from: "20:00",
+    quiet_to: "07:00",
+    voice: "jarvis",
+    neural_voice: false,
+  };
+  resetGlobals({ __jarvisRest: fakeRest({ read: { data: row, error: null } }).client });
+  const stored = await settings.readJarvisPrefs("staff-1");
+  expect(problems, "a row is a choice", [stored.stored, stored.problem], [true, null]);
+  expect(problems, "a row reaches the presence whole", stored.prefs, jarvis.normalizeJarvisPrefs(row));
+
+  // A door that blew up entirely still answers the safe state: the orb renders,
+  // it just does not listen or speak.
+  resetGlobals({ __jarvisRest: fakeRest({ throwOn: "read" }).client });
+  expect(
+    problems,
+    "a throwing read answers off rather than failing the page",
+    await settings.readJarvisPrefs("staff-1"),
+    { prefs: jarvis.DEFAULT_JARVIS_PREFS, stored: false, problem: "unreadable" }
+  );
+
+  // The same read as the presence's own viewer door — the shape the orb's first
+  // paint and the console receive. A person who is not signed in never reaches the
+  // table, and a failure is named rather than answered as a state nobody chose.
+  const noSessionRest = fakeRest({ read: { data: null, error: null } });
+  resetGlobals({ __jarvisRest: noSessionRest.client });
+  expect(
+    problems,
+    "a signed-out viewer is refused before the table is read",
+    [await settings.jarvisPresenceForViewer(), noSessionRest.calls.length],
+    [{ reason: "no-session", message: "Sign in to use the assistant presence." }, 0]
+  );
+
+  const viewerAbsent = fakeRest({ read: { error: ABSENT } });
+  resetGlobals({ __jarvisUser: { profileId: "staff-1" }, __jarvisRest: viewerAbsent.client });
+  const notApplied = await settings.jarvisPresenceForViewer();
+  expect(problems, "an unapplied table is named, not hidden", notApplied.reason, "absent-table");
+  expect(problems, "and the person is told which file creates it", /047_assistant_jarvis_prefs/.test(notApplied.message), true);
+
+  const viewerUnreadable = fakeRest({ read: { error: UNREADABLE } });
+  resetGlobals({ __jarvisUser: { profileId: "staff-1" }, __jarvisRest: viewerUnreadable.client });
+  const outage = await settings.jarvisPresenceForViewer();
+  expect(problems, "an outage is not reported as an unapplied file", outage.reason, "unreadable");
+  expect(problems, "and does not name a migration", /047|migration/.test(outage.message), false);
+
+  resetGlobals({
+    __jarvisUser: { profileId: "staff-1" },
+    __jarvisRest: fakeRest({ read: { data: row, error: null } }).client,
+  });
+  expect(
+    problems,
+    "a reader that works hands the orb the person's own choice",
+    await settings.jarvisPresenceForViewer(),
+    jarvis.normalizeJarvisPrefs(row)
+  );
+
+  // No administrator's grant is consulted: a person's own switch is the only door.
+  if (/hasPermissionForUser/.test(read(SETTINGS_REL))) {
+    problems.push("the prefs reader must not gate a person's own switch behind a grant");
+  }
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 13. The writer: its own row, trailed, and honest about a table that is not there
+// ---------------------------------------------------------------------------
+async function check13() {
+  const jarvis = await load(DOMAIN_URL);
+  const settings = await load(SETTINGS_URL);
+  const problems = [];
+  const columns = [...jarvis.JARVIS_PREF_COLUMNS];
+  const staff = { profileId: "staff-1", role: "RECRUITER" };
+
+  const nowhere = fakeRest();
+  resetGlobals({ __jarvisRest: nowhere.client });
+  const signedOut = await settings.saveJarvisPrefs({ briefing: true });
+  expect(problems, "no session, no write", [signedOut.ok, nowhere.calls, globalThis.__jarvisTrail], [
+    false,
+    [],
+    undefined,
+  ]);
+  expect(problems, "the refusal says who may write", /sign in/i.test(signedOut.error), true);
+
+  const absentWrite = fakeRest({ write: { error: ABSENT } });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: absentWrite.client });
+  const unapplied = await settings.saveJarvisPrefs({ briefing: true });
+  expect(problems, "an unapplied table is refused", unapplied.ok, false);
+  expect(problems, "and named by its file", /047_assistant_jarvis_prefs\.sql/.test(unapplied.error), true);
+  expect(problems, "no trail for a write that never happened", globalThis.__jarvisTrail, undefined);
+
+  const good = fakeRest();
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: good.client });
+  const saved = await settings.saveJarvisPrefs(
+    { briefing: true, briefingHour: 7, watchQueues: ["ungraded"], ambient: true },
+    { consentGiven: true }
+  );
+  expect(problems, "a good write answers the whole row", [saved.ok, saved.prefs.briefingHour], [true, 7]);
+  const write = good.calls.find((call) => call.op === "upsert");
+  expect(problems, "written through the prefs table", write?.table, "assistant_jarvis_prefs");
+  expect(problems, "one row per person", write?.opts, { onConflict: "profile_id" });
+  expect(
+    problems,
+    "the row is the columns plus the session's identity and the clock",
+    Object.keys(write.payload).sort(),
+    [...columns, "profile_id", "updated_at"].sort()
+  );
+  expect(problems, "the row is the caller's own", write.payload.profile_id, "staff-1");
+  expect(problems, "the switch on the row is on", write.payload.briefing, true);
+  expect(problems, "the hour on the row is the one asked for", write.payload.briefing_hour, 7);
+  expect(problems, "the stamp is the server's clock", Number.isNaN(Date.parse(write.payload.ambient_consent_at)), false);
+  expect(problems, "the update is dated", Number.isNaN(Date.parse(write.payload.updated_at)), false);
+  const trail = globalThis.__jarvisTrail ?? [];
+  expect(problems, "one trail row", trail.length, 1);
+  expect(problems, "the trail names the setting", {
+    area: trail[0]?.area,
+    action: trail[0]?.action,
+    entity: trail[0]?.entity,
+    entityId: trail[0]?.entityId,
+    actorId: trail[0]?.actorId,
+  }, {
+    area: "settings",
+    action: "jarvis_prefs_changed",
+    entity: "setting",
+    entityId: "jarvis_presence",
+    actorId: "staff-1",
+  });
+  expect(problems, "the trail carries both sides", [
+    trail[0]?.detail?.from?.briefing,
+    trail[0]?.detail?.to?.briefing,
+  ], [false, true]);
+  // The sentence names the switch that moved, so the trail is searchable by what
+  // changed, and it never invents a change that did not happen.
+  expect(problems, "the trail names what moved", /briefing on/.test(trail[0]?.summary ?? ""), true);
+  expect(problems, "and does not name a switch that stayed", /watching/.test(trail[0]?.summary ?? ""), false);
+
+  // A draft cannot point the row at somebody else, and a switch flipped without
+  // the audio explanation is written as off rather than refused outright.
+  const hijack = fakeRest();
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: hijack.client });
+  const claimed = await settings.saveJarvisPrefs({
+    profile_id: "deadbeef-0000-0000-0000-000000000000",
+    ambient: true,
+    ambient_consent_at: "2020-01-01T00:00:00.000Z",
+    briefing_hour: 99,
+  });
+  expect(problems, "the claim is accepted as a switch off", claimed.ok, true);
+  const hijacked = hijack.calls.find((call) => call.op === "upsert")?.payload;
+  expect(problems, "the row is still the caller's", hijacked.profile_id, "staff-1");
+  expect(problems, "the microphone stays off", hijacked.ambient, false);
+  expect(problems, "no stamp the browser invented", hijacked.ambient_consent_at, null);
+  expect(problems, "an impossible hour is not stored", hijacked.briefing_hour, jarvis.DEFAULT_JARVIS_PREFS.briefingHour);
+
+  // A failure that is not an absent table says what happened, and trails nothing.
+  const refusedWrite = fakeRest({ write: { error: { code: "PGRST301", message: "row-level security" } } });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: refusedWrite.client });
+  const blocked = await settings.saveJarvisPrefs({ briefing: true });
+  expect(problems, "a refused write is a refusal", blocked.ok, false);
+  expect(problems, "named as it was answered", /row-level security/.test(blocked.error), true);
+  expect(problems, "and not trailed", globalThis.__jarvisTrail, undefined);
+
+  // The previous state is read for the trail, not for permission: a read that
+  // blows up cannot cost a person their own settings change.
+  const blindRead = fakeRest({ throwOn: "read" });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: blindRead.client });
+  const afterBlindRead = await settings.saveJarvisPrefs({ briefing: true });
+  expect(problems, "an unreadable previous state still saves", afterBlindRead.ok, true);
+  expect(problems, "with the safe pair in the trail", [
+    globalThis.__jarvisTrail[0]?.detail?.from?.briefing,
+    globalThis.__jarvisTrail[0]?.detail?.to?.briefing,
+  ], [false, true]);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 14. The neural voice: one provider's key, a cache, and no key in any message
+// ---------------------------------------------------------------------------
+async function check14() {
+  const speech = await load(SPEECH_URL);
+  const problems = [];
+  const realFetch = globalThis.fetch;
+  const voiceId = "b9e3c2d41f7777e882aaf024";
+  const secret = "sk-eleven-test-secret";
+  const calls = [];
+  let responder = () =>
+    new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "Content-Type": "audio/mpeg" } });
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return responder();
+  };
+
+  try {
+    // A page is not a sentence. Refused on its own account, before any credential
+    // is read for it: the ceiling is a cost rule, so it has to hold the door.
+    resetGlobals();
+    let overLong = null;
+    try {
+      await speech.synthesizeSpeech("x".repeat(900), "jarvis");
+    } catch (cause) {
+      overLong = cause;
+    }
+    expect(problems, "an over-long sentence is refused", overLong?.constructor?.name, "VoiceUnavailableError");
+    expect(problems, "before a credential is read for it", globalThis.__jarvisKeys, undefined);
+
+    delete process.env.ELEVENLABS_VOICE_ID;
+    resetGlobals();
+    // No key: the door must fail with a reason the client can act on, and must
+    // not spend a call finding one out.
+    let threw = null;
+    try {
+      await speech.synthesizeSpeech("Good morning.", "jarvis");
+    } catch (cause) {
+      threw = cause;
+    }
+    expect(problems, "no key throws the unavailable class", threw?.constructor?.name, "VoiceUnavailableError");
+    expect(problems, "and asks exactly one provider for it", globalThis.__jarvisKeys, ["elevenlabs"]);
+    expect(problems, "without reaching the network", calls.length, 0);
+
+    // A key but no voice the provider knows: the name in the preferences is a
+    // label, not an identifier, so nothing is sent and the client falls back.
+    resetGlobals({ __jarvisSecret: secret });
+    threw = null;
+    try {
+      await speech.synthesizeSpeech("Good morning.", "jarvis");
+    } catch (cause) {
+      threw = cause;
+    }
+    expect(problems, "an unconfigured voice id is unavailable", threw?.constructor?.name, "VoiceUnavailableError");
+    expect(problems, "and no call was made", calls.length, 0);
+
+    // A voice id typed into Settings → API keys is the more deliberate choice, so
+    // it is asked for even when the deployment variable is set, and it is still
+    // checked against the id shape rather than sent as whatever was typed.
+    const configId = "a7f1c93e20044bb8915d0c6e";
+    process.env.ELEVENLABS_VOICE_ID = voiceId;
+    resetGlobals({ __jarvisSecret: secret, __jarvisConfig: { voice_id: configId } });
+    const stored = await speech.synthesizeSpeech("Configured.", "jarvis");
+    expect(problems, "a stored voice id answers audio", [...stored], [1, 2, 3]);
+    expect(problems, "is the voice addressed", calls[0].url.includes(configId), true);
+    expect(problems, "and not the deployment one", calls[0].url.includes(voiceId), false);
+
+    // Without it, the deployment variable is the voice.
+    resetGlobals({ __jarvisSecret: secret, __jarvisConfig: { voice_id: "clara" } });
+    const bytes = await speech.synthesizeSpeech("Good morning.", "jarvis");
+    expect(problems, "a configured voice answers audio", [...bytes], [1, 2, 3]);
+    expect(problems, "one call", calls.length, 2);
+    expect(problems, "addressed to the voice", calls[1].url.includes(voiceId), true);
+    expect(problems, "headed with the key", calls[1].init.headers["xi-api-key"], secret);
+    expect(problems, "speaking the text", JSON.parse(calls[1].init.body).text, "Good morning.");
+
+    // The cache is per sentence and per voice: the orb's boilerplate is paid for
+    // once, and two people with different voices never share a clip.
+    await speech.synthesizeSpeech("Good morning.", "jarvis");
+    expect(problems, "the same sentence is not spoken twice", calls.length, 2);
+    await speech.synthesizeSpeech("Good evening.", "jarvis");
+    expect(problems, "a new sentence is", calls.length, 3);
+    await speech.synthesizeSpeech("Good evening.", "clara");
+    expect(problems, "and a new voice re-speaks it", calls.length, 4);
+
+    // A failure is never cached, so one outage cannot freeze a sentence for the
+    // rest of the process's life.
+    responder = () => new Response("quota", { status: 429 });
+    threw = null;
+    try {
+      await speech.synthesizeSpeech("Bad news.", "jarvis");
+    } catch (cause) {
+      threw = cause;
+    }
+    expect(problems, "a refusal is its own class", threw?.constructor?.name, "VoiceProviderRefusedError");
+    expect(problems, "named without the key", String(threw?.message).includes(secret), false);
+    responder = () => new Response(new Uint8Array([9, 9]), { status: 200 });
+    const recovered = await speech.synthesizeSpeech("Bad news.", "jarvis");
+    expect(problems, "and asked again after it", [...recovered], [9, 9]);
+    expect(problems, "so the refusal did not fill the cache", calls.length, 6);
+
+    // The key is never in the message the browser sees, whatever the provider says.
+    responder = () => {
+      throw new Error(`upstream rejected ${secret} ${"x".repeat(400)}`);
+    };
+    threw = null;
+    try {
+      await speech.synthesizeSpeech("Leak?", "jarvis");
+    } catch (cause) {
+      threw = cause;
+    }
+    expect(problems, "a thrown provider error does not carry the key", String(threw?.message).includes(secret), false);
+    expect(problems, "and stays short", String(threw?.message).length <= 300, true);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.ELEVENLABS_VOICE_ID;
+  }
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 15. The speak door: who may ask, how often, and what never reaches a log
+// ---------------------------------------------------------------------------
+async function check15() {
+  const route = await load(SPEAK_ROUTE_URL);
+  const problems = [];
+  const realFetch = globalThis.fetch;
+  const voiceId = "b9e3c2d41f7777e882aaf024";
+  const secret = "sk-eleven-door-secret";
+  let hits = 0;
+  let responder = () =>
+    new Response(new Uint8Array([7, 7, 7]), { status: 200, headers: { "Content-Type": "audio/mpeg" } });
+  globalThis.fetch = async () => {
+    hits += 1;
+    return responder();
+  };
+  const spoken = "Twelve applications are waiting.";
+  const logs = [];
+  const staff = (id) => ({ profileId: id, role: "RECRUITER" });
+
+  try {
+    resetGlobals();
+    // 401 before anything is read: an anonymous caller is refused for being
+    // anonymous, and its text is never parsed, kept or repeated.
+    let response = await route.POST(speakRequest({ text: spoken }, null));
+    expect(problems, "anonymous refused", response.status, 401);
+    response = await route.POST(speakRequest({ text: spoken }, { profileId: "c-1", role: "CANDIDATE" }));
+    expect(problems, "a candidate refused", response.status, 401);
+
+    // 400 for a body that is not a sentence — and none of it spent a provider call.
+    for (const [body, label] of [
+      ["not json", "a body that is not JSON"],
+      [{ text: "   " }, "silence"],
+      [{ text: "x".repeat(4000) }, "a page"],
+      [{ notext: true }, "a body with no text"],
+    ]) {
+      const refused = await route.POST(speakRequest(body, staff("s-2")));
+      expect(problems, `${label} refused`, refused.status, 400);
+    }
+    expect(problems, "and never spoken", hits, 0);
+    // A malformed body must not spend the window either: twenty typos cannot
+    // lock a recruiter out of their own briefing.
+    for (let i = 0; i < 25; i += 1) {
+      const junk = await route.POST(speakRequest({ notext: true }, staff("s-2")));
+      if (junk.status !== 400) problems.push(`a junk body spent the window: ${junk.status}`);
+    }
+
+    // 503 when there is no neural voice at all, with the fallback named in the
+    // answer so the client chooses the device voice rather than guessing.
+    delete process.env.ELEVENLABS_VOICE_ID;
+    resetGlobals({ __jarvisSecret: null });
+    response = await route.POST(speakRequest({ text: spoken }, staff("s-3")));
+    expect(problems, "no key is 503", response.status, 503);
+    expect(problems, "and says fall back", (await jsonAnswer(response, "a missing key", problems)).fallback, "device");
+
+    // 200 with the audio itself, never cached anywhere.
+    process.env.ELEVENLABS_VOICE_ID = voiceId;
+    resetGlobals({ __jarvisSecret: secret });
+    const ok = await withLogCapture(() => route.POST(speakRequest({ text: spoken, voice: "jarvis" }, staff("s-4"))));
+    logs.push(...ok.lines);
+    expect(problems, "a spoken sentence answers audio", ok.value.status, 200);
+    expect(problems, "as mp3", ok.value.headers.get("Content-Type"), "audio/mpeg");
+    expect(problems, "and is never stored", ok.value.headers.get("Cache-Control"), "no-store");
+    expect(problems, "with the provider's bytes", [...new Uint8Array(await ok.value.arrayBuffer())], [7, 7, 7]);
+    expect(problems, "one provider call", hits, 1);
+
+    // 502 when the provider answers, and badly. The upstream body is dropped:
+    // nothing the model said, and nothing the person said, reaches a log.
+    responder = () => new Response(`upstream complained about ${spoken} and ${secret}`, { status: 502 });
+    const refusedLog = await withLogCapture(() =>
+      route.POST(speakRequest({ text: `second ${spoken}`, voice: "jarvis" }, staff("s-5")))
+    );
+    logs.push(...refusedLog.lines);
+    expect(problems, "a refusal is 502", refusedLog.value.status, 502);
+    expect(
+      problems,
+      "still offering the device voice",
+      (await jsonAnswer(refusedLog.value, "a provider refusal", problems)).fallback,
+      "device"
+    );
+
+    // 429 on the window, per profile.
+    responder = () =>
+      new Response(new Uint8Array([7, 7, 7]), { status: 200, headers: { "Content-Type": "audio/mpeg" } });
+    let last = null;
+    for (let i = 0; i < 22; i += 1) {
+      last = await route.POST(speakRequest({ text: `line ${i}`, voice: "jarvis" }, staff("s-6")));
+    }
+    expect(problems, "the window closes", last?.status, 429);
+    expect(problems, "and says when", Number(last.headers.get("Retry-After")) > 0, true);
+    const other = await route.POST(speakRequest({ text: "another desk", voice: "jarvis" }, staff("s-7")));
+    expect(problems, "one person's limit is not another's", other.status, 200);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.ELEVENLABS_VOICE_ID;
+    resetGlobals();
+  }
+
+  const leaked = logs.filter((line) => line.includes("applications are waiting") || line.includes(secret));
+  if (leaked.length) problems.push(`the log carried spoken text or the key: ${leaked[0].slice(0, 60)}`);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 16. The provider the voice asks for, as the registry knows it
+// ---------------------------------------------------------------------------
+async function check16() {
+  const registry = await load(PROVIDERS_URL);
+  const speechSource = read(SPEECH_REL);
+  const problems = [];
+  const eleven = registry.PROVIDERS.find((entry) => entry.id === "elevenlabs");
+  if (!eleven) return verdict(["the registry has no elevenlabs entry"]);
+
+  // Group `ai` is pinned to the six providers the gateway can dispatch to by
+  // scripts/prove-model-routing.mjs. A text-to-speech key is a credential with no
+  // model routing behind it, so it lives in `other` and says so.
+  expect(problems, "not offered as an inference provider", eleven.group, "other");
+  expect(problems, "one key", eleven.envVar, "ELEVENLABS_API_KEY");
+  expect(problems, "verified against the voices list", eleven.verify?.url, "https://api.elevenlabs.io/v1/voices");
+  expect(problems, "with the provider's own header", eleven.verify?.header, "xi-api-key");
+  expect(problems, "a secret field", eleven.fields.some((f) => f.key === "api_key" && f.secret === true), true);
+  // The speech module reads the id from the stored config, so the console has to
+  // offer the field it reads — and offer it as an ordinary value, not a secret.
+  expect(
+    problems,
+    "a voice id field the speech module can read",
+    eleven.fields.some((f) => f.key === "voice_id" && f.secret !== true),
+    true
+  );
+  expect(problems, "described as a voice", /voice/i.test(eleven.description), true);
+
+  // The id the infrastructure asks for is the id the registry publishes, so a
+  // rename cannot quietly turn the neural voice into a missing credential. The
+  // module names its provider once, as a constant, and asks only with that
+  // constant — a literal in a second call site would be a second provider.
+  const named = speechSource.match(/const PROVIDER = "([^"]+)"/);
+  const asked = named ? [named[1]] : [];
+  const callSites = [...speechSource.matchAll(/(?:resolveSecret|resolveConfig)\(([^)]*)\)/g)].map((m) => m[1].trim());
+  expect(problems, "the speech module names one provider", asked, ["elevenlabs"]);
+  expect(problems, "and asks for it by that name only", [...new Set(callSites)], ["PROVIDER"]);
+  expect(
+    problems,
+    "and every provider it asks for is registered",
+    asked.filter((id) => !registry.PROVIDERS.some((entry) => entry.id === id)),
+    []
+  );
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The five queues are the ones the attention feed issues, ranked and thresholded", check1],
   ["2. A clock reading is minutes past midnight, or nothing at all", check2],
@@ -471,6 +1235,12 @@ const CHECKS = [
   ["8. A briefing is due once a day, after its hour, outside quiet hours", check8],
   ["9. A raw preferences row cannot widen its own reach", check9],
   ["10. Migration 047 is the table the reader claims, with own-row policies and no delete", check10],
+  ["11. A draft row carries the table's columns, the server's stamp, and no wider reach than a stored row", check11],
+  ["12. The reader tells an unapplied table from an outage, and never asks a grant for a person's own switch", check12],
+  ["13. The writer saves its own row, trails it, and refuses to claim a table that is not applied", check13],
+  ["14. The neural voice asks one provider, caches a sentence per voice, and never caches a failure", check14],
+  ["15. The speak door answers 401, 400, 429, 503, 502 or audio — and never logs what was said", check15],
+  ["16. elevenlabs is a registered credential the speech module can actually ask for", check16],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -701,6 +1471,194 @@ await mutation(
   "  return out.sort((a, b) => a.rank - b.rank);",
   "  return out;",
   async () => checkIsRed(4)
+);
+
+// The draft merge: what a hand-edited or buggy panel is allowed to write.
+
+await mutation(
+  "22. A draft key the table does not know copied into the row verbatim → check 11 red",
+  DOMAIN_REL,
+  "    if (!column) continue;",
+  "    if (!column) {\n      merged[key] = draft[key];\n      continue;\n    }",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "23. The briefing hour's upper bound dropped → check 11 red",
+  DOMAIN_REL,
+  "      return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 23",
+  "      return Number.isInteger(value) && (value as number) >= 0",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "24. An unreadable quiet-hour start written as it arrived → check 11 red",
+  DOMAIN_REL,
+  "    case \"quiet_from\":\n      return readClock(value) === null ? previous.quietFrom : value;",
+  "    case \"quiet_from\":\n      return value;",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "25. A microphone armed without the server's stamp left on → check 11 red",
+  DOMAIN_REL,
+  "    else if (next.ambientConsentAt === null) {",
+  "    else if (false) {",
+  async () => checkIsRed(11)
+);
+
+// The reader, the viewer door and the writer, and the things only they can get wrong.
+
+await mutation(
+  "26. An outage reported as an unapplied migration → check 12 red",
+  SETTINGS_REL,
+  "      console.error(\"[jarvis-prefs] read failed:\", error.message ?? \"unknown\");\n      return { prefs: DEFAULT_JARVIS_PREFS, stored: false, problem: \"unreadable\" };",
+  "      console.error(\"[jarvis-prefs] read failed:\", error.message ?? \"unknown\");\n      return { prefs: DEFAULT_JARVIS_PREFS, stored: false, problem: \"absent\" };",
+  async () => checkIsRed(12)
+);
+
+// The viewer door the orb's first paint and the console both stand behind.
+
+await mutation(
+  "27. A table that is not applied answered as a set of choices → check 12 red",
+  SETTINGS_REL,
+  '  if (state.problem === "absent") return { reason: "absent-table", message: MIGRATION_SENTENCE };',
+  "  if (state.problem === \"absent\") return state.prefs;",
+  async () => checkIsRed(12)
+);
+
+await mutation(
+  "28. A signed-out viewer reaching the table as an anonymous profile → check 12 red",
+  SETTINGS_REL,
+  '  if (!user) return { reason: "no-session", message: "Sign in to use the assistant presence." };\n  const state = await readJarvisPrefs(user.profileId);',
+  '  const state = await readJarvisPrefs(user?.profileId ?? "");',
+  async () => checkIsRed(12)
+);
+
+await mutation(
+  "29. An unapplied table reported as a database refusal → check 13 red",
+  SETTINGS_REL,
+  "    if (absent(error)) return { ok: false, error: MIGRATION_SENTENCE };",
+  "    if (absent(error)) return { ok: false, error: \"That setting could not be saved.\" };",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "30. A save that writes the profile the draft names → check 13 red",
+  SETTINGS_REL,
+  "    .upsert({ ...row, profile_id: user.profileId, updated_at: new Date().toISOString() }, {",
+  "    .upsert({ ...row, profile_id: (draft.profile_id as string) ?? user.profileId, updated_at: new Date().toISOString() }, {",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "31. A microphone armed by the browser's own claim → check 13 red",
+  SETTINGS_REL,
+  "    given: consent.consentGiven === true,",
+  "    given: draft.ambient === true,",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "32. A trail sentence that names nothing about the change → check 13 red",
+  SETTINGS_REL,
+  "    summary: summarizeJarvisChange(previous, prefs),",
+  "    summary: \"Assistant presence settings saved\",",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "33. The trail filed under another setting's action → check 13 red",
+  SETTINGS_REL,
+  "    action: \"jarvis_prefs_changed\",",
+  "    action: \"voice_autonomy_changed\",",
+  async () => checkIsRed(13)
+);
+
+// The neural voice: whose id is asked for, and what a failure is allowed to say.
+
+await mutation(
+  "34. A voice id stored in Settings ignored for the deployment's → check 14 red",
+  SPEECH_REL,
+  "  const fromConfig = String(config.voice_id ?? \"\").trim();\n  if (VOICE_ID.test(fromConfig)) return fromConfig;",
+  "  const fromConfig = String(config.voice_id ?? \"\").trim();\n  if (VOICE_ID.test(fromConfig) && false) return fromConfig;",
+  async () => checkIsRed(14)
+);
+
+await mutation(
+  "35. The provider's own failure message passed through to the browser → check 14 red",
+  SPEECH_REL,
+  "    throw new VoiceProviderRefusedError(\"The voice provider did not answer.\");",
+  "    throw new VoiceProviderRefusedError(String((cause as Error)?.message ?? \"no answer\"));",
+  async () => checkIsRed(14)
+);
+
+// The speak door: who may ask, how often, and what the answer has to say.
+
+await mutation(
+  "36. The sentence ceiling lifted past what one call may cost → check 14 red",
+  SPEECH_REL,
+  "export const MAX_SPEECH_TEXT = 800;",
+  "export const MAX_SPEECH_TEXT = 100_000;",
+  async () => checkIsRed(14)
+);
+
+await mutation(
+  "37. The speak window widened past a person's budget → check 15 red",
+  SPEAK_ROUTE_REL,
+  "const MAX_SENTENCES = 20;",
+  "const MAX_SENTENCES = 2_000;",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "38. Any signed-in role allowed to speak → check 15 red",
+  SPEAK_ROUTE_REL,
+  "  if (!user || !isStaff(user.role)) {",
+  "  if (!user) {",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "39. The spoken audio left cacheable → check 15 red",
+  SPEAK_ROUTE_REL,
+  "      headers: { \"Content-Type\": \"audio/mpeg\", \"Cache-Control\": \"no-store\" },",
+  "      headers: { \"Content-Type\": \"audio/mpeg\" },",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "40. A missing voice answered without naming the fallback → check 15 red",
+  SPEAK_ROUTE_REL,
+  "      return json({ error: error.message, fallback: \"device\" }, 503);",
+  "      return json({ error: error.message }, 503);",
+  async () => checkIsRed(15)
+);
+
+// The registry the voice depends on.
+
+await mutation(
+  "41. The voice key offered as an inference provider → check 16 red",
+  PROVIDERS_REL,
+  "    id: \"elevenlabs\",\n    displayName: \"ElevenLabs (voice)\",\n    group: \"other\",",
+  "    id: \"elevenlabs\",\n    displayName: \"ElevenLabs (voice)\",\n    group: \"ai\",",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "42. The probe sent as a bearer token, not the provider's header → check 16 red",
+  PROVIDERS_REL,
+  "      header: \"xi-api-key\",",
+  "      header: \"Authorization\",",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "43. The console stops offering the id the speech module reads → check 16 red",
+  PROVIDERS_REL,
+  "        key: \"voice_id\",",
+  "        key: \"voice_name\",",
+  async () => checkIsRed(16)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
