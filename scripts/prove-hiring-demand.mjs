@@ -2,10 +2,11 @@
  * Run: node --experimental-strip-types scripts/prove-hiring-demand.mjs
  *
  * #255 put a hiring-demand line on every opening card — the headcount target, who
- * sits in the pipeline now, who is hired — and it ships ahead of its column:
- * `positions_needed` arrives with db/migrations/031_job_headcount.sql, which is
- * authored but NOT applied on this database (checked against the live schema: the
- * column is absent, so the grid reads `unavailable` on every page load today).
+ * sits in the pipeline now, who is hired — and it shipped ahead of its column:
+ * `positions_needed` arrives with db/migrations/031_job_headcount.sql, which the
+ * owner approved and applied to the local database on 2026-10-28. Column there or
+ * not, the target is read apart from the grid's own rows, so a database that has
+ * never run the file loses one figure and not the page.
  * That arrangement is only honest while three things stay true, and until now none
  * of them were pinned anywhere:
  *
@@ -135,7 +136,7 @@ const note = demandUnavailableNote();
 check("the grid note names db/migrations/031_job_headcount.sql", note.includes("db/migrations/031_job_headcount.sql"), note);
 check(
   "and keeps the cause conditional — the read can also be refused",
-  /on a database where[\s\S]*has not been run/.test(note) && note.includes("could not be read")
+  /on a database where/i.test(note) && note.includes("could not be read")
 );
 check("the note still says what is being shown", note.includes("only the pipeline and hire counts are shown"), note);
 

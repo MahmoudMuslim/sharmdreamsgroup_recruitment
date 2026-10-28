@@ -47,19 +47,24 @@
 -- way: a claim is inserted only by its own referrer, while reassigning a claim and
 -- recording the bonus are a recruiter's two doors.
 --
--- NOT APPLIED. This file is authored so the screen, the public door and the proof
--- can name it; running it is the owner's decision. `scripts/prove-referrals.mjs`
--- holds the refusal copy, so an unapplied file says "not stored yet" on screen
--- instead of reporting an empty board.
+-- APPLIED. The owner approved this file and it was run on the local database on
+-- 2026-10-28. `scripts/prove-referrals.mjs` still holds the refusal copy, because a
+-- database on which this file has not been run must say "not stored yet" and name the
+-- file rather than report an empty board.
 -- ============================================================================
 
 alter table public.user_profiles
   add column if not exists referral_code text;
 
--- Five random bytes, hex, upper-case: ten characters that fit the domain module's
--- pattern and cannot be read back into a person's identity the way a name can.
+-- Five random bytes' worth of hex, upper-case: ten characters that fit the domain
+-- module's pattern and cannot be read back into a person's identity the way a name
+-- can. The first ten hex digits of a v4 uuid are uniformly random — the version and
+-- variant nibbles sit later in the string — and `gen_random_uuid()` is in pg_catalog,
+-- so this default resolves on a database where pgcrypto was installed into another
+-- schema. The backfill below derives from the row's own id in exactly this shape.
 alter table public.user_profiles
-  alter column referral_code set default upper(encode(gen_random_bytes(5), 'hex'));
+  alter column referral_code set default
+    upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10));
 
 -- Existing rows get a code derived from their own id. `gen_random_bytes` would also
 -- work, but a collision during a bulk backfill would abort the statement and leave

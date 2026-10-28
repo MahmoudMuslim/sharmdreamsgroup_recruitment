@@ -39,7 +39,7 @@ export interface JobRow extends JobForEdit {
   /** Applicants who reached HIRED. */
   hired: { count: number }[];
   /** The `positions_needed` target, or null when none was recorded — or the column
-   * is not applied yet, which the grid flags separately via `headcountUnavailable`. */
+   * is not there on this database, which the grid flags separately via `headcountUnavailable`. */
   positions_needed: number | null;
 }
 
@@ -128,7 +128,7 @@ export function JobsBrowser({
    * carry. The strip counts this; the rails and the search count `jobs`.
    */
   scopeTotal: number;
-  /** The `positions_needed` column could not be read at all (not applied yet), so
+  /** The `positions_needed` column could not be read at all (nowhere to read it from), so
    * every card showing "no target set" is a read failure, not a recruiter's blank. */
   headcountUnavailable: boolean;
   /**

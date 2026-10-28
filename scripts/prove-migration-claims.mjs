@@ -94,6 +94,10 @@ const MIGRATIONS = [
       "select exists (select 1 from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'question_type' and e.enumlabel = 'CODING') as present",
   },
   {
+    file: "040_referrals.sql",
+    asks: "select to_regclass('public.referrals') is not null as present",
+  },
+  {
     file: "046_assistant_voice_autonomy.sql",
     asks: "select to_regclass('public.assistant_voice_autonomy') is not null as present",
   },
@@ -104,6 +108,11 @@ const MIGRATIONS = [
   {
     file: "048_user_permission_overrides.sql",
     asks: "select to_regclass('public.user_permission_overrides') is not null as present",
+  },
+  {
+    file: "049_jarvis_appearance.sql",
+    asks:
+      "select exists (select 1 from information_schema.columns where table_schema='public' and table_name='assistant_jarvis_prefs' and column_name='appearance') as present",
   },
 ];
 
@@ -302,16 +311,23 @@ for (const rel of SOFT_FILES) {
 //
 // getOpeningsHeadcount() returns `unavailable` for ANY error on the
 // `positions_needed` read, so the grid cannot know a missing column is the cause.
-// The note therefore says "on a database where 031 has not been run" — an
-// unqualified "031 is not applied here" would be a claim the code cannot support.
+// The note therefore names 031 as a condition ("on a database where it has never
+// run") and never as this database's state — an unqualified claim either way would
+// be an assertion the code cannot support, and after 031 was applied it would be a
+// lie. So this pins the two halves of that agreement: the file is named, and no
+// polarity is stated.
 // ---------------------------------------------------------------------------
 const demandNote = read("src/modules/jobs/domain/hiringDemand.ts");
 const noteLine = /return "([^"]*headcount target[^"]*)"/.exec(demandNote)?.[1] ?? null;
+const noteClaims = noteLine ? claimsOf(noteLine) : [];
 check(
-  "the headcount note names 031 and stays conditional",
+  "the headcount note names 031 without claiming this database's state",
   !!noteLine &&
-    /on a database where db\/migrations\/031_job_headcount\.sql has not been run/.test(noteLine),
-  noteLine ? noteLine.slice(0, 72) + "…" : "the note was not found"
+    noteClaims.some((c) => c.file === "031_job_headcount.sql") &&
+    noteClaims.every((c) => c.polarity === "none"),
+  noteLine
+    ? `${noteClaims.length} mention(s), ${noteClaims.filter((c) => c.polarity !== "none").length} with a polarity`
+    : "the note was not found"
 );
 
 const failed = results.filter((r) => !r.pass);

@@ -9,7 +9,7 @@ type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 export interface HeadcountRead {
   /** `job_openings.id` → `positions_needed`. Absent for an opening the read did not carry. */
   neededById: Map<string, number | null>;
-  /** True when the read failed — the column is not applied yet, or the request was refused.
+  /** True when the read failed — the column is not there on this database yet, or the request was refused.
    * The grid says so rather than showing "no target set" for every role as if that were the data. */
   unavailable: boolean;
 }
@@ -18,8 +18,8 @@ export interface HeadcountRead {
  * The `positions_needed` target for the openings the grid holds.
  *
  * Read separately from the grid's own row read rather than folded into its
- * projection, because the column may not exist yet: this feature ships ahead of the
- * ALTER (migration 031 is authored, not applied), and putting an unreadable column
+ * projection, because the column may not exist yet: 031 ships ahead of its ALTER on
+ * any database where that file has not been run, and putting an unreadable column
  * into the main `select` would 400 the entire read and blank the whole openings
  * page — including the pipeline and hire counts, which need no migration at all.
  * Isolated here, a missing column costs only the target figure, and the page keeps

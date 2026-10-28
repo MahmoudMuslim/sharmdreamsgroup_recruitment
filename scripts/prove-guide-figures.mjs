@@ -340,6 +340,17 @@ const FIGURES = [
     ],
   },
   {
+    route: "/assistant",
+    want: "the rail's bound",
+    guide: /The rail lists your ([\d,]+) most recent conversations/,
+    sources: [
+      {
+        rel: "src/modules/assistant/infrastructure/transcriptStore.ts",
+        pattern: /export async function listAssistantSessions\(limit = ([\d_]+)\)/,
+      },
+    ],
+  },
+  {
     route: "/referrals",
     want: "the hand-entry note",
     guide: /an optional note of up to ([\d,]+) characters/,

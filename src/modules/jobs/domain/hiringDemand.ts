@@ -78,7 +78,11 @@ export function demandLine(demand: HiringDemand): string {
  * set"), so when the read failed rather than came back empty the grid says which
  * it is — otherwise a recruiter is told every role lacks a target when the truth
  * is the demand column is not there yet.
+ *
+ * The migration is named as a condition, never as this database's state: the read
+ * answers "unavailable" for any failure on the column, so it cannot tell a missing
+ * column from a schema cache that has not reloaded.
  */
 export function demandUnavailableNote(): string {
-  return "The headcount target could not be read — on a database where db/migrations/031_job_headcount.sql has not been run, job_openings has no positions_needed column to read — so only the pipeline and hire counts are shown.";
+  return "The headcount target could not be read, so only the pipeline and hire counts are shown. On a database where db/migrations/031_job_headcount.sql has never run, job_openings has no positions_needed column to read.";
 }

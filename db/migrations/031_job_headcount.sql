@@ -22,11 +22,18 @@
 -- average against. Zero is refused: an opening nobody is hiring for is a draft or
 -- a closed role, not a vacancy with a headcount of none.
 --
--- This migration is NOT applied to any database yet. The read that shows the
--- demand counts (in pipeline / hired) needs nothing here and works today; the
--- `needed` figure it pairs them with is read from this column and simply shows
--- "not recorded" until this ALTER runs. The live application is the owner's
--- decision, so only the file and the schema of record change.
+-- This migration was authored so the demand line had a target to read, and the
+-- read that shows the counts (in pipeline / hired) needed nothing here. The live
+-- application is the owner's decision.
+--
+-- APPLIED. The owner approved this file and it was run on the local database on
+-- 2026-10-28; `positions_needed`, the `job_openings_positions_needed_sane` check and
+-- the column comment are all present, and both openings on that cluster read back
+-- NULL — no target recorded, which is what the demand line shows as "no target set".
+-- `src/modules/jobs/domain/hiringDemand.ts` still holds its conditional refusal copy,
+-- because the headcount read reports `unavailable` for any error, and a database on
+-- which this file has not been run must say the target could not be read rather than
+-- invent a zero.
 -- ============================================================================
 
 alter table public.job_openings

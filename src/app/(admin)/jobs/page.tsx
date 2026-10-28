@@ -57,7 +57,7 @@ export default async function JobsPage() {
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .range(0, GRID_ROW_LIMIT - 1),
-    // Read apart from the grid's own row read so an unapplied `positions_needed`
+    // Read apart from the grid's own row read so a missing `positions_needed`
     // column costs only the target figure, never the whole page.
     getOpeningsHeadcount(restClient),
     // The same separation for seniority: 033 is authored but not applied, and a
