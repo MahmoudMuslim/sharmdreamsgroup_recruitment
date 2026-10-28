@@ -22,7 +22,7 @@ export const offers: readonly AssistantTool[] = [
     name: "read_offer",
     label: "Reading an application's offer",
     description:
-      "The newest offer on one application and where it stands: its state, the deadline and whether that deadline has passed, the default number of days a new offer gets, and — when the table exists — the offer itself. A read that fails because db/migrations/042_offers.sql has not been run says so; that is not the same answer as “no offer”, and only the first one means the offer desk is unavailable. The application id comes from list_candidates or get_job_applicants.",
+      "The newest offer on one application and where it stands: its state, the deadline and whether that deadline has passed, the default number of days a new offer gets, and — when the table exists — the offer itself. A read that fails on a database where db/migrations/042_offers.sql has never run says so; that is not the same answer as “no offer”, and only the first one means the offer desk is unavailable. The application id comes from list_candidates or get_job_applicants.",
     args: { application_id: "string — from list_candidates" },
     run: async (args) => report(await readOfferPanel(str(args, "application_id"))),
   },

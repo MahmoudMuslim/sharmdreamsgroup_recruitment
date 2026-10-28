@@ -21,15 +21,21 @@ export const OFFER_MIGRATION = "db/migrations/042_offers.sql";
 /**
  * What a screen says when the table is not on the database it is reading.
  *
- * The offer letter itself still exists without this migration — a stage move to
- * OFFER mails it — so the cost of an unapplied 042 is the answer and the
- * deadline, not the letter. This note says that rather than letting a panel
+ * The offer letter itself still exists without this file — a stage move to
+ * OFFER mails it — so what a database without the table costs is the answer and
+ * the deadline, not the letter. This note says that rather than letting a panel
  * pretend it recorded something.
+ *
+ * The sentence names the file as a condition and never as this database's state.
+ * It prints only behind a read that has already failed, so the failure is what
+ * the recruiter is told; on a database that holds the table the sentence is
+ * unreachable, and a copy that asserted either polarity there would be a claim
+ * the code cannot support.
  */
 export const OFFER_SCHEMA_NOTE =
-  "The offers table has not been created on this database yet — " +
-  `${OFFER_MIGRATION} is authored but not applied. An offer can be written but ` +
-  "not issued or answered until it is.";
+  "The offers table is not on the database this screen is reading — " +
+  `${OFFER_MIGRATION} has never run there. An offer can be written but ` +
+  "not issued or answered until it has.";
 
 /** The refusal a desk write returns while the table is missing. */
 export const OFFER_WRITE_REFUSAL =

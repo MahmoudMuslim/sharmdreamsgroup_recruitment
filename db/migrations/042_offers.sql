@@ -40,10 +40,25 @@
 -- granted nothing at all, so no direct REST call can answer an offer in somebody
 -- else's name.
 --
--- NOT APPLIED. This file is authored so the drawer, the public page and the proof
--- can name it; running it is the owner's decision. The drawer says so rather than
--- pretending it stored an offer. Issuing still needs the email relay, and the
--- stage move to OFFER still works without this table.
+-- APPLIED to the local database on 2026-10-28, and the after-state was measured
+-- rather than assumed: the seven columns with their four named constraints, the
+-- partial unique index that counts a SENT row, RLS switched on with the three
+-- staff policies, the grants this file asks for, and zero rows. The policies were
+-- exercised inside a transaction that was rolled back — as `authenticated` and as
+-- `anon` — so the refusal of a forged issuer, of a second open offer and of a
+-- staff write of ACCEPTED is a measurement, not a reading of the SQL, and nothing
+-- was issued to a real candidate to find it out. Over the gateway a staff token
+-- reads the table with 200 and no rows, which is also the proof PostgREST reloaded
+-- its schema cache; anon is refused with 42501 permission denied, so no direct
+-- REST call can answer an offer in somebody else's name.
+--
+-- What a database that has not run this file is told: the drawer and the chat
+-- reach the same note and both name this file rather than pretending an offer was
+-- stored. The runtime strings in `src/modules/offers/domain/offer.ts` keep naming
+-- it, and they must — their door is a read that failed, so they print only where
+-- the table could not be reached, and on such a database the sentence is the whole
+-- of what the recruiter learns. The letter itself needs no table: a stage move to
+-- OFFER still mails it, so what an unrun file costs is the answer and the deadline.
 -- ============================================================================
 
 create table if not exists public.application_offers (

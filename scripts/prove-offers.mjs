@@ -347,7 +347,34 @@ const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
     "revoke all on table public.application_offers from anon"
   );
   has("it reloads the schema for PostgREST", migration, "notify pgrst, 'reload schema'");
-  has("it says it is not applied", migration, "NOT APPLIED");
+  lacks("it no longer says the file was never run", migration, "NOT APPLIED");
+  has(
+    "it records the apply and the date it was measured",
+    migration,
+    "APPLIED to the local database on 2026-10-28"
+  );
+  has(
+    "it says the after-state was measured, and how",
+    migration,
+    "exercised inside a transaction that was rolled back"
+  );
+  has("it says the table held no rows", migration, "and zero rows");
+  has(
+    "it says a missing-schema screen names this file instead of pretending",
+    migration,
+    "both name this file rather than pretending an offer was"
+  );
+  check(
+    "the schema note names the file and states nothing about this database",
+    d.OFFER_SCHEMA_NOTE.includes(d.OFFER_MIGRATION) &&
+      !/authored but not applied|is applied on this database/.test(d.OFFER_SCHEMA_NOTE),
+    d.OFFER_SCHEMA_NOTE
+  );
+  check(
+    "the write refusal names the file",
+    d.OFFER_WRITE_REFUSAL.includes(d.OFFER_MIGRATION),
+    d.OFFER_WRITE_REFUSAL
+  );
   lacks("it carries no free-text decision note", migration, "decision_note");
 }
 
