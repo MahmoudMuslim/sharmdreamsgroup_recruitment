@@ -163,6 +163,7 @@ export const PAGE_GUIDE: Record<StaffRoute, PageGuide> = {
       "A profile page is addressed by the person's oldest live record: a link naming a newer application is moved onto that address.",
       "Hand-marking needs Grade assessments, edits need Edit candidates, sending needs Send messages, and booking a panel needs Schedule interviews on top of Edit candidates.",
       "Download this list carries the email and phone columns only for an account that holds View candidates. Without it the file says the two columns were left out, and its trail row says so too.",
+      "The profile's three special-category groups each stand behind a grant of their own: View health and disability data opens the health answers, View family details opens the family record and the dependants listed on it, and View emergency contacts opens the people to call. Without one, that panel says the group is not shown to you and adds that the absence is a statement about your account, not about this person.",
       "A bulk send stops at 200 recipients, and the panel names the mail provider's own daily ceiling.",
       "A bulk move stops at 50 rows, writes them one at a time, and sends no stage notice unless you tick the opt-in — a ticked group of forty is forty real emails and chats. Rows the write refused are listed by name with the reason; the rest stay moved.",
     ],

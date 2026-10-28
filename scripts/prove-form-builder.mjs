@@ -3461,7 +3461,10 @@ const check29 = async (usage) => {
 
   const route = codeOf(EXPORT_ROUTE_REL);
   if (!route.includes('params.get("form")')) problems.push("the export route ignores the form in its address");
-  if (!/buildReportDocument\(report, window, user\.fullName, /.test(route)) {
+  // The id is coerced once, into a name, and that name is what rides into the
+  // builder — so the claim is the argument, not a call spelled in one breath. A
+  // mutation that hands the builder `null` in that slot must go red.
+  if (!route.includes("buildReportDocument(report, window, user.fullName, form)")) {
     problems.push("the export route drops the form before building the file");
   }
 
@@ -4382,7 +4385,7 @@ await mutation(
 await mutation(
   "73. The export route drops the form → check 29 red",
   EXPORT_ROUTE_REL,
-  'buildReportDocument(report, window, user.fullName, safeFormId(params.get("form")));',
+  "buildReportDocument(report, window, user.fullName, form);",
   "buildReportDocument(report, window, user.fullName, null);",
   () => checkIsRed(29, async () => check29())
 );
