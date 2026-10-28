@@ -7,11 +7,23 @@
 -- Requires 044_application_forms.sql applied first: it creates
 --   application_forms and the applications.form_answers column this view reads.
 --
--- STATUS: authored here, NOT applied. The /forms board already answers this
---   question without the view, by counting the newest 500 applications and
---   saying so. Applying this file is the owner's call; until then the board
---   reports that bounded read as its basis and calls a figure at the bound a
---   floor, not a total. Rehearse it on a throwaway database before it lands.
+-- STATUS: APPLIED to the local database on 2026-10-28, under the owner naming
+--   this file, and the after-state was measured rather than assumed: eight rows
+--   (one per form — three carry 2, 1 and 1, five read 0), a sum of 4 applications
+--   counted, form_id uuid / applications bigint / latest_at timestamptz, the view
+--   not updatable, security_invoker=true in pg_class.reloptions, select granted to
+--   authenticated and service_role with no grant to anon, and the comment in
+--   place. The security_invoker claim was driven, not read: rehearsed first inside
+--   begin … rollback, which left nothing behind, and then over the gateway with
+--   minted tokens — the super admin gets the 8 rows and the sum of 4, a recruiter
+--   whose tenant filed none of them gets the same 8 form rows with every figure 0,
+--   a candidate gets only the 4 published forms and no figure above 0, and anon is
+--   refused 42501 permission denied, which is the revoke honoured and the proof
+--   PostgREST reloaded its schema cache. So every figure is the reader's own, not
+--   the database's, and the /forms board now reports basis "view". The bounded
+--   fallback in `src/modules/form-builder/application/formActions.ts` is kept for a
+--   database where this file has never run: it counts the newest 500 applications
+--   and calls a figure at that bound a floor, not a total.
 --
 -- Why a view and not a column: usage is a count of what was filed, and the
 -- snapshot is written once and never rewritten. A stored counter would have to

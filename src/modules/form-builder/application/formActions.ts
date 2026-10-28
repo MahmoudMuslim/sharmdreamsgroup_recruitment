@@ -313,10 +313,10 @@ interface FormUsageViewRow {
 /**
  * How many applications named each form — the board's usage figures.
  *
- * Two reads, one answer. When `045_form_usage.sql` is applied the view aggregates
- * the whole table, so the figures are exact and the board says "usage view
- * (migration 045)". When it is not — the migration is owner-gated, so that is the
- * normal state until it is approved — the read falls back to the newest
+ * Two reads, one answer. On a database where `db/migrations/045_form_usage.sql` has
+ * been run the view aggregates the whole table, so the figures are exact within the
+ * reader's own row policies and the board says "usage view (migration 045)". On a
+ * database where that file has never run the read falls back to the newest
  * `USAGE_APPLICATIONS` applications and counts what their snapshots recorded; every
  * figure is then a **floor, not a total**, and the board prints the ceiling it
  * counted from.

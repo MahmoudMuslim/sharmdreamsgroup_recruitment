@@ -3267,10 +3267,10 @@ const check28 = async (naming) => {
 // it may never be a silent guess. The tally counts the applications whose
 // snapshot actually named the form — not the openings it is assigned to, which
 // is a plan and not a use — over a bounded newest-first read, and the surface
-// says "newest N" whenever that ceiling was reached. 045 is authored here and
-// preferred by the read once it is applied, because the view counts every
-// application instead of the newest N; until then the bounded read is the
-// honest answer, and the board says which one it got.
+// says "newest N" whenever that ceiling was reached. 045 is applied on this
+// database and preferred by the read, because the view counts every application
+// the reader may read rather than the newest N; the bounded read stays for a
+// database where that file has not run, and the board says which one it got.
 // ---------------------------------------------------------------------------
 const USAGE_REL = "src/modules/form-builder/domain/formUsage.ts";
 const MIGRATION_045 = "db/migrations/045_form_usage.sql";
@@ -3399,13 +3399,26 @@ const check29 = async (usage) => {
   const guide = blockBetween(codeOf(GUIDE_REL), '"/forms": {', '"/questions": {');
   if (!/bounded count/i.test(guide ?? "")) problems.push("the Guide does not say the usage figures are a bounded count");
 
-  /* --- 045: authored, exact, and owner-gated -------------------------------- */
+  /* --- 045: applied here, exact, and measured ------------------------------- */
 
   if (!existsSync(path.join(root, MIGRATION_045))) {
     problems.push(`${MIGRATION_045} does not exist`);
   } else {
-    if (!/STATUS: authored here, NOT applied/.test(rawOf(MIGRATION_045))) {
-      problems.push("045 does not say it is authored and unapplied");
+    const header = rawOf(MIGRATION_045);
+    if (/STATUS: authored here, NOT applied/.test(header)) {
+      problems.push("045 still says it is authored and unapplied");
+    }
+    if (!/APPLIED to the local database on 2026-10-28/.test(header)) {
+      problems.push("045 does not record the apply and the date it was measured");
+    }
+    if (!/begin … rollback/.test(header)) {
+      problems.push("045 does not record that its policies were driven inside a rolled-back transaction");
+    }
+    if (!/42501 permission denied/.test(header)) {
+      problems.push("045 does not record that anon is refused over the gateway");
+    }
+    if (!/has never run/.test(header)) {
+      problems.push("045 no longer says who the bounded fallback in formActions.ts is for");
     }
     const sql = currentSql(MIGRATION_045);
     if (!sql.includes("create or replace view public.form_usage")) problems.push("045 defines no form_usage view");
@@ -4416,7 +4429,7 @@ await mutation(
 await mutation(
   "76. The Guide stops calling the usage figure a bounded count → check 29 red",
   GUIDE_REL,
-  '      "Each form\'s Applications figure is a bounded count, not a lifetime total: it counts the applications whose filed snapshot named that form — a use, never the openings it is planned for — over the newest window the board could read. The footer says which basis it came from: with migration 045 applied the usage view counts every application, and without it the figure comes from the newest 500 applications and reads floor, not a total once it stops at that bound. The link beside the figure opens those applications on /reports, narrowed to this form, and the report says so at the top.",\n',
+  '      "Each form\'s Applications figure is a bounded count, not a database-wide total: the bound is what the calling reader may already read, so a recruiter sees the uses inside their own reach, and where the board had to fall back there is a second bound — the newest applications it could read. It counts the applications whose filed snapshot named that form, a use, never the openings it is planned for. The footer says which basis the figure came from: db/migrations/045_form_usage.sql is applied on this database, so the view counts every application the reader may see; on a database where that file has not been run the figure comes from the newest 500 applications and reads floor, not a total once it stops at that bound. The link beside the figure opens those applications on /reports, narrowed to this form, and the report says so at the top.",\n',
   "",
   () => checkIsRed(29, async () => check29())
 );
