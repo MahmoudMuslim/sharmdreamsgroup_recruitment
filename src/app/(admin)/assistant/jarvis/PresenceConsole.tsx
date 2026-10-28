@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Bell, Clock, Ear, Loader2, Mic, Moon, ShieldCheck, Sparkles, Volume2 } from "lucide-react";
+import { Bell, Clock, Ear, Loader2, Mic, Moon, ShieldCheck, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   JARVIS_QUEUES,
@@ -233,17 +233,6 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
     void save({ [field]: value });
   }
 
-  function commitVoice(value: string) {
-    const voice = value.trim();
-    if (!voice) {
-      setForm(prefs);
-      setNotice("A voice name is required; the stored one is unchanged.");
-      return;
-    }
-    if (voice === prefs.voice) return;
-    void save({ voice });
-  }
-
   const ambientBlocked = !supported
     ? "This browser has no speech recogniser. Chrome and Edge do; Firefox does not. The Ctrl+Space hotkey and the typed conversation still work."
     : "Arms this browser's wake word on every admin screen. Off by default, and only ever for your own account.";
@@ -368,6 +357,11 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
         title="Speaking first"
         hint="The presence may speak once on its own — a three-sentence briefing — and it may interrupt when a queue you chose crosses its threshold. Both are off until you turn them on."
       >
+        <p className="py-2.5 text-[11px] leading-relaxed text-brand-ink/55">
+          Sentences are read by the voice installed on the machine you are looking at; nothing is
+          sent to a speech service. A machine with no voice for the sentence&apos;s language says so
+          and leaves the words on screen.
+        </p>
         <SwitchRow
           checked={form.briefing}
           disabled={locked}
@@ -503,45 +497,6 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
             ? "The start and the end are the same time, so there is no quiet window: the assistant may speak at any hour."
             : "A window that wraps midnight — 18:00 to 08:00 — is the ordinary case: the start minute is silent and the end minute is when speech returns."}
         </p>
-      </Section>
-
-      <Section
-        icon={<Volume2 className="h-3.5 w-3.5" aria-hidden />}
-        title="The voice"
-        hint="The same voice on every machine, with the device's own voice as the fallback when no provider voice is available."
-      >
-        <div className="flex items-center justify-between gap-4 py-2.5">
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-brand-ink">Voice name</p>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-brand-ink/55">
-              The provider&apos;s voice id for briefings, alerts and spoken answers. Saved when the
-              field loses focus.
-            </p>
-          </div>
-          <input
-            type="text"
-            value={form.voice}
-            maxLength={48}
-            disabled={locked}
-            aria-label="Voice name"
-            onChange={(event) => {
-              const voice = event.target.value;
-              setForm((current) => ({ ...current, voice }));
-            }}
-            onBlur={(event) => commitVoice(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
-            className="w-40 shrink-0 rounded-xl border border-brand-line bg-white px-2.5 py-1.5 text-xs font-semibold text-brand-ink disabled:opacity-50"
-          />
-        </div>
-        <SwitchRow
-          checked={form.neuralVoice}
-          disabled={locked}
-          label="Neural voice"
-          hint="Read aloud through the speech provider. Turned off, sentences are spoken by this device and no text is sent to a speech service."
-          onChange={(next) => void save({ neuralVoice: next })}
-        />
       </Section>
 
       {notice && !error && (

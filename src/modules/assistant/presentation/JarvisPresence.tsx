@@ -106,10 +106,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   );
 
   const prefs = presence?.ok ? presence.prefs : null;
-  const voice = useJarvisVoice({
-    neural: prefs?.neuralVoice ?? false,
-    voice: prefs?.voice ?? DEFAULT_JARVIS_PREFS.voice,
-  });
+  const voice = useJarvisVoice();
   const { wakeAudio, tone, say, stop, notice, dismissNotice, heardOwnVoice } = voice;
 
   useEffect(() => {

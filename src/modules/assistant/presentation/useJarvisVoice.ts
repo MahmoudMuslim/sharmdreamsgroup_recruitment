@@ -10,10 +10,6 @@ import { isOwnVoiceEcho, speechLanguageOf } from "@/modules/assistant/domain/voi
  */
 const SPOKEN_MEMORY = 12;
 
-/** A refusal of the neural voice is not retried sentence after sentence. */
-const NEURAL_COOLDOWN_MS = 10 * 60_000;
-const DEFAULT_COOLDOWN_MS = 60_000;
-
 /**
  * Two notes, no audio files.
  *
@@ -27,21 +23,8 @@ const TONES: Record<"heard" | "alert", { from: number; to: number }> = {
   alert: { from: 520, to: 392 },
 };
 
-/**
- * Whether a context will actually make sound right now.
- *
- * A separate call, not an inline comparison: inside an `if (state === "suspended")`
- * block TypeScript holds that narrowing forever, so the state read *after* awaiting
- * `resume()` would be typed as still suspended and the check could never pass. The
- * browser does change it; this is where that change is allowed to be seen.
- */
-function readyToPlay(context: AudioContext): boolean {
-  return context.state === "running";
-}
-
 interface Playback {
   context: AudioContext;
-  source: AudioBufferSourceNode | null;
 }
 
 /** Silence the device voice. Needs nothing from the component, so it lives outside it. */
@@ -52,33 +35,23 @@ function stopDevice(): void {
 }
 
 /**
- * The presence's voice: the neural one first, the device's own always available.
+ * The presence's voice: the one this device already has.
  *
- * The door at `/api/assistant/speak` answers with mp3 bytes or with a reason. It
- * never silently substitutes a voice, and neither does this hook: when the neural
- * voice is unavailable the sentence is spoken by the machine the recruiter is
- * already sitting at, and the person is told once — not on every line.
+ * Nothing leaves the browser to say a sentence. That is the whole of the design:
+ * the briefing, an alert and a spoken answer are read by `speechSynthesis`, and a
+ * machine with no voice for the sentence's language says so on screen instead of
+ * pretending it spoke.
  *
  * Browsers block sound in a tab nobody has touched. That is reported as what it is
  * instead of being swallowed, because a briefing that plays nothing and claims to
  * have played is the worst kind of success.
  */
-export function useJarvisVoice({
-  neural,
-  voice,
-}: {
-  neural: boolean;
-  voice: string;
-}) {
+export function useJarvisVoice() {
   const [speaking, setSpeaking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const playback = useRef<Playback | null>(null);
   const deviceVoices = useRef<SpeechSynthesisVoice[]>([]);
   const spoken = useRef<{ text: string; at: number }[]>([]);
-  const neuralUntil = useRef(0);
-  // One line about the voice per visit: an orb that explains its fallback after
-  // every alert is the alert the person was trying to avoid.
-  const announced = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -101,7 +74,7 @@ export function useJarvisVoice({
     if (!Ctor) return null;
     if (!playback.current) {
       try {
-        playback.current = { context: new Ctor(), source: null };
+        playback.current = { context: new Ctor() };
       } catch {
         return null;
       }
@@ -109,31 +82,17 @@ export function useJarvisVoice({
     return playback.current.context;
   }, []);
 
-  /** Cut whatever is being heard, from either engine — one sentence at a time. */
-  const stopEveryVoice = useCallback(() => {
-    stopDevice();
-    const holder = playback.current;
-    if (holder?.source) {
-      try {
-        holder.source.stop();
-      } catch {
-        // Already finished — stopping a clip twice is not a failure worth a message.
-      }
-      holder.source = null;
-    }
-  }, []);
-
   const remember = useCallback((text: string, at: number) => {
     spoken.current = [...spoken.current, { text, at }].slice(-SPOKEN_MEMORY);
   }, []);
 
   const stop = useCallback(() => {
-    stopEveryVoice();
+    stopDevice();
     setSpeaking(false);
     // A deliberate stop is not a failed sentence, so the reason for the last one
     // must not outlive it.
     setNotice(null);
-  }, [stopEveryVoice]);
+  }, []);
 
   /** The device reads the sentence itself. Works with no key and no network. */
   const speakOnDevice = useCallback((text: string): boolean => {
@@ -176,83 +135,20 @@ export function useJarvisVoice({
     return true;
   }, [remember]);
 
-  /** Ask the door for the neural take, and fall back only when it says why. */
-  const speakWithNeural = useCallback(async (text: string): Promise<boolean> => {
-    const now = Date.now();
-    if (now < neuralUntil.current) return false;
-    let response: Response;
-    try {
-      response = await fetch("/api/assistant/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice }),
-      });
-    } catch {
-      neuralUntil.current = now + DEFAULT_COOLDOWN_MS;
-      return false;
-    }
-    if (!response.ok) {
-      const retryAfter = Number(response.headers.get("Retry-After") ?? "");
-      neuralUntil.current = now + (retryAfter > 0 ? retryAfter * 1000 : NEURAL_COOLDOWN_MS);
-      return false;
-    }
-    const bytes = await response.arrayBuffer().catch(() => null);
-    if (!bytes || bytes.byteLength === 0) {
-      neuralUntil.current = now + DEFAULT_COOLDOWN_MS;
-      return false;
-    }
-    const audio = context();
-    if (!audio) return false;
-    if (audio.state === "suspended") {
-      // Chrome refuses to make sound in a tab nobody has touched. Resuming from a
-      // spoken alert never works, so the honest answer is the device voice plus one
-      // note about what the person has to do.
-      await audio.resume().catch(() => undefined);
-      if (!readyToPlay(audio)) return false;
-    }
-    const buffer = await audio.decodeAudioData(bytes).catch(() => null);
-    if (!buffer) {
-      neuralUntil.current = now + DEFAULT_COOLDOWN_MS;
-      return false;
-    }
-    const holder = playback.current;
-    if (!holder) return false;
-    const source = audio.createBufferSource();
-    source.buffer = buffer;
-    source.onended = () => {
-      setSpeaking(false);
-      remember(text, Date.now());
-    };
-    source.connect(audio.destination);
-    source.start();
-    holder.source = source;
-    setSpeaking(true);
-    return true;
-  }, [voice, context, remember]);
-
   const say = useCallback(
     async (text: string) => {
       const sentence = text.trim();
       if (!sentence) return;
-      stopEveryVoice();
-      let said = false;
-      if (neural) said = await speakWithNeural(sentence);
-      if (!said) said = speakOnDevice(sentence);
-      if (!said) {
+      stopDevice();
+      if (!speakOnDevice(sentence)) {
         setNotice("The assistant has nothing to say out loud in this tab yet.");
         return;
       }
-      // The words are in the room either way, so they belong in the echo memory at
-      // once — an utterance that lands before `onend` must still be recognised.
+      // The words are in the room, so they belong in the echo memory at once — an
+      // utterance that lands before `onend` must still be recognised.
       remember(sentence, Date.now());
-      if (neural && !announced.current && Date.now() < neuralUntil.current) {
-        announced.current = true;
-        setNotice("The neural voice is unavailable, so the assistant uses this device's voice.");
-      }
     },
-    // The hooks' internals are refs, not state, so a new prefs value must be able to
-    // change which engine a sentence asks of.
-    [neural, stopEveryVoice, speakWithNeural, speakOnDevice, remember]
+    [speakOnDevice, remember]
   );
 
   const tone = useCallback((kind: "heard" | "alert") => {
@@ -281,13 +177,7 @@ export function useJarvisVoice({
   useEffect(
     () => () => {
       stopDevice();
-      const holder = playback.current;
-      try {
-        holder?.source?.stop();
-      } catch {
-        // Nothing was playing.
-      }
-      void holder?.context.close();
+      void playback.current?.context.close();
     },
     []
   );

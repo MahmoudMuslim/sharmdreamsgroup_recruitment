@@ -292,8 +292,6 @@ export interface JarvisPrefs {
   watchQueues: string[];
   quietFrom: string;
   quietTo: string;
-  voice: string;
-  neuralVoice: boolean;
 }
 
 /**
@@ -309,11 +307,7 @@ export const DEFAULT_JARVIS_PREFS: JarvisPrefs = Object.freeze({
   watchQueues: [],
   quietFrom: "18:00",
   quietTo: "08:00",
-  voice: "jarvis",
-  neuralVoice: true,
 });
-
-const VOICE_NAME_MAX = 48;
 
 function flag(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
@@ -372,15 +366,7 @@ export function normalizeJarvisPrefs(row: Record<string, unknown> | null): Jarvi
     watchQueues: uniqueKnownQueues(row.watch_queues),
     quietFrom: clockOrDefault(row.quiet_from, DEFAULT_JARVIS_PREFS.quietFrom),
     quietTo: clockOrDefault(row.quiet_to, DEFAULT_JARVIS_PREFS.quietTo),
-    voice: voiceName(row.voice),
-    neuralVoice: flag(row.neural_voice, DEFAULT_JARVIS_PREFS.neuralVoice),
   };
-}
-
-function voiceName(value: unknown): string {
-  if (typeof value !== "string") return DEFAULT_JARVIS_PREFS.voice;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, VOICE_NAME_MAX) : DEFAULT_JARVIS_PREFS.voice;
 }
 
 /**
@@ -416,8 +402,6 @@ export const JARVIS_PREF_COLUMNS: readonly string[] = Object.freeze([
   "watch_queues",
   "quiet_from",
   "quiet_to",
-  "voice",
-  "neural_voice",
 ]);
 
 /** Draft field names, camelCase and the row's own spelling alike, to columns. */
@@ -433,9 +417,6 @@ const COLUMN_BY_DRAFT_KEY: Record<string, string> = {
   quiet_from: "quiet_from",
   quietTo: "quiet_to",
   quiet_to: "quiet_to",
-  voice: "voice",
-  neuralVoice: "neural_voice",
-  neural_voice: "neural_voice",
 };
 
 /** A prefs value back in the row's own shape, so a merge is one normalize. */
@@ -449,8 +430,6 @@ export function prefsToRow(prefs: JarvisPrefs): Record<string, unknown> {
     watch_queues: prefs.watchQueues,
     quiet_from: prefs.quietFrom,
     quiet_to: prefs.quietTo,
-    voice: prefs.voice,
-    neural_voice: prefs.neuralVoice,
   };
 }
 
@@ -470,8 +449,6 @@ function draftValue(column: string, value: unknown, previous: JarvisPrefs): unkn
       return typeof value === "boolean" ? value : previous.briefing;
     case "watching":
       return typeof value === "boolean" ? value : previous.watching;
-    case "neural_voice":
-      return typeof value === "boolean" ? value : previous.neuralVoice;
     case "briefing_hour":
       return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 23
         ? value
@@ -480,8 +457,6 @@ function draftValue(column: string, value: unknown, previous: JarvisPrefs): unkn
       return readClock(value) === null ? previous.quietFrom : value;
     case "quiet_to":
       return readClock(value) === null ? previous.quietTo : value;
-    case "voice":
-      return typeof value === "string" && value.trim() ? value : previous.voice;
     // An empty list is the safe answer to a list nothing in it names: a watcher
     // that knows no queue says nothing, which is what nobody asked for but never
     // what a garbled field should cause.
@@ -542,11 +517,10 @@ export function jarvisRowToSave(
 // What the activity trail is allowed to claim about a save
 // ---------------------------------------------------------------------------
 
-const SWITCH_LABELS: Record<"ambient" | "briefing" | "watching" | "neuralVoice", string> = {
+const SWITCH_LABELS: Record<"ambient" | "briefing" | "watching", string> = {
   ambient: "wake word listening",
   briefing: "morning briefing",
   watching: "threshold alerts",
-  neuralVoice: "neural voice",
 };
 
 /**
@@ -562,9 +536,8 @@ const SWITCH_LABELS: Record<"ambient" | "briefing" | "watching" | "neuralVoice",
  *   of that moment; the trail says the switch moved, which is the fact a reader
  *   is looking for.
  *
- * The row is never copied into the summary either: a voice name is free text, and
- * a queue list is a claim about what the assistant may say about other people's
- * applications.
+ * The row is never copied into the summary either: a queue list is a claim about
+ * what the assistant may say about other people's applications.
  */
 export function summarizeJarvisChange(previous: JarvisPrefs, next: JarvisPrefs): string {
   const parts: string[] = [];
@@ -579,7 +552,6 @@ export function summarizeJarvisChange(previous: JarvisPrefs, next: JarvisPrefs):
   if (previous.quietFrom !== next.quietFrom || previous.quietTo !== next.quietTo) {
     parts.push(`quiet ${next.quietFrom}-${next.quietTo}`);
   }
-  if (previous.voice !== next.voice) parts.push(`voice “${next.voice}”`);
 
   return parts.length ? `Assistant presence: ${parts.join(", ")}` : "Assistant presence settings saved";
 }

@@ -49,9 +49,6 @@ create table if not exists public.assistant_jarvis_prefs (
     check (quiet_from ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
   quiet_to text not null default '08:00'
     check (quiet_to ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'),
-  -- Playback: the provider voice id, and whether a provider is used at all.
-  voice text not null default 'jarvis',
-  neural_voice boolean not null default true,
   updated_at timestamptz not null default now()
 );
 

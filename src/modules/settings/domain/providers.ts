@@ -152,7 +152,8 @@ export type CostTier = "free" | "low" | "medium" | "high" | "premium" | "unprice
 export const PROVIDER_GROUPS: ProviderGroupConfig[] = [
   { id: "ai", label: "AI Providers", blurb: "Language model APIs for generation, embedding, and reasoning." },
   { id: "communication", label: "Communication", blurb: "Messaging channels that send candidate notifications." },
-  { id: "other", label: "Other", blurb: "Miscellaneous integrations." },
+  // No `other` tab: the console hides an empty group, and a group named in the
+  // assistant's own prompt that opens nothing is a worse answer than no group.
 ];
 
 /** Built-in provider definitions. */
@@ -333,38 +334,6 @@ export const PROVIDERS: ProviderDefinition[] = [
         placeholder: "Sharm Dreams Group <talent@your-domain.com>",
         required: true,
         hint: "What candidates see and reply to. Falls back to EMAIL_FROM.",
-      },
-    ],
-  },
-  {
-    id: "elevenlabs",
-    displayName: "ElevenLabs (voice)",
-    group: "other",
-    envVar: "ELEVENLABS_API_KEY",
-    description:
-      "The neural voice the assistant's presence speaks with. This is a text-to-speech key, not a model: nothing in the portal routes a prompt through it, and a sentence spoken here is thrown away as soon as the browser has played it. Without a key the presence uses the voice your device already has.",
-    docsUrl: "https://elevenlabs.io/docs/api-reference/text-to-speech",
-    verify: {
-      url: "https://api.elevenlabs.io/v1/voices",
-      method: "GET",
-      header: "xi-api-key",
-    },
-    fields: [
-      {
-        key: "api_key",
-        label: "API Key",
-        kind: "text",
-        placeholder: "sk_...",
-        required: true,
-        secret: true,
-      },
-      {
-        key: "voice_id",
-        label: "Voice ID",
-        kind: "text",
-        placeholder: "b9e3c2d41f7777e882aaf024",
-        required: false,
-        hint: "The id of a voice in your own ElevenLabs account, from the list Verify returns. Falls back to ELEVENLABS_VOICE_ID. A voice name is not an id and is never sent.",
       },
     ],
   },

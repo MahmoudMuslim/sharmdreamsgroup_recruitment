@@ -53,13 +53,6 @@ const STUB_SOURCES = {
       (globalThis.__jarvisTrail ??= []).push(entry);
     };
   `,
-  "@/modules/settings/infrastructure/credentialResolver": `
-    export const resolveSecret = async (provider) => {
-      (globalThis.__jarvisKeys ??= []).push(provider);
-      return globalThis.__jarvisSecret ?? null;
-    };
-    export const resolveConfig = async () => globalThis.__jarvisConfig ?? {};
-  `,
 };
 const STUB_URLS = Object.fromEntries(
   Object.entries(STUB_SOURCES).map(([specifier, source]) => [
@@ -114,15 +107,9 @@ const DOMAIN_REL = "src/modules/assistant/domain/jarvis.ts";
 const MIGRATION_REL = "db/migrations/047_assistant_jarvis_prefs.sql";
 const FEED_REL = "src/modules/shell/application/shell-actions.ts";
 const SETTINGS_REL = "src/modules/assistant/application/jarvisSettings.ts";
-const SPEECH_REL = "src/modules/assistant/infrastructure/speech.ts";
-const SPEAK_ROUTE_REL = "src/app/api/assistant/speak/route.ts";
-const PROVIDERS_REL = "src/modules/settings/domain/providers.ts";
 
 const DOMAIN_URL = pathToFileURL(path.join(root, DOMAIN_REL)).href;
 const SETTINGS_URL = pathToFileURL(path.join(root, SETTINGS_REL)).href;
-const SPEECH_URL = pathToFileURL(path.join(root, SPEECH_REL)).href;
-const SPEAK_ROUTE_URL = pathToFileURL(path.join(root, SPEAK_ROUTE_REL)).href;
-const PROVIDERS_URL = pathToFileURL(path.join(root, PROVIDERS_REL)).href;
 // A fresh URL on every load, so a check reads the bytes now on disk: a monotonic
 // counter, because two Date.now() calls in one millisecond would hand a mutated
 // run the module imported before the mutation.
@@ -137,9 +124,6 @@ const GLOBAL_KEYS = [
   "__jarvisUser",
   "__jarvisRest",
   "__jarvisTrail",
-  "__jarvisKeys",
-  "__jarvisSecret",
-  "__jarvisConfig",
 ];
 function resetGlobals(patch = {}) {
   for (const key of GLOBAL_KEYS) delete globalThis[key];
@@ -185,53 +169,6 @@ function fakeRest({ read = { data: null, error: null }, write = { error: null },
 /** The error shape a table that was never created answers with. */
 const ABSENT = { code: "42P01", message: 'relation "public.assistant_jarvis_prefs" does not exist' };
 const UNREADABLE = { code: "PGRST802", message: "connection reset by peer" };
-
-/** A POST as the browser sends it, so the door is read the way it is reached. */
-function speakRequest(body, user) {
-  // Only the identity changes here: a check sets the key and the voice id around a
-  // series of calls, and a request must not quietly wipe them.
-  globalThis.__jarvisUser = user;
-  return new Request("http://localhost:3001/api/assistant/speak", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: typeof body === "string" ? body : JSON.stringify(body),
-  });
-}
-
-/** Captures console.error for one call, so a leak is caught rather than assumed absent. */
-async function withLogCapture(run) {
-  const lines = [];
-  const original = console.error;
-  console.error = (...args) => lines.push(args.map(String).join(" "));
-  try {
-    const value = await run();
-    return { value, lines };
-  } finally {
-    console.error = original;
-  }
-}
-
-/**
- * The JSON a door answered with, or a named problem.
- *
- * `response.json()` throws on an answer that is not JSON, and a check that throws
- * proves nothing about the rule it was reading: the failure disappears into the
- * harness. So the body is read once as text and a refusal to parse it becomes an
- * assertion of its own — which is also what a person's client would have to decide.
- */
-async function jsonAnswer(response, label, problems) {
-  const text = await response.text().catch(() => null);
-  if (text === null) {
-    problems.push(`${label}: its ${response.status} body could not be read`);
-    return {};
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    problems.push(`${label}: its ${response.status} body is not JSON (${JSON.stringify(text.slice(0, 40))})`);
-    return {};
-  }
-}
 
 // ---------------------------------------------------------------------------
 // 1. The queues, and the feed that issues them
@@ -509,13 +446,10 @@ async function check9() {
     watch_queues: ["ungraded", "failed-sends"],
     quiet_from: "20:00",
     quiet_to: "07:30",
-    voice: "jarvis",
-    neural_voice: false,
   });
   expect(problems, "sane row keeps its hour", sane.briefingHour, 7);
   expect(problems, "sane row keeps its queues", sane.watchQueues, ["ungraded", "failed-sends"]);
   expect(problems, "sane row keeps its window", [sane.quietFrom, sane.quietTo], ["20:00", "07:30"]);
-  expect(problems, "sane row keeps device voice", sane.neuralVoice, false);
 
   // Every field that arrives outside its vocabulary falls back to the default,
   // so a hand-edited row cannot name a queue the watcher does not count or a
@@ -529,8 +463,6 @@ async function check9() {
     watch_queues: ["ungraded", "payroll-access", "ungraded", 42, null],
     quiet_from: "9am",
     quiet_to: "1260",
-    voice: 3_402,
-    neural_voice: "true",
   });
   expect(problems, "junk ambient", junk.ambient, false);
   expect(problems, "junk consent", junk.ambientConsentAt, null);
@@ -538,13 +470,10 @@ async function check9() {
   expect(problems, "junk hour", junk.briefingHour, jarvis.DEFAULT_JARVIS_PREFS.briefingHour);
   expect(problems, "unknown queue dropped, duplicates folded", junk.watchQueues, ["ungraded"]);
   expect(problems, "junk window", [junk.quietFrom, junk.quietTo], [jarvis.DEFAULT_JARVIS_PREFS.quietFrom, jarvis.DEFAULT_JARVIS_PREFS.quietTo]);
-  expect(problems, "junk voice", junk.voice, jarvis.DEFAULT_JARVIS_PREFS.voice);
-  expect(problems, "junk neural", junk.neuralVoice, jarvis.DEFAULT_JARVIS_PREFS.neuralVoice);
 
-  // An hour bound to the day, and a name bound to what it may hold.
+  // An hour bound to the day.
   expect(problems, "hour clamped down", jarvis.normalizeJarvisPrefs({ briefing_hour: 99 }).briefingHour, jarvis.DEFAULT_JARVIS_PREFS.briefingHour);
   expect(problems, "hour 23 kept", jarvis.normalizeJarvisPrefs({ briefing_hour: 23 }).briefingHour, 23);
-  expect(problems, "long voice name cut", jarvis.normalizeJarvisPrefs({ voice: "x".repeat(80) }).voice.length <= 48, true);
   // `canArmAmbient` is the door the client obeys: arming needs a consent stamp
   // that the server wrote, not a flag toggled beside it.
   expect(problems, "armed without consent", jarvis.canArmAmbient({ ...jarvis.DEFAULT_JARVIS_PREFS, ambient: true }), false);
@@ -575,8 +504,6 @@ async function check10() {
     ...one(/\bwatch_queues text\[\] not null default '\{\}'/i),
     ...one(/\bquiet_from text not null default '18:00'/i),
     ...one(/\bquiet_to text not null default '08:00'/i),
-    ...one(/\bvoice text not null default 'jarvis'/i),
-    ...one(/\bneural_voice boolean not null default true/i),
     ...one(/alter table public\.assistant_jarvis_prefs enable row level security/i),
     // The own-row claim is a fact of the SQL: every policy names the caller's
     // own profile, staff-only, and no policy lets one person touch another.
@@ -698,8 +625,6 @@ async function check11() {
         quiet_from: "9am",
         quiet_to: "1260",
         watch_queues: ["payroll-access", "ungraded", "ungraded"],
-        voice: "x".repeat(90),
-        neural_voice: "true",
       },
       { ...DEFAULT_JARVIS_PREFS, briefingHour: 7, quietFrom: "20:00", quietTo: "07:00" }
     )
@@ -711,16 +636,14 @@ async function check11() {
     "07:00",
   ]);
   expect(problems, "an unknown queue names nothing", widened.watchQueues, ["ungraded"]);
-  expect(problems, "a voice name is cut", widened.voice.length <= 48, true);
-  expect(problems, "a string is not a neural switch", widened.neuralVoice, DEFAULT_JARVIS_PREFS.neuralVoice);
 
   // The safe direction is the person's own value, never a default nobody chose:
   // a garbled field must not move a quiet window, reset an hour, or flip off a
   // microphone that was already agreed to.
   const garbled = prefs(
     save(
-      { ambient: "yes", briefing_hour: 99, quiet_from: "9am", quiet_to: "evening", voice: "   " },
-      { ...once, briefingHour: 7, quietFrom: "20:00", quietTo: "07:00", voice: "clara" }
+      { ambient: "yes", briefing_hour: 99, quiet_from: "9am", quiet_to: "evening" },
+      { ...once, briefingHour: 7, quietFrom: "20:00", quietTo: "07:00" }
     )
   );
   expect(problems, "a string switch does not reset a stored one", garbled.ambient, true);
@@ -729,7 +652,6 @@ async function check11() {
     "20:00",
     "07:00",
   ]);
-  expect(problems, "a blank voice does not reset a stored one", garbled.voice, "clara");
 
   // A draft that names nothing changes nothing: every value stays the server's.
   expect(problems, "an empty draft keeps the stored choice", prefs(save({}, once)), once);
@@ -785,8 +707,6 @@ async function check12() {
     watch_queues: ["ungraded"],
     quiet_from: "20:00",
     quiet_to: "07:00",
-    voice: "jarvis",
-    neural_voice: false,
   };
   resetGlobals({ __jarvisRest: fakeRest({ read: { data: row, error: null } }).client });
   const stored = await settings.readJarvisPrefs("staff-1");
@@ -955,275 +875,6 @@ async function check13() {
   return verdict(problems);
 }
 
-// ---------------------------------------------------------------------------
-// 14. The neural voice: one provider's key, a cache, and no key in any message
-// ---------------------------------------------------------------------------
-async function check14() {
-  const speech = await load(SPEECH_URL);
-  const problems = [];
-  const realFetch = globalThis.fetch;
-  const voiceId = "b9e3c2d41f7777e882aaf024";
-  const secret = "sk-eleven-test-secret";
-  const calls = [];
-  let responder = () =>
-    new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "Content-Type": "audio/mpeg" } });
-  globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), init });
-    return responder();
-  };
-
-  try {
-    // A page is not a sentence. Refused on its own account, before any credential
-    // is read for it: the ceiling is a cost rule, so it has to hold the door.
-    resetGlobals();
-    let overLong = null;
-    try {
-      await speech.synthesizeSpeech("x".repeat(900), "jarvis");
-    } catch (cause) {
-      overLong = cause;
-    }
-    expect(problems, "an over-long sentence is refused", overLong?.constructor?.name, "VoiceUnavailableError");
-    expect(problems, "before a credential is read for it", globalThis.__jarvisKeys, undefined);
-
-    delete process.env.ELEVENLABS_VOICE_ID;
-    resetGlobals();
-    // No key: the door must fail with a reason the client can act on, and must
-    // not spend a call finding one out.
-    let threw = null;
-    try {
-      await speech.synthesizeSpeech("Good morning.", "jarvis");
-    } catch (cause) {
-      threw = cause;
-    }
-    expect(problems, "no key throws the unavailable class", threw?.constructor?.name, "VoiceUnavailableError");
-    expect(problems, "and asks exactly one provider for it", globalThis.__jarvisKeys, ["elevenlabs"]);
-    expect(problems, "without reaching the network", calls.length, 0);
-
-    // A key but no voice the provider knows: the name in the preferences is a
-    // label, not an identifier, so nothing is sent and the client falls back.
-    resetGlobals({ __jarvisSecret: secret });
-    threw = null;
-    try {
-      await speech.synthesizeSpeech("Good morning.", "jarvis");
-    } catch (cause) {
-      threw = cause;
-    }
-    expect(problems, "an unconfigured voice id is unavailable", threw?.constructor?.name, "VoiceUnavailableError");
-    expect(problems, "and no call was made", calls.length, 0);
-
-    // A voice id typed into Settings → API keys is the more deliberate choice, so
-    // it is asked for even when the deployment variable is set, and it is still
-    // checked against the id shape rather than sent as whatever was typed.
-    const configId = "a7f1c93e20044bb8915d0c6e";
-    process.env.ELEVENLABS_VOICE_ID = voiceId;
-    resetGlobals({ __jarvisSecret: secret, __jarvisConfig: { voice_id: configId } });
-    const stored = await speech.synthesizeSpeech("Configured.", "jarvis");
-    expect(problems, "a stored voice id answers audio", [...stored], [1, 2, 3]);
-    expect(problems, "is the voice addressed", calls[0].url.includes(configId), true);
-    expect(problems, "and not the deployment one", calls[0].url.includes(voiceId), false);
-
-    // Without it, the deployment variable is the voice.
-    resetGlobals({ __jarvisSecret: secret, __jarvisConfig: { voice_id: "clara" } });
-    const bytes = await speech.synthesizeSpeech("Good morning.", "jarvis");
-    expect(problems, "a configured voice answers audio", [...bytes], [1, 2, 3]);
-    expect(problems, "one call", calls.length, 2);
-    expect(problems, "addressed to the voice", calls[1].url.includes(voiceId), true);
-    expect(problems, "headed with the key", calls[1].init.headers["xi-api-key"], secret);
-    expect(problems, "speaking the text", JSON.parse(calls[1].init.body).text, "Good morning.");
-
-    // The cache is per sentence and per voice: the orb's boilerplate is paid for
-    // once, and two people with different voices never share a clip.
-    await speech.synthesizeSpeech("Good morning.", "jarvis");
-    expect(problems, "the same sentence is not spoken twice", calls.length, 2);
-    await speech.synthesizeSpeech("Good evening.", "jarvis");
-    expect(problems, "a new sentence is", calls.length, 3);
-    await speech.synthesizeSpeech("Good evening.", "clara");
-    expect(problems, "and a new voice re-speaks it", calls.length, 4);
-
-    // A failure is never cached, so one outage cannot freeze a sentence for the
-    // rest of the process's life.
-    responder = () => new Response("quota", { status: 429 });
-    threw = null;
-    try {
-      await speech.synthesizeSpeech("Bad news.", "jarvis");
-    } catch (cause) {
-      threw = cause;
-    }
-    expect(problems, "a refusal is its own class", threw?.constructor?.name, "VoiceProviderRefusedError");
-    expect(problems, "named without the key", String(threw?.message).includes(secret), false);
-    responder = () => new Response(new Uint8Array([9, 9]), { status: 200 });
-    const recovered = await speech.synthesizeSpeech("Bad news.", "jarvis");
-    expect(problems, "and asked again after it", [...recovered], [9, 9]);
-    expect(problems, "so the refusal did not fill the cache", calls.length, 6);
-
-    // The key is never in the message the browser sees, whatever the provider says.
-    responder = () => {
-      throw new Error(`upstream rejected ${secret} ${"x".repeat(400)}`);
-    };
-    threw = null;
-    try {
-      await speech.synthesizeSpeech("Leak?", "jarvis");
-    } catch (cause) {
-      threw = cause;
-    }
-    expect(problems, "a thrown provider error does not carry the key", String(threw?.message).includes(secret), false);
-    expect(problems, "and stays short", String(threw?.message).length <= 300, true);
-  } finally {
-    globalThis.fetch = realFetch;
-    delete process.env.ELEVENLABS_VOICE_ID;
-  }
-  return verdict(problems);
-}
-
-// ---------------------------------------------------------------------------
-// 15. The speak door: who may ask, how often, and what never reaches a log
-// ---------------------------------------------------------------------------
-async function check15() {
-  const route = await load(SPEAK_ROUTE_URL);
-  const problems = [];
-  const realFetch = globalThis.fetch;
-  const voiceId = "b9e3c2d41f7777e882aaf024";
-  const secret = "sk-eleven-door-secret";
-  let hits = 0;
-  let responder = () =>
-    new Response(new Uint8Array([7, 7, 7]), { status: 200, headers: { "Content-Type": "audio/mpeg" } });
-  globalThis.fetch = async () => {
-    hits += 1;
-    return responder();
-  };
-  const spoken = "Twelve applications are waiting.";
-  const logs = [];
-  const staff = (id) => ({ profileId: id, role: "RECRUITER" });
-
-  try {
-    resetGlobals();
-    // 401 before anything is read: an anonymous caller is refused for being
-    // anonymous, and its text is never parsed, kept or repeated.
-    let response = await route.POST(speakRequest({ text: spoken }, null));
-    expect(problems, "anonymous refused", response.status, 401);
-    response = await route.POST(speakRequest({ text: spoken }, { profileId: "c-1", role: "CANDIDATE" }));
-    expect(problems, "a candidate refused", response.status, 401);
-
-    // 400 for a body that is not a sentence — and none of it spent a provider call.
-    for (const [body, label] of [
-      ["not json", "a body that is not JSON"],
-      [{ text: "   " }, "silence"],
-      [{ text: "x".repeat(4000) }, "a page"],
-      [{ notext: true }, "a body with no text"],
-    ]) {
-      const refused = await route.POST(speakRequest(body, staff("s-2")));
-      expect(problems, `${label} refused`, refused.status, 400);
-    }
-    expect(problems, "and never spoken", hits, 0);
-    // A malformed body must not spend the window either: twenty typos cannot
-    // lock a recruiter out of their own briefing.
-    for (let i = 0; i < 25; i += 1) {
-      const junk = await route.POST(speakRequest({ notext: true }, staff("s-2")));
-      if (junk.status !== 400) problems.push(`a junk body spent the window: ${junk.status}`);
-    }
-
-    // 503 when there is no neural voice at all, with the fallback named in the
-    // answer so the client chooses the device voice rather than guessing.
-    delete process.env.ELEVENLABS_VOICE_ID;
-    resetGlobals({ __jarvisSecret: null });
-    response = await route.POST(speakRequest({ text: spoken }, staff("s-3")));
-    expect(problems, "no key is 503", response.status, 503);
-    expect(problems, "and says fall back", (await jsonAnswer(response, "a missing key", problems)).fallback, "device");
-
-    // 200 with the audio itself, never cached anywhere.
-    process.env.ELEVENLABS_VOICE_ID = voiceId;
-    resetGlobals({ __jarvisSecret: secret });
-    const ok = await withLogCapture(() => route.POST(speakRequest({ text: spoken, voice: "jarvis" }, staff("s-4"))));
-    logs.push(...ok.lines);
-    expect(problems, "a spoken sentence answers audio", ok.value.status, 200);
-    expect(problems, "as mp3", ok.value.headers.get("Content-Type"), "audio/mpeg");
-    expect(problems, "and is never stored", ok.value.headers.get("Cache-Control"), "no-store");
-    expect(problems, "with the provider's bytes", [...new Uint8Array(await ok.value.arrayBuffer())], [7, 7, 7]);
-    expect(problems, "one provider call", hits, 1);
-
-    // 502 when the provider answers, and badly. The upstream body is dropped:
-    // nothing the model said, and nothing the person said, reaches a log.
-    responder = () => new Response(`upstream complained about ${spoken} and ${secret}`, { status: 502 });
-    const refusedLog = await withLogCapture(() =>
-      route.POST(speakRequest({ text: `second ${spoken}`, voice: "jarvis" }, staff("s-5")))
-    );
-    logs.push(...refusedLog.lines);
-    expect(problems, "a refusal is 502", refusedLog.value.status, 502);
-    expect(
-      problems,
-      "still offering the device voice",
-      (await jsonAnswer(refusedLog.value, "a provider refusal", problems)).fallback,
-      "device"
-    );
-
-    // 429 on the window, per profile.
-    responder = () =>
-      new Response(new Uint8Array([7, 7, 7]), { status: 200, headers: { "Content-Type": "audio/mpeg" } });
-    let last = null;
-    for (let i = 0; i < 22; i += 1) {
-      last = await route.POST(speakRequest({ text: `line ${i}`, voice: "jarvis" }, staff("s-6")));
-    }
-    expect(problems, "the window closes", last?.status, 429);
-    expect(problems, "and says when", Number(last.headers.get("Retry-After")) > 0, true);
-    const other = await route.POST(speakRequest({ text: "another desk", voice: "jarvis" }, staff("s-7")));
-    expect(problems, "one person's limit is not another's", other.status, 200);
-  } finally {
-    globalThis.fetch = realFetch;
-    delete process.env.ELEVENLABS_VOICE_ID;
-    resetGlobals();
-  }
-
-  const leaked = logs.filter((line) => line.includes("applications are waiting") || line.includes(secret));
-  if (leaked.length) problems.push(`the log carried spoken text or the key: ${leaked[0].slice(0, 60)}`);
-  return verdict(problems);
-}
-
-// ---------------------------------------------------------------------------
-// 16. The provider the voice asks for, as the registry knows it
-// ---------------------------------------------------------------------------
-async function check16() {
-  const registry = await load(PROVIDERS_URL);
-  const speechSource = read(SPEECH_REL);
-  const problems = [];
-  const eleven = registry.PROVIDERS.find((entry) => entry.id === "elevenlabs");
-  if (!eleven) return verdict(["the registry has no elevenlabs entry"]);
-
-  // Group `ai` is pinned to the six providers the gateway can dispatch to by
-  // scripts/prove-model-routing.mjs. A text-to-speech key is a credential with no
-  // model routing behind it, so it lives in `other` and says so.
-  expect(problems, "not offered as an inference provider", eleven.group, "other");
-  expect(problems, "one key", eleven.envVar, "ELEVENLABS_API_KEY");
-  expect(problems, "verified against the voices list", eleven.verify?.url, "https://api.elevenlabs.io/v1/voices");
-  expect(problems, "with the provider's own header", eleven.verify?.header, "xi-api-key");
-  expect(problems, "a secret field", eleven.fields.some((f) => f.key === "api_key" && f.secret === true), true);
-  // The speech module reads the id from the stored config, so the console has to
-  // offer the field it reads — and offer it as an ordinary value, not a secret.
-  expect(
-    problems,
-    "a voice id field the speech module can read",
-    eleven.fields.some((f) => f.key === "voice_id" && f.secret !== true),
-    true
-  );
-  expect(problems, "described as a voice", /voice/i.test(eleven.description), true);
-
-  // The id the infrastructure asks for is the id the registry publishes, so a
-  // rename cannot quietly turn the neural voice into a missing credential. The
-  // module names its provider once, as a constant, and asks only with that
-  // constant — a literal in a second call site would be a second provider.
-  const named = speechSource.match(/const PROVIDER = "([^"]+)"/);
-  const asked = named ? [named[1]] : [];
-  const callSites = [...speechSource.matchAll(/(?:resolveSecret|resolveConfig)\(([^)]*)\)/g)].map((m) => m[1].trim());
-  expect(problems, "the speech module names one provider", asked, ["elevenlabs"]);
-  expect(problems, "and asks for it by that name only", [...new Set(callSites)], ["PROVIDER"]);
-  expect(
-    problems,
-    "and every provider it asks for is registered",
-    asked.filter((id) => !registry.PROVIDERS.some((entry) => entry.id === id)),
-    []
-  );
-  return verdict(problems);
-}
-
 const CHECKS = [
   ["1. The five queues are the ones the attention feed issues, ranked and thresholded", check1],
   ["2. A clock reading is minutes past midnight, or nothing at all", check2],
@@ -1238,9 +889,6 @@ const CHECKS = [
   ["11. A draft row carries the table's columns, the server's stamp, and no wider reach than a stored row", check11],
   ["12. The reader tells an unapplied table from an outage, and never asks a grant for a person's own switch", check12],
   ["13. The writer saves its own row, trails it, and refuses to claim a table that is not applied", check13],
-  ["14. The neural voice asks one provider, caches a sentence per voice, and never caches a failure", check14],
-  ["15. The speak door answers 401, 400, 429, 503, 502 or audio — and never logs what was said", check15],
-  ["16. elevenlabs is a registered credential the speech module can actually ask for", check16],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1573,92 +1221,6 @@ await mutation(
   "    action: \"jarvis_prefs_changed\",",
   "    action: \"voice_autonomy_changed\",",
   async () => checkIsRed(13)
-);
-
-// The neural voice: whose id is asked for, and what a failure is allowed to say.
-
-await mutation(
-  "34. A voice id stored in Settings ignored for the deployment's → check 14 red",
-  SPEECH_REL,
-  "  const fromConfig = String(config.voice_id ?? \"\").trim();\n  if (VOICE_ID.test(fromConfig)) return fromConfig;",
-  "  const fromConfig = String(config.voice_id ?? \"\").trim();\n  if (VOICE_ID.test(fromConfig) && false) return fromConfig;",
-  async () => checkIsRed(14)
-);
-
-await mutation(
-  "35. The provider's own failure message passed through to the browser → check 14 red",
-  SPEECH_REL,
-  "    throw new VoiceProviderRefusedError(\"The voice provider did not answer.\");",
-  "    throw new VoiceProviderRefusedError(String((cause as Error)?.message ?? \"no answer\"));",
-  async () => checkIsRed(14)
-);
-
-// The speak door: who may ask, how often, and what the answer has to say.
-
-await mutation(
-  "36. The sentence ceiling lifted past what one call may cost → check 14 red",
-  SPEECH_REL,
-  "export const MAX_SPEECH_TEXT = 800;",
-  "export const MAX_SPEECH_TEXT = 100_000;",
-  async () => checkIsRed(14)
-);
-
-await mutation(
-  "37. The speak window widened past a person's budget → check 15 red",
-  SPEAK_ROUTE_REL,
-  "const MAX_SENTENCES = 20;",
-  "const MAX_SENTENCES = 2_000;",
-  async () => checkIsRed(15)
-);
-
-await mutation(
-  "38. Any signed-in role allowed to speak → check 15 red",
-  SPEAK_ROUTE_REL,
-  "  if (!user || !isStaff(user.role)) {",
-  "  if (!user) {",
-  async () => checkIsRed(15)
-);
-
-await mutation(
-  "39. The spoken audio left cacheable → check 15 red",
-  SPEAK_ROUTE_REL,
-  "      headers: { \"Content-Type\": \"audio/mpeg\", \"Cache-Control\": \"no-store\" },",
-  "      headers: { \"Content-Type\": \"audio/mpeg\" },",
-  async () => checkIsRed(15)
-);
-
-await mutation(
-  "40. A missing voice answered without naming the fallback → check 15 red",
-  SPEAK_ROUTE_REL,
-  "      return json({ error: error.message, fallback: \"device\" }, 503);",
-  "      return json({ error: error.message }, 503);",
-  async () => checkIsRed(15)
-);
-
-// The registry the voice depends on.
-
-await mutation(
-  "41. The voice key offered as an inference provider → check 16 red",
-  PROVIDERS_REL,
-  "    id: \"elevenlabs\",\n    displayName: \"ElevenLabs (voice)\",\n    group: \"other\",",
-  "    id: \"elevenlabs\",\n    displayName: \"ElevenLabs (voice)\",\n    group: \"ai\",",
-  async () => checkIsRed(16)
-);
-
-await mutation(
-  "42. The probe sent as a bearer token, not the provider's header → check 16 red",
-  PROVIDERS_REL,
-  "      header: \"xi-api-key\",",
-  "      header: \"Authorization\",",
-  async () => checkIsRed(16)
-);
-
-await mutation(
-  "43. The console stops offering the id the speech module reads → check 16 red",
-  PROVIDERS_REL,
-  "        key: \"voice_id\",",
-  "        key: \"voice_name\",",
-  async () => checkIsRed(16)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
