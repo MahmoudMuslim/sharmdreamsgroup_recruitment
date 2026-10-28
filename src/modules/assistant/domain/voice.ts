@@ -270,15 +270,23 @@ export function isOwnVoiceEcho(
 
 /* --------------------------- Spoken summaries ---------------------------- */
 
-export const SPOKEN_SUMMARY_CHARS = 600;
+/**
+ * How much of an answer the device is handed at once.
+ *
+ * An answer is read whole, in pieces of about this size: one long task is the shape
+ * a browser is likeliest to lose, and a person who presses Stop should not have a
+ * minute of speech queued behind it. Nothing is cut — every piece reaches the
+ * queue, so the last sentence of a long answer is heard like the first.
+ */
+export const SPOKEN_CHUNK_CHARS = 600;
 
 /**
  * An answer as it should be heard.
  *
- * Never markup: a synthesizer reads asterisks and pipe characters aloud. A
- * fenced block and a table are named rather than read, because they are read with
- * the eyes. Past the cap the cut is stated — an answer that silently stopped
- * halfway would sound complete.
+ * Never markup: a synthesizer reads asterisks and pipe characters aloud. A fenced
+ * block and a table are named rather than read, because they are read with the
+ * eyes. The whole answer comes back: a reply that stopped at a character count
+ * would leave the person hearing half of a sentence they can see all of.
  */
 export function spokenSummary(markdown: string): string {
   const text = markdown
@@ -304,11 +312,103 @@ export function spokenSummary(markdown: string): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  if (text.length <= SPOKEN_SUMMARY_CHARS) return text;
-  const cut = text.slice(0, SPOKEN_SUMMARY_CHARS);
-  const boundary = Math.max(cut.lastIndexOf("."), cut.lastIndexOf("!"), cut.lastIndexOf("؟"));
-  const kept = boundary > SPOKEN_SUMMARY_CHARS * 0.6 ? cut.slice(0, boundary + 1) : cut.trim();
-  return `${kept} … The rest is on screen.`;
+  return text;
+}
+
+/**
+ * Plain text, in the order it was written, in pieces the device can be handed.
+ *
+ * Sentences are kept whole and packed as tightly as the piece allows, because the
+ * gaps a browser leaves between tasks are heard as hesitation. A single sentence
+ * longer than a piece is broken at a word, never inside one.
+ */
+export function chunkForSpeech(text: string, limit = SPOKEN_CHUNK_CHARS): string[] {
+  const source = text.replace(/\s+/g, " ").trim();
+  if (!source) return [];
+  const pieces: string[] = [];
+  for (const raw of source.split(/(?<=[.!?؟۔])\s+/)) {
+    const sentence = raw.trim();
+    if (!sentence) continue;
+    if (sentence.length > limit) {
+      let rest = sentence;
+      while (rest.length > limit) {
+        const at = rest.lastIndexOf(" ", limit);
+        const cut = at > limit * 0.5 ? at : limit;
+        pieces.push(rest.slice(0, cut).trim());
+        rest = rest.slice(cut).trim();
+      }
+      if (rest) pieces.push(rest);
+      continue;
+    }
+    const last = pieces[pieces.length - 1];
+    if (last && `${last} ${sentence}`.length <= limit) pieces[pieces.length - 1] = `${last} ${sentence}`;
+    else pieces.push(sentence);
+  }
+  return pieces;
+}
+
+/* ------------------------------ Device voice ------------------------------ */
+
+export const SPEECH_RATE_MIN = 0.6;
+export const SPEECH_RATE_MAX = 2;
+export const DEFAULT_SPEECH_RATE = 1;
+
+/**
+ * A rate as this portal will use it.
+ *
+ * The device accepts anything from 0.1 to 10; this portal offers a slower-to-
+ * double range and rounds to a tenth, so a value that arrived from a stale tab or a
+ * hand-edited store still cannot make the assistant unintelligible.
+ */
+export function normaliseSpeechRate(value: unknown): number {
+  // Absence answers with nothing, and Number of nothing is a finite 0 — which would
+  // be read as "the slowest pace" rather than "no pace chosen".
+  if (value === null || value === undefined || value === "") return DEFAULT_SPEECH_RATE;
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_SPEECH_RATE;
+  const clamped = Math.min(SPEECH_RATE_MAX, Math.max(SPEECH_RATE_MIN, parsed));
+  return Math.round(clamped * 10) / 10;
+}
+
+export interface DeviceVoiceLike {
+  voiceURI: string;
+  lang: string;
+}
+
+/**
+ * What this browser was told about its own voice, handed to whatever speaks.
+ *
+ * Both fields are browser preferences, not account data: a voice chosen for one
+ * machine is worth nothing on another, so the reader lives beside the store and each
+ * surface passes the plain values down.
+ */
+export interface DeviceVoiceChoice {
+  /** A `voiceURI`, or empty for "whatever the device has for this language". */
+  voiceId?: string;
+  /** Speed against normal. Anything outside the portal's range is clamped. */
+  rate?: number;
+}
+
+/**
+ * Which installed voice reads a sentence.
+ *
+ * The person's own choice wins while it is still on this machine — `voiceURI`
+ * names a voice this device has, so a choice carried to another computer simply
+ * stops matching and the language decides again. With neither a choice nor a
+ * language match there is nothing to speak with, and the words stay on screen.
+ */
+export function pickDeviceVoice<T extends DeviceVoiceLike>(
+  voices: readonly T[],
+  voiceId: string,
+  language: "ar" | "en" | null
+): T | null {
+  const wantedVoice = voiceId.trim();
+  if (wantedVoice) {
+    const chosen = voices.find((entry) => entry.voiceURI === wantedVoice);
+    if (chosen) return chosen;
+  }
+  if (!language) return null;
+  return voices.find((entry) => entry.lang.toLowerCase().startsWith(language)) ?? null;
 }
 
 /* ------------------------------- Language -------------------------------- */

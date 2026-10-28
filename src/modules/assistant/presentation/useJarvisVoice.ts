@@ -1,10 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isOwnVoiceEcho, speechLanguageOf } from "@/modules/assistant/domain/voice";
+import {
+  DEFAULT_SPEECH_RATE,
+  isOwnVoiceEcho,
+  normaliseSpeechRate,
+  pickDeviceVoice,
+  speechLanguageOf,
+  type DeviceVoiceChoice,
+} from "@/modules/assistant/domain/voice";
 
 /**
- * How many sentences the presence remembers as its own voice. An echo of the
+ * How many pieces the presence remembers as its own voice. An echo of the
  * briefing arrives while the next line is already being produced, so the memory
  * has to reach past the cue — the entries are short strings, never audio.
  */
@@ -37,6 +44,13 @@ interface Playback {
   context: AudioContext;
 }
 
+/** One sentence the presence was asked to say, with the caller waiting on it. */
+interface Queued {
+  text: string;
+  /** Called once this sentence has been produced, dropped or silenced. */
+  resolve: () => void;
+}
+
 /** Silence the device voice. Needs nothing from the component, so it lives outside it. */
 function stopDevice(): void {
   if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -44,31 +58,50 @@ function stopDevice(): void {
   }
 }
 
-/** What became of one sentence handed to the device. */
-type DeviceSpeech = "spoke" | "held" | "failed";
-
 /**
- * The presence's voice: the one this device already has.
+ * The presence's voice: the one this device already has, played from a queue.
  *
  * Nothing leaves the browser to say a sentence. That is the whole of the design:
  * the briefing, an alert and a spoken answer are read by `speechSynthesis`, and a
  * machine with no voice for the sentence's language says so on screen instead of
  * pretending it spoke.
  *
+ * A briefing is several sentences and the watchers produce them in one pass, so
+ * this hook owns a queue instead of cancelling before every line. `speechSynthesis`
+ * is one global voice per tab: the cancel that used to open every `say()` is what a
+ * person heard as the assistant stopping mid-sentence, because the second line
+ * arrived while the first was still being spoken. Now only two things silence it —
+ * the person asking to be quiet, and this hook unmounting while it is the one
+ * talking — and `say()` resolves when its own sentence has been produced, so a
+ * caller cannot overwrite a sentence that is still in the air.
+ *
  * Browsers block sound in a tab nobody has touched. That is reported as what it is
  * instead of being swallowed, because a briefing that plays nothing and claims to
  * have played is the worst kind of success.
  */
-export function useJarvisVoice() {
+export function useJarvisVoice(choice: DeviceVoiceChoice = {}) {
   const [speaking, setSpeaking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const playback = useRef<Playback | null>(null);
   const deviceVoices = useRef<SpeechSynthesisVoice[]>([]);
   const spoken = useRef<{ text: string; at: number }[]>([]);
-  /** The sentence asked for before the platform had named a single voice. */
-  const waiting = useRef<string | null>(null);
-  /** When the grace for that voice list runs out. */
+  /** What has been asked and not yet finished playing, oldest first. */
+  const queue = useRef<Queued[]>([]);
+  /** True while an utterance handed over by THIS hook is being produced. */
+  const producing = useRef(false);
+  /** When the grace for a voice list that has not arrived runs out. */
   const holdTimer = useRef<number | null>(null);
+  const choiceRef = useRef({ voiceId: "", rate: DEFAULT_SPEECH_RATE });
+
+  // Kept after commit: an in-flight utterance's handler closes over the pump that
+  // started it, and reads the choice through this ref, so a voice or rate changed
+  // mid-briefing applies to the next sentence rather than cutting this one short.
+  useEffect(() => {
+    choiceRef.current = {
+      voiceId: choice.voiceId ?? "",
+      rate: normaliseSpeechRate(choice.rate ?? DEFAULT_SPEECH_RATE),
+    };
+  });
 
   const clearHold = useCallback(() => {
     if (holdTimer.current !== null) {
@@ -81,116 +114,172 @@ export function useJarvisVoice() {
     spoken.current = [...spoken.current, { text, at }].slice(-SPOKEN_MEMORY);
   }, []);
 
-  const stop = useCallback(() => {
-    stopDevice();
-    setSpeaking(false);
-    // A deliberate stop is not a failed sentence, so the reason for the last one
-    // must not outlive it — and the words held for a voice that has not arrived
-    // must not play after the stop that cancelled them.
-    setNotice(null);
-    clearHold();
-    waiting.current = null;
-  }, [clearHold]);
+  /** The most recently produced words, restamped: the echo window runs from them. */
+  const hearAgain = useCallback(() => {
+    const newest = spoken.current[spoken.current.length - 1];
+    if (newest) newest.at = Date.now();
+  }, []);
+
+  /** Forget everything queued, releasing each caller whose sentence it held. */
+  const drain = useCallback(() => {
+    const pending = queue.current;
+    queue.current = [];
+    pending.forEach((item) => item.resolve());
+  }, []);
+
+  const pumpRef = useRef<() => void>(() => {});
 
   /**
-   * The device reads the sentence itself. Works with no key and no network.
+   * Hand the device the next sentence, if it is not already busy with one of ours.
    *
-   * `"held"` is not a failure: `getVoices()` is empty on first call while the
-   * platform loads its list, so the sentence waits for the `voiceschanged` pass
-   * instead of being reported as a machine that has no voice.
+   * A sentence in a language this machine cannot speak is dropped with the reason
+   * and the queue moves on, so one unpronounceable line does not end a briefing. An
+   * empty voice list is not that case: the sentence stays at the head of the queue,
+   * and the `voiceschanged` pass below plays it — with a note only if the list
+   * never comes.
    */
-  const speakOnDevice = useCallback(
-    (text: string): DeviceSpeech => {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-        setNotice("This browser cannot read a sentence aloud.");
-        return "failed";
-      }
-      const wanted = speechLanguageOf(text);
-      if (!wanted) return "failed";
-      const voices = deviceVoices.current;
-      if (voices.length === 0) {
-        waiting.current = text;
+  const pump = useCallback(() => {
+    if (producing.current) return;
+    for (;;) {
+      const next = queue.current[0];
+      if (!next) {
         clearHold();
-        holdTimer.current = window.setTimeout(() => {
-          holdTimer.current = null;
-          if (waiting.current !== text || deviceVoices.current.length > 0) return;
-          waiting.current = null;
-          setNotice("This device has no voice installed, so the sentence stays on screen.");
-        }, VOICE_LIST_GRACE_MS);
-        return "held";
+        setSpeaking(false);
+        return;
       }
-      const voice = voices.find((entry) => entry.lang.toLowerCase().startsWith(wanted));
+      if (deviceVoices.current.length === 0) {
+        if (holdTimer.current === null) {
+          holdTimer.current = window.setTimeout(() => {
+            holdTimer.current = null;
+            if (deviceVoices.current.length > 0) return;
+            setNotice("This device has no voice installed, so the sentence stays on screen.");
+            drain();
+            setSpeaking(false);
+          }, VOICE_LIST_GRACE_MS);
+        }
+        return;
+      }
+      /**
+       * Which language to ask for. A sentence with no letters in it is not a
+       * sentence to speak, and it is dropped without a note: "no English voice"
+       * would blame the machine for a row of numbers.
+       */
+      const wanted = speechLanguageOf(next.text);
+      if (!wanted) {
+        queue.current.shift();
+        next.resolve();
+        continue;
+      }
+      const { voiceId, rate } = choiceRef.current;
+      const voice = pickDeviceVoice(deviceVoices.current, voiceId, wanted);
       if (!voice) {
+        queue.current.shift();
+        next.resolve();
         setNotice(
           wanted === "ar"
             ? "This device has no Arabic voice, so the sentence stays on screen."
             : "This device has no English voice, so the sentence stays on screen."
         );
-        return "failed";
+        continue;
       }
-      waiting.current = null;
-      const utterance = new SpeechSynthesisUtterance(text);
+      clearHold();
+      queue.current.shift();
+      producing.current = true;
+      // The words are in the room from this moment, so they belong in the echo
+      // memory now — an utterance that lands before its end event must still be
+      // recognised as the presence's own voice.
+      remember(next.text, Date.now());
+      const utterance = new SpeechSynthesisUtterance(next.text);
       utterance.voice = voice;
       utterance.lang = voice.lang;
-      utterance.onstart = () => setSpeaking(true);
-      utterance.onend = () => {
+      utterance.rate = rate;
+      const done = () => {
+        producing.current = false;
         setSpeaking(false);
-        remember(text, Date.now());
+        // The sentence has been produced, so the watcher that awaited it may ask
+        // for the next one. Released here, and nowhere else: a caller released at
+        // the hand-over is how the second line came to cut the first one short.
+        next.resolve();
+        pumpRef.current();
+      };
+      utterance.onstart = () => {
+        setSpeaking(true);
+        hearAgain();
+      };
+      utterance.onend = () => {
+        hearAgain();
+        done();
       };
       utterance.onerror = (event) => {
-        setSpeaking(false);
         // cancel() reports the utterance it stopped, and a stop is the person's own
         // choice — the sentence still counts as heard-by-the-room for echo purposes.
         if (event.error !== "canceled" && event.error !== "interrupted") {
           setNotice("That sentence could not be spoken.");
         }
-        remember(text, Date.now());
+        hearAgain();
+        done();
       };
       setSpeaking(true);
       window.speechSynthesis.speak(utterance);
-      return "spoke";
-    },
-    [clearHold, remember]
-  );
+      return;
+    }
+  }, [clearHold, drain, hearAgain, remember]);
 
-  // The list arrived. Say the one sentence asked for while it was still empty —
-  // and read the list on mount too, so the first sentence of a sitting is not
-  // held behind an event the platform may never fire again.
+  useEffect(() => {
+    pumpRef.current = pump;
+  });
+
+  // Read the list on mount too, so the first sentence of a sitting is not held
+  // behind an event the platform may never fire again.
   useEffect(() => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     const read = () => {
       deviceVoices.current = window.speechSynthesis.getVoices();
-      const held = waiting.current;
-      if (!held || deviceVoices.current.length === 0) return;
-      clearHold();
-      waiting.current = null;
-      if (speakOnDevice(held) === "spoke") remember(held, Date.now());
+      pump();
     };
     read();
     window.speechSynthesis.addEventListener("voiceschanged", read);
     return () => {
       window.speechSynthesis.removeEventListener("voiceschanged", read);
-      window.speechSynthesis.cancel();
+      // Only this hook's own speech is silenced here. The orb and the chat share one
+      // global `speechSynthesis`, so an unmount that cancelled unconditionally cut
+      // whatever the other surface was saying mid-sentence.
+      if (producing.current) stopDevice();
+      drain();
+      clearHold();
     };
-  }, [clearHold, remember, speakOnDevice]);
+  }, [clearHold, drain, pump]);
 
+  /**
+   * Say this, after anything already asked.
+   *
+   * The promise settles when THIS sentence has been produced, not when it was
+   * handed over, because the watchers use it as the latch that keeps a second
+   * sentence off a device that is still busy with the first.
+   */
   const say = useCallback(
     async (text: string) => {
       const sentence = text.trim();
       if (!sentence) return;
-      stopDevice();
-      // A newer sentence replaces anything still waiting for a voice.
-      clearHold();
-      waiting.current = null;
-      const outcome = speakOnDevice(sentence);
-      // The words are in the room, so they belong in the echo memory at once — an
-      // utterance that lands before `onend` must still be recognised. A sentence
-      // still waiting for the voice list is not in the room yet, and is remembered
-      // when it plays.
-      if (outcome === "spoke") remember(sentence, Date.now());
+      await new Promise<void>((resolve) => {
+        queue.current = [...queue.current, { text: sentence, resolve }];
+        pumpRef.current();
+      });
     },
-    [clearHold, speakOnDevice, remember]
+    []
   );
+
+  /** Say nothing more, and be quiet now. */
+  const stop = useCallback(() => {
+    drain();
+    clearHold();
+    producing.current = false;
+    stopDevice();
+    setSpeaking(false);
+    // A deliberate stop is not a failed sentence, so the reason for the last one
+    // must not outlive it.
+    setNotice(null);
+  }, [clearHold, drain]);
 
   // The AudioContext is only built when something is actually about to play, so a
   // person who never lets the assistant speak is never handed a suspended context.
@@ -233,7 +322,6 @@ export function useJarvisVoice() {
 
   useEffect(
     () => () => {
-      stopDevice();
       if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
       void playback.current?.context.close();
     },
@@ -246,6 +334,7 @@ export function useJarvisVoice() {
     if (audio && audio.state === "suspended") void audio.resume();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       deviceVoices.current = window.speechSynthesis.getVoices();
+      pumpRef.current();
     }
   }, [context]);
 

@@ -245,7 +245,7 @@ async function check4() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. What an answer sounds like: markup stripped, table named, cut stated
+// 5. What an answer sounds like: markup stripped, table named, nothing cut
 // ---------------------------------------------------------------------------
 async function check5() {
   const voice = await load(VOICE_URL);
@@ -261,11 +261,86 @@ async function check5() {
   if (!/table is on screen/i.test(spoken)) problems.push("table not named");
   if (!/code is on screen/i.test(voice.spokenSummary("```js\nx()\n```"))) problems.push("fence not named");
 
+  // The whole answer is handed to the voice. A summary cut at a character count was
+  // half of "JARVIS stops before it finishes": the person heard part of a sentence
+  // they could see all of, and then heard the assistant say the rest was on screen.
   const long = `${"A sentence that keeps going. ".repeat(40)}FINAL`;
-  const clipped = voice.spokenSummary(long);
-  if (clipped.length > voice.SPOKEN_SUMMARY_CHARS + 40) problems.push(`clip too long: ${clipped.length}`);
-  if (!/rest is on screen/i.test(clipped)) problems.push("clip did not say it cut");
-  if (clipped.includes("FINAL")) problems.push("clip kept the tail");
+  const full = voice.spokenSummary(long);
+  if (!full.endsWith("FINAL")) problems.push(`answer cut short: it ends ${JSON.stringify(full.slice(-40))}`);
+  if ("SPOKEN_SUMMARY_CHARS" in voice) problems.push("the character cap on a spoken answer is back");
+
+  // Chunking is how the whole answer reaches the device: in pieces it can hold, with
+  // every word in the order it was written. The join is the test — a lost sentence
+  // makes it short, a piece broken inside a word makes it longer.
+  expect(problems, "nothing to say is nothing to queue", voice.chunkForSpeech("   \n  "), []);
+  const pieces = voice.chunkForSpeech(full);
+  if (pieces.length < 2) problems.push(`a ${full.length}-character answer queued as one piece`);
+  if (pieces.join(" ") !== full) problems.push("chunking lost or invented words");
+  for (const piece of pieces) {
+    if (piece.length > voice.SPOKEN_CHUNK_CHARS) problems.push(`piece over the limit: ${piece.length}`);
+  }
+  expect(problems, "the tail is in the last piece", pieces[pieces.length - 1].endsWith("FINAL"), true);
+  expect(problems, "the piece size", voice.SPOKEN_CHUNK_CHARS, 600);
+
+  // One sentence longer than a piece is broken between words, never inside one.
+  const runOn = Array.from({ length: 300 }, (unused, index) => `word${index}`).join(" ");
+  const broken = voice.chunkForSpeech(runOn);
+  if (broken.join(" ") !== runOn) problems.push("breaking a long sentence lost or split a word");
+  if (broken.length < 2) problems.push("a sentence past the limit was not broken");
+  for (const piece of broken) {
+    if (piece.length > voice.SPOKEN_CHUNK_CHARS) problems.push(`long-sentence piece over the limit: ${piece.length}`);
+  }
+
+  // Sentences are the unit, so the packing never cuts one in half — and an Arabic
+  // question mark ends a sentence like a Latin full stop does.
+  const arabic = voice.chunkForSpeech("من ينتظر اليوم؟ إنه في المقابلة.", 20);
+  expect(problems, "arabic sentence boundary", arabic.length, 2);
+  if (arabic.length === 2 && !arabic[0].endsWith("؟")) problems.push(`arabic sentence split: ${arabic[0]}`);
+
+  // The rate a person sets. The device takes 0.1 to 10; the portal offers a slower-
+  // to-double range and nothing outside it, however it arrived, is passed through.
+  expect(problems, "rate default", voice.DEFAULT_SPEECH_RATE, 1);
+  expect(problems, "rate floor", voice.SPEECH_RATE_MIN, 0.6);
+  expect(problems, "rate ceiling", voice.SPEECH_RATE_MAX, 2);
+  expect(problems, "rate kept", voice.normaliseSpeechRate(1.4), 1.4);
+  expect(problems, "rate from a stored string", voice.normaliseSpeechRate("1.5"), 1.5);
+  expect(problems, "rate below the floor", voice.normaliseSpeechRate(0.1), voice.SPEECH_RATE_MIN);
+  expect(problems, "rate above the ceiling", voice.normaliseSpeechRate(20), voice.SPEECH_RATE_MAX);
+  expect(problems, "rate not a number", voice.normaliseSpeechRate("fast"), voice.DEFAULT_SPEECH_RATE);
+  expect(problems, "rate rounded to a tenth", voice.normaliseSpeechRate(1.04), 1);
+  // A store with nothing in it answers null, and Number(null) is a finite 0, which
+  // would otherwise be read as "the slowest pace" rather than "no pace chosen".
+  expect(problems, "rate when nothing is stored", voice.normaliseSpeechRate(null), voice.DEFAULT_SPEECH_RATE);
+  expect(problems, "rate from an empty store", voice.normaliseSpeechRate(""), voice.DEFAULT_SPEECH_RATE);
+
+  // Which voice reads it. The person's own choice wins while the machine still has
+  // it; a choice carried from another computer simply stops matching and the
+  // language decides again.
+  const device = [
+    { voiceURI: "Google العربية", lang: "ar-SA" },
+    { voiceURI: "Microsoft David Desktop", lang: "en-US" },
+    { voiceURI: "Samantha", lang: "en-GB" },
+  ];
+  expect(
+    problems,
+    "a chosen voice wins over the language",
+    voice.pickDeviceVoice(device, "Microsoft David Desktop", "ar")?.voiceURI,
+    "Microsoft David Desktop"
+  );
+  expect(
+    problems,
+    "a choice this machine does not have falls back to the language",
+    voice.pickDeviceVoice(device, "Zira", "ar")?.voiceURI,
+    "Google العربية"
+  );
+  expect(
+    problems,
+    "no choice leaves the language to decide",
+    voice.pickDeviceVoice(device, "", "en")?.voiceURI,
+    "Microsoft David Desktop"
+  );
+  expect(problems, "no choice and no language", voice.pickDeviceVoice(device, "", null), null);
+  expect(problems, "a machine with no voices", voice.pickDeviceVoice([], "Zira", "en"), null);
   return verdict(problems);
 }
 
@@ -615,12 +690,12 @@ async function check10() {
 // ---------------------------------------------------------------------------
 async function check11() {
   const problems = [];
-  const page = read("src/app/(admin)/assistant/voice/page.tsx");
-  if (!page.includes('requireStaff("/assistant/voice")')) problems.push("page is not staff-gated");
+  const page = read("src/app/(admin)/assistant/page.tsx");
+  if (!page.includes('requireStaff("/assistant")')) problems.push("page is not staff-gated");
   if (!page.includes("await connection()")) problems.push("page does not await connection()");
   if (!page.includes("instant = false")) problems.push("page is not marked instant = false");
 
-  const consoleCopy = read("src/app/(admin)/assistant/voice/VoiceConsole.tsx");
+  const consoleCopy = page;
   for (const needle of [
     "never stored",
     "discarded",
@@ -632,13 +707,13 @@ async function check11() {
 
   // The dock's mic is the other door audio leaves by, and it carries the same
   // promise while it records.
-  const button = read("src/app/(admin)/assistant/voice/VoiceButton.tsx");
+  const button = read("src/modules/assistant/presentation/voice/VoiceButton.tsx");
   if (!button.includes("goes to the transcription model and is discarded")) {
     problems.push("the dock mic does not say where its audio goes");
   }
 
   // The two-minute cap is the recorder's, so the surface must say it happened.
-  const strip = read("src/app/(admin)/assistant/voice/VoiceStrip.tsx");
+  const strip = read("src/modules/assistant/presentation/voice/VoiceStrip.tsx");
   if (!strip.includes("Stopped at two minutes")) problems.push("the strip never reports the cap");
   // The strip is what is on screen while hands-free is armed, so the listening
   // line itself says whose service receives the words. The disclosure box below
@@ -659,7 +734,7 @@ async function check11() {
   // table reads no row either, so the offered levels are gated on `problem`.
   // Pinned as the exact declaration, because `problem === null` appears again
   // in the render condition below it and a loose scan would survive the break.
-  const panel = read("src/app/(admin)/assistant/voice/AutonomyPanel.tsx");
+  const panel = read("src/modules/assistant/presentation/voice/AutonomyPanel.tsx");
   if (!panel.includes("const storable = state.problem === null;")) {
     problems.push("the autonomy panel does not gate its levels on a working table");
   }
@@ -709,10 +784,9 @@ async function check11() {
     problems.push("the chat does not hold confirm-mode cards to a click");
   }
 
-  // The Assistant page links to the console the Guide describes.
-  const assistantPage = read("src/app/(admin)/assistant/page.tsx");
-  if (!assistantPage.includes("/assistant/voice")) {
-    problems.push("the Assistant page does not link to the voice console");
+  const assistantConsole = read("src/app/(admin)/assistant/AssistantConsole.tsx");
+  if (!assistantConsole.includes('voiceMode="console"')) {
+    problems.push("the Assistant console does not include voice controls");
   }
   return verdict(problems);
 }
@@ -818,7 +892,7 @@ async function check13() {
   // heal by starting again. Without the `stopped` latch the restart loop turns
   // one refusal into a start → error → end cycle at event speed, while the strip
   // goes on saying "Arming the microphone…".
-  const hook = read("src/app/(admin)/assistant/voice/useWakeWord.ts");
+  const hook = read("src/modules/assistant/presentation/voice/useWakeWord.ts");
   if (!hook.includes('code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture"')) {
     problems.push("the recognizer does not treat a refusal as fatal");
   }
@@ -842,7 +916,7 @@ async function check13() {
   // The status line is the only thing that says what the microphone is doing, so
   // it cannot claim silence while push-to-talk is recording, and cannot name a
   // phrase that is not the one being matched.
-  const strip = read("src/app/(admin)/assistant/voice/VoiceStrip.tsx");
+  const strip = read("src/modules/assistant/presentation/voice/VoiceStrip.tsx");
   if (!strip.includes("Recording — this clip goes to the transcription model")) {
     problems.push("the strip says nothing is recorded while a clip is being recorded");
   }
@@ -863,7 +937,7 @@ async function check13() {
   // The panel offers hands-free only with the grant, and a failed save has to
   // release the spinner — otherwise the one control that changes what a word may
   // release is stuck disabled with no explanation.
-  const panel = read("src/app/(admin)/assistant/voice/AutonomyPanel.tsx");
+  const panel = read("src/modules/assistant/presentation/voice/AutonomyPanel.tsx");
   if (!panel.includes("if (busy) return;")) problems.push("the panel ignores its own spinner");
   if (!panel.includes("    } finally {\n      setBusy(null);\n    }")) {
     problems.push("a save that throws leaves the autonomy panel spinning forever");
@@ -874,8 +948,8 @@ async function check13() {
 
   // The conversation id arrives on every answer; rewriting the address each time
   // would push the router once per turn.
-  const consoleFile = read("src/app/(admin)/assistant/voice/VoiceConsole.tsx");
-  if (!consoleFile.includes("if (reportedSession.current === id) return;")) {
+  const consoleFile = read("src/app/(admin)/assistant/AssistantConsole.tsx");
+  if (!consoleFile.includes("if (reportedSession.current !== sessionId) {")) {
     problems.push("the voice console rewrites its address on every answer");
   }
 
@@ -893,7 +967,8 @@ async function check13() {
 }
 
 // ---------------------------------------------------------------------------
-// 14. The console cannot hear itself, and one turn runs at a time
+// 14. The console cannot hear itself, an answer is queued not cancelled, and one
+//     turn runs at a time
 // ---------------------------------------------------------------------------
 async function check14() {
   const voice = await load(VOICE_URL);
@@ -978,14 +1053,14 @@ async function check14() {
     false
   );
 
-  // The window runs from the last moment the device was producing sound. A
-  // 600-character answer plays for tens of seconds, so a window timed from the
-  // hand-over would expire long before the echo of its tail arrived.
-  const speechHook = read("src/app/(admin)/assistant/voice/useSpeech.ts");
+  // The window runs from the last moment the device was producing sound. A piece of
+  // a long answer plays for tens of seconds, so a window timed from the hand-over
+  // would expire long before the echo of its tail arrived.
+  const speechHook = read("src/modules/assistant/presentation/voice/useSpeech.ts");
   for (const needle of [
     "const SPOKEN_MEMORY = 8;",
     "const spokenRecently = useRef<{ text: string; at: number }[]>([]);",
-    "{ text: spoken, at: Date.now() },",
+    "{ text: next.text, at: Date.now() },",
     "].slice(-SPOKEN_MEMORY);",
     "const newest = spokenRecently.current[spokenRecently.current.length - 1];",
     "isOwnVoiceEcho(heard, spokenRecently.current, Date.now())",
@@ -1006,15 +1081,40 @@ async function check14() {
   if (!/event\.error === "interrupted"\) \{\s*\n\s*hearAgain\(\);/.test(speechHook)) {
     problems.push("a cancelled or interrupted utterance does not restamp the echo window");
   }
-  // The words a Stop cancelled must not come back when the voice list arrives:
-  // replaying them would cut off whatever the person moved on to.
-  if (!/const stop = useCallback\(\(\) => \{[\s\S]{0,600}?waitingForVoices\.current = null;/.test(speechHook)) {
-    problems.push("a Stop leaves held words that play when the voice list finally arrives");
+
+  // The queue, not a cancel, is what carries an answer. `speechSynthesis` is one
+  // global voice per tab, and the `cancel()` that used to open every sentence cut
+  // short the sentence before it — which is what a person heard as JARVIS stopping
+  // mid-word. Two silences are left, and each one is the person's own request: the
+  // Stop button, and a surface unmounting while it is the one talking. So the count
+  // is pinned, and the unmount's is pinned in its guarded form.
+  for (const needle of [
+    "const queue = useRef<Piece[]>([]);",
+    "if (producing.current) return;",
+    "const pieces = chunkForSpeech(text).map(",
+    "queue.current = [...queue.current, ...pieces];",
+    "if (producing.current) window.speechSynthesis.cancel();",
+    "      stop();\n      speak(text, language);",
+  ]) {
+    if (!speechHook.includes(needle)) problems.push(`the speech queue is missing: ${needle.trim()}`);
+  }
+  const silences = speechHook.match(/window\.speechSynthesis\.cancel\(\);/g) ?? [];
+  if (silences.length !== 2) {
+    problems.push(`the device is silenced ${silences.length} times, not by the Stop and its own unmount`);
+  }
+  // A Stop that cancelled only the utterance in the air left every queued sentence
+  // to play after the click that asked for silence.
+  if (!/const stop = useCallback\(\(\) => \{[\s\S]{0,400}?queue\.current = \[\];/.test(speechHook)) {
+    problems.push("a Stop leaves queued sentences to play after the click that cancelled them");
   }
 
-  // A voice list that has not loaded is not a voiceless device. The words are
-  // held for the `voiceschanged` pass instead of blaming the person's machine.
-  if (!speechHook.includes("if (voices.length === 0) {")) {
+  // A voice list that has not loaded is not a voiceless device. The piece stays at
+  // the head of the queue for the `voiceschanged` pass, instead of the hook blameing
+  // the person's machine for a list that was still arriving.
+  if (!speechHook.includes("if (voices.current.length === 0) return;")) {
+    problems.push("a still-loading voice list is not held for the voiceschanged pass");
+  }
+  if (/if \(voices(\.current)?\.length === 0\) \{[\s\S]{0,120}setError/.test(speechHook)) {
     problems.push("a still-loading voice list is reported as no voice installed");
   }
 
@@ -1043,7 +1143,7 @@ async function check14() {
   ]) {
     if (!chat.includes(needle)) problems.push(`the wake-follow state is not a ref: ${needle}`);
   }
-  const awaitingWriter = read("src/app/(admin)/assistant/voice/useJarvisHandoff.ts");
+  const awaitingWriter = read("src/modules/assistant/presentation/voice/useJarvisHandoff.ts");
   if (
     !awaitingWriter.includes("awaitingRef.current = awaiting;") ||
     !awaitingWriter.includes("setJarvisAwaiting(awaiting);")
@@ -1081,7 +1181,8 @@ async function check14() {
 }
 
 // ---------------------------------------------------------------------------
-// 15. The presence holds a sentence until the device names its voices
+// 15. The presence queues its sentences and holds one for a voice list still
+//     arriving
 // ---------------------------------------------------------------------------
 const JARVIS_VOICE_REL = "src/modules/assistant/presentation/useJarvisVoice.ts";
 
@@ -1092,37 +1193,248 @@ async function check15() {
   const code = read(JARVIS_VOICE_REL)
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/\/\/[^\n]*/g, " ");
-  // `getVoices()` answers with an empty list on the first call while the platform
-  // loads its voices. That is not a voiceless machine, and the presence used to
-  // say so, drop the sentence and leave a briefing unspoken on a device that
-  // could have read it. The words are held for the `voiceschanged` pass instead.
+
+  // A briefing is several sentences and the watchers ask for them in one pass. The
+  // cancel that used to open every `say()` is what a person heard as JARVIS going
+  // quiet mid-sentence, because the second line arrived while the first was still
+  // being spoken. So the hook owns a queue, produces one sentence at a time, and
+  // silences the device only for the person's own Stop and for its own speech.
   for (const needle of [
-    "const waiting = useRef<string | null>(null);",
-    "waiting.current = text;",
-    "if (!held || deviceVoices.current.length === 0) return;",
-    "speakOnDevice(held)",
-    "const outcome = speakOnDevice(sentence);",
+    "const queue = useRef<Queued[]>([]);",
+    "if (producing.current) return;",
+    "queue.current = [...queue.current, { text: sentence, resolve }];",
+    "if (producing.current) stopDevice();",
   ]) {
     if (!code.includes(needle)) problems.push(`useJarvisVoice is missing: ${needle}`);
   }
-  // A list that never arrives is not a list still loading: after the grace the
-  // hold is given up with the sentence the machine can act on — the note.
-  if (!code.includes("This device has no voice installed, so the sentence stays on screen.")) {
-    problems.push("a voice list that never arrives leaves the sentence held forever");
+  const silences = code.match(/stopDevice\(\);/g) ?? [];
+  // Two call sites, both of them the person's own request for quiet: the Stop, and
+  // this hook unmounting while it is the one talking.
+  if (silences.length !== 2) {
+    problems.push(`the device is silenced from ${silences.length} places, not from Stop and its own unmount`);
+  }
+  // The caller's latch is the sentence finishing, not the sentence being handed
+  // over. A watcher released at the hand-over queued the next line onto a device
+  // still busy with the last one — and a queue that never released its callers
+  // would leave a briefing hanging after its first sentence.
+  if (!code.includes("await new Promise<void>((resolve) => {")) {
+    problems.push("say() is not a promise the watcher can wait on");
+  }
+  if (!/const done = \(\) => \{[\s\S]{0,160}next\.resolve\(\);[\s\S]{0,60}pumpRef\.current\(\);/.test(code)) {
+    problems.push("a sentence whose playback ended does not release the watcher that awaited it");
+  }
+  if (!/const done = \(\) => \{[\s\S]{0,80}producing\.current = false;/.test(code)) {
+    problems.push("the queue is not drained when a sentence finishes");
+  }
+  // A Stop that cancelled only the sentence in the air left the rest of the briefing
+  // to play after the click that asked for quiet — and each waiting caller had to be
+  // released, or the watcher that awaited it would never resume.
+  if (!/const stop = useCallback\(\(\) => \{[\s\S]{0,200}?drain\(\);/.test(code)) {
+    problems.push("a Stop leaves the queued sentences to play after the click that cancelled them");
+  }
+  if (!code.includes("pending.forEach((item) => item.resolve());")) {
+    problems.push("a drained queue leaves its callers waiting forever");
+  }
+
+  // `getVoices()` answers with an empty list on the first call while the platform
+  // loads its voices. That is not a voiceless machine, and the presence used to say
+  // so, drop the sentence and leave a briefing unspoken on a device that could have
+  // read it. The sentence stays at the head of the queue for the `voiceschanged`
+  // pass, and only a list that never arrives is reported as a missing voice.
+  for (const needle of [
+    "const VOICE_LIST_GRACE_MS = 2_000;",
+    "if (deviceVoices.current.length === 0) {",
+    "holdTimer.current = window.setTimeout(",
+    "deviceVoices.current = window.speechSynthesis.getVoices();\n      pump();",
+    "This device has no voice installed, so the sentence stays on screen.",
+  ]) {
+    if (!code.includes(needle)) problems.push(`the voice-list hold is missing: ${needle}`);
+  }
+  if (/if \(deviceVoices\.current\.length === 0\) \{[\s\S]{0,80}setNotice/.test(code)) {
+    problems.push("a still-loading voice list is reported as no voice installed");
+  }
+  // A language with no voice on this machine drops that sentence with the reason
+  // and the queue moves on: one unpronounceable line must not end a briefing.
+  if (!/const voice = pickDeviceVoice\(deviceVoices\.current, voiceId, wanted\);\n\s*if \(!voice\) \{\s*\n\s*queue\.current\.shift\(\);/.test(code)) {
+    problems.push("a sentence the device cannot speak stops the rest of the queue");
+  }
+  // A sentence with no letters is not a sentence to speak, and it must not blame
+  // the machine for a row of numbers.
+  if (!/const wanted = speechLanguageOf\(next\.text\);\n\s*if \(!wanted\) \{\s*\n\s*queue\.current\.shift\(\);\n\s*next\.resolve\(\);/.test(code)) {
+    problems.push("a letterless sentence is reported as a missing voice");
+  }
+  // The words still queued when the person stopped talking must not come back with
+  // the voice list.
+  if (!/const stop = useCallback\(\(\) => \{[\s\S]{0,200}?clearHold\(\);/.test(code)) {
+    problems.push("a Stop leaves the voice-list grace running");
   }
   // The specific reason must survive `say()`: it used to be overwritten with a
   // generic "nothing to say out loud" by the caller that had just set it.
   if (code.includes("The assistant has nothing to say out loud in this tab yet.")) {
     problems.push("say() overwrites the device-voice notice with a generic one");
   }
-  // The empty list must not set the notice on the spot.
-  if (/if \(voices\.length === 0\) \{\s*setNotice/.test(code)) {
-    problems.push("a still-loading voice list is reported as no voice installed");
+  return verdict(problems);
+}
+
+/**
+ * 16. Which voice reads a sentence, and how fast, is chosen in one place and obeyed
+ * by both engines.
+ *
+ * The pair is a browser preference, not an account row: a voice is a fact about the
+ * machine in front of the person, so a choice carried to another computer means
+ * nothing there. That makes the store the only place the choice can live, and the
+ * two surfaces that speak (the chat and the orb) and the one panel that edits it
+ * (Settings → Assistant) must all read the same two keys — otherwise a person picks
+ * a voice in Settings and the briefing keeps saying "Hello" in another one.
+ *
+ * The preview is the part that could undo the fix this suite exists for. The panel
+ * shares one global `speechSynthesis` with the orb, so a preview that cancelled to
+ * get its turn would cut a briefing mid-sentence — exactly the defect check 14 and
+ * check 15 pin out of the engines. And its words are data: a sample that said the
+ * wake phrase, or "stop", would be heard back by the armed recogniser and either
+ * open a turn nobody asked for or silence the voice that is reading it.
+ */
+async function check16() {
+  const problems = [];
+  const store = read("src/app/(admin)/assistant/AssistantPrefs.tsx");
+  const chat = read("src/app/(admin)/assistant/AssistantChat.tsx");
+  const orb = read("src/modules/assistant/presentation/JarvisPresence.tsx");
+  const panel = read("src/app/(admin)/settings/JarvisPresenceConsole.tsx");
+  const listHook = read("src/modules/assistant/presentation/voice/useDeviceVoices.ts");
+  const speechHook = read("src/modules/assistant/presentation/voice/useSpeech.ts");
+  const jarvisHook = read("src/modules/assistant/presentation/useJarvisVoice.ts");
+
+  /** One exported function's body, so a rule is pinned where it lives, not nearby. */
+  const body = (source, name) => {
+    const at = source.indexOf(`export function ${name}(`);
+    if (at === -1) return null;
+    const rest = source.slice(at + name.length);
+    const next = rest.indexOf("export function ");
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+
+  // --- the store: two keys, each written and read through the same notify ------
+  for (const needle of [
+    'const VOICE_ID_KEY = "sdg-assistant-voice-id";',
+    'const SPEECH_RATE_KEY = "sdg-assistant-speech-rate";',
+    "export function readStoredVoiceId(",
+    "export function writeStoredVoiceId(",
+    "export function readStoredSpeechRate(",
+    "export function writeStoredSpeechRate(",
+  ]) {
+    if (!store.includes(needle)) problems.push(`the voice store is missing: ${needle}`);
   }
-  // A Stop cancels held words, or the list arriving later replays a sentence the
-  // person already silenced.
-  if (!/const stop = useCallback\(\(\) => \{[\s\S]{0,400}?waiting\.current = null;/.test(code)) {
-    problems.push("a Stop leaves held words to play when the voice list arrives");
+  const writeVoice = body(store, "writeStoredVoiceId");
+  if (!writeVoice) problems.push("writeStoredVoiceId is not exported");
+  else {
+    if (!writeVoice.includes("window.localStorage.setItem(VOICE_ID_KEY, clean);")) {
+      problems.push("a chosen voice is not written under the voice key");
+    }
+    if (!writeVoice.includes("window.localStorage.removeItem(VOICE_ID_KEY);")) {
+      problems.push('choosing the device default leaves the old name stored instead of clearing it');
+    }
+    if (!writeVoice.includes("notifyVoicePrefs();")) {
+      problems.push("a chosen voice does not reach the surfaces already open");
+    }
+  }
+  const readRate = body(store, "readStoredSpeechRate");
+  if (!readRate) problems.push("readStoredSpeechRate is not exported");
+  else if (!readRate.includes("normaliseSpeechRate(window.localStorage.getItem(SPEECH_RATE_KEY))")) {
+    problems.push("a rate is read out of storage unclamped, so a hand-edited value can be obeyed");
+  }
+  const writeRate = body(store, "writeStoredSpeechRate");
+  if (!writeRate) problems.push("writeStoredSpeechRate is not exported");
+  else {
+    if (!writeRate.includes("normaliseSpeechRate(rate)")) {
+      problems.push("a rate is stored unnormalised");
+    }
+    if (!writeRate.includes("if (clean === DEFAULT_SPEECH_RATE) window.localStorage.removeItem(SPEECH_RATE_KEY);")) {
+      problems.push("going back to a normal pace leaves a stale factor in the store");
+    }
+    if (!writeRate.includes("notifyVoicePrefs();")) {
+      problems.push("a pace change does not reach the surfaces already open");
+    }
+  }
+
+  // --- both speaking surfaces read the same two keys ---------------------------
+  for (const [label, source, call] of [
+    ["the chat", chat, "useSpeech({ voiceId, rate: speechRate })"],
+    ["the presence", orb, "useJarvisVoice({ voiceId, rate: speechRate })"],
+  ]) {
+    if (!source.includes("useSyncExternalStore(subscribeVoicePrefs, readStoredVoiceId")) {
+      problems.push(`${label} does not read the chosen voice from the store`);
+    }
+    if (!source.includes("readStoredSpeechRate")) {
+      problems.push(`${label} does not read the speaking pace from the store`);
+    }
+    if (!source.includes(call)) {
+      problems.push(`${label} does not hand the pair to its engine: ${call}`);
+    }
+  }
+
+  // --- both engines obey it per sentence, so a change lands on the next one ----
+  for (const [label, source] of [
+    ["useSpeech", speechHook],
+    ["useJarvisVoice", jarvisHook],
+  ]) {
+    if (!source.includes("utterance.rate = rate;")) {
+      problems.push(`${label} speaks without the chosen pace`);
+    }
+    if (!/const voice = pickDeviceVoice\([\w.]+, voiceId, /.test(source)) {
+      problems.push(`${label} picks a voice without the chosen name`);
+    }
+  }
+  // The list hook only listens. A reader that cancelled on unmount would silence
+  // the orb from the Settings panel while a briefing was still being read.
+  if (listHook.includes(".cancel(")) {
+    problems.push("useDeviceVoices silences the one global voice it is only meant to list");
+  }
+  if (!listHook.includes("voiceschanged")) {
+    problems.push("useDeviceVoices never refreshes, so a list that arrives late is never shown");
+  }
+
+  // --- the panel: a select, a bounded slider, and a preview that waits ---------
+  for (const needle of [
+    'title="The voice and the pace"',
+    "const devices = useDeviceVoices();",
+    "writeStoredVoiceId(event.target.value);",
+    "writeStoredSpeechRate(Number(event.target.value));",
+    'type="range"',
+    "min={SPEECH_RATE_MIN}",
+    "max={SPEECH_RATE_MAX}",
+    "const voice = pickDeviceVoice(devices, voiceId, \"en\");",
+    "utterance.rate = speechRate;",
+  ]) {
+    if (!panel.includes(needle)) problems.push(`the voice panel is missing: ${needle}`);
+  }
+  if (panel.includes(".cancel(")) {
+    problems.push("the preview cancels the presence's speech to get its own turn");
+  }
+  // A saved name this machine no longer has is a fallback, and the panel must show
+  // the fallback rather than a select sitting on a choice nobody made.
+  if (!panel.includes('value={voiceMissing ? "" : voiceId}')) {
+    problems.push("a voice this machine does not have is shown as if it were selected");
+  }
+  // These are browser prefs, so the account write must not be what gates them.
+  const voiceSection = panel.slice(
+    panel.indexOf('title="The voice and the pace"'),
+    panel.indexOf('title="The quiet window"')
+  );
+  if (!voiceSection) problems.push("the voice section cannot be found");
+  else if (voiceSection.includes("disabled={locked}") || voiceSection.includes("disabled={busy")) {
+    problems.push("the voice and the pace are disabled with the account row, though neither is stored on it");
+  }
+
+  // The sample is handed to a live recogniser as well as to the device. Neither the
+  // wake phrase nor a barge-in word may be in it.
+  const sample = panel.match(/const PREVIEW_SENTENCE = "([^"]*)"/);
+  if (!sample) problems.push("the preview has no sample sentence");
+  else {
+    const said = sample[1].toLowerCase();
+    if (said.includes("jarvis")) problems.push("the preview says the wake phrase, and would open a turn");
+    for (const command of ["stop", "be quiet", "quiet now", "shut up"]) {
+      if (said.includes(command)) problems.push(`the preview says "${command}", and would stop itself`);
+    }
   }
   return verdict(problems);
 }
@@ -1135,7 +1447,7 @@ const CHECKS = [
   ["2. Arabic folds harakat, tatweel and alef forms", check2],
   ["3. Cancel wins over approve; a code in play must be said", check3],
   ["4. The code is four characters, never 0/O/1/I, and compares case-free", check4],
-  ["5. A spoken answer has no markup, names a table, and says where the cut is", check5],
+  ["5. A spoken answer keeps every word, in pieces the device can hold", check5],
   ["6. The spoken language follows the script written", check6],
   ["7. Migration 046 is authored with own-row policies and no audio column", check7],
   ["8. A stored open without the grant is only ever confirm", check8],
@@ -1145,7 +1457,8 @@ const CHECKS = [
   ["12. A spoken code and a spoken question reach the server as said", check12],
   ["13. The microphone reports what it is doing, and a refusal stops", check13],
   ["14. The console cannot hear itself, and one turn runs at a time", check14],
-  ["15. The presence holds a sentence until the device names its voices", check15],
+  ["15. The presence queues its sentences; a loading voice list is not a voiceless machine", check15],
+  ["16. The voice and the pace are chosen once, in this browser, and both engines obey", check16],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1445,25 +1758,24 @@ await mutation(
 // The voice console's page and its privacy pins. Each mutation restores one
 // defect the page or a surface could plausibly ship with, so check 11 is shown
 // failing on the exact line it guards.
-const VOICE_PAGE_REL = "src/app/(admin)/assistant/voice/page.tsx";
-const VOICE_CONSOLE_REL = "src/app/(admin)/assistant/voice/VoiceConsole.tsx";
-const AUTONOMY_PANEL_REL = "src/app/(admin)/assistant/voice/AutonomyPanel.tsx";
-const VOICE_STRIP_REL = "src/app/(admin)/assistant/voice/VoiceStrip.tsx";
-const VOICE_BUTTON_REL = "src/app/(admin)/assistant/voice/VoiceButton.tsx";
-const ASSISTANT_PAGE_REL = "src/app/(admin)/assistant/page.tsx";
+const VOICE_PAGE_REL = "src/app/(admin)/assistant/page.tsx";
+const VOICE_CONSOLE_REL = "src/app/(admin)/assistant/AssistantConsole.tsx";
+const AUTONOMY_PANEL_REL = "src/modules/assistant/presentation/voice/AutonomyPanel.tsx";
+const VOICE_STRIP_REL = "src/modules/assistant/presentation/voice/VoiceStrip.tsx";
+const VOICE_BUTTON_REL = "src/modules/assistant/presentation/voice/VoiceButton.tsx";
 const CHAT_REL = "src/app/(admin)/assistant/AssistantChat.tsx";
 
 await mutation(
   "26. The voice page guards a different route → check 11 red",
   VOICE_PAGE_REL,
-  'requireStaff("/assistant/voice")',
   'requireStaff("/assistant")',
+  'requireStaff("/assistant/voice")',
   async () => checkIsRed(11)
 );
 
 await mutation(
   "27. The console's privacy note stops naming the browser vendor → check 11 red",
-  VOICE_CONSOLE_REL,
+  VOICE_PAGE_REL,
   "the browser vendor&apos;s service",
   "its own speech service",
   async () => checkIsRed(11)
@@ -1494,10 +1806,10 @@ await mutation(
 );
 
 await mutation(
-  "31. The Assistant page loses its Voice link → check 11 red",
-  ASSISTANT_PAGE_REL,
-  'href="/assistant/voice"',
-  'href="/assistant"',
+  "31. The Assistant console loses its voice controls → check 11 red",
+  VOICE_CONSOLE_REL,
+  'voiceMode="console"',
+  'voiceMode="dictate"',
   async () => checkIsRed(11)
 );
 
@@ -1525,7 +1837,7 @@ await mutation(
   async () => checkIsRed(11)
 );
 
-const WAKE_HOOK_REL = "src/app/(admin)/assistant/voice/useWakeWord.ts";
+const WAKE_HOOK_REL = "src/modules/assistant/presentation/voice/useWakeWord.ts";
 
 await mutation(
   "35. The whole sentence is sent as the approval code → check 12 red",
@@ -1586,8 +1898,8 @@ await mutation(
 await mutation(
   "42. The console rewrites its address on every answer → check 13 red",
   VOICE_CONSOLE_REL,
-  "if (reportedSession.current === id) return;",
-  "if (false) return;",
+  "if (reportedSession.current !== sessionId) {",
+  "if (true) {",
   async () => checkIsRed(13)
 );
 
@@ -1615,7 +1927,7 @@ await mutation(
   async () => checkIsRed(13)
 );
 
-const USE_SPEECH_REL = "src/app/(admin)/assistant/voice/useSpeech.ts";
+const USE_SPEECH_REL = "src/modules/assistant/presentation/voice/useSpeech.ts";
 
 // The two defects the whole-slice review found in the voice path: the console
 // hearing itself, and a recogniser batch starting two turns at once. Each
@@ -1633,15 +1945,15 @@ await mutation(
 await mutation(
   "47. The window timed from the hand-over, never from the end of playback → check 14 red",
   USE_SPEECH_REL,
-  "      utterance.onend = () => {\n        setSpeaking(false);\n        hearAgain();\n      };",
-  "      utterance.onend = () => setSpeaking(false);",
+  "      utterance.onend = () => {\n        hearAgain();\n        done();\n      };",
+  "      utterance.onend = done;",
   async () => checkIsRed(14)
 );
 
 await mutation(
   "48. The words are never recorded, so nothing can be recognised as an echo → check 14 red",
   USE_SPEECH_REL,
-  "{ text: spoken, at: Date.now() },",
+  "{ text: next.text, at: Date.now() },",
   "// recorded by the platform, not here",
   async () => checkIsRed(14)
 );
@@ -1649,8 +1961,8 @@ await mutation(
 await mutation(
   "49. A voice list still loading is called a voiceless device → check 14 red",
   USE_SPEECH_REL,
-  "if (voices.length === 0) {",
-  "if (false) {",
+  "      if (voices.current.length === 0) return;",
+  '      if (voices.current.length === 0) {\n        setError("This device has no English voice installed — the answer stays on screen.");\n        queue.current = [];\n        return;\n      }',
   async () => checkIsRed(14)
 );
 
@@ -1755,10 +2067,10 @@ await mutation(
 );
 
 await mutation(
-  "61. A Stop leaves the held words to play when the voice list arrives → check 14 red",
+  "61. A Stop leaves the queued sentences to play after the click that asked for quiet → check 14 red",
   USE_SPEECH_REL,
-  "    waitingForVoices.current = null;\n  }, []);",
-  "  }, []);",
+  "    queue.current = [];\n    producing.current = false;",
+  "    producing.current = false;",
   async () => checkIsRed(14)
 );
 
@@ -1786,8 +2098,8 @@ await mutation(
 await mutation(
   "64. A cancelled utterance does not restamp the window → check 14 red",
   USE_SPEECH_REL,
-  "          hearAgain();\n          return;",
-  "          return;",
+  "          hearAgain();\n          done();\n          return;",
+  "          done();\n          return;",
   async () => checkIsRed(14)
 );
 
@@ -1832,25 +2144,234 @@ await mutation(
 await mutation(
   "69. A loading voice list is called a voiceless device again → check 15 red",
   JARVIS_VOICE_REL,
-  "        waiting.current = text;",
-  '        setNotice("This device has no voice installed, so the sentence stays on screen.");',
+  "        if (holdTimer.current === null) {",
+  '        setNotice("This device has no voice installed, so the sentence stays on screen.");\n        if (false) {',
   async () => checkIsRed(15)
 );
 
 await mutation(
-  "70. Nothing replays a held sentence → check 15 red",
+  "70. Nothing replays a queued sentence when the voice list arrives → check 15 red",
   JARVIS_VOICE_REL,
-  "      if (!held || deviceVoices.current.length === 0) return;",
-  "      return;",
+  "      deviceVoices.current = window.speechSynthesis.getVoices();\n      pump();",
+  "      deviceVoices.current = window.speechSynthesis.getVoices();",
   async () => checkIsRed(15)
 );
 
 await mutation(
-  "71. say() overwrites the note the device voice just wrote → check 15 red",
+  "71. A finished sentence releases its watcher only when the next one is handed over → check 15 red",
   JARVIS_VOICE_REL,
-  "      const outcome = speakOnDevice(sentence);",
-  '      const outcome = speakOnDevice(sentence);\n      if (outcome === "failed") setNotice("The assistant has nothing to say out loud in this tab yet.");',
+  "        next.resolve();\n        pumpRef.current();",
+  "        pumpRef.current();",
   async () => checkIsRed(15)
+);
+
+// The truncation itself. Each of these restores one of the three ways the console
+// cut off its own speech, and check 14 or 15 must see it: the cancel that opened
+// every sentence, the unmount that silenced the other surface, and the queue that
+// kept speaking after a Stop.
+
+await mutation(
+  "72. Every queued sentence cancels the one being heard → check 14 red",
+  USE_SPEECH_REL,
+  "      queue.current = [...queue.current, ...pieces];\n      pump();",
+  "      window.speechSynthesis.cancel();\n      queue.current = [...queue.current, ...pieces];\n      pump();",
+  async () => checkIsRed(14)
+);
+
+await mutation(
+  "73. An unmount silences whatever the other surface was saying → check 14 red",
+  USE_SPEECH_REL,
+  "if (producing.current) window.speechSynthesis.cancel();",
+  "window.speechSynthesis.cancel();",
+  async () => checkIsRed(14)
+);
+
+await mutation(
+  "74. The orb cancels the sentence it was handed → check 15 red",
+  JARVIS_VOICE_REL,
+  "      const sentence = text.trim();\n      if (!sentence) return;",
+  "      const sentence = text.trim();\n      if (!sentence) return;\n      stopDevice();",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "75. The orb's unmount silences the chat mid-answer → check 15 red",
+  JARVIS_VOICE_REL,
+  "      if (producing.current) stopDevice();",
+  "      stopDevice();",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "76. A queued answer is cut to the piece the device was handed → check 5 red",
+  VOICE_REL,
+  "      if (rest) pieces.push(rest);",
+  "      // the device is not handed more than a piece",
+  async () => checkIsRed(5)
+);
+
+await mutation(
+  "77. Sentences are packed without a ceiling, so one piece is the whole answer → check 5 red",
+  VOICE_REL,
+  "    if (last && `${last} ${sentence}`.length <= limit) pieces[pieces.length - 1] = `${last} ${sentence}`;",
+  "    if (last) pieces[pieces.length - 1] = `${last} ${sentence}`;",
+  async () => checkIsRed(5)
+);
+
+await mutation(
+  "78. A spoken answer is clipped to a size again → check 5 red",
+  VOICE_REL,
+  "  return text;\n}",
+  '  return text.length > 600 ? `${text.slice(0, 600)} — the rest is on screen —` : text;\n}',
+  async () => checkIsRed(5)
+);
+
+await mutation(
+  "79. A rate from a stale tab is passed to the device unchecked → check 5 red",
+  VOICE_REL,
+  "  const clamped = Math.min(SPEECH_RATE_MAX, Math.max(SPEECH_RATE_MIN, parsed));",
+  "  const clamped = parsed;",
+  async () => checkIsRed(5)
+);
+
+await mutation(
+  "80. A voice chosen on another machine is kept, so nothing speaks → check 5 red",
+  VOICE_REL,
+  "    if (chosen) return chosen;",
+  "    if (chosen) return chosen;\n    if (wantedVoice) return null;",
+  async () => checkIsRed(5)
+);
+
+const PREFS_REL = "src/app/(admin)/assistant/AssistantPrefs.tsx";
+const ORB_REL = "src/modules/assistant/presentation/JarvisPresence.tsx";
+const PANEL_REL = "src/app/(admin)/settings/JarvisPresenceConsole.tsx";
+
+await mutation(
+  "81. A chosen voice is stored under the wake-phrase key → check 16 red",
+  PREFS_REL,
+  "window.localStorage.setItem(VOICE_ID_KEY, clean);",
+  "window.localStorage.setItem(WAKE_KEY, clean);",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "82. Going back to the device default leaves the old name in the store → check 16 red",
+  PREFS_REL,
+  "    else window.localStorage.removeItem(VOICE_ID_KEY);",
+  "    else window.localStorage.setItem(VOICE_ID_KEY, \"\");",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "83. A pace change is stored but never reaches the orb that is speaking → check 16 red",
+  PREFS_REL,
+  "    else window.localStorage.setItem(SPEECH_RATE_KEY, String(clean));\n  } catch {\n    // Storage blocked — the choice is not remembered.\n  }\n  notifyVoicePrefs();",
+  "    else window.localStorage.setItem(SPEECH_RATE_KEY, String(clean));\n  } catch {\n    // Storage blocked — the choice is not remembered.\n  }",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "84. A pace is read out of the store unclamped → check 16 red",
+  PREFS_REL,
+  "return normaliseSpeechRate(window.localStorage.getItem(SPEECH_RATE_KEY));",
+  "return Number(window.localStorage.getItem(SPEECH_RATE_KEY)) || DEFAULT_SPEECH_RATE;",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "85. The chat is given the chosen voice but not the chosen pace → check 16 red",
+  CHAT_REL,
+  "const speech = useSpeech({ voiceId, rate: speechRate });",
+  "const speech = useSpeech({ voiceId });",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "86. The orb is given the chosen voice but not the chosen pace → check 16 red",
+  ORB_REL,
+  "const voice = useJarvisVoice({ voiceId, rate: speechRate });",
+  "const voice = useJarvisVoice({ voiceId });",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "87. The presence speaks every sentence at the device default → check 16 red",
+  "src/modules/assistant/presentation/useJarvisVoice.ts",
+  "      utterance.rate = rate;",
+  "",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "88. The chat picks a voice by language alone, ignoring the chosen name → check 16 red",
+  "src/modules/assistant/presentation/voice/useSpeech.ts",
+  "const voice = pickDeviceVoice(voices.current, voiceId, next.language);",
+  "const voice = pickDeviceVoice(voices.current, \"\", next.language);",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "89. The voice list silences the orb when the panel closes → check 16 red",
+  "src/modules/assistant/presentation/voice/useDeviceVoices.ts",
+  "      window.speechSynthesis.removeEventListener(\"voiceschanged\", read);",
+  "      window.speechSynthesis.removeEventListener(\"voiceschanged\", read);\n      window.speechSynthesis.cancel();",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "90. The preview cancels the briefing to get its own turn → check 16 red",
+  PANEL_REL,
+  "    window.speechSynthesis.speak(utterance);",
+  "    window.speechSynthesis.cancel();\n    window.speechSynthesis.speak(utterance);",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "91. The preview sample says the wake phrase → check 16 red",
+  PANEL_REL,
+  "const PREVIEW_SENTENCE = \"Two offers are waiting for an answer today.\";",
+  "const PREVIEW_SENTENCE = \"Hey Jarvis, two offers are waiting.\";",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "92. A voice this machine lost is displayed as if it were chosen → check 16 red",
+  PANEL_REL,
+  "value={voiceMissing ? \"\" : voiceId}",
+  "value={voiceId}",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "93. The pace and the voice grey out with the account row they are not stored on → check 16 red",
+  PANEL_REL,
+  "            aria-label=\"Voice\"",
+  "            aria-label=\"Voice\"\n            disabled={locked}",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "94. The slider offers the device's whole range rather than the portal's → check 16 red",
+  PANEL_REL,
+  "              min={SPEECH_RATE_MIN}\n              max={SPEECH_RATE_MAX}",
+  "              min={0.1}\n              max={10}",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "95. An absent pace reads as the number zero, so the reset lands on the floor → check 5 red",
+  VOICE_REL,
+  '  if (value === null || value === undefined || value === "") return DEFAULT_SPEECH_RATE;',
+  "  // absence is not answered here",
+  async () => checkIsRed(5)
+);
+
+await mutation(
+  "96. Going back to a normal pace re-writes the factor instead of clearing it → check 16 red",
+  PREFS_REL,
+  "    if (clean === DEFAULT_SPEECH_RATE) window.localStorage.removeItem(SPEECH_RATE_KEY);",
+  "    if (clean === DEFAULT_SPEECH_RATE) window.localStorage.setItem(SPEECH_RATE_KEY, \"1\");",
+  async () => checkIsRed(16)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
