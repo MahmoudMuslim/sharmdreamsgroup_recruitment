@@ -9,7 +9,6 @@ import {
   readJarvisUi,
   setJarvisOpen,
   subscribeJarvisUi,
-  toggleJarvisOpen,
 } from "@/lib/jarvis-ui";
 import { AssistantChat } from "./AssistantChat";
 
@@ -169,21 +168,6 @@ export function AssistantDock() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={toggleJarvisOpen}
-        aria-expanded={open}
-        aria-label={open ? "Close the assistant" : "Open the assistant"}
-        className={cn(
-          "fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full px-4 py-3 font-display text-sm font-bold text-brand-cream shadow-lift transition",
-          "bg-gradient-to-r from-brand-ink to-brand-ink/85 hover:from-brand-ink/90 hover:to-brand-ink/75",
-          open && "opacity-0 pointer-events-none"
-        )}
-      >
-        <Sparkles className="h-4 w-4 text-brand-gold-light" aria-hidden />
-        <span className="hidden sm:inline">Assistant</span>
-      </button>
-
       {open && (
         <section
           aria-label="Operations assistant"

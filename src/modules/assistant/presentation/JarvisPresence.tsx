@@ -56,6 +56,15 @@ const STATE_LABEL: Record<ReactorState, string> = {
   alert: "A queue the assistant watches is above its threshold — open it",
 };
 
+/**
+ * How long an idle, untouched orb waits before it shrinks into the corner.
+ *
+ * Long enough that it does not duck away from a pointer on its way somewhere else,
+ * short enough that a still page is not left with a bright orb and a status line
+ * competing with the content.
+ */
+const REST_AFTER_MS = 2500;
+
 export interface JarvisPresenceProps {
   user: SessionUser;
   timeZone: string;
@@ -93,6 +102,10 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   // that was showing: a note the person closed stays closed, and a different one
   // still arrives.
   const [dismissedAnnouncement, setDismissedAnnouncement] = useState<string | null>(null);
+  // The corner shape has two halves: the room has been still long enough, and the
+  // pointer or the keyboard is not on the orb. Either one alone is not rest.
+  const [idle, setIdle] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const wakePhrase = useSyncExternalStore(
     subscribeVoicePrefs,
@@ -242,6 +255,25 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   const candidate = notice ?? lines ?? watcher.error ?? wake.error ?? readProblem;
   const announcement = candidate && candidate !== dismissedAnnouncement ? candidate : null;
 
+  /**
+   * Whether the orb may rest: the conversation is closed, nothing is happening,
+   * and it has nothing to say. Those four facts are what make a small orb honest —
+   * an orb that shrank while a queue was over its threshold, or while a briefing
+   * was on screen, would be hiding the one thing it exists to show.
+   *
+   * `idle` is a latch, not a countdown: once the orb has rested, `resting` above is
+   * still gated by `canRest` on every render, so a busier state brings it straight
+   * back — and a pointer or a tab focus holds it out until both leave.
+   */
+  const canRest = !ui.open && state === "idle" && !announcement && watcher.news.length === 0;
+  const resting = canRest && idle && !expanded;
+
+  useEffect(() => {
+    if (!canRest) return;
+    const timer = window.setTimeout(() => setIdle(true), REST_AFTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [canRest]);
+
   return (
     <div
       className={cn(
@@ -250,8 +282,12 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
         // when you want to see the assistant reacting to your voice. In full-window
         // mode the panel covers the corner and its own `z-50` wins, so the reactor
         // goes behind it rather than floating over the transcript.
-        ui.open ? "bottom-5 left-5 hidden sm:block" : "bottom-24 right-6"
+        ui.open ? "bottom-5 left-5 hidden sm:block" : "bottom-5 right-5"
       )}
+      onPointerEnter={() => setExpanded(true)}
+      onPointerLeave={() => setExpanded(false)}
+      onFocus={() => setExpanded(true)}
+      onBlur={() => setExpanded(false)}
     >
       {announcement && (
         <div className="mb-2 w-56 rounded-xl border border-brand-line bg-white p-3 text-[11px] leading-relaxed text-brand-ink/75 shadow-lift">
@@ -279,14 +315,27 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
         </div>
       )}
 
-      <div className="relative inline-block">
+      <div
+        className={cn(
+          // The canvas is a fixed 104 px square and CSS scales it, so shrinking
+          // never re-initialises the WebGL scene behind the orb. Scaling about the
+          // bottom-right corner and pushing a third of the way past it leaves a
+          // small orb tucked into the frame rather than one floating over the page.
+          "relative inline-block origin-bottom-right transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none",
+          resting
+            ? "translate-x-[34%] translate-y-[34%] scale-50 opacity-80 [@media(hover:none)]:translate-x-0 [@media(hover:none)]:translate-y-0 [@media(hover:none)]:scale-75 [@media(hover:none)]:opacity-100"
+            : "translate-x-0 translate-y-0 scale-100 opacity-100"
+        )}
+        data-resting={resting ? "true" : undefined}
+      >
         <JarvisReactor
           state={state}
           size={ui.open ? 76 : 104}
           level={meter.armed ? meter.read : undefined}
-          showStatus
+          showStatus={!resting}
           line={ui.awaiting ? "AWAKE · SAY YOUR QUESTION" : null}
           ariaLabel={`${STATE_LABEL[state]}${meter.error ? ` — ${meter.error}` : ""}`}
+          ariaExpanded={ui.open}
           onClick={() => {
             wakeAudio();
             toggleJarvisOpen();
