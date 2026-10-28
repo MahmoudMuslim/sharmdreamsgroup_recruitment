@@ -36,11 +36,19 @@
 -- its source is ever removed — the candidate's paper does not become orphaned
 -- history because another row went away.
 --
--- This migration is NOT applied to any database yet. Every reader probes for
--- these columns and, while they are missing, says so in the words that name
--- this file — the suite editor hides the rule, `getTemplates` keeps answering
--- without it, and the router quietly does nothing. Applying it is the owner's
+-- This migration was authored so a suite could carry a second stage without a
+-- recruiter watching the grading queue. The live application is the owner's
 -- decision.
+--
+-- APPLIED. The owner approved this file and it was run on the local database on
+-- 2026-10-28; the three `assessment_templates` columns, their six constraints,
+-- `candidate_attempts.follow_up_of_attempt_id` with its foreign key and the
+-- `candidate_attempts_follow_up_once` unique index are all present, and no suite
+-- carries a rule yet — zero rows on either side, which is the normal state.
+-- `src/modules/assessment/domain/followUp.ts` keeps its refusal copy, because the
+-- availability probe reads the columns and a database that predates this file has
+-- to be told which file to run rather than be shown a 42703 about Postgres
+-- internals.
 -- ============================================================================
 
 alter table public.assessment_templates

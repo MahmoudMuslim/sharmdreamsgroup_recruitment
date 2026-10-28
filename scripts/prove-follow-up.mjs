@@ -4,7 +4,8 @@
  * #266 lets a suite send a candidate on to a second test: when a fully marked
  * paper scores inside a percent band written on the source suite, the target
  * suite is issued automatically. `db/migrations/035_assessment_follow_ups.sql`
- * is authored and NOT applied, so what can be pinned without a database is:
+ * is authored, and applied on the local database, so what can be pinned without
+ * touching candidate rows is:
  *
  *   1. the arithmetic — one module decides what a score is as a percentage,
  *      what a stored rule means, and whether a percentage sits in a band;
@@ -17,11 +18,14 @@
  *   5. the wiring markers — the router's guards, the three doors into GRADED,
  *      the suite editor, the assistant and the Guide all agree.
  *
- * (3) and (5) are text assertions, deliberately: the SQL is reviewed, never run
- * here, and the screens need a browser. They catch the files being edited
+ * (3) and (5) are text assertions, deliberately: the SQL is reviewed here, never
+ * re-run, and the screens need a browser. They catch the files being edited
  * apart, not a runtime that was misconfigured. Whether 035 is applied to any
  * given database is a fact about that database, not about this tree, and is
- * checked separately against the local stack.
+ * checked separately against the local stack. The router itself is not exercised
+ * here on purpose: issuing a link writes a real paper against a real candidate,
+ * which is the owner's data, so the routing guards are pinned as code, not as a
+ * rehearsal.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -426,22 +430,24 @@ check(
   FOLLOW_UP_MIGRATION
 );
 check(
-  "the read note names the migration and says authored but not applied",
+  "the read note names the migration a recruiter has to run, and what still works",
   FOLLOW_UP_SCHEMA_NOTE.includes(FOLLOW_UP_MIGRATION) &&
-    /authored but not applied/.test(FOLLOW_UP_SCHEMA_NOTE),
+    FOLLOW_UP_SCHEMA_NOTE.includes("Every other suite setting works normally"),
   FOLLOW_UP_SCHEMA_NOTE
 );
 check(
   "the write refusal names the migration and keeps the suite saved",
   FOLLOW_UP_WRITE_REFUSAL.includes("The suite itself was saved") &&
-    FOLLOW_UP_WRITE_REFUSAL.includes(FOLLOW_UP_MIGRATION) &&
-    /authored but not applied/.test(FOLLOW_UP_WRITE_REFUSAL),
+    FOLLOW_UP_WRITE_REFUSAL.includes(FOLLOW_UP_MIGRATION),
   FOLLOW_UP_WRITE_REFUSAL
 );
 
 const migration = read(FOLLOW_UP_MIGRATION);
 for (const [label, needle] of [
-  ["says it is not applied", "This migration is NOT applied to any database yet."],
+  [
+    "records that the owner applied it locally",
+    "APPLIED. The owner approved this file and it was run on the local database",
+  ],
   ["adds the target column", "add column if not exists follow_up_template_id uuid"],
   ["adds the bottom column", "add column if not exists follow_up_min_percent smallint"],
   ["adds the top column", "add column if not exists follow_up_max_percent smallint"],
@@ -963,8 +969,8 @@ sourceHas(
 );
 sourceHas(
   guide,
-  "Second-test rules arrive with db/migrations/035_assessment_follow_ups.sql",
-  "the Guide names the migration while it is unapplied"
+  "db/migrations/035_assessment_follow_ups.sql is applied",
+  "the Guide names the migration and says this database has it"
 );
 sourceHas(
   guide,

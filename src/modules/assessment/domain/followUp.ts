@@ -15,21 +15,22 @@
  * "everyone who finishes".
  *
  * The columns behind this rule are added by
- * `db/migrations/035_assessment_follow_ups.sql`, which is authored and not
- * applied. Every door probes for them and names that file while they are
- * missing; nothing here touches the database.
+ * `db/migrations/035_assessment_follow_ups.sql`, applied on this database. Every
+ * door still probes for them and names that file on a database that predates it,
+ * so a half-migrated cluster says which half it is missing; nothing here touches
+ * the database.
  */
 
-/** The file that adds the rule columns and the attempt link. Authored, not applied. */
+/** The file that adds the rule columns and the attempt link, applied on this database. */
 export const FOLLOW_UP_MIGRATION = "db/migrations/035_assessment_follow_ups.sql";
 
-/** What the suite editor and the assistant say while the columns are missing. */
+/** What the suite editor and the assistant say on a database that predates the columns. */
 export const FOLLOW_UP_SCHEMA_NOTE =
-  "Second-test routing has not been added to this database yet — db/migrations/035_assessment_follow_ups.sql is authored but not applied. Every other suite setting works normally.";
+  `Second-test routing is not on this database yet — ${FOLLOW_UP_MIGRATION} has not been run here. Every other suite setting works normally.`;
 
-/** What a save that carried a rule is told while the columns are missing. */
+/** What a save that carried a rule is told on a database that predates the columns. */
 export const FOLLOW_UP_WRITE_REFUSAL =
-  "The suite itself was saved, but its second-test rule was not: db/migrations/035_assessment_follow_ups.sql is authored but not applied.";
+  `The suite itself was saved, but its second-test rule was not: ${FOLLOW_UP_MIGRATION} has not been run here.`;
 
 /**
  * Whether an error means the follow-up columns are not on this database.
