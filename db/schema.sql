@@ -471,11 +471,16 @@ create table if not exists public.job_openings (
   salary_currency text default 'USD'::text not null,
   position_id uuid,
   positions_needed integer,
+  experience_level text,
   constraint job_openings_positions_needed_sane check ((positions_needed is null) or (positions_needed >= 1 and positions_needed <= 1000)),
   PRIMARY KEY (id)
 );
 comment on column public.job_openings.positions_needed is
   'How many people this opening is hiring for. A target set when the requisition opens, never derived from applications; NULL means no target was recorded. See migration 031.';
+comment on column public.job_openings.experience_level is
+  'How senior the role is: JUNIOR, MID, SENIOR or LEAD. NULL means no level '
+  'was recorded — every opening created before the column existed — and is '
+  'shown as silence, never defaulted to a middle tier. See migration 033.';
 create table if not exists public.jobs (
   id text,
   title text not null,
@@ -839,7 +844,10 @@ do $$ begin
   alter table public.job_opening_skills add constraint job_opening_skills_source_check CHECK ((source = ANY (ARRAY['RECRUITER'::text, 'CATALOGUE_MATCH'::text])));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
-  alter table public.job_openings add constraint job_openings_employment_type_check CHECK ((employment_type = ANY (ARRAY['FULL_TIME'::text, 'PART_TIME'::text, 'CONTRACT'::text, 'INTERNSHIP'::text])));
+  alter table public.job_openings add constraint job_openings_employment_type_check CHECK ((employment_type = ANY (ARRAY['FULL_TIME'::text, 'PART_TIME'::text, 'CONTRACT'::text, 'INTERNSHIP'::text, 'REMOTE'::text, 'HYBRID'::text])));
+exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
+do $$ begin
+  alter table public.job_openings add constraint job_openings_experience_level_check CHECK (((experience_level IS NULL) OR (experience_level = ANY (ARRAY['JUNIOR'::text, 'MID'::text, 'SENIOR'::text, 'LEAD'::text]))));
 exception when duplicate_object or duplicate_table or undefined_object then null; end $$;
 do $$ begin
   alter table public.notification_templates add constraint notification_templates_channel_check CHECK ((channel = ANY (ARRAY['EMAIL'::text, 'WHATSAPP'::text, 'IN_APP'::text])));
@@ -2597,7 +2605,6 @@ insert into public.role_family_skills (role_family_id, skill_id, required_level,
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('04f20d3a-1484-421f-a4a5-245dd3472962', 'GLOBAL', null, 'notifications.whatsapp_enabled', 'true', 'Send candidate WhatsApp updates', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('05729e75-55eb-4dde-9455-331e7352782e', 'GLOBAL', null, 'ai.enabled', 'true', 'Master switch for all AI features', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('35211a06-533e-4ade-aa8d-f178254b381a', 'GLOBAL', null, 'organisation.timezone', '"Africa/Cairo"', 'Used for interview scheduling and reports', false, null) on conflict (id) do nothing;
-insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('4072e650-dc25-464b-8270-b00466027b08', 'GLOBAL', null, 'security.require_oauth', 'false', 'Force single sign-on for all staff', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('43b38a61-746d-4d81-87d9-a03e813198a2', 'GLOBAL', null, 'assessment.autosave_interval_seconds', '20', 'Draft save frequency during a test', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('50455f6d-0281-48e6-aa62-930cb688fbb3', 'GLOBAL', null, 'security.session_timeout_minutes', '480', 'Idle timeout for staff sessions', false, null) on conflict (id) do nothing;
 insert into public.app_settings (id, scope, company_id, key, value, description, is_secret, updated_by) values ('51fee2b4-2967-4c49-b853-1ad16989ebf4', 'GLOBAL', null, 'assessment.default_duration_minutes', '60', 'Default test time limit', false, null) on conflict (id) do nothing;

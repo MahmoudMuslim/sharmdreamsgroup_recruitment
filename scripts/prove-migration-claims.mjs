@@ -1,11 +1,13 @@
 /* scripts/prove-migration-claims.mjs — Run: node scripts/prove-migration-claims.mjs
  *
  * This portal's copy says, page by page, whether *this* database has a given
- * migration: "025 is applied, so the page reads real rows", "033 is authored but
- * not applied, so the drawer hides the level picker". Two slices (#440, #483) were
- * spent fixing claims that had gone stale after a migration was applied, and
- * nothing pinned the agreement afterwards — the next `db:apply-local` of 031–035
- * would silently make six sentences lie.
+ * migration: "the ledger is applied on this database, so the page reads real rows",
+ * "on a database where that file has not been run the panel names the file and
+ * writes nothing". Two
+ * slices (#440, #483) were spent fixing claims that had gone stale after a
+ * migration was applied, and nothing pinned the agreement afterwards — the next
+ * `db:apply-local` of any file the copy names would silently make its sentences
+ * lie.
  *
  * So this asks the database first and the copy second. For each migration the copy
  * names, one SQL question establishes whether its signature object is here; then
@@ -15,7 +17,7 @@
  * until something applies it, which is the whole reason these claims exist.
  *
  * Part one is pure text and runs anywhere: a sentence that names
- * `db/migrations/033_opening_terms.sql` is a pointer a recruiter is told to run,
+ * `db/migrations/042_offers.sql` is a pointer a recruiter is told to run,
  * so renaming or deleting that file under the copy must fail here rather than
  * send someone at `npm run db:apply-local` after a file that is not there.
  */
@@ -96,6 +98,16 @@ const MIGRATIONS = [
   {
     file: "040_referrals.sql",
     asks: "select to_regclass('public.referrals') is not null as present",
+  },
+  {
+    file: "042_offers.sql",
+    asks: "select to_regclass('public.application_offers') is not null as present",
+  },
+  {
+    // `to_regclass` resolves a view as well as a table, so this probe does not need
+    // information_schema for a file whose only object is `form_usage`.
+    file: "045_form_usage.sql",
+    asks: "select to_regclass('public.form_usage') is not null as present",
   },
   {
     file: "046_assistant_voice_autonomy.sql",
@@ -225,6 +237,9 @@ const SOFT_FILES = [
   "src/modules/assistant/domain/registry/writes.ts",
   "src/modules/assistant/domain/registry/reads.ts",
   "src/modules/assistant/domain/registry/interviews.ts",
+  "src/modules/assistant/domain/registry/offers.ts",
+  "src/modules/offers/domain/offer.ts",
+  "src/modules/form-builder/application/formActions.ts",
 ];
 
 // Phrases, not verbs. `is applied` on its own cannot carry this: "REMOTE and HYBRID
