@@ -106,20 +106,30 @@ export function readExperienceLevel(value: unknown): ExperienceRead {
   return { ok: true, level };
 }
 
-/** The file that adds both vocabularies to the database. Authored, not applied. */
+/**
+ * The file that adds both vocabularies to the database. Applied on this database,
+ * so `job_openings` carries `experience_level` and the six-value employment-type
+ * check, and the screens read both.
+ */
 export const OPENING_TERMS_MIGRATION = "db/migrations/033_opening_terms.sql";
 
-/** What the grid and the public board say while the column is missing. */
+/**
+ * What the grid and the public board say where the read failed.
+ *
+ * This prints only after a probe reports a missing schema, so on a database that
+ * has the column it never reaches a screen; the wording names the file and states
+ * no fact about a database it has not measured.
+ */
 export const OPENING_TERMS_SCHEMA_NOTE =
-  "Seniority levels and Remote/Hybrid job types have not been added to this database yet — db/migrations/033_opening_terms.sql is authored but not applied.";
+  "Seniority levels and the Remote and Hybrid job types could not be read here: db/migrations/033_opening_terms.sql has never run on this database, so job_openings holds neither experience_level nor the wider employment-type list.";
 
-/** What a write that named a seniority level is told while the column is missing. */
+/** What a write naming a seniority level is told where the column is absent. */
 export const EXPERIENCE_WRITE_REFUSAL =
-  "This opening's seniority could not be saved: db/migrations/033_opening_terms.sql is authored but not applied, so job_openings has no experience_level column yet. Save the rest of the opening and record the level once it is applied.";
+  "This opening's seniority could not be saved: db/migrations/033_opening_terms.sql has never run on this database, so job_openings has no experience_level column. Save the rest of the opening and record the level once the column is there.";
 
-/** What a write that chose Remote or Hybrid is told while the old check holds. */
+/** What a write choosing Remote or Hybrid is told where the old check still holds. */
 export const EMPLOYMENT_WRITE_REFUSAL =
-  "Remote and Hybrid are not on this database's employment-type list yet: db/migrations/033_opening_terms.sql is authored but not applied, so the old four-value check still refuses them.";
+  "Remote and Hybrid were refused on this write: db/migrations/033_opening_terms.sql has never run on this database, so the older four-value employment-type check still stands and names only Full time, Part time, Contract and Internship.";
 
 /**
  * Whether an error means the schema this feature needs is absent.

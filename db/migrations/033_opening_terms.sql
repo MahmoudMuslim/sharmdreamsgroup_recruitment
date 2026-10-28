@@ -31,11 +31,21 @@
 -- exactly this column — a second axis would hide those roles from the chips
 -- applicants already use.
 --
--- This migration is NOT applied to any database yet. Nothing else in the tree
--- selects experience_level in a shared list: the jobs grid, the public board
--- and the assistant each read it through their own probe and name this file
--- while the column is missing, so the portal keeps working on both sides of the
--- ALTER. Applying it is the owner's decision.
+-- APPLIED to the local database on 2026-10-28, and the after-state was measured
+-- rather than assumed: `experience_level` is a nullable text column carrying its
+-- comment, `job_openings_experience_level_check` holds the four levels, and
+-- `job_openings_employment_type_check` holds six values. No opening violated
+-- either check, and the two rows on this database were both re-read afterwards
+-- still `FULL_TIME` with no level — the proof wrote REMOTE and SENIOR inside a
+-- transaction it rolled back, so nothing here was recorded by a test.
+--
+-- What a database that has not run this file is told: SUPERVISOR and a lowercase
+-- `lead` were refused by the level check and WORK_FROM_HOME by the employment
+-- check, which is the shape of every refusal the screens quote. The runtime
+-- strings in `src/modules/jobs/domain/openingTerms.ts` still name this file, and
+-- they must keep doing it: their door is a probe that failed, so they print only
+-- where a read or write could not reach the column, and on such a database the
+-- sentence is the whole of what the user learns.
 -- ============================================================================
 
 alter table public.job_openings

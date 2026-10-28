@@ -60,8 +60,9 @@ export default async function JobsPage() {
     // Read apart from the grid's own row read so a missing `positions_needed`
     // column costs only the target figure, never the whole page.
     getOpeningsHeadcount(restClient),
-    // The same separation for seniority: 033 is authored but not applied, and a
-    // missing column must cost the level, not the openings page.
+    // The same separation for seniority: on a database where 033 has never run
+    // there is no column, and a missing column must cost the level, not the
+    // openings page.
     getOpeningsTerms(restClient),
     // The master list a requisition picks from, read apart from the rows so a
     // failed catalogue costs the picker and not the page. Its retired rows come

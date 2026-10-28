@@ -407,9 +407,9 @@ export function JobsBrowser({
         <p className="text-[11px] leading-relaxed text-brand-ink/50">{demandUnavailableNote()}</p>
       )}
 
-      {/* The same rule for seniority: while 033 is unapplied there is no column to
-          hold a level, so no card can say "not recorded" about a value nobody could
-          have set. The grid says why once here. */}
+      {/* The same rule for seniority: where the column is absent there is nothing
+          to hold a level, so no card can say "not recorded" about a value nobody
+          could have set. The grid says why once here. */}
       {termsNote && (
         <p className="text-[11px] leading-relaxed text-brand-ink/50">{termsNote}</p>
       )}

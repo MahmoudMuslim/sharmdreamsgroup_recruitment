@@ -79,11 +79,11 @@ export async function getOpeningTermsByIds(
  * The seniority level for the openings the grid holds.
  *
  * Read apart from the grid's own row read, the same way the headcount target
- * is: the column ships ahead of its ALTER (migration 033 is authored, not
- * applied), and naming it in the main `select` would 400 the entire openings
- * page — including the applicants, the rails and the positions picker, none of
- * which need it. Isolated here, a missing column costs only the level, and the
- * note says which migration is missing.
+ * is: the column arrives with its own ALTER (migration 033), and on a database
+ * where that file has not run naming it in the main `select` would 400 the entire
+ * openings page — including the applicants, the rails and the positions picker,
+ * none of which need it. Isolated here, a missing column costs only the level,
+ * and the note says which migration is missing.
  *
  * The read takes the newest `GRID_ROW_LIMIT` openings in the grid's order and
  * is matched back by id, so a row the two reads disagree about is reported as

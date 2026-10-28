@@ -46,9 +46,9 @@ export interface JobDraft {
   /**
    * The seniority the opening states, or null for none recorded.
    *
-   * `undefined` means the caller did not offer the field at all. While 033 is
-   * unapplied the form sends nothing, and the action must write no column — a
-   * literal null would name a column the database does not have.
+   * `undefined` means the caller did not offer the field at all. On a database
+   * without the column the form sends nothing, and the action must write no
+   * column — a literal null would name something the database does not have.
    */
   experience_level?: string | null;
   description: string;
@@ -438,9 +438,10 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
   if (!existing) return { ok: false, error: "That opening no longer exists." };
 
   // The level is read in its own query, for the same reason the grid reads it
-  // apart: naming it in the row select above would fail the whole edit while 033
-  // is unapplied. It is read only when the draft names the field — a form that
-  // cannot offer it sends nothing, and "not offered" must never become "cleared".
+  // apart: naming it in the row select above would fail the whole edit on a
+  // database that has never run 033. It is read only when the draft names the
+  // field — a form that cannot offer it sends nothing, and "not offered" must
+  // never become "cleared".
   let storedLevel: string | null = null;
   let levelWasRead = false;
   if (draft.experience_level !== undefined) {

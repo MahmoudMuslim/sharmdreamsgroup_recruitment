@@ -68,10 +68,10 @@ import type { ResolvedField, ResolvedLayout } from "@/modules/form-builder/domai
  * Nothing here may return another applicant's data.
  */
 
-// `experience_level` is deliberately absent: db/migrations/033_opening_terms.sql
-// is authored but not applied, and naming the column here would fail the whole
-// public board on every database that has not run it. It is read in its own
-// probe below, which degrades to "not recorded".
+// `experience_level` is deliberately absent from this projection: the column is
+// what db/migrations/033_opening_terms.sql adds, and naming it here would fail
+// the whole public board on every database that has not run it. It is read in its
+// own probe below, which degrades to "not recorded".
 const JOB_COLUMNS =
   "id, title, tenant_id, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, created_at, tenants_and_companies(name)";
 
@@ -134,11 +134,11 @@ function toJob(row: Record<string, unknown>, experienceLevel: string | null = nu
 /**
  * The seniority map for the openings a public read returned.
  *
- * Read apart from the board's own columns so an unapplied 033 costs only the
- * tag: the row read still succeeds, every role keeps its card, and a missing
- * column reads as "not recorded" rather than throwing the board away. Only
- * stored codes the vocabulary recognises are carried — an unexpected value is
- * silence, the same as a null.
+ * Read apart from the board's own columns so a database without the level costs
+ * only the tag: the row read still succeeds, every role keeps its card, and a
+ * missing column reads as "not recorded" rather than throwing the board away.
+ * Only stored codes the vocabulary recognises are carried — an unexpected value
+ * is silence, the same as a null.
  */
 async function experienceLevels(
   restClient: ReturnType<typeof getAnonRestClient>,
@@ -152,8 +152,9 @@ async function experienceLevels(
     .in("id", ids);
 
   if (error) {
-    // The missing column is the expected state until the owner applies 033, so
-    // it is not logged on every cache revalidation; anything else is.
+    // A database that has never run 033 reports the missing column on every read,
+    // which is a fact about its schema rather than an incident, so it is not
+    // logged on every cache revalidation; anything else is.
     if (!isMissingSchemaError(error)) {
       console.error("[careers] seniority levels unreadable:", error.message);
     }

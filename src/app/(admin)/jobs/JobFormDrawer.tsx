@@ -43,7 +43,7 @@ export interface JobFormOptions {
   /** False when `positions` could not be read at all — the table does not exist yet. */
   positionsAvailable: boolean;
   /**
-   * False while 033 is unapplied: `experience_level` is not a column and the
+   * False where 033 has never run: `experience_level` is not a column and the
    * employment check still holds four values. The form then offers the four it
    * can store and no level at all, rather than a picker whose choice the
    * database would refuse.
@@ -69,7 +69,7 @@ export interface JobForEdit {
   sector: string;
   location: string;
   employment_type: string;
-  /** Null while 033 is unapplied, and for an opening nobody gave a level. */
+  /** Null on a database without the column, and for an opening nobody gave a level. */
   experience_level: string | null;
   description: string;
   requirements: string[] | null;
@@ -296,9 +296,9 @@ export function JobFormDrawer({
       // where it is — and while 026 is unapplied, sending the column at all would
       // fail the save.
       position_id: job ? undefined : draft.position_id || undefined,
-      // Undefined, not null, while 033 is unapplied: a literal null would name a
-      // column the database does not have, and the level is not the recruiter's
-      // to lose because a migration has not run.
+      // Undefined, not null, when the form has no level to offer: a literal null
+      // would name a column the database does not have, and the level is not the
+      // recruiter's to lose because a migration has not run.
       experience_level: options.termsAvailable ? draft.experience_level || null : undefined,
       requirements: draft.requirements
         .split("\n")
@@ -501,7 +501,7 @@ export function JobFormDrawer({
               value={draft.employment_type}
               onChange={(e) => set("employment_type")(e.target.value)}
             >
-              {/* While 033 is unapplied the widened check does not exist, so the
+              {/* Where 033 has never run the widened check does not exist, so the
                   two types it adds are not offered — a picker whose choice the
                   database would refuse is worse than one that says why. */}
               {(options.termsAvailable

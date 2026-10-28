@@ -2,17 +2,17 @@
  * Run: node --experimental-strip-types scripts/prove-opening-terms.mjs
  *
  * #259 gives an opening a seniority level and teaches the employment-type check
- * Remote and Hybrid. Most of the feature needs a database — `db/migrations/033_opening_terms.sql`
- * is authored and NOT applied, so on the live stack the column does not exist and
- * the old four-value check still stands. What can be pinned without one is the part
- * every door shares:
+ * Remote and Hybrid. Most of the feature needs a database: the column, the four
+ * levels and the widened check are `db/migrations/033_opening_terms.sql`'s, and on
+ * a database where that file has never run neither the level nor the two types
+ * exist. What can be pinned without one is the part every door shares:
  *
  *   1. the two closed vocabularies, their labels and the one reader a write uses;
  *   2. what a submitted level means — a code, a deliberate blank, or a refusal;
  *   3. the schema-missing predicate — a missing column is not a refused value;
- *   4. the authored DDL — column, both checks, cache reload, and no invented level;
+ *   4. the DDL — column, both checks, cache reload, and no invented level;
  *   5. the wiring markers — every screen and the chat reach the same lists, and no
- *      shared select names the unapplied column.
+ *      shared select names the column its own degradable probe reads.
  *
  * (4) and (5) are text assertions, deliberately: the SQL is reviewed, never run
  * here, and the screens need a browser. They catch the files being edited apart,
@@ -183,9 +183,9 @@ check(
   OPENING_TERMS_MIGRATION
 );
 check(
-  "the read note names the migration and says authored but not applied",
+  "the read note names the migration and states nothing about this database",
   OPENING_TERMS_SCHEMA_NOTE.includes(OPENING_TERMS_MIGRATION) &&
-    /authored but not applied/.test(OPENING_TERMS_SCHEMA_NOTE),
+    !/authored but not applied|is applied on this database/.test(OPENING_TERMS_SCHEMA_NOTE),
   OPENING_TERMS_SCHEMA_NOTE
 );
 check(
@@ -230,7 +230,7 @@ for (const [label, error, want] of [
 }
 
 // ---------------------------------------------------------------------------
-// 4. The authored migration (not executed here)
+// 4. The migration as authored (not executed here)
 // ---------------------------------------------------------------------------
 const migration = read("db/migrations/033_opening_terms.sql");
 for (const [label, needle] of [
@@ -242,7 +242,8 @@ for (const [label, needle] of [
   ["readds the check with six values", "array['FULL_TIME', 'PART_TIME', 'CONTRACT', 'INTERNSHIP', 'REMOTE', 'HYBRID']"],
   ["reloads the REST schema", "notify pgrst, 'reload schema';"],
   ["documents the column", "comment on column public.job_openings.experience_level is"],
-  ["says it is not applied", "This migration is NOT applied to any database yet."],
+  ["records that it was applied", "APPLIED to the local database on 2026-10-28"],
+  ["says which way an unrun database is told", "`src/modules/jobs/domain/openingTerms.ts` still name this file"],
 ]) {
   check(`033 ${label}`, migration.includes(needle), needle);
 }
@@ -315,7 +316,7 @@ sourceHas("the edit pre-reads a level only when the draft names it", "src/app/(a
 const publicActions = read("src/app/careers/actions.ts");
 const publicColumns = publicActions.match(/const JOB_COLUMNS =\s*"([^"]+)"/)?.[1] ?? "";
 check(
-  "the public board's shared select omits the unapplied column",
+  "the public board's shared select names no level column, so it still serves a database that has not run 033",
   publicColumns.length > 0 && !publicColumns.includes("experience_level"),
   publicColumns || "JOB_COLUMNS not found"
 );
@@ -343,7 +344,7 @@ sourceHas("the public chat card names the level", "src/modules/careers/chatbot/r
 const assistantReads = read("src/modules/assistant/infrastructure/reads.ts");
 const assistantSelect = assistantReads.match(/const JOB_SELECT =\s*"([^"]+)"/)?.[1] ?? "";
 check(
-  "the assistant's shared select omits the unapplied column",
+  "the assistant's shared select names no level column, so its reads survive a database that has not run 033",
   assistantSelect.length > 0 && !assistantSelect.includes("experience_level"),
   assistantSelect || "JOB_SELECT not found"
 );

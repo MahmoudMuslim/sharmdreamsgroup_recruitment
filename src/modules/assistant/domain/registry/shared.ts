@@ -557,10 +557,10 @@ function jobDraft(args: ToolArgs, opts: { fromPosition?: boolean } = {}): JobDra
     throw new ToolArgumentError(`"sector" must be one of: ${SECTORS.join(", ")}.`);
   }
 
-  // Three states, not two. An absent argument has to stay absent: while 033 is
-  // unapplied a chat has no level to send, and a null would name a column the
-  // database does not have and fail the whole write. `null` is the model asking
-  // to clear a recorded level; a word is the level itself.
+  // Three states, not two. An absent argument has to stay absent: on a database
+  // where 033 has never run a chat has no level to send, and a null would name a
+  // column the database does not have and fail the whole write. `null` is the
+  // model asking to clear a recorded level; a word is the level itself.
   const rawLevel = args.experience_level;
   let experienceLevel: string | null | undefined;
   if (rawLevel !== undefined) {

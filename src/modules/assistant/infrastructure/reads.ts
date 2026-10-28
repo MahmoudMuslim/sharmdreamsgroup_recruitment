@@ -71,9 +71,9 @@ export interface AssistantJobRow {
   hired: number;
 }
 
-// No `experience_level`: db/migrations/033_opening_terms.sql is authored but not
-// applied, and naming the column here would fail every openings read — the list,
-// the count and `update_job`'s pre-read — on a database that has not run it.
+// No `experience_level` in the projection: db/migrations/033_opening_terms.sql is
+// what adds the column, and naming it here would fail every openings read — the
+// list, the count and `update_job`'s pre-read — on a database that has not run it.
 // The level is read by id in `getOpeningTermsByIds` and merged below.
 const JOB_SELECT =
   "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applicants:applications(count), pipeline:applications(count), hired:applications(count)";
@@ -155,9 +155,10 @@ export interface AssistantJobRead {
   /** True when a company id was passed and no company carries it. */
   unknownCompany: boolean;
   /**
-   * Why no level could be read — 033 unapplied — or null when the column was
-   * readable. Without this every `experience_level: null` reads as "none was
-   * recorded", which is a different fact from "there is nowhere to record one".
+   * Why no level could be read — the database has no seniority column to read —
+   * or null when the column was readable. Without this every
+   * `experience_level: null` reads as "none was recorded", which is a different
+   * fact from "there is nowhere to record one".
    */
   termsNote: string | null;
 }
