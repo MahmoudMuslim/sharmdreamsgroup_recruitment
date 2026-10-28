@@ -79,7 +79,7 @@ const allAreas = LIVE_WATCH.map((watch) => watch.area);
 /* 1. The watch table                                                          */
 /* -------------------------------------------------------------------------- */
 
-check("the table watches fourteen areas", allAreas.length === 14, `got ${allAreas.length}`);
+check("the table watches fifteen areas", allAreas.length === 15, `got ${allAreas.length}`);
 check(
   "every area has its own name",
   new Set(allAreas).size === allAreas.length,
@@ -102,6 +102,11 @@ check(
   "no area is both stamped and hashed",
   LIVE_WATCH.every((watch) => Boolean(watch.stamp) !== Boolean(watch.columns?.length))
 );
+check(
+  "no two areas watch the same table",
+  new Set(LIVE_WATCH.map((watch) => watch.table)).size === allAreas.length,
+  LIVE_WATCH.map((watch) => watch.table).join(", ")
+);
 {
   const notes = LIVE_WATCH.find((watch) => watch.area === "interview notes");
   check(
@@ -117,6 +122,22 @@ check(
     JSON.stringify(schedule?.columns) ===
       JSON.stringify(["id", "application_id", "scheduled_at", "status", "meeting_link"]),
     JSON.stringify(schedule?.columns)
+  );
+}
+{
+  const claims = LIVE_WATCH.find((watch) => watch.area === "referrals");
+  check(
+    "the claim table is watched by its own stamped area, on the book alone",
+    claims?.table === "referrals" &&
+      claims?.stamp === "updated_at" &&
+      JSON.stringify(claims?.paths) === JSON.stringify(["/referrals"]),
+    JSON.stringify(claims)
+  );
+  const pipeline = LIVE_WATCH.find((watch) => watch.area === "pipeline");
+  check(
+    "the book watches the pipeline too, because a claim's progress is the application's stage",
+    pipeline?.table === "applications" && pipeline?.paths.includes("/referrals"),
+    JSON.stringify(pipeline?.paths)
   );
 }
 
@@ -164,6 +185,10 @@ equal("the jobs page reads the pipeline and the openings", areas("/jobs"), [
   "pipeline",
   "openings",
 ]);
+equal("the referral book reads the claims and the pipeline", areas("/referrals"), [
+  "pipeline",
+  "referrals",
+]);
 equal("a candidate's own page inherits the pipeline scope", areas("/candidates/abc-123"), [
   "pipeline",
   "assessments",
@@ -204,13 +229,13 @@ const oldReads = allAreas.length * STAFF_ROUTES.length;
 
 check("no page reads the whole watch list", busiest < allAreas.length, `busiest ${busiest}`);
 check("the busiest page reads six tables", busiest === 6, `got ${busiest}`);
-check("five pages poll nothing at all", silent === 5, `got ${silent}`);
+check("four pages poll nothing at all", silent === 4, `got ${silent}`);
 check(
   "the average page reads at most a quarter of the old sweep",
   reads <= oldReads * 0.25,
   `${reads} reads across ${STAFF_ROUTES.length} pages vs ${oldReads} before`
 );
-equal("the per-page sum is the tree's 31", reads, 31);
+equal("the per-page sum is the tree's 33", reads, 33);
 check(
   "the reduction is at least 80 per cent",
   (oldReads - reads) / oldReads >= 0.8,

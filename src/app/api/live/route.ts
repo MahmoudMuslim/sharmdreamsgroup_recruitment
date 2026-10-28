@@ -8,10 +8,10 @@
  * stream. The browser then reloads just the data of the page it is standing on.
  *
  * The browser names the page in the query string, so only that page's areas are
- * probed: a tab on /time fingerprints one table, not all twelve, and a page no
- * watched table feeds (Settings, the assistant, the change trail) polls nothing
- * at all. The reload rule was already filtered by the same paths, so this cuts
- * reads without changing which changes reach a page.
+ * probed: a tab on /time fingerprints one table, not the whole watch list, and a
+ * page no watched table feeds (Settings, the assistant, the change trail) polls
+ * nothing at all. The reload rule was already filtered by the same paths, so this
+ * cuts reads without changing which changes reach a page.
  *
  * That is the whole contract, and it is worth stating plainly because it is
  * narrower than "database push": no row content crosses here, only which part

@@ -37,7 +37,22 @@ export const LIVE_WATCH: readonly LiveWatch[] = [
     area: "pipeline",
     table: "applications",
     stamp: "updated_at",
-    paths: ["/candidates", "/dashboard", "/analytics", "/reports", "/jobs", "/files", "/whatsapp"],
+    // `/referrals` is here because a claim's progress IS the linked application's
+    // stage: the board reads it rather than copying it, so a stage move has to
+    // reach the book the same way it reaches the candidates list.
+    paths: ["/candidates", "/dashboard", "/analytics", "/reports", "/jobs", "/files", "/whatsapp", "/referrals"],
+  },
+  {
+    // The claims themselves, and their own area for the reason the interview
+    // notes are one: a missing table refuses only the area that names it. On a
+    // database where db/migrations/040_referrals.sql has never run, an entry
+    // shared with the pipeline would take its live reload down with it on eight
+    // pages; on one where it has run, the book still fails alone if the table
+    // ever goes unreadable.
+    area: "referrals",
+    table: "referrals",
+    stamp: "updated_at",
+    paths: ["/referrals"],
   },
   {
     area: "sourcing",

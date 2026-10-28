@@ -50,6 +50,7 @@ registerHooks({
 });
 
 const referral = await import("../src/modules/referrals/domain/referral.ts");
+const { LIVE_WATCH, watchForPath } = await import("../src/modules/live/domain/watch.ts");
 
 const results = [];
 function check(name, pass, detail = "") {
@@ -214,6 +215,27 @@ equal("an empty board counts nothing", referral.referralCounts([]), {
   bonusPaid: 0,
 });
 
+// The comment on `referralProgress` promises that a stage move reaches the book
+// through the live channel. Before this watch existed the promise was false and
+// the page silently never refreshed, so the scope is asserted here rather than
+// trusted from the watch table's own proof.
+const claims = LIVE_WATCH.find((watch) => watch.area === "referrals");
+check(
+  "the claim table is watched by its own area",
+  claims?.table === "referrals" && claims?.stamp === "updated_at",
+  JSON.stringify(claims)
+);
+check(
+  "and on the referral book alone, so an unapplied 040 refuses only this area",
+  JSON.stringify(claims?.paths) === JSON.stringify(["/referrals"]),
+  JSON.stringify(claims?.paths)
+);
+equal(
+  "the book refreshes on its own claims and on the pipeline",
+  watchForPath("/referrals").map((watch) => watch.area),
+  ["pipeline", "referrals"]
+);
+
 /* -------------------------------------------------------------------------- */
 /* 4. The leaderboard                                                          */
 /* -------------------------------------------------------------------------- */
@@ -302,7 +324,17 @@ equal(
 const migration = read("db/migrations/040_referrals.sql");
 has("the migration creates the referrals table", migration, "create table if not exists public.referrals");
 has("the migration adds a durable code to the profile", migration, "add column if not exists referral_code");
-has("a new staff member gets a code from the database", migration, "set default upper(encode(gen_random_bytes(5), 'hex'))");
+has("a new staff member gets a code from the database", migration, "upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 10))");
+// The default must not be `encode(gen_random_bytes(5), 'hex')`: this stack installs
+// pgcrypto into the `extensions` schema and a migration session runs with
+// search_path = public, so the unqualified name aborts the whole file. The backfill's
+// comment still names the function to explain the choice, so the guard reads only the
+// lines the database actually executes.
+const migrationStatements = migration
+  .split("\n")
+  .filter((line) => !line.trimStart().startsWith("--"))
+  .join("\n");
+check("the code default resolves without pgcrypto", !/gen_random_bytes/.test(migrationStatements));
 has(
   "the claim is unique per person and role",
   migration,
@@ -323,7 +355,8 @@ has(
   "referrer_profile_id = current_user_profile_id()"
 );
 has("a recruiter reads every row", migration, "is_recruiter()");
-has("the migration says it is not applied", migration, "NOT APPLIED");
+has("the migration says it is applied", migration, "-- APPLIED. The owner approved");
+check("the migration no longer claims the file was never run", !/NOT APPLIED/.test(migration));
 has("the migration names the next file", migration, "041");
 
 /* -------------------------------------------------------------------------- */
