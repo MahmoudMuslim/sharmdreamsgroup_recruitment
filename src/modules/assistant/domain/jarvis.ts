@@ -273,7 +273,7 @@ export const MAX_WAKE_PHRASE_LEN = 48;
 export const DEFAULT_WAKE_PHRASE_TEXT = "Hey Jarvis";
 
 /**
- * The moment the microphone's destination changed from the browser vendor's speech
+ * The moment the microphone's destination changed from the browser's own speech
  * service to this portal's own gateway.
  *
  * A stamp taken before it was taken under an explanation that is no longer true, so
