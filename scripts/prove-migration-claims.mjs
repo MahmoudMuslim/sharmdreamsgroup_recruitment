@@ -131,6 +131,13 @@ const MIGRATIONS = [
     asks:
       "select exists (select 1 from information_schema.columns where table_schema='public' and table_name='assistant_jarvis_prefs' and column_name='wake_phrase') as present",
   },
+  {
+    // Authored, not applied: the probe asks for the table the file's first
+    // structural act creates, so an applied 051 flips this row to `applied` and the
+    // reader's refusal sentence has to be swept with it.
+    file: "051_jarvis_voice_commands.sql",
+    asks: "select to_regclass('public.assistant_jarvis_commands') is not null as present",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -245,6 +252,7 @@ const SOFT_FILES = [
   "src/modules/assistant/domain/registry/offers.ts",
   "src/modules/offers/domain/offer.ts",
   "src/modules/form-builder/application/formActions.ts",
+  "src/modules/assistant/application/jarvisCommands.ts",
 ];
 
 // Phrases, not verbs. `is applied` on its own cannot carry this: "REMOTE and HYBRID

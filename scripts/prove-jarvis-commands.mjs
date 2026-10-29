@@ -129,6 +129,7 @@ const RUNNER_REL = "src/app/(admin)/assistant/actions.ts";
 const STORE_REL = "src/lib/jarvis-ui.ts";
 
 const DOMAIN_URL = pathToFileURL(path.join(root, DOMAIN_REL)).href;
+const READER_URL = pathToFileURL(path.join(root, READER_REL)).href;
 // A fresh URL on every load, so a check reads the bytes now on disk: a monotonic
 // counter, because two Date.now() calls in one millisecond would hand a mutated
 // run the module imported before the mutation.
@@ -163,14 +164,21 @@ function fakeRest({ read = { data: null, error: null }, write = { error: null },
     from(table) {
       const entry = { table };
       calls.push(entry);
+      const settle = async () => {
+        if (throwOn === "read") throw new Error("the read door blew up");
+        entry.op = "read";
+        return typeof read === "function" ? read(entry) : read;
+      };
       const chain = {
         select: () => chain,
         eq: () => chain,
-        maybeSingle: async () => {
-          if (throwOn === "read") throw new Error("the read door blew up");
-          entry.op = "read";
-          return typeof read === "function" ? read(entry) : read;
+        // Recorded, not merely accepted: a capped list is only honest if the read
+        // asked for one row more than it shows, and that number is the mechanism.
+        limit: (value) => {
+          entry.limit = value;
+          return chain;
         },
+        maybeSingle: settle,
         upsert: async (payload, opts) => {
           entry.op = "upsert";
           entry.payload = payload;
@@ -178,6 +186,9 @@ function fakeRest({ read = { data: null, error: null }, write = { error: null },
           if (throwOn === "write") throw new Error("the write door blew up");
           return typeof write === "function" ? write(entry) : write;
         },
+        // The real builder is awaitable (query-builder.ts:141), so a chained read
+        // that never picked `.single()` is awaited as a promise of rows.
+        then: (onFulfilled, onRejected) => settle().then(onFulfilled, onRejected),
       };
       return chain;
     },
@@ -631,12 +642,124 @@ async function check5() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 5b. The list is read once, and says which failure it met
+// ---------------------------------------------------------------------------
+/**
+ * One read answers three different questions — *the table is not there*, *the table
+ * could not be reached*, *there is nothing here yet* — and the console says a
+ * different sentence for each. The person's next action differs, so a read that
+ * collapsed two of them would send somebody to a migration that would not help, or
+ * explain an outage as a missing file.
+ */
+async function check5b() {
+  const problems = [];
+  const m = await load(READER_URL);
+
+  // A fresh stub per case, and every case starts from a clean room, because an
+  // inherited identity is exactly the bug these checks exist to catch.
+  const reading = (payload) => {
+    const rest = fakeRest(payload);
+    resetGlobals({ __jarvisRest: rest.client });
+    return rest;
+  };
+
+  // The table nobody created, answered the way PostgREST answers it.
+  reading({ read: { data: null, error: ABSENT } });
+  const absentRead = await m.readVoiceCommands();
+  expect(problems, "an absent table is a problem", absentRead.problem, "absent");
+  expect(problems, "with no commands", absentRead.commands.length, 0);
+  expect(problems, "nothing capped", absentRead.capped, false);
+  expect(problems, "and the file named",
+    /051_jarvis_voice_commands\.sql is authored but not applied/.test(absentRead.message ?? ""), true);
+
+  // An outage is not an unapplied file. Saying it was would send the person to a
+  // migration they cannot run.
+  reading({ read: { data: null, error: UNREADABLE } });
+  const broken = await m.readVoiceCommands();
+  expect(problems, "an outage is a different problem", broken.problem, "unreadable");
+  expect(problems, "and does not name the migration", /051/.test(broken.message ?? ""), false);
+  expect(problems, "and still says nothing will run", /nothing spoken will run/.test(broken.message ?? ""), true);
+
+  // Present and empty: a person who has saved nothing, on a database that has the
+  // table. Neither failure, and no sentence.
+  reading({ read: { data: [], error: null } });
+  const empty = await m.readVoiceCommands();
+  expect(problems, "an empty list is not a problem", empty.problem, null);
+  expect(problems, "and says nothing", empty.message, null);
+  expect(problems, "with no commands", empty.commands.length, 0);
+
+  // Present with rows, personal and shared, merged in one read because RLS decides
+  // what the person may see and a second, scope-filtered query would be a weaker
+  // copy of that decision.
+  const rows = [
+    { id: "1", scope: "personal", owner_profile_id: "p1", trigger_phrase: "open mine", title: "Mine",
+      category: "personal", action_type: "note", action_payload: { text: "hi" }, notes: null, enabled: true },
+    { id: "2", scope: "shared", owner_profile_id: null, trigger_phrase: "open the outbox", title: "Outbox",
+      category: "communication", action_type: "open", action_payload: { href: "/whatsapp" }, notes: null, enabled: true },
+  ];
+  const filledRest = reading({ read: { data: rows, error: null } });
+  const filled = await m.readVoiceCommands();
+  expect(problems, "both halves arrive", filled.commands.map((command) => command.scope), ["personal", "shared"]);
+  expect(problems, "one table read, not one per scope",
+    filledRest.calls.filter((call) => call.table === "assistant_jarvis_commands").length, 1);
+  expect(problems, "asking for one row more than it shows", filledRest.calls[0]?.limit, 201);
+
+  // The cap, disclosed rather than silently applied.
+  const many = Array.from({ length: 201 }, (_, index) => ({
+    id: `m${index}`, scope: "personal", owner_profile_id: "p1", trigger_phrase: `phrase ${index}`,
+    title: `T${index}`, category: "personal", action_type: "note",
+    action_payload: { text: "x" }, notes: null, enabled: true,
+  }));
+  reading({ read: { data: many, error: null } });
+  const capped = await m.readVoiceCommands();
+  expect(problems, "the read is bounded", capped.commands.length, 200);
+  expect(problems, "and says it was", capped.capped, true);
+  expect(problems, "naming the number it kept", /first 200 commands/.test(capped.message ?? ""), true);
+
+  // The one-row read A6's update uses: the same answered list, found in it.
+  reading({ read: { data: rows, error: null } });
+  const found = await m.readVoiceCommand("2");
+  expect(problems, "the one-row read finds its row", found.command?.id, "2");
+  expect(problems, "through the same answered read", found.read.problem, null);
+  const miss = await m.readVoiceCommand("nope");
+  expect(problems, "a miss is a miss, not a failure", miss.command, null);
+  expect(problems, "with the read still answering", miss.read.problem, null);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 5c. The migration-claims proof asks about 051 by the table it creates
+// ---------------------------------------------------------------------------
+async function check5c() {
+  const problems = [];
+  const claims = read("scripts/prove-migration-claims.mjs");
+  if (!claims.includes('file: "051_jarvis_voice_commands.sql"')) {
+    problems.push("prove-migration-claims does not ask about 051");
+  }
+  if (!claims.includes("to_regclass('public.assistant_jarvis_commands')")) {
+    problems.push("the 051 probe does not name the table");
+  }
+  // That proof requires every migration it asks about to be named in src/, with the
+  // polarity stated within a sentence. This sentence is the one that does it, so the
+  // two halves of the task have to land together or the claims proof goes red.
+  const reader = read(READER_REL);
+  const at = reader.indexOf("db/migrations/051_jarvis_voice_commands.sql");
+  if (at === -1) problems.push("no src/ file names 051, so the claims proof cannot read it");
+  else if (!/not applied/.test(reader.slice(at, at + 200))) {
+    problems.push("the sentence naming 051 does not say whether this database has it");
+  }
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The six categories and four action types are the shipped vocabulary", check1],
   ["2. The write door refuses every field it cannot express", check2],
   ["3. The read door renders a hand-edited row and names what it cannot read", check3],
   ["4. The matcher reads whole folded phrases, longest first, own scope first", check4],
   ["5. 051 stores a command, scopes it, and gates the shared half", check5],
+  ["5b. The list is read once, and says which failure it met", check5b],
+  ["5c. The migration-claims proof asks about 051 by the table it creates", check5c],
   // Group 6 arrives in Task A8.
 ];
 
@@ -822,6 +945,27 @@ await mutation(
   "    scope = 'shared' and is_staff() and has_permission('assistant.commands')\n  );\n\ncreate policy assistant_jarvis_commands_shared_update",
   "    scope = 'shared' and is_staff()\n  );\n\ncreate policy assistant_jarvis_commands_shared_update",
   async () => checkIsRed(5)
+);
+
+// The reader's two decisions that change what a person is told. The first is the
+// one that costs a working portal an outage explanation: an unreadable table
+// reported as an unapplied file sends somebody to run a migration that is already
+// there. The second is the cap — a list silently cut is a list that lies about what
+// the person can say.
+await mutation(
+  "14. The reader reporting an outage as an unapplied file → check 5b red",
+  READER_REL,
+  "    if (isMissing(error)) {",
+  "    if (true) {",
+  async () => checkIsRed(6)
+);
+
+await mutation(
+  "15. The reader keeping every row it was given → check 5b red",
+  READER_REL,
+  "  const capped = rows.length > COMMAND_LIMITS.rows;",
+  "  const capped = false;",
+  async () => checkIsRed(6)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
