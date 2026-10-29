@@ -103,6 +103,12 @@ function expect(problems, label, actual, expected) {
   if (!same) problems.push(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
+/** The route's own spelling of a window: `5 * 60_000` for five minutes. */
+function formatMs(ms) {
+  const minutes = ms / 60_000;
+  return Number.isInteger(minutes) && minutes >= 2 ? `${minutes} * 60_000` : String(ms);
+}
+
 const DOMAIN_REL = "src/modules/assistant/domain/jarvis.ts";
 const MIGRATION_REL = "db/migrations/047_assistant_jarvis_prefs.sql";
 const FEED_REL = "src/modules/shell/application/shell-actions.ts";
@@ -1071,6 +1077,86 @@ async function check17() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 18. The gate opens on speech, closes on silence, and never runs away
+// ---------------------------------------------------------------------------
+async function check18() {
+  const listening = await load(pathToFileURL(path.join(root, "src/modules/assistant/domain/listening.ts")).href);
+  const jarvis = await load(DOMAIN_URL);
+  const problems = [];
+
+  // Four numbers decide the always-on tier, and they are the whole vocabulary.
+  expect(problems, "the threshold is a loudness, not a percent", listening.GATE_LEVEL_THRESHOLD > 0 && listening.GATE_LEVEL_THRESHOLD < 1, true);
+  expect(problems, "the hysteresis is smaller than the threshold", listening.GATE_HYSTERESIS < listening.GATE_LEVEL_THRESHOLD, true);
+  expect(problems, "the floor is shorter than the cap", listening.GATE_MIN_SEGMENT_MS < listening.GATE_MAX_SEGMENT_MS, true);
+
+  const hi = listening.GATE_LEVEL_THRESHOLD;
+  const lo = listening.GATE_LEVEL_THRESHOLD - listening.GATE_HYSTERESIS - 0.01;
+
+  // A closed gate hearing nothing stays closed and yields nothing.
+  let outcome = listening.sampleGate(listening.GATE_CLOSED, 0, 0);
+  expect(problems, "silence does not open a segment", outcome, { gate: { openFrom: null }, clip: null });
+
+  // Speech opens it, and the opening sample is not itself a clip.
+  outcome = listening.sampleGate(listening.GATE_CLOSED, hi, 1000);
+  expect(problems, "the opening sample", outcome, { gate: { openFrom: 1000 }, clip: null });
+
+  // A level inside the hysteresis band holds the segment open — a consonant tail
+  // that dips is still the same sentence.
+  const held = listening.sampleGate(outcome.gate, hi - listening.GATE_HYSTERESIS / 2, 1200);
+  expect(problems, "a dip inside the hysteresis holds it open", held, { gate: { openFrom: 1000 }, clip: null });
+
+  // Silence below the band closes it and yields the segment.
+  const closed = listening.sampleGate(outcome.gate, lo, 1400);
+  expect(problems, "silence closes the segment", closed, {
+    gate: { openFrom: null },
+    clip: { startMs: 1000, endMs: 1400 },
+  });
+
+  // A segment shorter than the floor is not speech worth a call: cough, click, breath.
+  const tiny = listening.sampleGate({ openFrom: 1000 }, lo, 1000 + listening.GATE_MIN_SEGMENT_MS - 1);
+  expect(problems, "a too-short segment is discarded", tiny.clip, null);
+  expect(problems, "and the gate is closed again", tiny.gate, { openFrom: null });
+
+  // A never-ending segment is capped, kept, and re-opened at the cap boundary while
+  // the person is still talking — otherwise one long answer costs one call and the
+  // rest of it is lost.
+  const overrun = listening.sampleGate({ openFrom: 1000 }, hi, 1000 + listening.GATE_MAX_SEGMENT_MS + 50);
+  expect(problems, "the cap cuts the clip at the ceiling", overrun.clip, {
+    startMs: 1000,
+    endMs: 1000 + listening.GATE_MAX_SEGMENT_MS,
+  });
+  expect(problems, "and a still-speaking gate re-opens", overrun.gate, { openFrom: 1000 + listening.GATE_MAX_SEGMENT_MS });
+
+  // The same cap with nobody still talking does not invent a fresh segment.
+  const overrunQuiet = listening.sampleGate({ openFrom: 1000 }, lo, 1000 + listening.GATE_MAX_SEGMENT_MS + 50);
+  expect(problems, "a capped clip that has gone quiet does not re-open", overrunQuiet.gate, { openFrom: null });
+
+  // The numbers a retune would change are not written anywhere else.
+  const meter = read("src/modules/assistant/presentation/useJarvisMeter.ts");
+  problems.push(...(meter.includes("sum / bytes.length / 128") ? [] : ["the meter no longer scales the way the threshold is worded"]));
+  expect(problems, "the gate is not a jarvis.ts concept", typeof jarvis.sampleGate, "undefined");
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 19. The cap the panel prints is the cap the door enforces
+// ---------------------------------------------------------------------------
+async function check19() {
+  const listening = await load(pathToFileURL(path.join(root, "src/modules/assistant/domain/listening.ts")).href);
+  const problems = [];
+  const route = read("src/app/api/assistant/voice/route.ts");
+
+  // The panel promises a ceiling; the route is the only thing that imposes it. Two
+  // numbers written twice are only honest while a proof keeps them equal.
+  problems.push(...(route.includes(`const WINDOW_MS = ${listening.TRANSCRIPTION_WINDOW_MS}`) || route.includes(`const WINDOW_MS = ${formatMs(listening.TRANSCRIPTION_WINDOW_MS)}`) ? [] : [`the door's window is not the panel's: ${route.match(/const WINDOW_MS = [^\n]*/)?.[0] ?? "absent"}`]));
+  expect(problems, "the door's count is the panel's count", route.includes(`const MAX_UTTERANCES = ${listening.TRANSCRIPTION_MAX_SEGMENTS}`), true);
+  // The sentence is what a person reads, so it must carry both numbers.
+  problems.push(...(listening.LISTENING_QUOTA_SENTENCE.includes(String(listening.TRANSCRIPTION_MAX_SEGMENTS)) ? [] : ["the quota sentence does not name the count"]));
+  problems.push(...(/five|300000|5 min/.test(listening.LISTENING_QUOTA_SENTENCE) ? [] : ["the quota sentence does not name the window"]));
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The five queues are the ones the attention feed issues, ranked and thresholded", check1],
   ["2. A clock reading is minutes past midnight, or nothing at all", check2],
@@ -1089,6 +1175,8 @@ const CHECKS = [
   ["15. The phrase ceiling in jarvis.ts is the ceiling in voice.ts", check15],
   ["16. A consent stamp taken under the browser-vendor wording does not carry over", check16],
   ["17. A refused write names the file the draft actually needs", check17],
+  ["18. The gate opens on speech, closes on silence, discards a breath, caps a river", check18],
+  ["19. The ceiling the panel prints is the ceiling the voice door imposes", check19],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1477,6 +1565,40 @@ await mutation(
   "return { ok: false, error: migrationSentence(draft) };",
   "return { ok: false, error: TABLE_SENTENCE };",
   async () => checkIsRed(17)
+);
+
+const LISTENING_REL = "src/modules/assistant/domain/listening.ts";
+
+await mutation(
+  "41. A gate that closes at its own threshold cuts every sentence into words → check 18 red",
+  LISTENING_REL,
+  "  if (level < GATE_LEVEL_THRESHOLD - GATE_HYSTERESIS) {",
+  "  if (level < GATE_LEVEL_THRESHOLD) {",
+  async () => checkIsRed(18)
+);
+
+await mutation(
+  "42. A too-short segment charged to the gateway anyway → check 18 red",
+  LISTENING_REL,
+  "    const kept = nowMs - gate.openFrom >= GATE_MIN_SEGMENT_MS;",
+  "    const kept = true;",
+  async () => checkIsRed(18)
+);
+
+await mutation(
+  "43. A capped segment that never re-opens, losing the rest of an answer → check 18 red",
+  LISTENING_REL,
+  "      gate: { openFrom: level >= GATE_LEVEL_THRESHOLD ? endMs : null },",
+  "      gate: { openFrom: null },",
+  async () => checkIsRed(18)
+);
+
+await mutation(
+  "44. The panel promising a ceiling the door does not impose → check 19 red",
+  LISTENING_REL,
+  "export const TRANSCRIPTION_MAX_SEGMENTS = 20;",
+  "export const TRANSCRIPTION_MAX_SEGMENTS = 21;",
+  async () => checkIsRed(19)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
