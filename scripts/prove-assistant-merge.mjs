@@ -102,7 +102,16 @@ function runtime({ server = false, preference = null, ambientArmed = false, bloc
       if (name.endsWith("/ReplyChart")) return { ReplyChart: () => null };
       if (name.endsWith("/useSpeech")) return { useSpeech: () => ({ speaking: false, error: null, speak: (value) => spoken.push(value), stop() {}, echoedOwnVoice: () => false }) };
       if (name.endsWith("/useRecorder")) return { useRecorder: () => ({ state: "idle", secondsLeft: 120, hitLimit: false, start() {}, stop() {} }) };
-      if (name.endsWith("/useWakeWord")) return { useWakeWord: () => ({ supported: true, listening: false, error: null }) };
+      if (name.endsWith("/useWakeListening")) return {
+        useWakeListening: () => ({ listening: false, error: null, quotaHit: false }),
+        useMicrophoneAvailable: () => true,
+      };
+      // The console reads its phrase from the account through this server action. A
+      // fixture has no database, so it answers the way an unreadable one does and the
+      // chat falls back to the shipped phrase — which is the state the strip names.
+      if (name === "@/app/(admin)/settings/jarvis-actions") return {
+        getJarvisPresence: async () => ({ ok: false, reason: "unreadable", message: "fixture" }),
+      };
       if (name.endsWith("/useJarvisHandoff")) return {
         useJarvisHandoff: () => ({ ambientArmed }),
         useJarvisAwaitingWriter: (ref) => (value) => { ref.current = value; },
@@ -177,7 +186,11 @@ test("main page renders history, console controls and collapsed privacy/autonomy
   const disclosure = html.match(/<details\b([^>]*)>([\s\S]*?)<\/details>/);
   assert.ok(disclosure, "voice settings can be expanded");
   assert.doesNotMatch(disclosure[1], /\bopen(?:=|\s|$)/);
-  for (const promise of ["never stored", "discarded", "browser vendor", "only while this tab is visible", "What a spoken word may release"]) assert.ok(disclosure[2].includes(promise), promise);
+  // The server escapes the apostrophe in "portal's", so the promise is read on the
+  // text as a person reads it rather than on the markup.
+  const disclosed = disclosure[2].replace(/&#x27;|&#39;|&apos;/g, "'");
+  for (const promise of ["never stored", "discarded", "this portal's own model", "only while this tab is visible", "What a spoken word may release"]) assert.ok(disclosed.includes(promise), promise);
+  assert.ok(!disclosed.includes("sends it to Google"), "the disclosure does not name a browser vendor");
   assert.deepEqual(ui.guarded, ["/assistant"]);
   assert.deepEqual(ui.reads, ["staff-1"]);
   assert.equal(page.instant, false);
@@ -259,7 +272,7 @@ test("voice autonomy action moves to the Assistant guard without changing its ap
 });
 
 test("voice implementation no longer lives under the retired page", () => {
-  for (const name of ["AutonomyPanel.tsx", "VoiceButton.tsx", "VoiceStrip.tsx", "transcribe.ts", "useRecorder.ts", "useSpeech.ts", "useWakeWord.ts", "useJarvisHandoff.ts"]) {
+  for (const name of ["AutonomyPanel.tsx", "VoiceButton.tsx", "VoiceStrip.tsx", "transcribe.ts", "useRecorder.ts", "useSpeech.ts", "useWakeListening.ts", "useJarvisHandoff.ts"]) {
     assert.ok(existsSync(path.join(root, voice, name)), `shared module: ${name}`);
     assert.ok(!existsSync(path.join(root, assistant, "voice", name)), `retired route module: ${name}`);
   }
