@@ -64,7 +64,11 @@ export function JarvisReactor({
   }, [metered, level]);
 
   const label = preview ? `${state} appearance preview` : ariaLabel ?? STATE_LINE[state];
-  const Surface = preview ? "div" : "button";
+  // A surface with no click is a display, not a button: `aria-expanded` over a stage
+  // that has no panel to expand would promise a control that is not there, and a
+  // `cursor-pointer` over it promises the same thing one way sooner.
+  const interactive = !preview && Boolean(onClick);
+  const Surface = interactive ? "button" : "div";
 
   return (
     <div className="relative flex flex-col items-center">
@@ -74,11 +78,11 @@ export function JarvisReactor({
         className="pointer-events-none absolute inset-0 rounded-full blur-2xl transition-colors duration-700 motion-reduce:transition-none"
       />
       <Surface
-        type={preview ? undefined : "button"}
-        onClick={preview ? undefined : onClick}
+        type={interactive ? "button" : undefined}
+        onClick={interactive ? onClick : undefined}
         aria-label={label}
-        aria-expanded={preview ? undefined : ariaExpanded}
-        className={preview ? "relative z-10 rounded-full" : "group relative z-10 cursor-pointer rounded-full transition-transform duration-300 hover:scale-[1.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-current motion-reduce:transition-none"}
+        aria-expanded={interactive ? ariaExpanded : undefined}
+        className={interactive ? "group relative z-10 cursor-pointer rounded-full transition-transform duration-300 hover:scale-[1.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-current motion-reduce:transition-none" : "relative z-10 rounded-full"}
       >
         <div style={{ width: size, height: size }}>
           <LazyOrb

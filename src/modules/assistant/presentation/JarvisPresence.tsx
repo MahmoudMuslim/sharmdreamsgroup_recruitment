@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { matchCommand } from "@/modules/assistant/domain/commands";
+import { STAGE_ORB_PX, STAGE_ROUTE } from "@/modules/assistant/domain/stage";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
 import {
@@ -116,6 +117,9 @@ export interface JarvisPresenceProps {
  */
 export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   const router = useRouter();
+  // The stage is a route, so the orb's position and the address bar can never disagree:
+  // a reload comes back to the same place and the back button leaves it.
+  const pathname = usePathname();
   const ui = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
   const [presence, setPresence] = useState<PresenceRead | null>(null);
   // What the orb looks like, read from the same row that says what it may do. The
@@ -133,6 +137,11 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   // pointer or the keyboard is not on the orb. Either one alone is not rest.
   const [idle, setIdle] = useState(false);
   const [expanded, setExpanded] = useState(false);
+
+  const onStage = pathname === STAGE_ROUTE;
+  // An answer that has landed is what moves the orb: an empty stage keeps the middle,
+  // because there is nothing beside it to read yet.
+  const turned = onStage && ui.stageTurns > 0;
 
   // The same browser-level pair the chat speaks with, so the orb and the answers it
   // reads aloud cannot sound like two different people on one machine.
@@ -228,10 +237,25 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
         }
         return;
       }
-      setJarvisOpen(true);
+      // On the stage the conversation is already on screen; opening the dock over it
+      // would put a second copy of the transcript in front of the person speaking.
+      if (!onStage) setJarvisOpen(true);
       handToJarvisChat(text);
     },
-    [heardOwnVoice, presence, router, say, stop, tone, ui.awaiting, ui.pendingApproval, voice.speaking, wakeAudio, wakePhrase]
+    [
+      heardOwnVoice,
+      onStage,
+      presence,
+      router,
+      say,
+      stop,
+      tone,
+      ui.awaiting,
+      ui.pendingApproval,
+      voice.speaking,
+      wakeAudio,
+      wakePhrase,
+    ]
   );
 
   // Kept current after commit rather than during render: the listener reads its
@@ -278,11 +302,19 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
       if (target?.tagName === "TEXTAREA") return;
       event.preventDefault();
       wakeAudio();
+      // Shift is the stage, and it is tested before the plain chord because the plain
+      // chord fires on this keystroke too — the guard above never looks at shiftKey.
+      if (event.shiftKey) {
+        router.push(STAGE_ROUTE);
+        return;
+      }
+      // On the stage there is no panel to open: the conversation is the screen.
+      if (onStage) return;
       toggleJarvisOpen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [wakeAudio]);
+  }, [wakeAudio, router, onStage]);
 
   const state: ReactorState =
     voice.speaking || ui.speaking
@@ -321,15 +353,16 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
 
   /**
    * Whether the orb may rest: the conversation is closed, nothing is happening,
-   * and it has nothing to say. Those four facts are what make a small orb honest —
-   * an orb that shrank while a queue was over its threshold, or while a briefing
-   * was on screen, would be hiding the one thing it exists to show.
+   * it has nothing to say, and it is not the stage's own orb. Those five facts are
+   * what make a small orb honest — an orb that shrank while a queue was over its
+   * threshold, or while a briefing was on screen, would be hiding the one thing it
+   * exists to show, and a stage orb is placed by its own centre, not by the corner.
    *
    * `idle` is a latch, not a countdown: once the orb has rested, `resting` above is
    * still gated by `canRest` on every render, so a busier state brings it straight
    * back — and a pointer or a tab focus holds it out until both leave.
    */
-  const canRest = !ui.open && state === "idle" && !announcement && watcher.news.length === 0;
+  const canRest = !ui.open && state === "idle" && !announcement && watcher.news.length === 0 && !onStage;
   const resting = canRest && idle && !expanded;
 
   useEffect(() => {
@@ -338,15 +371,29 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
     return () => window.clearTimeout(timer);
   }, [canRest]);
 
+  // The list itself is inline so that scale and translate cannot be split across two
+  // rules with different specificity; the numbers it reads are per-state classes, and
+  // group 5 of prove-jarvis-stage.mjs compares those literals against the derivation
+  // in src/modules/assistant/domain/stage.ts rather than against a second copy.
+  const stageTransform = {
+    transform: "translate(var(--jv-x, -50%), var(--jv-y, -50%)) scale(var(--jv-s, 1))",
+  } as const;
+
   return (
     <div
       className={cn(
-        "fixed z-40",
-        // Beside the panel, not under it: a conversation you are having is exactly
-        // when you want to see the assistant reacting to your voice. In full-window
-        // mode the panel covers the corner and its own `z-50` wins, so the reactor
-        // goes behind it rather than floating over the transcript.
-        ui.open ? "bottom-5 left-5 hidden sm:block" : "bottom-5 right-5"
+        onStage
+          // Nothing here is a hit target until the orb or a note is: a full-viewport
+          // wrapper that swallowed clicks would sit over the transcript it shares.
+          ? "pointer-events-none fixed left-1/2 top-1/2 z-40"
+          : cn(
+              "fixed z-40",
+              // Beside the panel, not under it: a conversation you are having is exactly
+              // when you want to see the assistant reacting to your voice. In full-window
+              // mode the panel covers the corner and its own `z-50` wins, so the reactor
+              // goes behind it rather than floating over the transcript.
+              ui.open ? "bottom-5 left-5 hidden sm:block" : "bottom-5 right-5"
+            )
       )}
       onPointerEnter={() => setExpanded(true)}
       onPointerLeave={() => setExpanded(false)}
@@ -354,7 +401,28 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
       onBlur={() => setExpanded(false)}
     >
       {announcement && (
-        <div className="mb-2 w-56 rounded-xl border border-brand-line bg-white p-3 text-[11px] leading-relaxed text-brand-ink/75 shadow-lift">
+        <div
+          className={cn(
+            "rounded-xl border border-brand-line bg-white p-3 text-[11px] leading-relaxed text-brand-ink/75 shadow-lift",
+            onStage
+              ? cn(
+                  // The card stays a child of the root, which carries no transform on the
+                  // stage, so viewport coordinates are honest on it: putting it beside the
+                  // orb instead of under it is a `right`, not a row-reversed flex child
+                  // that would glide and shrink together with the orb.
+                  "pointer-events-auto fixed",
+                  // 152px is the turned orb's own left edge — its drawn half (48) plus the
+                  // inset (24), measured from the right — with 32 of air.
+                  turned && "right-[152px] top-6 w-64",
+                  !turned && "left-1/2 top-[calc(50%+120px)] w-72 -translate-x-1/2",
+                  // A phone has no right-hand room: top-centre, starting where the
+                  // transcript starts, because that is the same gutter the chat keeps.
+                  turned &&
+                    "max-sm:right-auto max-sm:left-1/2 max-sm:top-[144px] max-sm:-translate-x-1/2"
+                )
+              : "mb-2 w-56"
+          )}
+        >
           <div className="flex items-start gap-2">
             <span className="min-w-0 flex-1 break-words">{announcement}</span>
             <button
@@ -382,30 +450,47 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
 
       <div
         className={cn(
-          // The canvas is a fixed 104 px square and CSS scales it, so shrinking
-          // never re-initialises the WebGL scene behind the orb. Scaling about the
-          // bottom-right corner and pushing a third of the way past it leaves a
-          // small orb tucked into the frame rather than one floating over the page.
-          "relative inline-block origin-bottom-right transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none",
-          resting
-            ? "translate-x-[34%] translate-y-[34%] scale-50 opacity-80 [@media(hover:none)]:translate-x-0 [@media(hover:none)]:translate-y-0 [@media(hover:none)]:scale-75 [@media(hover:none)]:opacity-100"
-            : "translate-x-0 translate-y-0 scale-100 opacity-100"
+          "relative inline-block",
+          // The resting scale is about the bottom-right corner because that is the only
+          // place a corner orb can shrink to without leaving the frame. The stage orb is
+          // moved by its centre, so it scales about the centre; the two cannot share one
+          // origin, and `canRest` is false on the stage anyway.
+          onStage ? "origin-center" : "origin-bottom-right",
+          // The scene is built from the orb's preset and quality, not from this box, so
+          // handing the reactor a different `size` resizes the drawing without
+          // re-initialising the WebGL behind it.
+          onStage
+            ? "transition-transform duration-500 ease-out motion-reduce:transition-none"
+            : "transition-[transform,opacity] duration-300 ease-out motion-reduce:transition-none",
+          // The three vars the inline transform reads. Underscores are how Tailwind
+          // spells a space inside an arbitrary value: `calc(-50vh - 28px)`.
+          turned &&
+            "[--jv-x:-50%] [--jv-y:calc(-50vh_-_28px)] [--jv-s:0.48] lg:[--jv-x:calc(50vw_-_172px)]",
+          !onStage &&
+            (resting
+              ? "translate-x-[34%] translate-y-[34%] scale-50 opacity-80 [@media(hover:none)]:translate-x-0 [@media(hover:none)]:translate-y-0 [@media(hover:none)]:scale-75 [@media(hover:none)]:opacity-100"
+              : "translate-x-0 translate-y-0 scale-100 opacity-100")
         )}
+        style={onStage ? stageTransform : undefined}
         data-resting={resting ? "true" : undefined}
       >
         <JarvisReactor
           state={state}
           appearance={appearance}
-          size={ui.open ? 76 : 104}
+          size={onStage ? STAGE_ORB_PX : ui.open ? 76 : 104}
           level={meter.armed ? meter.read : undefined}
           showStatus={!resting}
           line={ui.awaiting ? "AWAKE · SAY YOUR QUESTION" : null}
           ariaLabel={`${STATE_LABEL[state]}${meter.error ? ` — ${meter.error}` : ""}`}
-          ariaExpanded={ui.open}
-          onClick={() => {
-            wakeAudio();
-            toggleJarvisOpen();
-          }}
+          ariaExpanded={onStage ? undefined : ui.open}
+          onClick={
+            onStage
+              ? undefined
+              : () => {
+                  wakeAudio();
+                  toggleJarvisOpen();
+                }
+          }
         />
         {watcher.news.length > 0 && (
           <span className="absolute -right-1 -top-1 z-20 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand-ink px-1 text-[10px] font-bold text-brand-cream">

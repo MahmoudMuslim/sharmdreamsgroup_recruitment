@@ -112,3 +112,67 @@ test("group 4 — the shell is bare and the stage keeps the orb's gutter", () =>
   assert.match(stageView, /router\.replace\(\`\$\{STAGE_ROUTE\}\?session=\$\{encodeURIComponent\(id\)\}\`, \{ scroll: false \}\)/);
   assert.ok(!/AssistantDock|<LiveChrome/.test(stageView), "the stage page does not mount a second conversation or a second chrome");
 });
+
+test("group 5 — one orb, three positions, and the shell's hotkeys", () => {
+  const presence = readFileSync(path.join(root, "src/modules/assistant/presentation/JarvisPresence.tsx"), "utf8");
+  // The route is read, not stored: a reload and the back button both agree with the screen.
+  assert.match(presence, /usePathname\(\)/);
+  assert.match(presence, /const onStage = pathname === STAGE_ROUTE/);
+  assert.match(presence, /const turned = onStage && ui\.stageTurns > 0/);
+  // The vars are literal classes (Tailwind purges what it must assemble) and the
+  // transform list itself is inline, so scale and translate cannot be split.
+  // Each literal is compared against the derivation, never against a second copy of
+  // the number: change a STAGE_ORB_* constant and leave a class alone and this turns
+  // red. `_` is how Tailwind spells a space inside an arbitrary value.
+  const turned = stage.stageOrbTransformVars(true);
+  const centred = stage.stageOrbTransformVars(false);
+  const asClass = (value) => value.replace(/ /g, "_");
+  assert.ok(presence.includes(`[--jv-x:${asClass(centred.x)}]`), "the centred horizontal term");
+  assert.ok(presence.includes(`[--jv-y:${asClass(turned.y)}]`), "the turned vertical term");
+  assert.ok(presence.includes(`[--jv-s:${asClass(turned.s)}]`), "the turned scale");
+  assert.ok(presence.includes(`lg:[--jv-x:${asClass(turned.x)}]`), "the turned horizontal term, wide screens only");
+  // The un-turned state is the inline fallback, so it must read as the centred vars.
+  assert.ok(
+    presence.includes(
+      `translate(var(--jv-x, ${centred.x}), var(--jv-y, ${centred.y})) scale(var(--jv-s, ${centred.s}))`
+    ),
+    "the transform list falls back to the centred position"
+  );
+  assert.match(presence, /duration-500/);
+  // Off the stage the inline transform must be absent, or it beats the resting classes.
+  assert.match(presence, /style=\{onStage \? stageTransform : undefined\}/);
+  assert.match(presence, /onStage \? "origin-center" : "origin-bottom-right"/);
+  assert.match(presence, /const canRest = !ui\.open && state === "idle" && !announcement && watcher\.news\.length === 0 && !onStage/);
+  // The dock is not a second surface on a screen that already is one.
+  assert.match(presence, /if \(!onStage\) setJarvisOpen\(true\);/);
+  // Ctrl+Shift+Space before Ctrl+Space, or the same keystroke does both.
+  assert.match(presence, /if \(event\.shiftKey\)/);
+  assert.match(presence, /router\.push\(STAGE_ROUTE\)/);
+  // Group 4 already asserts the stage's two ways out (the Escape key and the visible
+  // control), so this group only checks the third door: the dock links to the stage
+  // and takes its own panel down when it does.
+  const dock = readFileSync(path.join(root, "src/app/(admin)/assistant/AssistantDock.tsx"), "utf8");
+  const at = dock.indexOf("href={STAGE_ROUTE}");
+  assert.ok(at > -1, "the dock links to the stage");
+  // Scoped to the link itself: the close button already calls setJarvisOpen(false), so
+  // a bare assertion on that call would pass with the stage link wide open.
+  assert.ok(dock.slice(at, at + 240).includes("setJarvisOpen(false)"), "the stage link closes the dock");
+  // A reactor with nothing to open is not a button that lies about expanding.
+  const reactor = readFileSync(path.join(root, "src/modules/assistant/presentation/JarvisReactor.tsx"), "utf8");
+  assert.match(reactor, /const interactive = !preview && Boolean\(onClick\)/);
+  // And the two needles the corner proof pins are still there, spelled exactly.
+  assert.ok(presence.includes('ui.open ? "bottom-5 left-5 hidden sm:block" : "bottom-5 right-5"'));
+  assert.ok(presence.includes("origin-bottom-right"));
+  // The stage's orb is drawn, not scaled up from a corner avatar: the box it is handed
+  // is the size the geometry module reserves for it.
+  assert.match(presence, /size=\{onStage \? STAGE_ORB_PX : ui\.open \? 76 : 104\}/);
+  // Two more literals the note card spells, derived the same way rather than copied:
+  // the gap to the turned orb is its drawn half plus the inset plus air, and the phone's
+  // top offset is the very gutter the stage pads.
+  const cardGap = String(stage.STAGE_ORB_EDGE_PX + stage.STAGE_ORB_INSET_PX + 32);
+  assert.ok(presence.includes(`right-[${cardGap}px]`), "the card's gap must follow the turned orb's edge");
+  assert.ok(
+    presence.includes(`max-sm:top-[${String(stage.STAGE_ORB_GUTTER_PX)}px]`),
+    "the card on a phone must start where the transcript starts"
+  );
+});

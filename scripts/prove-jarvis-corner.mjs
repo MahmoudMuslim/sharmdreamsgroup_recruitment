@@ -71,21 +71,30 @@ function check1() {
 function check2() {
   const reactor = read(REACTOR);
   expect(reactor.includes("ariaExpanded?: boolean;"), "the reactor does not accept the expanded state");
+  // The gate is named here rather than in prove-jarvis-stage.mjs because this is the
+  // check that owns the claim: only a surface that really opens something may say so.
   expect(
-    reactor.includes("aria-expanded={preview ? undefined : ariaExpanded}"),
-    "the orb's button never says whether it is expanded, or a preview claims it is"
+    reactor.includes("const interactive = !preview && Boolean(onClick);"),
+    "the reactor decides its own interactivity from something other than having a click"
+  );
+  expect(
+    reactor.includes("aria-expanded={interactive ? ariaExpanded : undefined}"),
+    "the orb's button never says whether it is expanded, or a surface with no click claims it is"
   );
   const presence = read(PRESENCE);
-  expect(presence.includes("ariaExpanded={ui.open}"), "the presence does not pass the conversation's open state");
+  expect(
+    presence.includes("ariaExpanded={onStage ? undefined : ui.open}"),
+    "the presence does not pass the conversation's open state, or the stage's orb claims a panel it has none of"
+  );
 }
 
 function check3() {
   const presence = read(PRESENCE);
   expect(
     presence.includes(
-      "const canRest = !ui.open && state === \"idle\" && !announcement && watcher.news.length === 0;"
+      "const canRest = !ui.open && state === \"idle\" && !announcement && watcher.news.length === 0 && !onStage;"
     ),
-    "the orb may rest while open, busy, speaking or holding news"
+    "the orb may rest while open, busy, speaking, holding news, or on a screen it does not belong to"
   );
   expect(
     presence.includes("const resting = canRest && idle && !expanded;"),
@@ -288,8 +297,24 @@ await mutation(
 await mutation(
   "2. The orb stops saying whether it is expanded → check 2 red",
   PRESENCE,
-  "          ariaExpanded={ui.open}\n",
+  "          ariaExpanded={onStage ? undefined : ui.open}\n",
   "",
+  async () => checkIsRed(2)
+);
+
+await mutation(
+  "2b. A surface with nothing to open calls itself a button → check 2 red",
+  REACTOR,
+  "const interactive = !preview && Boolean(onClick);",
+  "const interactive = !preview;",
+  async () => checkIsRed(2)
+);
+
+await mutation(
+  "2c. The button stops reporting expansion and the display picks it up → check 2 red",
+  REACTOR,
+  "aria-expanded={interactive ? ariaExpanded : undefined}",
+  "aria-expanded={interactive ? undefined : ariaExpanded}",
   async () => checkIsRed(2)
 );
 

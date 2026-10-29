@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Maximize2, Minimize2, Sparkles, X } from "lucide-react";
+import { Expand, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { STAGE_ROUTE } from "@/modules/assistant/domain/stage";
 import {
   jarvisUiOnServer,
   readJarvisUi,
@@ -221,6 +223,15 @@ export function AssistantDock() {
                   <Maximize2 className="h-3.5 w-3.5" aria-hidden />
                 )}
               </button>
+              <Link
+                href={STAGE_ROUTE}
+                onClick={() => setJarvisOpen(false)}
+                aria-label="Open the stage"
+                title="Open the stage — the whole screen, just the orb (Ctrl+Shift+Space)"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand-line bg-white text-brand-ink/60 transition hover:bg-brand-sand"
+              >
+                <Expand className="h-3.5 w-3.5" aria-hidden />
+              </Link>
               <button
                 type="button"
                 onClick={() => setJarvisOpen(false)}
