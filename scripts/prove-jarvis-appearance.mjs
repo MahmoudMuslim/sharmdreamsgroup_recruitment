@@ -19,6 +19,10 @@ registerHooks({
       const file = path.join(root, "src", `${specifier.slice(2)}.ts`);
       if (existsSync(file)) return { url: pathToFileURL(file).href, shortCircuit: true };
     }
+    if (specifier.startsWith(".") && context.parentURL?.startsWith("file:")) {
+      const file = fileURLToPath(new URL(`${specifier}.ts`, context.parentURL));
+      if (existsSync(file)) return { url: pathToFileURL(file).href, shortCircuit: true };
+    }
     return next(specifier, context);
   },
 });

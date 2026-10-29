@@ -119,16 +119,7 @@ const PROVIDER_SECTIONS: SettingsNavSection[] = [
   },
 ];
 
-/**
- * The Assistant area's two sections — the orb's behaviour and its look.
- *
- * They sit here rather than on a page of their own because both are one person's
- * own settings row (`assistant_jarvis_prefs`), and the portal already keeps
- * per-account choices under this dock. They are not in `SETTINGS_SCHEMA`: those
- * rows are `app_settings`, shared by every account and gated on
- * `settings.manage_platform`, while these switches and colours belong to the
- * signed-in person and are open to them whatever their role.
- */
+/** Personal orb preferences and commands have their own access rules, outside app_settings. */
 const ASSISTANT_SECTIONS: SettingsNavSection[] = [
   {
     id: "presence",
@@ -141,6 +132,12 @@ const ASSISTANT_SECTIONS: SettingsNavSection[] = [
     label: "JARVIS appearance",
     hint: "The orb's five colours, eight motions, quality and breath, previewed before they are saved.",
     icon: "palette",
+  },
+  {
+    id: "commands",
+    label: "Voice commands",
+    hint: "Phrases you save to open a page, ask a question, run a tool or say a line.",
+    icon: "mic",
   },
 ];
 

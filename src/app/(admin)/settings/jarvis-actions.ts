@@ -8,6 +8,8 @@ import {
   type SavedJarvisPrefs,
 } from "@/modules/assistant/application/jarvisSettings";
 import type { JarvisPrefs } from "@/modules/assistant/domain/jarvis";
+import type { VoiceCommand } from "@/modules/assistant/domain/commands";
+import { readVoiceCommands } from "@/modules/assistant/application/jarvisCommands";
 import {
   readJarvisAppearance,
   saveJarvisAppearance,
@@ -33,14 +35,17 @@ export async function setJarvisAppearance(draft: unknown): Promise<SavedJarvisAp
  * not to whichever browser they happen to be using.
  */
 export type PresenceRead =
-  | { ok: true; profileId: string; prefs: JarvisPrefs }
+  | { ok: true; profileId: string; prefs: JarvisPrefs; commands: VoiceCommand[] }
   | { ok: false; profileId?: string; reason: JarvisUnarmed["reason"]; message: string };
 
 export async function getJarvisPresence(): Promise<PresenceRead> {
   const user = await requireStaff("/assistant");
-  const seen = await jarvisPresenceForViewer();
+  const [seen, commands] = await Promise.all([
+    jarvisPresenceForViewer(),
+    readVoiceCommands(),
+  ]);
   if ("reason" in seen) return { ok: false, profileId: user.profileId, ...seen };
-  return { ok: true, profileId: user.profileId, prefs: seen };
+  return { ok: true, profileId: user.profileId, prefs: seen, commands: commands.commands };
 }
 
 /**

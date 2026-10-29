@@ -21,7 +21,7 @@ const text = (node) => Array.isArray(node) ? node.map(text).join("")
 const autonomy = { level: "code", stored: true, canOpen: false, problem: null };
 const saved = [{ id: "saved-1", title: "Saved pipeline", messageCount: 2, updatedAt: "2026-10-20T09:00:00Z", engine: "auto" }];
 
-function runtime({ server = false, preference = null, ambientArmed = false, blockedStorage = false, sessions = saved } = {}) {
+function runtime({ server = false, preference = null, ambientArmed = false, blockedStorage = false, sessions = saved, query = "", commandResult = { ok: true, command: null } } = {}) {
   const cache = new Map(), instances = new Map(), effects = [];
   const history = [], sent = [], spoken = [], opened = [], guarded = [], reads = [], writes = [];
   const storage = new Map(preference === null ? [] : [["sdg-assistant-speak", preference]]);
@@ -51,6 +51,7 @@ function runtime({ server = false, preference = null, ambientArmed = false, bloc
     },
     useMemo: (fn) => fn(),
     useCallback: (fn) => fn,
+    useTransition: () => [false, (fn) => fn()],
     useId: () => `merge-${cursor++}`,
     useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
     Fragment: Symbol.for("merge.fragment"),
@@ -58,6 +59,12 @@ function runtime({ server = false, preference = null, ambientArmed = false, bloc
   };
   const create = server ? React.createElement : (type, props) => jsx(type, props);
   const window = {
+    location: { search: query },
+    history: { replaceState(_state, _unused, url) {
+      history.push(url);
+      window.location.search = url.includes("?") ? url.slice(url.indexOf("?")) : "";
+      dirty = true;
+    } },
     localStorage: {
       getItem: (key) => { if (blockedStorage) throw new Error("Storage blocked"); return storage.get(key) ?? null; },
       setItem: (key, value) => storage.set(key, value),
@@ -91,7 +98,17 @@ function runtime({ server = false, preference = null, ambientArmed = false, bloc
       if (name === "react/jsx-runtime") return server ? require(name) : { jsx, jsxs: jsx, Fragment: hooks.Fragment };
       if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
       if (name === "next/link") return { __esModule: true, default: (props) => create("a", props) };
-      if (name === "next/navigation") return { useRouter: () => ({ replace: (url) => history.push(url) }) };
+      if (name === "next/navigation") return {
+        useRouter: () => ({ replace: (url) => history.push(url) }),
+        usePathname: () => "/settings",
+        useSearchParams: () => new URLSearchParams(window.location.search),
+      };
+      if (name.endsWith("/jarvis-command-actions")) return Object.fromEntries(
+        ["saveCommand", "duplicateCommand", "deleteCommand", "setCommandEnabled", "adoptSharedCommand"].map((action) => [action, async (...args) => {
+          writes.push({ action, args });
+          return commandResult;
+        }])
+      );
       if (name === "next/server") return { connection: async () => {} };
       if (name === "@/lib/auth/session") return { requireStaff: async (route) => { guarded.push(route); return { profileId: "staff-1" }; } };
       if (name === "@/modules/assistant/application/voiceSettings") return {
@@ -165,6 +182,9 @@ function runtime({ server = false, preference = null, ambientArmed = false, bloc
     button(label) { return ui.find((node) => node.type === "button" && (text(node).trim() === label || node.props["aria-label"] === label)); },
     check(label) { const node = ui.find((node) => node.type === "label" && text(node).trim() === label); return nodes(node).find((child) => child.type === "input"); },
     text: () => { render(); return text(tree); },
+    change(id, value) { ui.find((node) => node.props.id === id).props.onChange({ target: { value } }); render(); },
+    navigate(search) { window.location.search = search; dirty = true; render(); },
+    submit() { ui.find((node) => node.type === "form").props.onSubmit({ preventDefault() {} }); render(); },
     click(label) { const button = ui.button(label); assert.ok(!button.props.disabled); button.props.onClick(); dirty = true; render(); },
     async send(question) {
       ui.find((node) => node.type === "textarea").props.onChange({ target: { value: question } });
@@ -377,4 +397,165 @@ test("an empty rail keeps saying nothing saved while the box holds words", async
   assert.match(body, /Nothing saved yet/);
   assert.doesNotMatch(body, /None of your 0/, "zero is not a search that found nothing");
   assert.doesNotMatch(body, /names match/);
+});
+
+const commandRows = [
+  { id: "mine-1", scope: "personal", ownerProfileId: "staff-1", triggerPhrase: "résumé review", title: "Review applicants", category: "hiring", rawCategory: null, action: { type: "ask", prompt: "Who needs review?" }, notes: "Morning check", enabled: true, problem: null },
+  { id: "mine-2", scope: "personal", ownerProfileId: "staff-1", triggerPhrase: "open reports", title: "Reports", category: "reports", rawCategory: null, action: { type: "open", href: "/reports" }, notes: null, enabled: false, problem: null },
+  { id: "shared-1", scope: "shared", ownerProfileId: null, triggerPhrase: "team inbox", title: "Outbox", category: "communication", rawCategory: null, action: { type: "open", href: "/whatsapp" }, notes: "Team messages", enabled: true, problem: null },
+];
+const commandTools = [{ name: "list_candidates", label: "List candidates" }];
+function commandConsole(options = {}, initial = {}, canPublish = false) {
+  const ui = runtime({ query: "?area=assistant&section=commands", ...options });
+  ui.mount(ui.load("src/app/(admin)/settings/JarvisCommandsConsole.tsx").JarvisCommandsConsole, {
+    initial: { commands: commandRows, problem: null, message: null, capped: false, ...initial }, canPublish, tools: commandTools,
+  });
+  return ui;
+}
+const commandList = (ui) => text(ui.find((node) => node.props["aria-label"] === "Voice commands"));
+
+for (const problem of ["absent", "unreadable"]) {
+  test(`command manager reports ${problem} instead of inventing an empty list`, () => {
+    const ui = commandConsole({}, { commands: [], problem, message: `Exact ${problem} message` });
+    assert.match(ui.text(), new RegExp(`Exact ${problem} message`));
+    assert.doesNotMatch(ui.text(), /No commands yet/);
+    assert.equal(ui.button("Add command").props.disabled, true);
+    ui.click("Shared");
+    assert.match(ui.history.at(-1), /area=assistant&section=commands&tab=shared/);
+    assert.deepEqual(ui.writes, []);
+  });
+}
+
+test("command manager filters folded phrase or title and keeps URL filters through tab changes", () => {
+  const ui = commandConsole();
+  assert.match(commandList(ui), /résumé review/);
+  assert.doesNotMatch(commandList(ui), /team inbox/);
+  ui.change("command-search", "RÉSUMÉ-review");
+  assert.match(commandList(ui), /résumé review/);
+  assert.doesNotMatch(commandList(ui), /open reports/);
+  assert.equal(new URLSearchParams(ui.history.at(-1).split("?")[1]).get("q"), "RÉSUMÉ-review");
+  ui.click("Shared");
+  assert.match(ui.history.at(-1), /&tab=shared/);
+  assert.equal(new URLSearchParams(ui.history.at(-1).split("?")[1]).get("q"), "RÉSUMÉ-review");
+  ui.change("command-search", "outbox");
+  assert.match(commandList(ui), /team inbox/);
+  ui.navigate("?area=assistant&section=commands&tab=mine&q=reports");
+  assert.equal(ui.find((n) => n.props.id === "command-search").props.value, "reports");
+  assert.match(commandList(ui), /open reports/);
+  assert.doesNotMatch(commandList(ui), /résumé review/);
+  ui.change("command-search", "");
+  const lastUrl = ui.history.at(-1);
+  ui.click("Hiring");
+  assert.match(commandList(ui), /résumé review/);
+  assert.doesNotMatch(commandList(ui), /open reports/);
+  assert.equal(ui.history.at(-1), lastUrl, "category is local, not a URL destination");
+});
+
+test("command manager shows honest empty, filtered-empty and capped states", () => {
+  const empty = commandConsole({}, { commands: [] });
+  assert.match(empty.text(), /No commands yet/);
+  assert.equal(empty.button("Add command").props.disabled, false);
+  const capped = commandConsole({}, { capped: true });
+  assert.match(capped.text(), /first 200/);
+  capped.change("command-search", "no such phrase");
+  assert.match(capped.text(), /No commands match/);
+  assert.doesNotMatch(capped.text(), /No commands yet/);
+});
+
+test("command manager gives shared readers adoption but not editing or toggling", async () => {
+  const adopted = { ...commandRows[2], id: "adopted", scope: "personal", ownerProfileId: "staff-1" };
+  const ui = commandConsole({ query: "?area=assistant&section=commands&tab=shared", commandResult: { ok: true, command: adopted } });
+  assert.match(ui.text(), /read.only/i);
+  assert.equal(ui.button("Add command").props.disabled, true);
+  assert.equal(ui.find((n) => n.props.role === "switch").props.disabled, true);
+  ui.click("View Outbox");
+  assert.equal(ui.all((n) => n.type === "button" && ["Save command", "Duplicate", "Delete"].includes(text(n))).length, 0);
+  assert.equal(ui.find((n) => n.props.id === "command-title").props.disabled, true);
+  ui.click("Add to mine"); await ui.settle();
+  assert.deepEqual(ui.writes, [{ action: "adoptSharedCommand", args: ["shared-1"] }]);
+  ui.click("Mine");
+  assert.match(commandList(ui), /team inbox/);
+});
+
+test("command manager reports malformed stored values instead of repairing them when opened", () => {
+  for (const [problem, patch, expected] of [
+    ["category", { rawCategory: "payroll" }, /payroll/],
+    ["action", { action: null, enabled: false }, /action cannot be read/],
+    ["phrase", { triggerPhrase: "x", enabled: false }, /stored phrase/],
+  ]) {
+    const ui = commandConsole({}, { commands: [{ ...commandRows[0], problem, ...patch }] });
+    assert.match(commandList(ui), expected);
+    ui.click("Edit Review applicants");
+    if (problem === "category") assert.equal(ui.find((n) => n.props.id === "command-category").props.value, "payroll");
+    if (problem === "action") assert.equal(ui.find((n) => n.props.id === "command-action_type").props.value, "");
+    assert.deepEqual(ui.writes, []);
+  }
+});
+
+test("command manager edits each action payload and preserves entered values on a field refusal", async () => {
+  const ui = commandConsole({ commandResult: { ok: false, field: "trigger_phrase", error: "That phrase already exists." } });
+  ui.click("Add command");
+  ui.change("command-trigger_phrase", "show my people");
+  ui.change("command-title", "My people");
+  ui.change("command-category", "hiring");
+  ui.change("command-action_type", "open");
+  ui.change("command-href", "/candidates?q=waiting");
+  assert.ok(ui.all((n) => n.type === "option" && n.props.value === "/reports").length);
+  ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1), { action: "saveCommand", args: [{ trigger_phrase: "show my people", title: "My people", category: "hiring", action_type: "open", action_payload: { href: "/candidates?q=waiting" }, notes: "", enabled: true }, "personal"] });
+  assert.match(ui.text(), /That phrase already exists/);
+  assert.equal(ui.find((n) => n.props.id === "command-trigger_phrase").props["aria-invalid"], true);
+  assert.equal(ui.find((n) => n.props.id === "command-title").props.value, "My people");
+  ui.change("command-action_type", "tool");
+  ui.change("command-tool", "list_candidates");
+  ui.change("command-args", '{"stage":"APPLIED","limit":5,"active":true}');
+  ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1).args[0].action_payload, { tool: "list_candidates", args: { stage: "APPLIED", limit: 5, active: true } });
+  const count = ui.writes.length;
+  ui.change("command-args", "{bad json"); ui.submit(); await ui.settle();
+  assert.equal(ui.writes.length, count);
+  assert.match(ui.text(), /valid JSON/i);
+  ui.change("command-action_type", "ask");
+  assert.match(ui.find((n) => n.props.id === "command-prompt").props.placeholder, /Leave empty/);
+  ui.change("command-prompt", "Who is waiting?"); ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1).args[0].action_payload, { prompt: "Who is waiting?" });
+  ui.change("command-action_type", "note"); ui.change("command-text", "Ready."); ui.change("command-notes", "My note");
+  assert.match(ui.text(), /6 \/ 280/); assert.match(ui.text(), /7 \/ 500/);
+  ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1).args[0].action_payload, { text: "Ready." });
+  assert.equal(ui.writes.at(-1).args[0].notes, "My note");
+});
+
+test("command manager applies returned rows, toggles only after success and confirms deletion inline", async () => {
+  const updated = { ...commandRows[0], title: "Updated review" };
+  const saved = commandConsole({ commandResult: { ok: true, command: updated } });
+  saved.click("Edit Review applicants"); saved.change("command-title", "Updated review"); saved.submit(); await saved.settle();
+  assert.match(commandList(saved), /Updated review/);
+  assert.equal(saved.writes[0].args[0].id, "mine-1");
+  const copy = commandConsole({ commandResult: { ok: true, command: { ...commandRows[0], id: "copy-1", title: "Review copy", triggerPhrase: "review copy" } } });
+  copy.click("Edit Review applicants"); copy.click("Duplicate"); await copy.settle();
+  assert.match(commandList(copy), /review copy/);
+  assert.deepEqual(copy.writes[0], { action: "duplicateCommand", args: ["mine-1"] });
+  const ui = commandConsole();
+  ui.click("Disable Review applicants"); await ui.settle();
+  assert.equal(ui.button("Enable Review applicants").props["aria-checked"], false);
+  assert.deepEqual(ui.writes[0], { action: "setCommandEnabled", args: ["mine-1", false] });
+  ui.click("Edit Review applicants"); ui.click("Delete");
+  assert.equal(ui.writes.length, 1);
+  ui.click("Keep command"); assert.equal(ui.writes.length, 1);
+  ui.click("Delete"); ui.click("Delete command"); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1), { action: "deleteCommand", args: ["mine-1"] });
+  assert.doesNotMatch(commandList(ui), /résumé review/);
+  const refused = commandConsole({ commandResult: { ok: false, error: "Write refused" } });
+  refused.click("Disable Review applicants"); await refused.settle();
+  assert.equal(refused.button("Disable Review applicants").props["aria-checked"], true);
+  assert.match(refused.text(), /Write refused/);
+});
+
+test("command manager lets a publisher author shared commands with explicit shared scope", async () => {
+  const ui = commandConsole({ query: "?area=assistant&section=commands&tab=shared" }, {}, true);
+  assert.equal(ui.button("Add command").props.disabled, false);
+  ui.click("Edit Outbox"); ui.submit(); await ui.settle();
+  assert.equal(ui.writes[0].args[1], "shared");
+  assert.equal(ui.writes[0].args[0].id, "shared-1");
 });

@@ -31,6 +31,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { registerHooks } from "node:module";
+import { spawnSync } from "node:child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => readFileSync(path.join(root, rel), "utf8");
@@ -72,6 +73,14 @@ const STUB_SOURCES = {
       { name: "delete_candidate", label: "Delete a candidate", args: {}, destructive: true, run: async () => "{}" },
       { name: "search_web", label: "Search the web", args: {}, web: true, run: async () => "{}" },
     ];
+  `,
+  "@/modules/assistant/application/jarvisSettings": `
+    export const jarvisPresenceForViewer = async () => globalThis.__jarvisPrefs;
+    export const saveJarvisPrefs = async () => { throw new Error("Unexpected preferences write"); };
+  `,
+  "@/modules/assistant/application/jarvisAppearanceSettings": `
+    export const readJarvisAppearance = async () => { throw new Error("Unexpected appearance read"); };
+    export const saveJarvisAppearance = async () => { throw new Error("Unexpected appearance write"); };
   `,
   "@/lib/data-api/server": `
     export const createServerRestClient = async () => globalThis.__jarvisRest;
@@ -164,6 +173,7 @@ const GLOBAL_KEYS = [
   "__jarvisRest",
   "__jarvisTrail",
   "__jarvisPermission",
+  "__jarvisPrefs",
 ];
 function resetGlobals(patch = {}) {
   for (const key of GLOBAL_KEYS) delete globalThis[key];
@@ -945,6 +955,40 @@ async function check2b() {
   return verdict(problems);
 }
 
+async function check6a() {
+  const problems = [];
+  const nav = await load(pathToFileURL(path.join(root, "src/modules/settings/domain/settingsNav.ts")).href);
+  const area = nav.areaById("assistant");
+  expect(problems, "commands resolves to its own section", nav.sectionFor(area, "commands").id, "commands");
+  expect(problems, "the default stays presence", nav.sectionFor(area, undefined).id, "presence");
+  const { DEFAULT_JARVIS_PREFS } = await load(pathToFileURL(path.join(root, "src/modules/assistant/domain/jarvis.ts")).href);
+  const actions = await load(pathToFileURL(path.join(root, "src/app/(admin)/settings/jarvis-actions.ts")).href);
+  const row = { id: "presence-command", scope: "personal", owner_profile_id: "p1", trigger_phrase: "open reports", title: "Reports", category: "reports", action_type: "open", action_payload: { href: "/reports" }, notes: null, enabled: true };
+  for (const [data, error, expected] of [
+    [[row], null, ["presence-command"]],
+    [null, { code: "42P01", message: "missing table" }, []],
+    [null, { code: "42501", message: "unreadable" }, []],
+  ]) {
+    const rest = fakeRest({ read: { data, error } });
+    resetGlobals({ __jarvisUser: { profileId: "p1", role: "RECRUITER" }, __jarvisPrefs: DEFAULT_JARVIS_PREFS, __jarvisRest: rest.client });
+    const result = await actions.getJarvisPresence();
+    expect(problems, "preferences survive a command read", result.prefs, DEFAULT_JARVIS_PREFS);
+    expect(problems, "presence carries only the reader's commands", result.commands?.map((entry) => entry.id), expected);
+    expect(problems, "one command read per presence refresh", rest.calls.filter((call) => call.table === "assistant_jarvis_commands").length, 1);
+  }
+  const rest = fakeRest({ read: { data: [row], error: null } });
+  resetGlobals({ __jarvisUser: { profileId: "p1", role: "RECRUITER" }, __jarvisPrefs: { reason: "unreadable", message: "Preferences cannot be read" }, __jarvisRest: rest.client });
+  const unarmed = await actions.getJarvisPresence();
+  expect(problems, "unarmed presence stays unarmed", unarmed.ok, false);
+  expect(problems, "unarmed response carries no commands", "commands" in unarmed, false);
+  resetGlobals({ __jarvisRest: rest.client });
+  let rejected = false;
+  try { await actions.getJarvisPresence(); } catch { rejected = true; }
+  expect(problems, "presence still needs staff", rejected, true);
+  expect(problems, "commands do not join live polling", /assistant_jarvis_commands/.test(read("src/modules/live/domain/watch.ts")), false);
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The six categories and four action types are the shipped vocabulary", check1],
   ["2. The write door refuses every field it cannot express", check2],
@@ -954,7 +998,8 @@ const CHECKS = [
   ["5b. The list is read once, and says which failure it met", check5b],
   ["5c. The migration-claims proof asks about 051 by the table it creates", check5c],
   ["2b. The five actions write the columns the table has, and never a scope the body named", check2b],
-  // Group 6 arrives in Task A8.
+  ["6a. Settings resolves the manager and presence carries its scoped command read", check6a],
+  // Dispatch arrives in Task A8.
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1208,6 +1253,55 @@ await mutation(
   '    category: command.rawCategory ?? command.category,',
   '    category: command.category,',
   async () => checkIsRed(8)
+);
+
+function managerIsRed(name) {
+  const run = spawnSync(process.execPath, [
+    "--test", "--test-reporter=tap", `--test-name-pattern=${name}`,
+    "scripts/prove-assistant-merge.mjs",
+  ], { cwd: root, encoding: "utf8", timeout: 30_000 });
+  const output = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
+  const pass = run.status === 1 && output.includes("ERR_ASSERTION") && /# fail 1\b/.test(output);
+  return { pass, detail: pass ? `${name}: assertion failed` : output || String(run.error) };
+}
+
+const MANAGER_REL = "src/app/(admin)/settings/JarvisCommandsConsole.tsx";
+for (const [label, needle, replacement, testName] of [
+  ["22. Shared readers gain editor controls",
+    '(scope === "personal" || canPublish)', 'true',
+    "command manager gives shared readers adoption"],
+  ["23. Search stops folding spoken punctuation and case",
+    'const needle = fold(query);', 'const needle = query;',
+    "command manager filters folded phrase"],
+  ["24. Query changes discard the current section and filters",
+    'new URLSearchParams(window.location.search)', 'new URLSearchParams()',
+    "command manager filters folded phrase"],
+  ["25. A refused save loses its field error",
+    'if (!result.ok) { setRefusal(result); return; }', 'if (!result.ok) { return; }',
+    "command manager edits each action payload"],
+  ["26. Returned command rows never reach the list",
+    'if (command) setRows(', 'if (false) setRows(',
+    "command manager applies returned rows"],
+  ["27. The first delete click skips confirmation",
+    'onClick={() => setConfirming(true)}', 'onClick={onDelete}',
+    "command manager applies returned rows"],
+  ["28. Shared authoring sends personal scope",
+    'saveCommand(draft, scope)', 'saveCommand(draft, "personal")',
+    "command manager lets a publisher author shared commands"],
+  ["29. A malformed stored category loses its raw value",
+    'command?.rawCategory ?? command?.category ?? "personal"', 'command?.category ?? "personal"',
+    "command manager reports malformed stored values"],
+]) {
+  await mutation(`${label} → manager assertion red`, MANAGER_REL, needle, replacement,
+    async () => managerIsRed(testName));
+}
+
+await mutation(
+  "30. Presence drops the scoped commands it read → check 6a red",
+  "src/app/(admin)/settings/jarvis-actions.ts",
+  "commands: commands.commands",
+  "commands: []",
+  async () => checkIsRed(9)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);

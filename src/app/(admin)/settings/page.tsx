@@ -9,6 +9,9 @@ import { TemplatesConsole } from "./TemplatesConsole";
 import { LanguagesConsole } from "./LanguagesConsole";
 import { AppearanceConsole } from "./JarvisAppearanceConsole";
 import { PresenceConsole } from "./JarvisPresenceConsole";
+import { JarvisCommandsConsole } from "./JarvisCommandsConsole";
+import { readVoiceCommands } from "@/modules/assistant/application/jarvisCommands";
+import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
 import { readJarvisPrefs } from "@/modules/assistant/application/jarvisSettings";
 import { readJarvisAppearance } from "@/modules/assistant/application/jarvisAppearanceSettings";
 import { REACTOR_STATES, type ReactorState } from "@/modules/assistant/domain/jarvisAppearance";
@@ -110,19 +113,7 @@ async function LanguagesPanel({ editable }: { editable: boolean }) {
   return <LanguagesConsole rows={rows} editable={editable} />;
 }
 
-/**
- * The Assistant area's panel, with its own read.
- *
- * Both halves are one person's row, and the dock shows one half at a time, so
- * exactly one read runs — the way the change trail reads only on `section=trail`.
- * Neither read belongs in the `Promise.all` above: a recruiter on the model
- * catalogue has no orb to describe, and a row that cannot be read would put a
- * failure notice on a screen that never shows one.
- *
- * The `?state=` a chat link writes is checked against the six states the editor
- * actually has tabs for, and only on the half that edits colours — a presence
- * address naming `alert` would ask for a view that does not exist.
- */
+/** Each section reads only its own data; appearance alone consumes the state query. */
 async function AssistantPanel({
   profileId,
   section,
@@ -132,6 +123,16 @@ async function AssistantPanel({
   section: string;
   state: string | null;
 }) {
+  if (section === "commands") {
+    const [initial, canPublish] = await Promise.all([
+      readVoiceCommands(),
+      hasPermissionForUser("assistant.commands"),
+    ]);
+    const tools = ASSISTANT_TOOLS
+      .filter((tool) => tool.destructive !== true && tool.web !== true)
+      .map(({ name, label }) => ({ name, label }));
+    return <JarvisCommandsConsole initial={initial} canPublish={canPublish} tools={tools} />;
+  }
   if (section !== "appearance") return <PresenceConsole initial={await readJarvisPrefs(profileId)} />;
 
   const openOn: ReactorState | null =

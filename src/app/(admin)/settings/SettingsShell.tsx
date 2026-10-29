@@ -10,6 +10,7 @@ import {
   KeyRound,
   Languages,
   MapPin,
+  Mic,
   Network,
   Palette,
   Shield,
@@ -46,6 +47,7 @@ const ICONS: Record<string, LucideIcon> = {
   cpu: Cpu,
   languages: Languages,
   history: History,
+  mic: Mic,
 };
 
 function IconFor({ name, className }: { name: string; className?: string }) {
