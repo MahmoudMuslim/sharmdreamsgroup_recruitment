@@ -2236,7 +2236,7 @@ Work the list; for each, retarget the string to what the file says now and re-ru
   `if (name.endsWith("/useWakeListening")) return { useWakeListening: () => ({ listening: false, error: null, quotaHit: false }), useMicrophoneAvailable: () => true };`
   and the loader's whitelist is extended to admit the new module name — this repo's proofs import client files through an exact-name whitelist, so an unlisted specifier fails the whole render check rather than the one assertion.
 - `:228` — `ui.check("Hands-free")` stays, and the language selector's `<option value="ar">العربية</option>` assert is deleted with the element.
-- `:180` — the assertion that the disclosure contains `"browser vendor"` becomes an assertion that it contains `"this portal's own transcription model"` and does **not** contain `"sends it to Google"`.
+- `:180` — the assertion that the disclosure contains `"browser vendor"` becomes an assertion that it contains `"this portal's own model"` and does **not** contain `"sends it to Google"`. (Task 6 already rewrote the disclosure and the voice proof's needle; the merge assertion is retargeted to the same phrase.)
 - `:262` — the file list `[..., "useWakeWord.ts", ...]` drops the deleted name and gains `"useWakeListening.ts"`.
 
 `scripts/prove-jarvis-corner.mjs`, `scripts/prove-person-spine.mjs`: run them and fix only what they name. `prove-person-spine.mjs` asserts on import whitelists and staff-guard returns, and moving a console invalidates both — if it names `useWakeWord`, retarget and re-run.

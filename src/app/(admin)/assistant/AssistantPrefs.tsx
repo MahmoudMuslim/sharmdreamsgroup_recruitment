@@ -3,8 +3,6 @@
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import {
   DEFAULT_SPEECH_RATE,
-  DEFAULT_WAKE_PHRASE,
-  MAX_WAKE_PHRASE_CHARS,
   normaliseSpeechRate,
 } from "@/modules/assistant/domain/voice";
 
@@ -183,11 +181,6 @@ export function writeStoredSpeak(value: boolean): void {
   notifyVoicePrefs();
 }
 
-/* ------------------------------- Wake phrase ----------------------------- */
-
-const WAKE_KEY = "sdg-assistant-wake";
-const VOICE_LANG_KEY = "sdg-assistant-voice-lang";
-
 /**
  * The console's voice preferences are browser preferences, read through an
  * external store for the same reason the rail is: `useSyncExternalStore` renders
@@ -205,51 +198,12 @@ function notifyVoicePrefs(): void {
 
 export function subscribeVoicePrefs(notify: () => void): () => void {
   voicePrefListeners.add(notify);
-  // A phrase, language or playback choice changed in another tab is the same preference.
+  // A voice or a pace changed in another tab is the same preference.
   window.addEventListener("storage", notify);
   return () => {
     voicePrefListeners.delete(notify);
     window.removeEventListener("storage", notify);
   };
-}
-
-export function readStoredWakePhrase(): string {
-  try {
-    const raw = window.localStorage.getItem(WAKE_KEY)?.trim() ?? "";
-    return raw ? raw.slice(0, MAX_WAKE_PHRASE_CHARS) : DEFAULT_WAKE_PHRASE;
-  } catch {
-    return DEFAULT_WAKE_PHRASE;
-  }
-}
-
-export function writeStoredWakePhrase(phrase: string): void {
-  const clean = phrase.trim().slice(0, MAX_WAKE_PHRASE_CHARS);
-  try {
-    if (clean) window.localStorage.setItem(WAKE_KEY, clean);
-    else window.localStorage.removeItem(WAKE_KEY);
-  } catch {
-    // Storage blocked — the phrase is not remembered.
-  }
-  notifyVoicePrefs();
-}
-
-export type VoiceLanguage = "en" | "ar";
-
-export function readStoredVoiceLanguage(): VoiceLanguage {
-  try {
-    return window.localStorage.getItem(VOICE_LANG_KEY) === "ar" ? "ar" : "en";
-  } catch {
-    return "en";
-  }
-}
-
-export function writeStoredVoiceLanguage(value: VoiceLanguage): void {
-  try {
-    window.localStorage.setItem(VOICE_LANG_KEY, value === "ar" ? "ar" : "en");
-  } catch {
-    // Storage blocked — the choice is not remembered.
-  }
-  notifyVoicePrefs();
 }
 
 /* ------------------------- Which voice, how fast ------------------------- */

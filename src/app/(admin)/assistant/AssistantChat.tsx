@@ -1117,8 +1117,6 @@ export function AssistantChat({
                 listening={wake.listening}
                 ambientArmed={ambientArmed}
                 wakePhrase={wakePhrase}
-                // Editing the phrase moved to Settings; the strip shows it.
-                onWakePhrase={() => undefined}
                 speakReplies={speakReplies}
                 onSpeakReplies={(next) => {
                   writeStoredSpeak(next);

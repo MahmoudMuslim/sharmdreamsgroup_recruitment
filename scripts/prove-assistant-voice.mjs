@@ -695,14 +695,21 @@ async function check11() {
   if (!page.includes("await connection()")) problems.push("page does not await connection()");
   if (!page.includes("instant = false")) problems.push("page is not marked instant = false");
 
-  const consoleCopy = page;
+  // The note is JSX: apostrophes are entities and the prose is hard-wrapped, so
+  // it is read the way a person reads it, not as raw markup.
+  const consoleCopy = page.replaceAll("&apos;", "'").replaceAll(/\s+/g, " ");
   for (const needle of [
     "never stored",
     "discarded",
-    "browser vendor",
+    "this portal's own model",
     "only while this tab is visible",
   ]) {
     if (!consoleCopy.includes(needle)) problems.push(`the privacy note is missing: ${needle}`);
+  }
+  // The portal transcribes with its own routed model now, so the note may not name
+  // a browser vendor's service as the destination.
+  if (consoleCopy.includes("browser vendor")) {
+    problems.push("the privacy note still says the browser vendor hears it");
   }
 
   // The dock's mic is the other door audio leaves by, and it carries the same
@@ -718,8 +725,11 @@ async function check11() {
   // The strip is what is on screen while hands-free is armed, so the listening
   // line itself says whose service receives the words. The disclosure box below
   // it carries the same promise, but a person mid-sentence is looking here.
-  if (!strip.includes("the browser sends what it hears to its own speech service")) {
+  if (!strip.includes("transcribed by this portal's own model and discarded")) {
     problems.push("the listening line does not say where the words go");
+  }
+  if (/Listening language|onLanguage|VoiceLanguage/.test(strip)) {
+    problems.push("the strip still offers a listening language");
   }
 
   // Comments are stripped first: the route's own header says "no bucket, no
@@ -1825,10 +1835,10 @@ await mutation(
 );
 
 await mutation(
-  "27. The console's privacy note stops naming the browser vendor → check 11 red",
+  "27. The console's privacy note names the browser vendor again → check 11 red",
   VOICE_PAGE_REL,
-  "the browser vendor&apos;s service",
-  "its own speech service",
+  "to this portal&apos;s own model when a sound begins",
+  "to the browser vendor&apos;s service when a sound begins",
   async () => checkIsRed(11)
 );
 
@@ -2064,7 +2074,7 @@ await mutation(
 await mutation(
   "55. The listening line stops saying where the words go → check 11 red",
   VOICE_STRIP_REL,
-  " — the browser sends what it hears to its own speech service.",
+  " — what it hears is transcribed by this portal's own model and discarded once the words come back.",
   ".",
   async () => checkIsRed(11)
 );

@@ -63,12 +63,12 @@ export default async function AssistantPage({ searchParams }: { searchParams: Se
             What happens to your voice
           </p>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-brand-ink/65">
-            Push-to-talk records a clip and sends it to Google&apos;s speech model for transcription;
-            the audio is discarded the moment the words come back and is never stored, logged or
-            attached to a conversation. Only the text you send is saved, exactly as if you typed it.
-            Hands-free uses this browser&apos;s own speech recognition, which sends what it hears to
-            the browser vendor&apos;s service — it runs only on this page, only while the toggle is
-            on, and only while this tab is visible.
+            Push-to-talk records a clip and sends it to this portal&apos;s own model for
+            transcription; the audio is discarded the moment the words come back and is never stored,
+            logged or attached to a conversation. Only the text you send is saved, exactly as if you
+            typed it. Hands-free watches the microphone&apos;s loudness in this browser, sends only a
+            spoken segment to this portal&apos;s own model when a sound begins, and runs only on this
+            page, only while the toggle is on, and only while this tab is visible.
           </p>
         </section>
         <AutonomyPanel initial={state} />

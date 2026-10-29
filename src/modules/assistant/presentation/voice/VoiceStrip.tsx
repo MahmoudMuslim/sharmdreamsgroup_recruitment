@@ -2,19 +2,15 @@
 
 import { Loader2, Mic, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  DEFAULT_WAKE_PHRASE,
-  MAX_WAKE_PHRASE_CHARS,
-} from "@/modules/assistant/domain/voice";
-import type { VoiceLanguage } from "@/app/(admin)/assistant/AssistantPrefs";
+import { DEFAULT_WAKE_PHRASE } from "@/modules/assistant/domain/voice";
 
 /**
  * The voice console's controls, above its composer.
  *
  * Every control here describes what it does plainly: hands-free is a listening
- * state with a visible indicator, the wake phrase is a browser preference, and
- * "Speak answers" changes playback only. Nothing here approves anything — the
- * autonomy panel below the chat decides that.
+ * state with a visible indicator, the wake phrase it listens for is set on the
+ * account in Settings, and "Speak answers" changes playback only. Nothing here
+ * approves anything — the autonomy panel below the chat decides that.
  */
 export function VoiceStrip({
   pushToTalk,
@@ -28,9 +24,6 @@ export function VoiceStrip({
   listening,
   ambientArmed,
   wakePhrase,
-  onWakePhrase,
-  language,
-  onLanguage,
   speakReplies,
   onSpeakReplies,
   speaking,
@@ -56,9 +49,6 @@ export function VoiceStrip({
    */
   ambientArmed: boolean;
   wakePhrase: string;
-  onWakePhrase: (phrase: string) => void;
-  language: VoiceLanguage;
-  onLanguage: (next: VoiceLanguage) => void;
   speakReplies: boolean;
   onSpeakReplies: (next: boolean) => void;
   speaking: boolean;
@@ -129,30 +119,13 @@ export function VoiceStrip({
           </button>
         )}
 
-        <label className="ml-auto flex items-center gap-1.5 text-[11px] font-semibold text-brand-ink/60">
-          Listening language
-          <select
-            value={language}
-            onChange={(event) => onLanguage(event.target.value === "ar" ? "ar" : "en")}
-            className="rounded-lg border border-brand-line bg-white px-1.5 py-1 text-[11px] outline-none focus:border-brand-gold"
-          >
-            <option value="en">English</option>
-            <option value="ar">العربية</option>
-          </select>
-        </label>
       </div>
 
       {handsFree && supported && (
-        <label className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-brand-ink/60">
-          Wake phrase
-          <input
-            value={wakePhrase}
-            onChange={(event) => onWakePhrase(event.target.value)}
-            maxLength={MAX_WAKE_PHRASE_CHARS}
-            aria-label="Wake phrase"
-            className="min-w-0 flex-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[11px] outline-none focus:border-brand-gold"
-          />
-        </label>
+        <p className="mt-2 text-[10px] font-semibold leading-relaxed text-brand-ink/60">
+          Listening for “{shownPhrase}” — the phrase is set in Settings → Assistant, on your account,
+          so it is the same phrase on every machine you sign in from.
+        </p>
       )}
 
       <p className="mt-1.5 text-[10px] leading-relaxed text-brand-ink/55">
@@ -162,7 +135,7 @@ export function VoiceStrip({
             ? "The assistant's orb is holding this browser's microphone, so it hears the wake phrase from the room and brings the question here."
             : handsFree
               ? listening
-                ? `Listening for “${shownPhrase}” — the browser sends what it hears to its own speech service.`
+                ? `Listening for “${shownPhrase}” — what it hears is transcribed by this portal's own model and discarded once the words come back.`
                 : error
                   ? "Listening stopped — the error below says why."
                   : "Arming the microphone…"
@@ -178,8 +151,8 @@ export function VoiceStrip({
 
       {!supported && (
         <p className="mt-1 text-[10px] font-semibold leading-relaxed text-amber-700">
-          Hands-free needs Chrome or Edge&apos;s speech recognition. Push-to-talk works in this
-          browser.
+          Hands-free needs a microphone this browser will both open and encode. Push-to-talk works in
+          this browser.
         </p>
       )}
       {error && (
