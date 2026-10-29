@@ -516,6 +516,29 @@ function tokensOf(folded: string): string[] {
   return folded.split(TOKEN_SPLIT).filter(Boolean);
 }
 
+/**
+ * The utterance as folded tokens, with the raw word each token came from.
+ *
+ * `fold` can turn one written word into two spoken tokens — `follow-up` folds to
+ * `follow up`, `O'Brien` to `o brien` — so an index into the folded list is not an
+ * index into the words the person said. The tail comes from the words, so the
+ * matcher carries both and `after` is the map between them: `after[i]` is the
+ * number of raw words the first `i + 1` tokens were made from.
+ */
+function wordsOf(transcript: string): { tokens: string[]; after: number[]; raw: string[] } {
+  const raw = transcript.trim().split(/\s+/).filter(Boolean);
+  const tokens: string[] = [];
+  const after: number[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const folded = tokensOf(fold(raw[index]));
+    for (let n = 0; n < folded.length; n += 1) {
+      tokens.push(folded[n]);
+      after.push(index + 1);
+    }
+  }
+  return { tokens, after, raw };
+}
+
 /** Whether `needle` appears in `haystack` as a run of whole tokens, from its start. */
 function containsRun(haystack: string[], needle: string[], at: number): boolean {
   if (needle.length > haystack.length - at) return false;
@@ -534,7 +557,10 @@ export interface CommandMatch {
    * because a tail becomes a saved question: lowercased and stripped, it would put
    * a name in the transcript that the person never typed that way. `wakeRemainder`
    * in `domain/voice.ts` does the same trick for the wake phrase for the same
-   * reason, and this is its second instance rather than a third copy of it.
+   * reason, and this is its second instance rather than a third copy of it — with
+   * one thing this one needs and a wake phrase does not, because a command can be
+   * said in the middle of a sentence: the folded-to-raw map in `wordsOf`, so the
+   * cut lands after a word rather than after a token.
    */
   tail: string;
 }
@@ -550,11 +576,8 @@ export interface CommandMatch {
  * overrides one shared command without touching anyone else's.
  */
 export function matchCommand(transcript: string, commands: readonly VoiceCommand[]): CommandMatch | null {
-  const spoken = fold(transcript);
-  if (!spoken) return null;
-  const spokenTokens = tokensOf(spoken);
+  const { tokens: spokenTokens, after, raw } = wordsOf(transcript);
   if (spokenTokens.length === 0) return null;
-  const rawWords = transcript.trim().split(/\s+/).filter(Boolean);
 
   let best: { command: VoiceCommand; at: number; length: number } | null = null;
   for (const command of commands) {
@@ -573,5 +596,5 @@ export function matchCommand(transcript: string, commands: readonly VoiceCommand
     }
   }
   if (!best) return null;
-  return { command: best.command, tail: rawWords.slice(best.at + best.length).join(" ") };
+  return { command: best.command, tail: raw.slice(after[best.at + best.length - 1]).join(" ") };
 }

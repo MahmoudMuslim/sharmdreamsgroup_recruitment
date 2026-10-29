@@ -14,8 +14,13 @@
  * write door is this file's group 2: it refuses a draft that cannot be stored, and
  * names the field that made it so. The matcher is group 4: heard words become a
  * command only on a run of whole folded tokens, the longest phrase wins, the
- * person's own row wins a tie, and a row the read door already dropped never
- * reaches it at all. The reader and the console are later groups of this file.
+ * person's own row wins a tie, a row the read door already dropped never reaches it
+ * at all, and the tail is cut where the word ends rather than where the folded token
+ * did — `fold` splits `follow-up` in two, and a saved question that lost the word
+ * after it would be wrong in the ordinary case, not an edge. Group 1 holds the two
+ * spellings of the token rule together, because `domain/jarvis.ts` may not be
+ * imported here and a splitter that quietly diverges makes `stop` a word in one
+ * module and not the other. The reader and the console are later groups of this file.
  *
  * Nothing here needs a database, a browser, a microphone or a model. The mutation
  * proofs that break a rule and re-run the check that must notice use the harness
@@ -209,6 +214,14 @@ async function check1() {
   expect(problems, "spoken note ceiling", m.COMMAND_LIMITS.noteTextMax, 280);
   expect(problems, "ask prompt ceiling", m.COMMAND_LIMITS.promptMax, 2000);
   expect(problems, "read ceiling", m.COMMAND_LIMITS.rows, 200);
+  // The stop-word splitter and the command splitter are one rule written twice,
+  // on purpose (this module may not import `jarvis.ts`). Pinned, because the day
+  // they differ, `stop` is a word in one and not in the other — and a person who
+  // says "stop" to a command that tokenises `stop.` as one token is still talking
+  // to JARVIS, just not to the thing they meant.
+  const splitOf = (src) => (src.match(/const TOKEN_SPLIT = (\/.*\/);/) ?? [])[1];
+  expect(problems, "one token rule, spelled twice",
+    splitOf(read(DOMAIN_REL)), splitOf(read("src/modules/assistant/domain/jarvis.ts")));
   return verdict(problems);
 }
 
@@ -503,6 +516,15 @@ async function check4() {
   expect(problems, "the tail is handed back", hit?.tail, "Ahmed Hassan");
   const noTail = m.matchCommand("ask about", ask);
   expect(problems, "and is empty when nothing followed", noTail?.tail, "");
+  // A written word that folds into two spoken tokens, sitting inside the matched
+  // run. `follow-up` is two tokens to the matcher and one word to the person who
+  // typed it, so the tail has to be cut where the *word* ends, not where the
+  // tokens did — otherwise the saved question loses the first word after a
+  // hyphenated phrase, which is the ordinary case, not an edge.
+  const hyphen = [cmd({ triggerPhrase: "open the follow-up", action: { type: "open", href: "/jobs" } })];
+  const hyphenHit = m.matchCommand("open the follow-up Ahmed Hassan", hyphen);
+  expect(problems, "a hyphenated phrase leaves its own word in the tail", hyphenHit?.command.triggerPhrase, "open the follow-up");
+  expect(problems, "and the words after it are all still there", hyphenHit?.tail, "Ahmed Hassan");
 
   // The same four rules seen from the side a listing order or an unreadable row can
   // reach, so every guard the matcher has is pinned by a mutation of its own below.
@@ -676,6 +698,31 @@ await mutation(
   '        (wanted.length === best.length && command.scope === "personal" && best.command.scope === "shared");',
   "        (wanted.length === best.length && true);",
   async () => checkIsRed(4)
+);
+
+// The folded-to-raw map. This one is not a permissiveness question — the break it
+// guards is a *wrong* tail, not an extra match — so the needle is the slice itself,
+// and the replacement is the code this task shipped before its own fix round: it
+// passes every fixture that does not fold a word into two tokens, and fails the
+// hyphenated one.
+await mutation(
+  "11. The tail cut at the token count instead of the word count → check 4 red",
+  DOMAIN_REL,
+  '  return { command: best.command, tail: raw.slice(after[best.at + best.length - 1]).join(" ") };',
+  '  return { command: best.command, tail: raw.slice(best.at + best.length).join(" ") };',
+  async () => checkIsRed(4)
+);
+
+// The duplicate splitter, diverged by a real edit rather than by deleting the line:
+// a period no longer splits, so `open. the outbox` folds to a token the stored
+// phrase can never equal. The divergence is also a behaviour break, which is why the
+// needle is a character class.
+await mutation(
+  "12. The command splitter splitting on fewer characters than the stop-word splitter → check 1 red",
+  DOMAIN_REL,
+  "const TOKEN_SPLIT = /[\\s,.;:!?\"'()]+/;",
+  "const TOKEN_SPLIT = /[\\s,;:!?\"'()]+/;",
+  async () => checkIsRed(1)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);

@@ -1064,6 +1064,15 @@ async function check4() {
   expect(problems, "the tail is handed back", hit?.tail, "Ahmed Hassan");
   const noTail = m.matchCommand("ask about", ask);
   expect(problems, "and is empty when nothing followed", noTail?.tail, "");
+  // A written word that folds into two spoken tokens, sitting inside the matched
+  // run. `follow-up` is two tokens to the matcher and one word to the person who
+  // typed it, so the tail has to be cut where the *word* ends, not where the
+  // tokens did — otherwise the saved question loses the first word after a
+  // hyphenated phrase, which is the ordinary case, not an edge.
+  const hyphen = [cmd({ triggerPhrase: "open the follow-up", action: { type: "open", href: "/jobs" } })];
+  const hyphenHit = m.matchCommand("open the follow-up Ahmed Hassan", hyphen);
+  expect(problems, "a hyphenated phrase leaves its own word in the tail", hyphenHit?.command.triggerPhrase, "open the follow-up");
+  expect(problems, "and the words after it are all still there", hyphenHit?.tail, "Ahmed Hassan");
   return verdict(problems);
 }
 ```
@@ -1101,6 +1110,29 @@ function tokensOf(folded: string): string[] {
   return folded.split(TOKEN_SPLIT).filter(Boolean);
 }
 
+/**
+ * The utterance as folded tokens, with the raw word each token came from.
+ *
+ * `fold` can turn one written word into two spoken tokens — `follow-up` folds to
+ * `follow up`, `O'Brien` to `o brien` — so an index into the folded list is not an
+ * index into the words the person said. The tail comes from the words, so the
+ * matcher carries both and `after` is the map between them: `after[i]` is the
+ * number of raw words the first `i + 1` tokens were made from.
+ */
+function wordsOf(transcript: string): { tokens: string[]; after: number[]; raw: string[] } {
+  const raw = transcript.trim().split(/\s+/).filter(Boolean);
+  const tokens: string[] = [];
+  const after: number[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    const folded = tokensOf(fold(raw[index]));
+    for (let n = 0; n < folded.length; n += 1) {
+      tokens.push(folded[n]);
+      after.push(index + 1);
+    }
+  }
+  return { tokens, after, raw };
+}
+
 /** Whether `needle` appears in `haystack` as a run of whole tokens, from its start. */
 function containsRun(haystack: string[], needle: string[], at: number): boolean {
   if (needle.length > haystack.length - at) return false;
@@ -1119,7 +1151,10 @@ export interface CommandMatch {
    * because a tail becomes a saved question: lowercased and stripped, it would put
    * a name in the transcript that the person never typed that way. `wakeRemainder`
    * in `domain/voice.ts` does the same trick for the wake phrase for the same
-   * reason, and this is its second instance rather than a third copy of it.
+   * reason, and this is its second instance rather than a third copy of it — with
+   * one thing this one needs and a wake phrase does not, because a command can be
+   * said in the middle of a sentence: the folded-to-raw map in `wordsOf`, so the
+   * cut lands after a word rather than after a token.
    */
   tail: string;
 }
@@ -1135,11 +1170,8 @@ export interface CommandMatch {
  * overrides one shared command without touching anyone else's.
  */
 export function matchCommand(transcript: string, commands: readonly VoiceCommand[]): CommandMatch | null {
-  const spoken = fold(transcript);
-  if (!spoken) return null;
-  const spokenTokens = tokensOf(spoken);
+  const { tokens: spokenTokens, after, raw } = wordsOf(transcript);
   if (spokenTokens.length === 0) return null;
-  const rawWords = transcript.trim().split(/\s+/).filter(Boolean);
 
   let best: { command: VoiceCommand; at: number; length: number } | null = null;
   for (const command of commands) {
@@ -1158,20 +1190,22 @@ export function matchCommand(transcript: string, commands: readonly VoiceCommand
     }
   }
   if (!best) return null;
-  return { command: best.command, tail: rawWords.slice(best.at + best.length).join(" ") };
+  return { command: best.command, tail: raw.slice(after[best.at + best.length - 1]).join(" ") };
 }
 ```
 
 - [ ] **Step 4: Run the proof**
 
 Run: `node --experimental-strip-types scripts/prove-jarvis-commands.mjs`
-Expected: `4/4 checks held, 0/0 mutations turned red.`
+Expected: `4/4 checks held, N/N mutations turned red.` — `N` is every mutation the file already holds (A1 and A2 registered their own; count them with `grep -c "^await mutation" scripts/prove-jarvis-commands.mjs`). Read it from the file, not from here: a shortfall against the count is a broken needle, never a number to ignore.
 
-- [ ] **Step 5: Add group 4's mutation**
+- [ ] **Step 5: Add the mutations group 4 needs**
+
+The one below is the minimum the plan can name in advance. The rule this project runs by is wider than the example: **every guard this task adds is pinned by a mutation of its own**, each a single, strictly-more-permissive loosening (a tightening proves nothing, because it turns red by refusing more, not by letting a break through), each labelled with the next free ordinal the file's existing labels leave — `6.` here, `7.` after it, and so on. A guard that cannot be loosened alone — because the same rule is enforced twice, once in the callee and once in the caller — gets its non-vacuity proved by a temporary two-line revert outside the harness, with the red line quoted in the report; do not register a mutation that reports green.
 
 ```js
 await mutation(
-  "2. The matcher accepting a substring instead of a run of tokens → check 4 red",
+  "6. The matcher accepting a substring instead of a run of tokens → check 4 red",
   DOMAIN_REL,
   "    if (haystack[at + index] !== needle[index]) return false;",
   "    if (!haystack[at + index]?.startsWith(needle[index])) return false;",
@@ -1179,9 +1213,52 @@ await mutation(
 );
 ```
 
-Run the proof. Expected: `4/4 checks held, 1/2 mutations turned red.` — A2's mutation now passes too, so the count is out of two.
+Run the proof. Expected: `4/4 checks held, (N+M)/(N+M) mutations turned red.` — `M` is how many mutations this task registered.
 
-- [ ] **Step 6: Commit**
+The tail's folded-to-raw map needs one of the same, and it is not a permissiveness question — the break it guards is a *wrong* tail, not an extra match, so the needle is the slice itself:
+
+```js
+await mutation(
+  "The tail cut at the token count instead of the word count → check 4 red",
+  DOMAIN_REL,
+  "  return { command: best.command, tail: raw.slice(after[best.at + best.length - 1]).join(\" \") };",
+  "  return { command: best.command, tail: raw.slice(best.at + best.length).join(\" \") };",
+  async () => checkIsRed(4)
+);
+```
+
+That replacement is the code this task shipped before its own fix round, which is the best evidence the assertion is not decoration: it passes every fixture that does not fold a word into two tokens, and fails the hyphenated one.
+
+- [ ] **Step 6: Pin the deliberate duplicate**
+
+`TOKEN_SPLIT` is now spelled twice: `domain/jarvis.ts` keeps its private copy for `isStopCommand`, and this task's matcher has its own. That is the same decision `MAX_WAKE_PHRASE_LEN` records in the listening slice — a domain module that imported `jarvis.ts` would drag the tool registry into the proof — and a decision this project only trusts when a check holds it in place. Two lines in `check1`, which is the group that already asserts "these are the shipped vocabularies and ceilings":
+
+```js
+  // The stop-word splitter and the command splitter are one rule written twice,
+  // on purpose (this module may not import `jarvis.ts`). Pinned, because the day
+  // they differ, `stop` is a word in one and not in the other — and a person who
+  // says "stop" to a command that tokenises `stop.` as one token is still talking
+  // to JARVIS, just not to the thing they meant.
+  const splitOf = (src) => (src.match(/const TOKEN_SPLIT = (\/.*\/);/) ?? [])[1];
+  expect(problems, "one token rule, spelled twice",
+    splitOf(read(DOMAIN_REL)), splitOf(read("src/modules/assistant/domain/jarvis.ts")));
+```
+
+Group 1 loads the module but has not read its text until now — `read` is one of the harness stubs the earlier groups left unused, and this is the line that spends it. Then one more mutation, in group 1's list, that diverges the command side by a real edit rather than by deleting the line:
+
+```js
+await mutation(
+  "The command splitter splitting on fewer characters than the stop-word splitter → check 1 red",
+  DOMAIN_REL,
+  "const TOKEN_SPLIT = /[\\s,.;:!?\"'()]+/;",
+  "const TOKEN_SPLIT = /[\\s,;:!?\"'()]+/;",
+  async () => checkIsRed(1)
+);
+```
+
+A period no longer splits, so `open. the outbox` folds to a token the stored phrase can never equal — the divergence is also a behaviour break, which is why the needle is a character class and not the whole line. Run the proof. Expected: `4/4 checks held, (N+M+1)/(N+M+1) mutations turned red.`
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/modules/assistant/domain/voice.ts src/modules/assistant/domain/commands.ts scripts/prove-jarvis-commands.mjs
@@ -1200,7 +1277,7 @@ The table, its shape CHECKs, the two partial unique indexes, eight policies, the
 - Read first: `db/migrations/047_assistant_jarvis_prefs.sql`, `db/migrations/050_jarvis_wake_phrase.sql`
 
 **Interfaces:**
-- Consumes: `current_user_profile_id()`, `is_staff()`, `has_permission(text)` — all already in the local schema (`047` and `001_settings_rbac.sql:216`).
+- Consumes: `current_user_profile_id()` (`020_assistant_sessions.sql:29`, and `db/schema.sql:1214`), `is_staff()` (`db/schema.sql:1283`; `047` is the policy that *uses* both), `has_permission(text)` (`001_settings_rbac.sql:216`). The seed guard to copy is `027_company_careers_profile.sql:167` — `047` seeds nothing, so it has no idiom to take.
 - Produces: the table `public.assistant_jarvis_commands` and the permission key `assistant.commands`, both read by A5 and A7.
 
 - [ ] **Step 1: Write the failing checks**
@@ -1252,7 +1329,11 @@ async function check5() {
   for (const name of shared) has(`policy ${name}`, `create policy ${name}`);
   has("own rows by profile id", "(select current_user_profile_id()) = owner_profile_id");
   has("and only by staff", "and is_staff()");
-  has("shared writes behind the permission", "has_permission('assistant.commands')");
+  // Counted, not merely present: four shared-write guards (one insert, two update,
+  // one delete). A `has` alone stays green when a policy loses its permission, which
+  // is the exact break group 5's mutation makes below, so it would prove nothing.
+  if ((sql.match(/has_permission\('assistant\.commands'\)/g) ?? []).length !== 4)
+    problems.push("a shared write is not behind the permission (expected four guards)");
 
   // The permission and its grants.
   has("the permission row", "insert into public.permissions (key, label, group_name, description)");
@@ -1260,10 +1341,10 @@ async function check5() {
   has("  idempotent", "on conflict (key) do nothing");
   has("SUPER_ADMIN granted", "('SUPER_ADMIN', 'assistant.commands', true)");
   has("HIRING_MANAGER granted", "('HIRING_MANAGER', 'assistant.commands', true)");
-  // No SUBSIDIARY_HR_MANAGER row: `user_role` cannot hold that value, so a grant
-  // for it would be a matrix entry nobody can ever hold.
+  // No SUBSIDIARY_HR_MANAGER row: the grants table's enum can name it, but no
+  // account's role column can hold it, so the row would be unreachable furniture.
   if (sql.includes("'SUBSIDIARY_HR_MANAGER', 'assistant.commands'")) {
-    problems.push("the migration grants a role the enum cannot hold");
+    problems.push("the migration grants a role no account can hold");
   }
 
   // Four starters, navigation and saved-prompt only.
@@ -1429,9 +1510,11 @@ values ('assistant.commands', 'Publish shared JARVIS commands', 'Assistant',
         'Add, edit and remove voice commands every recruiter can use')
 on conflict (key) do nothing;
 
--- No SUBSIDIARY_HR_MANAGER row: `user_role` (db/schema.sql:99) does not hold that
--- value, so a grant for it would be a matrix entry nobody can ever hold. RECRUITER
--- is left to the matrix on purpose — see the spec's Privacy and authority.
+-- No SUBSIDIARY_HR_MANAGER row. `role_permissions.role_key` is `app_role`
+-- (db/schema.sql:48), which *does* hold that value — but a person's own role is
+-- `user_profiles.role`, typed `user_role` (db/schema.sql:99, :756), whose four values
+-- exclude it. So a grant for it would be a matrix entry no account can ever hold.
+-- RECRUITER is left to the matrix on purpose — see the spec's Privacy and authority.
 insert into public.role_permissions (role_key, permission_key, granted)
 values ('SUPER_ADMIN', 'assistant.commands', true),
        ('HIRING_MANAGER', 'assistant.commands', true)
@@ -1465,7 +1548,7 @@ commit;
 
 **Two things in that draft are deliberately wrong and must be fixed while writing it** — this is the plan telling you what it could not settle in advance, not a placeholder:
 
-1. `on conflict (lower(btrim(trigger_phrase))) where scope = 'shared' do nothing` is not valid `ON CONFLICT` syntax — an inference clause cannot carry a `WHERE` over a partial index that way. Use the form the starters actually need: `on conflict do nothing` is *also* insufficient, because there is no unique constraint on the whole table. The correct statement is `insert … select … where not exists (select 1 from public.assistant_jarvis_commands e where e.scope = 'shared' and lower(btrim(e.trigger_phrase)) = lower(btrim(<new phrase>)))` — or, simplest and consistent with `047`'s seed idiom, add `on conflict (id) do nothing` is *not* it either. **Decide between the `where not exists` guard and a `do nothing` on a newly-declared exclusion constraint, verify the file runs inside a rolled-back transaction on the local database (`docker compose exec -T postgres psql` with `begin; … rollback;`), and keep whichever answers check 5 with the starters inserted twice without a unique violation.** A migration nobody has executed once is a guess.
+1. `on conflict (lower(btrim(trigger_phrase))) where scope = 'shared' do nothing` is not valid `ON CONFLICT` syntax — an inference clause cannot carry a `WHERE` over a partial index, and a bare `on conflict do nothing` is not enough either: the only unique constraints here are partial, so an `ON CONFLICT` clause has nothing whole-table to infer. Take the guard the repository already writes — `insert … select … where not exists (select 1 from public.assistant_jarvis_commands e where e.scope = 'shared' and lower(btrim(e.trigger_phrase)) = lower(btrim(s.trigger_phrase)))`, the shape at `027_company_careers_profile.sql:167` (`047` seeds nothing, so it has no idiom to copy). **Prove it by running the file twice inside Step 6's rolled-back rehearsal: the first pass inserts four rows, the second inserts zero and raises no unique violation.** A migration nobody has executed once is a guess.
 2. `select pg_cron_unschedule_if_exists…` is a stray line from a different migration. Delete it.
 
 Group 5's check for the starters is written against the `insert into … values` form, so if the chosen shape becomes an `insert … select`, update that check's needle to the statement actually on disk — the check follows the file, not the other way round.
@@ -1473,13 +1556,15 @@ Group 5's check for the starters is written against the `insert into … values`
 - [ ] **Step 4: Run the proof**
 
 Run: `node --experimental-strip-types scripts/prove-jarvis-commands.mjs`
-Expected: `5/5 checks held, 2/2 mutations turned red.`
+Expected: `5/5 checks held, N/N mutations turned red.` — `N` is every mutation the file holds before this task adds its own; count them with `grep -c "^await mutation" scripts/prove-jarvis-commands.mjs`. It was 6 when this task was written, and it is a number that later fix rounds move, so read it from the file, not from here. A shortfall is a broken needle, never a count to ignore.
 
 - [ ] **Step 5: Add group 5's mutation**
 
+Label it with the next ordinal the file's existing labels leave (`1.` … `N.` in order of appearance) — at authoring time that is `7.`:
+
 ```js
 await mutation(
-  "3. A shared row writable by any staff member → check 5 red",
+  "7. A shared row writable by any staff member → check 5 red",
   MIGRATION_REL,
   "    scope = 'shared' and is_staff() and has_permission('assistant.commands')\n  );\n\ncreate policy assistant_jarvis_commands_shared_update",
   "    scope = 'shared' and is_staff()\n  );\n\ncreate policy assistant_jarvis_commands_shared_update",
@@ -1487,28 +1572,35 @@ await mutation(
 );
 ```
 
-Run the proof. Expected: `5/5 checks held, 3/3 mutations turned red.`
+Run the proof. Expected: `5/5 checks held, (N+1)/(N+1) mutations turned red.` The mutation drops the guard from the shared **insert** policy, leaving three of four; the counted assertion in check 5 is what makes that go red — a `has` on the same string would stay green, because the update and delete policies still carry it.
 
 - [ ] **Step 6: Prove it runs, without applying it**
 
-The local database is the owner's real data, so the rehearsal is a transaction that cannot land:
+The local database is the owner's real data, and `051` carries its **own** `begin;` / `commit;` — so pasting the file between an outer `begin;` and `rollback;` would *commit* it and apply the migration with no approval. The rehearsal therefore owns the transaction: the copy is edited so the file's closing `commit;` becomes `rollback;`, and the copy — never the file — is what runs.
 
 ```bash
-docker compose exec -T postgres psql -U postgres -d sharm_dreams -v ON_ERROR_STOP=1 <<'SQL'
-begin;
-\i /dev/stdin
-rollback;
-SQL
+COMPOSE=(docker compose -f docker/docker-compose.yml --env-file docker/.env)   # `npm run docker:psql` is this, with the db service
+REHEARSAL="$(mktemp "${TEMP:-/tmp}/jarvis051XXXXXX").sql"   # an absolute template: a bare `jarvis051XXXXXX` is created in the *current directory*, and this runs from the repo — two 0-byte strays landed in the working tree that way
+sed -e 's/^commit;$/rollback;/' db/migrations/051_jarvis_voice_commands.sql > "$REHEARSAL"
+grep -n '^begin;$\|^rollback;$' "$REHEARSAL"    # begin still there, commit gone, before running anything
+"${COMPOSE[@]}" exec -T db psql -U postgres -d sharm_dreams -v ON_ERROR_STOP=1 < "$REHEARSAL"
+rm -f "$REHEARSAL"    # only after every run of the copy is finished — the repeat in the step below rebuilds it the same way
 ```
 
-Paste the file's body between `begin` and `rollback` (or copy it into a temp file outside the repo and `\i` that). Expected: every statement succeeds, then `ROLLBACK`. Confirm afterwards that the table is **not** there:
+Expected: the session prints `BEGIN`, every statement's tag, and ends with `ROLLBACK`. The gateway service is named **`db`** (`docker/docker-compose.yml:24`), the database is `sharm_dreams`, and `-T` is what makes the piped file work. **One substitution, not two: leave the file's `begin;` alone.** Editing it away is the mistake this step was rewritten to avoid — with no `begin;` in the copy, psql autocommits every statement, the trailing `rollback;` rolls back nothing, and it says so with `WARNING: there is no transaction in progress` while the table is already real. That warning in the output means the rehearsal applied the migration; treat it exactly like the post-check failure below.
+
+Then prove the seed guard is idempotent *inside* a transaction — a second pass of the whole file would trip `create policy` on the name it just took, so repeat only the starters statement. Append a second copy of the `insert into public.assistant_jarvis_commands (scope, trigger_phrase, …)` statement you wrote in Step 3, immediately **before** the `rollback;` line in `$REHEARSAL`, and run it again. Expected: the second seed reports `INSERT 0 0` — the `where not exists` guard saw the rows the first seed placed in this same transaction — and the session still ends in `ROLLBACK`. Nothing else may differ between the two runs.
+
+Confirm afterwards that nothing landed:
 
 ```bash
-docker compose exec -T postgres psql -U postgres -d sharm_dreams -tAc \
+docker compose -f docker/docker-compose.yml --env-file docker/.env exec -T db psql -U postgres -d sharm_dreams -tAc \
   "select to_regclass('public.assistant_jarvis_commands') is not null"
+docker compose -f docker/docker-compose.yml --env-file docker/.env exec -T db psql -U postgres -d sharm_dreams -tAc \
+  "select count(*) from public.permissions where key = 'assistant.commands'"
 ```
 
-Expected: `f`. **If it returns `t`, the rollback did not happen and 051 was applied without approval — say so immediately and stop; do not attempt to undo it yourself.**
+Expected: `f` and `0` — the table absent and the permission unseeded, which together say the rollback happened. **If either answer is anything else, 051 was applied without the owner's approval: say so immediately and stop; do not attempt to undo it yourself.**
 
 - [ ] **Step 7: Commit**
 
