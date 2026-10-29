@@ -42,9 +42,9 @@ export function VoiceStrip({
   onHandsFree: (next: boolean) => void;
   listening: boolean;
   /**
-   * True while the presence orb's own recogniser holds the microphone on this page.
+   * True while the presence orb's own capture holds the microphone on this page.
    *
-   * One capture per tab: this console stands its recognizer down then, and the strip
+   * One capture per tab: this console stands its own down then, and the strip
    * has to say who is listening instead of claiming nothing is.
    */
   ambientArmed: boolean;

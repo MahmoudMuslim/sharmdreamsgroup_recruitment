@@ -93,7 +93,7 @@ import {
  * The presence orb is a third door, and it is deliberately not a third
  * conversation: it owns the microphone while ambient listening is armed and owns
  * no interpretation at all. What it hears arrives here through
- * `useJarvisHandoff`, into the same `hearUtterance` the console's own recogniser
+ * `useJarvisHandoff`, into the same `hearUtterance` the console's own listener
  * calls, so "Hey Jarvis" means the same thing whoever carried it. What the orb
  * shows — amber for a turn in flight, green for an answer being read, violet for a
  * card owed a click — is this component's state, mirrored there and nowhere else.
@@ -169,7 +169,7 @@ export function AssistantChat({
   const [extracting, setExtracting] = useState(false);
   const [opening, setOpening] = useState(sessionId !== null);
 
-  /** Console-only: what the strip shows and whether the recognizer is armed. */
+  /** Console-only: what the strip shows and whether the listener is armed. */
   const [caption, setCaption] = useState("");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [handsFree, setHandsFree] = useState(false);
@@ -260,10 +260,10 @@ export function AssistantChat({
   /**
    * Whether a turn or a released approval is in flight, seen from outside React.
    *
-   * One `onresult` from the hands-free recogniser can carry more than one final,
-   * and the loop delivers them back to back in the same synchronous pass, before
-   * any state those calls set is visible. `pending` alone cannot stop the second
-   * one, and two turns at once means double quota and an interleaved transcript.
+   * A hands-free listener can deliver two utterances back to back in the same
+   * synchronous pass, before any state those calls set is visible. `pending` alone
+   * cannot stop the second one, and two turns at once means double quota and an
+   * interleaved transcript.
    * This is the same fact as `pending`, written where synchronous code can read
    * it: set before the first await, cleared when the run ends.
    */
@@ -674,7 +674,7 @@ export function AssistantChat({
   }
 
   /**
-   * One final utterance from the browser recognizer.
+   * One final utterance from the hands-free listener.
    *
    * The wake phrase may carry the question ("Hey Jarvis, who is waiting?") or
    * stand alone, in which case the next utterance is the question. While a card
@@ -690,7 +690,7 @@ export function AssistantChat({
     if (wake.matched) {
       markAwaiting(false);
       if (wake.remainder) {
-        // The folded remainder is the recognizer-level match; the turn that is
+        // The folded remainder is the phrase-level match; the turn that is
         // sent and stored is the person's own words after the phrase.
         const question = wakeRemainder(text, phrase) || wake.remainder;
         const blocked = spokenTurnBlocked();
@@ -709,7 +709,7 @@ export function AssistantChat({
       return;
     }
     if (!awaitingRef.current) return;
-    // The console speaks while the recognizer is armed, so a final can be the
+    // The console speaks while the listener is armed, so a final can be the
     // assistant hearing itself: the cue it said, a refusal it read out, or the
     // answer it just summarised aloud. `speaking` only covers the utterance
     // still in flight; an echo that lands after it ended is caught by comparing
@@ -746,7 +746,7 @@ export function AssistantChat({
           speech.speakNow("Approval not sent. The code was not heard.", "en");
           return;
         }
-        // One release at a time: the recognizer can hand two verdicts in a
+        // One release at a time: the listener can hand two verdicts in a
         // single batch, and the second must not caption itself as though the
         // change it names had run.
         if (inFlightRef.current) {

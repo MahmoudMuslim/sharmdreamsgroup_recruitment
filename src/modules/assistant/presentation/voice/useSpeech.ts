@@ -44,8 +44,8 @@ export function useSpeech(choice: DeviceVoiceChoice = {}) {
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The words handed to the device, oldest first, each with when it was last
-  // being produced. The hands-free recogniser listens to the same room, so this is
-  // what it can hear back — the chat needs it a beat after the utterance ends,
+  // being produced. The hands-free listener hears the same room, so this is what
+  // can come back to it — the chat needs it a beat after the utterance ends,
   // which is why it is a ref and not state.
   const spokenRecently = useRef<{ text: string; at: number }[]>([]);
   /** Pieces asked for and not yet finished playing, oldest first. */
@@ -223,7 +223,7 @@ export function useSpeech(choice: DeviceVoiceChoice = {}) {
   // Whether these words are the device's own voice coming back. The clock is read
   // here, beside the stamp it is measured from: a component body is render scope
   // for React's rules, and an impure call there is what they forbid — while this
-  // runs only from the recogniser's own callback.
+  // runs only from the listener's own callback.
   const echoedOwnVoice = useCallback(
     (heard: string) => isOwnVoiceEcho(heard, spokenRecently.current, Date.now()),
     []

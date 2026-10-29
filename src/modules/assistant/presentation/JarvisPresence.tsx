@@ -101,8 +101,8 @@ export interface JarvisPresenceProps {
  *
  * ## One microphone, one owner
  *
- * While this recogniser is armed the chat's own is stood down (its `ambientArmed`
- * subscription). Two continuous recognisers in one page would each hear the person
+ * While this listener is armed the chat's own is stood down (its `ambientArmed`
+ * subscription). Two continuous captures in one page would each hear the person
  * and each hand the assistant the same turn.
  *
  * ## What the orb never claims
@@ -121,7 +121,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   const [appearance, setAppearance] = useState<JarvisAppearance>(DEFAULT_JARVIS_APPEARANCE);
   const [stopped, setStopped] = useState(false);
   // The note card is fed by several sources that outlive a click — a briefing that
-  // was given, the recogniser's refusal, the prefs read. None of them is a piece of
+  // was given, the capture's refusal, the prefs read. None of them is a piece of
   // state this component owns, so closing the card is remembered here, by the text
   // that was showing: a note the person closed stays closed, and a different one
   // still arrives.
@@ -204,9 +204,9 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
     [heardOwnVoice, stop, tone, ui.awaiting, voice.speaking, wakeAudio, wakePhrase]
   );
 
-  // Kept current after commit rather than during render: the recogniser holds one
-  // handler for its whole run, and re-arming the microphone to pass a new closure
-  // would drop the utterance in flight.
+  // Kept current after commit rather than during render: the listener reads its
+  // handler through a ref for its whole run, and re-arming the microphone to pass a
+  // new closure would drop the utterance in flight.
   const hearRef = useRef(hear);
   useEffect(() => {
     hearRef.current = hear;
@@ -214,7 +214,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
 
   // One capture, one owner: the meter holds the microphone whenever the wake word is
   // armed, and the listening hook cuts its segments from that same stream. Arming is
-  // a preference, so the capture follows the preference and not a recogniser's report.
+  // a preference, so the capture follows the preference and not the hook's report.
   const ambientArmed = prefs !== null && canArmAmbient(prefs);
   const meter = useJarvisMeter({ enabled: ambientArmed });
 
@@ -233,7 +233,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   });
 
   // The store reports the microphone's truth, from the hook that owns it, so no
-  // surface can advertise a recogniser the browser refused to start.
+  // surface can advertise a capture the browser refused to open.
   useEffect(() => {
     setJarvisAmbient(wake.listening);
   }, [wake.listening]);

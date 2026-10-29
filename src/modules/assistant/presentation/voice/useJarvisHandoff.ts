@@ -17,7 +17,7 @@ import {
  *
  * Two facts travel across this boundary, in opposite directions.
  *
- * **In:** while ambient listening is armed the orb's recogniser owns the microphone and
+ * **In:** while ambient listening is armed the orb's listener owns the microphone and
  * hands what it hears to the store; this takes it exactly once and gives it to the
  * chat's own utterance handler, where the wake phrase, the approval verdicts and the
  * refusals are already decided and proved. Nothing new is interpreted here.
@@ -47,7 +47,7 @@ export function useJarvisHandoff({
   speaking: boolean;
   approvalSummary: string | null;
 }): {
-  /** True while the orb's recogniser holds the microphone, so the chat's must not. */
+  /** True while the orb's listener holds the microphone, so the chat's must not. */
   ambientArmed: boolean;
 } {
   const ui = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
@@ -96,9 +96,9 @@ export function useJarvisHandoff({
 /**
  * Write the chat's waiting-for-a-follow-up decision to both places it is read.
  *
- * The ref stays authoritative because the recogniser's handler runs in a synchronous
- * pass: a batch carrying "Hey Jarvis" and then the question would arm a state the
- * second final could not see. This is the only writer of the mirrored copy, and the
+ * The ref stays authoritative because the listener's handler runs in a synchronous
+ * pass: two utterances carrying "Hey Jarvis" and then the question would arm a state
+ * the second one could not see. This is the only writer of the mirrored copy, and the
  * only reason the chat should ever touch `awaitingRef`.
  */
 export function useJarvisAwaitingWriter(awaitingRef: { current: boolean }) {

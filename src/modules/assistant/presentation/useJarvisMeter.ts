@@ -152,7 +152,7 @@ export function useJarvisMeter({ enabled }: { enabled: boolean }): JarvisMeter {
       }
     };
 
-    // A hidden tab gives up the microphone: this is the rule the recogniser and the
+    // A hidden tab gives up the microphone: this is the rule the listener and the
     // recorder already follow, and a level reader that outlived the page would be the
     // one thing still holding a capture after everything else let go.
     const onVisibility = () => {

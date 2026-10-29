@@ -231,7 +231,7 @@ export function spokenCodeIn(transcript: string, code: string): string | null {
 /**
  * Words the console cannot mean to hear.
  *
- * A recogniser armed for hands-free keeps listening to the same room the device
+ * A listener armed for hands-free keeps listening to the same room the device
  * speaks into, so the console's own voice comes back as a transcript — the cue it
  * said, the approval line naming a code, the answer it read aloud. None of that is
  * a person. A final whose words run inside what was just spoken is an echo of the
@@ -240,7 +240,7 @@ export function spokenCodeIn(transcript: string, code: string): string | null {
  *
  * What is compared is every string still inside the window, not only the last one.
  * The console says something new before the echo of the old thing arrives — the
- * cue that arms the recogniser cuts off the answer it was reading — so a memory of
+ * cue that arms the listener cuts off the answer it was reading — so a memory of
  * one sentence forgets the sentence the echo came from and lets it through.
  *
  * The heard words must line up with whole words of what was said. Folding makes

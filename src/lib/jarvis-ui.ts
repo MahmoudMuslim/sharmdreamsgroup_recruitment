@@ -8,7 +8,7 @@
  *
  * Nothing here decides reach. Whether the microphone may arm comes from the
  * person's own row through `canArmAmbient`, and this file only reports that the
- * recogniser is actually running in this browser right now.
+ * microphone is actually open in this browser right now.
  */
 
 export interface JarvisUtterance {
@@ -20,7 +20,7 @@ export interface JarvisUtterance {
 export interface JarvisUiState {
   /** The conversation surface — dock or page — is open. */
   open: boolean;
-  /** The ambient recogniser is running in this browser, right now. */
+  /** The ambient microphone is open in this browser, right now. */
   ambientArmed: boolean;
   /** The conversation is waiting for the next thing said out loud. */
   awaiting: boolean;
@@ -81,17 +81,17 @@ export function toggleJarvisOpen(): void {
 }
 
 /**
- * Reports the recogniser's own state, not a wish.
+ * Reports the microphone's own state, not a wish.
  *
- * The orb calls this from the effect that starts and stops the recogniser, so an
+ * The orb calls this from the effect that starts and stops the capture, so an
  * app-bar indicator that says "listening" is true only while something is
  * listening — a saved switch that the browser refused to honour would otherwise
  * advertise a microphone that never opened.
  *
- * A microphone cannot be armed in two windows at once, because the recogniser that
+ * A microphone cannot be armed in two windows at once, because the capture that
  * owns it lets go the moment its tab is hidden — so this never needs broadcasting.
  * An indicator that read a shared value would risk showing "listening" for a
- * recogniser another window had already released.
+ * capture another window had already released.
  */
 export function setJarvisAmbient(armed: boolean): void {
   if (state.ambientArmed === armed) return;
@@ -107,9 +107,9 @@ export function setJarvisThinking(thinking: boolean): void {
 /**
  * Hands words heard in the room to the conversation.
  *
- * Only the presence listens while ambient is armed, so the chat's own recogniser is
- * stood down and this is how a turn reaches it. The text is the recogniser's own
- * final result, not a question: the conversation still decides what it means —
+ * Only the presence listens while ambient is armed, so the chat's own capture is
+ * stood down and this is how a turn reaches it. The text is the gateway's own
+ * transcript, not a question: the conversation still decides what it means —
  * whether it names the wake phrase, answers a live approval card, or asks something
  * — because that judgement is the chat's and is already proved there. Silence is not
  * a turn: an empty transcript would open a blank question.

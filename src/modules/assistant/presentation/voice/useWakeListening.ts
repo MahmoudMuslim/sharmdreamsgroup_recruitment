@@ -89,13 +89,14 @@ export interface WakeListeningState {
  * - **Nothing kept.** A segment is `stop()`-ed into a `Blob`, posted, and dropped. A
  *   transcript reaches the caller that owns the conversation, which discards one
  *   without the phrase in it silently; nothing is logged about a near-miss.
- * - **No capture of its own.** This file never calls `getUserMedia` — check 13 and
- *   Task 10's audit both hold that, because a second call is a second prompt and a
- *   second thing to release.
+ * - **No capture of its own.** This file never calls `getUserMedia` — the meter is the
+ *   one place that opens a microphone, because a second call is a second prompt and a
+ *   second thing to release. The voice proof reads the code with comments stripped and
+ *   refuses a call here.
  *
  * Quiet hours are the caller's `quiet` flag: the gate keeps running so the orb stays
  * awake and animating, and segments are simply not sent. A hidden tab tears the whole
- * run down — the rule the recogniser, the recorder and the meter already follow.
+ * run down — the rule the recorder and the meter already follow.
  */
 export function useWakeListening({
   enabled,

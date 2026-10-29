@@ -9,8 +9,8 @@ import { useRecorder } from "./useRecorder";
 /**
  * The microphone beside the composer.
  *
- * Dictation only inserts text — it never sends the turn, so what the recogniser
- * heard can be read and corrected before it becomes a question. Escape cancels a
+ * Dictation only inserts text — it never sends the turn, so what was heard can be
+ * read and corrected before it becomes a question. Escape cancels a
  * clip; the recorder itself stops at two minutes. While it records, the button
  * says where the audio goes and that it is discarded, which is the first-use
  * explanation the spec asks for on this surface.
