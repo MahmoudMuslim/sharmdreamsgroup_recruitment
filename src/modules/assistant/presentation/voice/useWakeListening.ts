@@ -172,8 +172,18 @@ export function useWakeListening({
     // start → error at frame speed.
     let stopped = false;
 
-    /** Close the segment that is open, if any. Its own `onstop` posts what it heard. */
-    const closeSegment = () => {
+    /**
+     * Close the segment that is open, if any. A kept segment's own `onstop` posts
+     * what it heard; a discarded one has its handlers taken away first.
+     *
+     * The difference is the gate's verdict, not this hook's: `GATE_MIN_SEGMENT_MS` is
+     * "the shortest segment worth a transcription call", and the voice door charges
+     * the window *before* it asks the model. So a two-hundred-millisecond cough that
+     * still reached a recorder must reach the door only if the gate kept it — and a
+     * noisy desk must not spend the ceiling of twenty segments in five minutes on
+     * sounds nobody spoke.
+     */
+    const closeSegment = (keep: boolean) => {
       const closing = recorder;
       if (!closing) return;
       // Unclaimed before `stop()` is called: the frame loop reads `recorder` on the
@@ -182,6 +192,15 @@ export function useWakeListening({
       // the live one and refuse to open its successor.
       recorder = null;
       if (closing.state !== "inactive") {
+        if (!keep) {
+          // All three come off together: a buffered frame must not post the segment
+          // the gate refused, and a recorder this hook has already thrown away must
+          // not end the run a frame later with "the browser refused the recording".
+          // Pinned as one literal by check 13, so keep these lines consecutive.
+          closing.ondataavailable = null;
+          closing.onstop = null;
+          closing.onerror = null;
+        }
         try {
           closing.stop();
         } catch {
@@ -198,7 +217,7 @@ export function useWakeListening({
       alive = false;
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
-      closeSegment();
+      closeSegment(false);
       gate = GATE_CLOSED;
       setError(message);
       setRunEnded(true);
@@ -272,8 +291,10 @@ export function useWakeListening({
       // samples cross no closed→open edge and both leak without this: a sound under
       // the floor closes the gate with no clip to post, and a cap closes and re-opens
       // it inside one sample. Close first, then open, so a capped sentence hands its
-      // second half to a fresh recorder on this same frame.
-      if (sample.clip || !gateOpen) closeSegment();
+      // second half to a fresh recorder on this same frame. The argument is the gate's
+      // verdict, not this hook's opinion: the gate's floor is what decides whether the
+      // segment is worth the door's call.
+      if (sample.clip || !gateOpen) closeSegment(sample.clip !== null);
       if (gateOpen && recorder === null) openSegment();
       frame = requestAnimationFrame(tick);
     };
@@ -283,7 +304,9 @@ export function useWakeListening({
         alive = false;
         if (frame !== null) cancelAnimationFrame(frame);
         frame = null;
-        closeSegment();
+        // A tab that went away was never going to hear a sentence finish, and the
+        // door does not get paid for a fragment nobody can complete.
+        closeSegment(false);
         gate = GATE_CLOSED;
         return;
       }
@@ -306,7 +329,9 @@ export function useWakeListening({
       document.removeEventListener("visibilitychange", onVisibility);
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
-      closeSegment();
+      // The run is over because the switch went off, and a clip cut short by a
+      // disarm is not what the person asked.
+      closeSegment(false);
       gate = GATE_CLOSED;
     };
     // `meter` is deliberately absent: see the `meterRef` above. The React hooks lint

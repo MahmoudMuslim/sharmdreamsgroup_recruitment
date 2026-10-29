@@ -905,11 +905,24 @@ async function check13() {
   // writing into one buffer. A cap closes the gate and re-opens it inside a single
   // sample, so a loop that only opens on the edge never records the rest of the
   // sentence. Each line is the whole rule for one direction, so each is pinned.
-  if (!hook.includes("if (sample.clip || !gateOpen) closeSegment();")) {
+  // The close also carries the gate's verdict. `GATE_MIN_SEGMENT_MS` is the shortest
+  // segment worth a transcription call, and the voice door charges its window *before*
+  // it asks the model (`src/app/api/assistant/voice/route.ts`), so a two-hundred-
+  // millisecond cough that still reached a recorder is thrown away — not billed, and
+  // not spent from the twenty slots a noisy desk would otherwise use to lock the
+  // person out of the orb before they ever spoke.
+  if (!hook.includes("if (sample.clip || !gateOpen) closeSegment(sample.clip !== null);")) {
     problems.push("a sound under the gate's floor leaves its recorder running");
   }
   if (!hook.includes("if (gateOpen && recorder === null) openSegment();")) {
     problems.push("an utterance longer than the cap loses everything after the cap");
+  }
+  // Deciding to discard is only half of discarding: a handler left on a closing
+  // recorder fires a frame later and posts the segment the gate just refused. So the
+  // three come off together before `stop()`, pinned as one literal the way the disarm
+  // trio below is, so a hook that removes two of the three cannot pass.
+  if (!hook.includes("          closing.ondataavailable = null;\n          closing.onstop = null;\n          closing.onerror = null;")) {
+    problems.push("a segment the gate discarded still costs a transcription call");
   }
   // The hook never reaches for a microphone of its own — Task 10's audit counts the
   // sites in the whole tree, and this is the one that must not appear in that list.
@@ -1896,8 +1909,8 @@ await mutation(
 await mutation(
   "38. A sound under the gate's floor leaves its recorder running → check 13 red",
   WAKE_HOOK_REL,
-  "if (sample.clip || !gateOpen) closeSegment();",
-  "if (sample.clip) closeSegment();",
+  "if (sample.clip || !gateOpen) closeSegment(sample.clip !== null);",
+  "if (sample.clip) closeSegment(sample.clip !== null);",
   async () => checkIsRed(13)
 );
 
@@ -2409,6 +2422,22 @@ await mutation(
   WAKE_HOOK_REL,
   "if (gateOpen && recorder === null) openSegment();",
   "if (gateOpen && recorder !== null) openSegment();",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "98. Every closed segment is kept, so a cough spends a transcription call → check 13 red",
+  WAKE_HOOK_REL,
+  "closeSegment(sample.clip !== null);",
+  "closeSegment(true);",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "99. A discarded recorder keeps its `onstop`, so the gate's refusal is posted anyway → check 13 red",
+  WAKE_HOOK_REL,
+  "          closing.ondataavailable = null;\n          closing.onstop = null;\n          closing.onerror = null;",
+  "          closing.ondataavailable = null;\n          closing.onerror = null;",
   async () => checkIsRed(13)
 );
 
