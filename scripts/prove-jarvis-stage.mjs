@@ -57,3 +57,17 @@ test("group 1c — the store carries turn counts without duplicate notifications
   assert.equal(notifies, 2);
   store.setJarvisStageTurns(0);
 });
+
+test("group 2 — the stage variant reserves the gutter and reports its turns", () => {
+  const source = readFileSync(path.join(root, "src/app/(admin)/assistant/AssistantChat.tsx"), "utf8");
+  assert.match(source, /variant: "docked" \| "page" \| "stage"/);
+  assert.match(source, /setJarvisStageTurns\(messages\.length\)/);
+  assert.match(source, /setJarvisStageTurns\(0\)/);
+  // `wide` is the max-w-3xl measure: a stage line of text at full width is unreadable.
+  assert.match(source, /const wide = variant !== "docked"/);
+  // Only the dock gets the sessions button; a stage is not a second copy of the rail.
+  assert.match(source, /variant === "docked" && \(\n          <button/);
+  // The gutter is padding on the stage's own container, so the chat must not spell it.
+  assert.ok(!source.includes('@/modules/assistant/domain/stage'), "the chat reads the store, not the geometry module");
+  assert.doesNotMatch(source, /\[(144|96|72)px\]/, "the chat owns no gutter class");
+});

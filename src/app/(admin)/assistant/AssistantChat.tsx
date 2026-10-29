@@ -78,6 +78,7 @@ import {
   jarvisUiOnServer,
   readJarvisUi,
   setJarvisCommandNote,
+  setJarvisStageTurns,
   takeJarvisCommandRequest,
   subscribeJarvisUi,
 } from "@/lib/jarvis-ui";
@@ -129,7 +130,8 @@ export interface AssistantChatProps {
   /** Called with the id of a conversation the first turn just created. */
   onSessionChange: (sessionId: string) => void;
   onNewConversation: () => void;
-  variant: "docked" | "page";
+  /** `stage` is the full-viewport surface: the same body, kept clear of the orb. */
+  variant: "docked" | "page" | "stage";
   /** `dictate` adds a microphone; `console` also offers opt-in hands-free controls. */
   voiceMode?: "dictate" | "console";
 }
@@ -214,6 +216,17 @@ export function AssistantChat({
       alive = false;
     };
   }, [jarvisUi.prefsEpoch]);
+
+  /**
+   * The orb steps aside when this surface has something to read, and goes back to the
+   * middle when it has nothing. Unmounting resets it: leaving the stage must not leave
+   * a corner orb standing over the portal.
+   */
+  useEffect(() => {
+    if (variant !== "stage") return;
+    setJarvisStageTurns(messages.length);
+    return () => setJarvisStageTurns(0);
+  }, [variant, messages.length]);
   const wakePhrase = presence?.ok
     ? presence.prefs.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT
     : DEFAULT_WAKE_PHRASE_TEXT;
@@ -641,7 +654,7 @@ export function AssistantChat({
     }
   }
 
-  const wide = variant === "page";
+  const wide = variant !== "docked";
 
   /**
    * The change this transcript is waiting for a click on, or null.
@@ -959,7 +972,7 @@ export function AssistantChat({
       ) : (
         <div
           ref={scrollRef}
-          className={cn("rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain", variant === "page" ? "px-6 py-5" : "p-4")}
+          className={cn("rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain", variant !== "docked" ? "px-6 py-5" : "p-4")}
         >
           <div className={cn("space-y-3", wide && "mx-auto max-w-3xl")}>
             {messages.length === 0 && !pending && !opening && (
@@ -1129,7 +1142,7 @@ export function AssistantChat({
       )}
 
       {!showCapabilities && !showSessions && (
-        <footer className={cn("shrink-0 border-t border-brand-line bg-white", variant === "page" ? "px-6 py-4" : "p-3")}>
+        <footer className={cn("shrink-0 border-t border-brand-line bg-white", variant !== "docked" ? "px-6 py-4" : "p-3")}>
           <div className={cn(wide && "mx-auto max-w-3xl")}>
             {error && (
               <FailureNote
