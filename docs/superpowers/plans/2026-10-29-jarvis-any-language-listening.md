@@ -414,11 +414,12 @@ The column that stores the phrase, registered where the repo asks a database whe
 **Files:**
 - Create: `db/migrations/050_jarvis_wake_phrase.sql`
 - Modify: `scripts/prove-migration-claims.mjs` (the `MIGRATIONS` array, after the `049_jarvis_appearance.sql` entry)
-- Modify: `src/modules/assistant/application/jarvisSettings.ts`
+- Modify: `src/modules/assistant/application/jarvisSettings.ts` (the sentence, and Step 3b's payload prune)
+- Modify: `scripts/prove-jarvis-presence.mjs` (append `check17`, register it, append mutations 39–40)
 
 **Interfaces:**
 - Consumes: `JarvisPrefs.wakePhrase` and `JARVIS_PREF_COLUMNS` from Task 1; `saveJarvisPrefs` already upserts whatever `jarvisRowToSave` returns.
-- Produces: column `public.assistant_jarvis_prefs.wake_phrase`; `saveJarvisPrefs` returning `{ ok: false, error }` whose sentence names `050` when the draft asked for a phrase and `047` otherwise.
+- Produces: column `public.assistant_jarvis_prefs.wake_phrase`; `saveJarvisPrefs` returning `{ ok: false, error }` whose sentence names `050` when the draft asked for a phrase and `047` otherwise, and whose upsert payload carries `wake_phrase` **only** when the draft named it — so a database without 050 still saves every other switch.
 
 - [ ] **Step 1: Author the migration in 049's exact idiom**
 
@@ -505,6 +506,25 @@ with:
 
 and replace `message: MIGRATION_SENTENCE` in `jarvisPresenceForViewer` with `message: TABLE_SENTENCE`. Then import the map's source of names: add `COLUMN_BY_DRAFT_KEY` to the existing `import { … } from "@/modules/assistant/domain/jarvis"` statement — it is exported from Task 1's file already (`const COLUMN_BY_DRAFT_KEY` is module-private today, so **export it** in `jarvis.ts` as part of this step and add a note to the JSDoc that the writer reads it to name migrations).
 
+- [ ] **Step 3b: Prune the phrase from a payload that never asked for it**
+
+Since Step (g) of Task 1, `prefsToRow` puts `wake_phrase` into **every** row the writer builds, so on a database that holds `047` but not `050` PostgREST refuses the whole body for one unknown column (`PGRST204`), `absent()` matches it, and *no* switch on the panel saves — the very promise Task 9's Guide copy makes ("every other switch still saves") would be untrue until Task 11 applies the migration. `absent()` cannot tell a missing column from a missing table, so this is fixed by sending less, not by matching better.
+
+In `saveJarvisPrefs`, the row is built at `const row = jarvisRowToSave(…)` and handed straight to `.upsert({ ...row, profile_id: …, updated_at: … })`. Split the wire payload away from the row the person reads back:
+
+```ts
+  const payload = { ...row, profile_id: user.profileId, updated_at: new Date().toISOString() };
+  // The row describes the whole preference set, so it names `wake_phrase` even for
+  // a draft that never touched it. On a database with 047 and without 050 that one
+  // unknown column makes PostgREST refuse the entire body, and `absent()` reads the
+  // refusal as the table being missing — so a person moving their briefing hour
+  // would be blocked by a field they never spoke to. Send the column only when this
+  // draft named it; then the phrase is the only write that can need 050.
+  if (!("wakePhrase" in draft)) delete payload.wake_phrase;
+```
+
+and upsert `payload`. Leave `const prefs = normalizeJarvisPrefs(row)` reading the **row**, not the payload: an unrelated save must still return the phrase the person stored, not the default.
+
 - [ ] **Step 4: Prove the sentence, and prove the phrase round-trips**
 
 Append `check17` to `scripts/prove-jarvis-presence.mjs`, registered as
@@ -551,6 +571,37 @@ async function check17() {
       : [])
   );
 
+  // Step 3b: a draft that never mentions the phrase must not put its column on the
+  // wire. `fakeRest` records each call, so the check reads the payload it was handed.
+  const pruned = fakeRest({
+    read: { data: { profile_id: "p-1", wake_phrase: "يا Jarvis" }, error: null },
+    write: { error: null },
+  });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: pruned.client });
+  const switchSaved = await settings.saveJarvisPrefs({ briefing: false });
+  expect(problems, "a switch write succeeds with the column absent", switchSaved.ok, true);
+  expect(problems, "and still reports the phrase the row holds", switchSaved.ok === true && switchSaved.prefs.wakePhrase, "يا Jarvis");
+  const prunedBody = pruned.calls.find((entry) => entry.op === "upsert");
+  problems.push(
+    ...(prunedBody && "wake_phrase" in prunedBody.payload
+      ? ["a switch write sent the phrase column anyway"]
+      : [])
+  );
+
+  // And a draft that DOES name the phrase sends it, so clearing the field is real.
+  const named = fakeRest({
+    read: { data: { profile_id: "p-1", wake_phrase: "يا Jarvis" }, error: null },
+    write: { error: null },
+  });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: named.client });
+  await settings.saveJarvisPrefs({ wakePhrase: "   " });
+  const namedBody = named.calls.find((entry) => entry.op === "upsert");
+  problems.push(
+    ...(!namedBody || namedBody.payload.wake_phrase !== null
+      ? ["a cleared phrase did not reach the row as null"]
+      : [])
+  );
+
   // And a stored phrase arrives whole on the read.
   const withPhrase = fakeRest({ read: { data: { profile_id: "p-1", wake_phrase: "يا Jarvis" }, error: null } });
   resetGlobals({ __jarvisUser: staff, __jarvisRest: withPhrase.client });
@@ -580,6 +631,30 @@ Append to `check14`'s end (before its `return verdict(problems);`) — reading t
 Run: `node --experimental-strip-types scripts/prove-jarvis-presence.mjs`
 Expected: `17/17 checks held`.
 
+- [ ] **Step 5b: Two mutations, one for each rule this task adds**
+
+The plan's rule is that every new rule gets a check *and* a mutation. Append after mutation 38 (Task 1's last entry), in the file's own idiom:
+
+```js
+await mutation(
+  "39. A switch write carries the phrase column anyway → check 17 red",
+  SETTINGS_REL,
+  '  if (!("wakePhrase" in draft)) delete payload.wake_phrase;',
+  "  // prune lifted",
+  async () => checkIsRed(17)
+);
+
+await mutation(
+  "40. Every refusal blames the table → check 17 red",
+  SETTINGS_REL,
+  "return { ok: false, error: migrationSentence(draft) };",
+  "return { ok: false, error: TABLE_SENTENCE };",
+  async () => checkIsRed(17)
+);
+```
+
+If the first reports `needle not found`, the prune was written into `row` instead of `payload` — that is the Step 3b defect, not a bad needle.
+
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -595,7 +670,7 @@ Tier 1 decides when a segment of room audio is worth a transcription call, knowi
 
 **Files:**
 - Create: `src/modules/assistant/domain/listening.ts`
-- Modify: `scripts/prove-jarvis-presence.mjs` (append `check18`, `check19`; register them; append mutations 39–42)
+- Modify: `scripts/prove-jarvis-presence.mjs` (append `check18`, `check19`; register them; append mutations 41–44)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -858,13 +933,13 @@ Expected: `19/19 checks held`.
 
 - [ ] **Step 5: Add the four mutations**
 
-Append after mutation 38:
+Task 2 appends mutations 39–40 to this file, so this task's four follow at 41–44. Append after mutation 40 (Task 2's last entry):
 
 ```js
 const LISTENING_REL = "src/modules/assistant/domain/listening.ts";
 
 await mutation(
-  "39. A gate that closes at its own threshold cuts every sentence into words → check 18 red",
+  "41. A gate that closes at its own threshold cuts every sentence into words → check 18 red",
   LISTENING_REL,
   "  if (level < GATE_LEVEL_THRESHOLD - GATE_HYSTERESIS) {",
   "  if (level < GATE_LEVEL_THRESHOLD) {",
@@ -872,7 +947,7 @@ await mutation(
 );
 
 await mutation(
-  "40. A too-short segment charged to the gateway anyway → check 18 red",
+  "42. A too-short segment charged to the gateway anyway → check 18 red",
   LISTENING_REL,
   "    const kept = nowMs - gate.openFrom >= GATE_MIN_SEGMENT_MS;",
   "    const kept = true;",
@@ -880,7 +955,7 @@ await mutation(
 );
 
 await mutation(
-  "41. A capped segment that never re-opens, losing the rest of an answer → check 18 red",
+  "43. A capped segment that never re-opens, losing the rest of an answer → check 18 red",
   LISTENING_REL,
   "      gate: { openFrom: level >= GATE_LEVEL_THRESHOLD ? endMs : null },",
   "      gate: { openFrom: null },",
@@ -888,7 +963,7 @@ await mutation(
 );
 
 await mutation(
-  "42. The panel promising a ceiling the door does not impose → check 19 red",
+  "44. The panel promising a ceiling the door does not impose → check 19 red",
   LISTENING_REL,
   "export const TRANSCRIPTION_MAX_SEGMENTS = 20;",
   "export const TRANSCRIPTION_MAX_SEGMENTS = 21;",
