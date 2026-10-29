@@ -188,8 +188,15 @@ export function useSpeech(choice: DeviceVoiceChoice = {}) {
         setError("This browser cannot speak answers.");
         return;
       }
+      // Two scripts can be *spoken* on this machine, and a listening model can read
+      // many more. An answer in a third is real text the person will read; what it
+      // must not be is silence with no explanation, now that the language a person
+      // used to be able to choose is gone.
       const wanted = language ?? speechLanguageOf(text);
-      if (!wanted) return;
+      if (!wanted) {
+        setError("That answer is in a language this device has no voice for — the words stay on screen.");
+        return;
+      }
       const pieces = chunkForSpeech(text).map((piece) => ({ text: piece, language: wanted }));
       if (pieces.length === 0) return;
       queue.current = [...queue.current, ...pieces];

@@ -1445,6 +1445,13 @@ async function check16() {
       problems.push(`${label} picks a voice without the chosen name`);
     }
   }
+
+  // A script this machine has no voice for, and no language even chosen for, is the
+  // one case where an answer used to arrive with no sound and no reason. The selector
+  // is gone; the sentence replaces it.
+  if (!speechHook.includes("in a language this device has no voice for")) {
+    problems.push("an unvoiceable answer is still silent");
+  }
   // The list hook only listens. A reader that cancelled on unmount would silence
   // the orb from the Settings panel while a briefing was still being read.
   if (listHook.includes(".cancel(")) {
@@ -2457,6 +2464,16 @@ await mutation(
   "          closing.ondataavailable = null;\n          closing.onstop = null;\n          closing.onerror = null;",
   "          closing.ondataavailable = null;\n          closing.onerror = null;",
   async () => checkIsRed(13)
+);
+
+// The plan numbered this 97, but Task 4's fix rounds left the file at 99; the label
+// is the sequence, so the next free number is what it says.
+await mutation(
+  "100. An unvoiceable script is silent again → check 16 red",
+  "src/modules/assistant/presentation/voice/useSpeech.ts",
+  '        setError("That answer is in a language this device has no voice for — the words stay on screen.");\n        return;',
+  "        return;",
+  async () => checkIsRed(16)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
