@@ -544,12 +544,100 @@ async function check4() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 5. 051 stores a command, scopes it, and gates the shared half
+// ---------------------------------------------------------------------------
+async function check5() {
+  const problems = [];
+  const sql = read(MIGRATION_REL);
+  const has = (label, needle) => {
+    if (!sql.includes(needle)) problems.push(`${label}: missing ${JSON.stringify(needle)}`);
+  };
+
+  has("the table", "create table if not exists public.assistant_jarvis_commands");
+  has("scope CHECK", "constraint assistant_jarvis_commands_scope_owner check");
+  has("a personal row has an owner", "(scope = 'personal' and owner_profile_id is not null)");
+  has("a shared row has none", "(scope = 'shared' and owner_profile_id is null)");
+  has("phrase ceiling", "char_length(btrim(trigger_phrase)) between 2 and 64");
+  has("no control characters", "trigger_phrase !~ '[\\u0000-\\u001F]'");
+  has("title ceiling", "char_length(btrim(title)) between 1 and 80");
+  has("notes ceiling", "char_length(notes) <= 500");
+  has("payload size", "octet_length(action_payload::text) <= 16384");
+  has("the six categories", "category in ('navigation','hiring','communication','reports','settings','personal')");
+  has("the four action types", "action_type in ('ask','open','tool','note')");
+
+  // Two indexes, not one coalesce: the same phrase may exist once per person and
+  // once for the portal, which is what makes "Add to mine" possible at all.
+  has("the personal phrase index",
+    "create unique index if not exists assistant_jarvis_commands_personal_phrase");
+  has("  on owner and folded phrase", "on public.assistant_jarvis_commands (owner_profile_id, lower(btrim(trigger_phrase)))");
+  has("  scoped to personal", "where scope = 'personal'");
+  has("the shared phrase index", "create unique index if not exists assistant_jarvis_commands_shared_phrase");
+  has("  scoped to shared", "where scope = 'shared'");
+
+  // RLS: four policies on the person's own rows, four on the portal's.
+  has("row security is on", "alter table public.assistant_jarvis_commands enable row level security");
+  const personal = [
+    "assistant_jarvis_commands_personal_select",
+    "assistant_jarvis_commands_personal_insert",
+    "assistant_jarvis_commands_personal_update",
+    "assistant_jarvis_commands_personal_delete",
+  ];
+  for (const name of personal) has(`policy ${name}`, `create policy ${name}`);
+  const shared = [
+    "assistant_jarvis_commands_shared_select",
+    "assistant_jarvis_commands_shared_insert",
+    "assistant_jarvis_commands_shared_update",
+    "assistant_jarvis_commands_shared_delete",
+  ];
+  for (const name of shared) has(`policy ${name}`, `create policy ${name}`);
+  has("own rows by profile id", "(select current_user_profile_id()) = owner_profile_id");
+  has("and only by staff", "and is_staff()");
+  // Counted, not merely present: four shared-write guards (one insert, two update,
+  // one delete). A `has` alone stays green when a policy loses its permission, which
+  // is the exact break group 5's mutation makes below, so it would prove nothing.
+  if ((sql.match(/has_permission\('assistant\.commands'\)/g) ?? []).length !== 4)
+    problems.push("a shared write is not behind the permission (expected four guards)");
+
+  // The permission and its grants.
+  has("the permission row", "insert into public.permissions (key, label, group_name, description)");
+  has("  named", "('assistant.commands', 'Publish shared JARVIS commands', 'Assistant',");
+  has("  idempotent", "on conflict (key) do nothing");
+  has("SUPER_ADMIN granted", "('SUPER_ADMIN', 'assistant.commands', true)");
+  has("HIRING_MANAGER granted", "('HIRING_MANAGER', 'assistant.commands', true)");
+  // No SUBSIDIARY_HR_MANAGER row: the grants table's enum can name it, but no
+  // account's role column can hold it, so the row would be unreachable furniture.
+  if (sql.includes("'SUBSIDIARY_HR_MANAGER', 'assistant.commands'")) {
+    problems.push("the migration grants a role no account can hold");
+  }
+
+  // Four starters, navigation and saved-prompt only.
+  has("the starters", "insert into public.assistant_jarvis_commands (scope, trigger_phrase, title, category, action_type, action_payload, notes)");
+  has("  open candidates", "'open candidates', 'Open candidates', 'navigation', 'open', '{\"href\":\"/candidates\"}'::jsonb");
+  has("  open the pipeline", "'open the pipeline', 'Open the pipeline', 'navigation', 'open', '{\"href\":\"/jobs\"}'::jsonb");
+  has("  today's interviews", "'today''s interviews', 'Today''s interviews', 'hiring', 'ask',");
+  has("  open the outbox", "'open the outbox', 'Open the outbox', 'communication', 'open', '{\"href\":\"/whatsapp\"}'::jsonb");
+  // The starters statement alone, not the whole file: `'tool'` is also a member of
+  // the action-type CHECK, so a file-wide search would redden this on every run.
+  const seedStart = sql.indexOf("insert into public.assistant_jarvis_commands (scope, trigger_phrase");
+  const seed = seedStart === -1 ? "" : sql.slice(seedStart, sql.indexOf(";", seedStart));
+  if (seed.includes("'tool'")) problems.push("a seeded starter runs a tool; none may");
+
+  has("grants to authenticated", "grant select, insert, update, delete on public.assistant_jarvis_commands to authenticated");
+  has("service role", "grant all on public.assistant_jarvis_commands to service_role");
+  has("anon kept out", "revoke all on public.assistant_jarvis_commands from anon");
+  has("the updated_at trigger", "execute function set_updated_at()");
+  has("PostgREST reloads", "notify pgrst, 'reload schema'");
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The six categories and four action types are the shipped vocabulary", check1],
   ["2. The write door refuses every field it cannot express", check2],
   ["3. The read door renders a hand-edited row and names what it cannot read", check3],
   ["4. The matcher reads whole folded phrases, longest first, own scope first", check4],
-  // Groups 5 and 6 arrive in Tasks A4 and A8.
+  ["5. 051 stores a command, scopes it, and gates the shared half", check5],
+  // Group 6 arrives in Task A8.
 ];
 
 for (const [name, run] of CHECKS) {
@@ -723,6 +811,17 @@ await mutation(
   "const TOKEN_SPLIT = /[\\s,.;:!?\"'()]+/;",
   "const TOKEN_SPLIT = /[\\s,;:!?\"'()]+/;",
   async () => checkIsRed(1)
+);
+
+// One of the four shared-write guards, and the *insert* one on purpose: the
+// update and delete policies still spell the permission, so a `has` on that string
+// would stay green. Check 5 counts them, which is what makes this go red.
+await mutation(
+  "13. A shared row writable by any staff member → check 5 red",
+  MIGRATION_REL,
+  "    scope = 'shared' and is_staff() and has_permission('assistant.commands')\n  );\n\ncreate policy assistant_jarvis_commands_shared_update",
+  "    scope = 'shared' and is_staff()\n  );\n\ncreate policy assistant_jarvis_commands_shared_update",
+  async () => checkIsRed(5)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
