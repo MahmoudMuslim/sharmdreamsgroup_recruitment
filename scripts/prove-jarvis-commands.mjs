@@ -999,7 +999,10 @@ const CHECKS = [
   ["5c. The migration-claims proof asks about 051 by the table it creates", check5c],
   ["2b. The five actions write the columns the table has, and never a scope the body named", check2b],
   ["6a. Settings resolves the manager and presence carries its scoped command read", check6a],
-  // Dispatch arrives in Task A8.
+  ["6b. Commands dispatch before the model and retain approval and transcript boundaries", async () => {
+    const run = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-name-pattern=command (dispatch|server)", "scripts/prove-assistant-merge.mjs"], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    return { pass: run.status === 0, detail: run.status === 0 ? "Behavioral dispatch and server checks passed" : `${run.stdout ?? ""}\n${run.stderr ?? ""}` };
+  }],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1303,6 +1306,56 @@ await mutation(
   "commands: []",
   async () => checkIsRed(9)
 );
+
+for (const [label, rel, needle, replacement, testName] of [
+  ["31. Matched commands fall through to the model", PRESENCE_REL,
+    "if (matched && action) {", "if (false) {",
+    "command dispatch presence routes open"],
+  ["32. Pending commands are silently overwritten", STORE_REL,
+    "if (state.pendingCommand) {", "if (false) {",
+    "command dispatch store keeps one"],
+  ["33. Saved questions are not sent", CHAT_REL,
+    "await send(request.prompt);", "return;",
+    "command dispatch chat sends a saved ask"],
+  ["34. The browser's title replaces the stored label", RUNNER_REL,
+    "title: command.title,\n    reply,", 'title: input.title,\n    reply,',
+    "command server re-reads the row"],
+  ["35. Disabled commands can run", RUNNER_REL,
+    "!command.enabled || command.problem", "command.problem",
+    "command server refuses missing disabled"],
+  ["36. The destructive switch is opened", RUNNER_REL,
+    "runTool(action.tool, action.args, false, staff.profileId, false, autonomy.level)", "runTool(action.tool, action.args, true, staff.profileId, false, autonomy.level)",
+    "command server keeps destructive"],
+  ["37. The web switch is opened", RUNNER_REL,
+    "runTool(action.tool, action.args, false, staff.profileId, false, autonomy.level)", "runTool(action.tool, action.args, false, staff.profileId, true, autonomy.level)",
+    "command server keeps destructive"],
+  ["38. A pending approval is called a refusal", RUNNER_REL,
+    "const reply = step.approval", "const reply = false",
+    "command server keeps destructive"],
+  ["39. Commands overwrite the chosen model engine", "src/modules/assistant/infrastructure/transcriptStore.ts",
+    "...(input.engine === null ? {} : { engine: input.engine })", "engine: input.engine",
+    "command server keeps destructive"],
+  ["40. Save failures lose their disclosure", RUNNER_REL,
+    "{ saveError: saved.error }", "{}",
+    "command server preserves results"],
+  ["41. Commands steal a pending approval verdict", PRESENCE_REL,
+    "ui.pendingApproval ? null : matchCommand(", "matchCommand(",
+    "command dispatch preserves a pending approval"],
+  ["42. A matched note leaves the follow-up window open", PRESENCE_REL,
+    "setJarvisAwaiting(false);", "setJarvisAwaiting(true);",
+    "command dispatch ends the follow-up"],
+  ["43. A saved question buries a pending approval", CHAT_REL,
+    "if (liveApproval) {\n        setJarvisCommandNote", "if (false) {\n        setJarvisCommandNote",
+    "command dispatch chat keeps an approval"],
+  ["44. A consumed command remains replayable", STORE_REL,
+    "emit({ ...state, pendingCommand: null });", "emit({ ...state });",
+    "command dispatch store keeps one"],
+  ["45. Draft protection is skipped", CHAT_REL,
+    "const blocked = spokenTurnBlocked();\n      if (blocked)", "const blocked = null;\n      if (blocked)",
+    "command dispatch chat sends a saved ask"],
+]) {
+  await mutation(`${label} → behavioral assertion red`, rel, needle, replacement, async () => managerIsRed(testName));
+}
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
 console.log("");

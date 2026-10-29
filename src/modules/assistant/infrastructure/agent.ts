@@ -375,7 +375,7 @@ function detailFor(value: unknown): string {
   return fitResult(value);
 }
 
-async function runTool(
+export async function runTool(
   name: string,
   args: ToolArgs,
   allowDestructive: boolean,

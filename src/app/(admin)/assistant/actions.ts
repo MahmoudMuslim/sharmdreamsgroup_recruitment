@@ -5,6 +5,7 @@ import { withActivityContext } from "@/modules/activity/application/record";
 import {
   runApprovedChange,
   runAssistantTurn,
+  runTool,
   type AssistantStep,
   type AssistantTurn,
 } from "@/modules/assistant/infrastructure/agent";
@@ -14,6 +15,7 @@ import {
 } from "@/modules/assistant/infrastructure/qoderAgent";
 import {
   appendApprovalOutcome,
+  appendCommandTurn,
   deleteAssistantSession,
   listAssistantSessions,
   readAssistantSession,
@@ -35,8 +37,9 @@ import {
   uploadTooLarge,
 } from "@/modules/assistant/domain/attachments";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
-import { checkApprovalCode, requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
+import { approvalAsReply, checkApprovalCode, requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
 import { readVoiceAutonomy } from "@/modules/assistant/application/voiceSettings";
+import { readVoiceCommand } from "@/modules/assistant/application/jarvisCommands";
 import { resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { getModelCatalogue } from "@/modules/settings/application/credential-actions";
 import {
@@ -127,6 +130,56 @@ const MAX_MODEL_ID_CHARS = 160;
 const MODEL_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
 /** An approval id is a `randomUUID`, so anything else was never issued by this server. */
 const APPROVAL_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type CommandTurnResult =
+  | { ok: false; error: string }
+  | { ok: true; title: string; reply: string; steps: AssistantStep[]; sessionId?: string; saveError?: string };
+
+export async function runJarvisCommand(input: {
+  commandId: string;
+  sessionId: string | null;
+}): Promise<CommandTurnResult> {
+  const staff = await requireStaff("/assistant");
+  if (typeof input?.commandId !== "string" || !APPROVAL_ID_SHAPE.test(input.commandId)) {
+    return { ok: false, error: "Choose a saved command to run." };
+  }
+  if (input.sessionId !== null && (typeof input.sessionId !== "string" || !input.sessionId.trim())) {
+    return { ok: false, error: "Choose a conversation or start a new one." };
+  }
+
+  let command;
+  let autonomy;
+  try {
+    const seen = await readVoiceCommand(input.commandId);
+    if (seen.read.problem) return { ok: false, error: seen.read.message ?? "The command could not be read." };
+    command = seen.command;
+    if (!command || !command.enabled || command.problem || command.action?.type !== "tool") {
+      return { ok: false, error: "That tool command is unavailable, disabled, or needs repair in Settings." };
+    }
+    autonomy = await readVoiceAutonomy(staff.profileId);
+  } catch {
+    return { ok: false, error: "The command could not be read right now. Nothing was run." };
+  }
+
+  const action = command.action;
+  const { step } = await withActivityContext({ via: "assistant voice" }, () =>
+    runTool(action.tool, action.args, false, staff.profileId, false, autonomy.level)
+  );
+  const reply = step.approval
+    ? approvalAsReply(step.approval)
+    : step.ok
+      ? `${command.title} — ${step.label}\n\n${step.detail}`
+      : `Command refused — ${step.label}\n\n${step.detail}`;
+  const steps = [step];
+  const saved = await appendCommandTurn({ sessionId: input.sessionId, title: command.title, reply, steps });
+  return {
+    ok: true,
+    title: command.title,
+    reply,
+    steps,
+    ...(saved.ok ? { sessionId: saved.sessionId } : { saveError: saved.error }),
+  };
+}
 
 /**
  * The recruiter's question, with the attached document's text underneath it.

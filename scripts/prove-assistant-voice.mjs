@@ -1228,7 +1228,9 @@ async function check14() {
   ]) {
     if (!chat.includes(needle)) problems.push(`the in-flight guard is missing: ${needle.trim()}`);
   }
-  if ((chat.match(/inFlightRef\.current = false;/g) ?? []).length !== 2) {
+  const releases = (chat.match(/inFlightRef\.current = false;/g) ?? []).length;
+  const finalReleases = (chat.match(/finally\s*\{\s*inFlightRef\.current = false;/g) ?? []).length;
+  if (releases !== 3 || finalReleases !== releases) {
     problems.push("an in-flight turn is never released, or released somewhere other than its finally");
   }
   // A second verdict in the same batch must not caption itself as a release the

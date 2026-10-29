@@ -40,6 +40,7 @@ import {
   extractAssistantAttachmentText,
   getAssistantModelChoices,
   openAssistantSession,
+  runJarvisCommand,
   sendAssistantMessage,
   type AssistantAttachment,
   type AssistantModelChoice
@@ -76,6 +77,8 @@ import {
 import {
   jarvisUiOnServer,
   readJarvisUi,
+  setJarvisCommandNote,
+  takeJarvisCommandRequest,
   subscribeJarvisUi,
 } from "@/lib/jarvis-ui";
 
@@ -672,6 +675,58 @@ export function AssistantChat({
     }
     return null;
   }
+
+  useEffect(() => {
+    const consume = async () => {
+      if (opening || pending || extracting || approving || inFlightRef.current) return;
+      const request = takeJarvisCommandRequest();
+      if (!request) return;
+      if (liveApproval) {
+        setJarvisCommandNote("Not sent — answer the pending approval before running another command.");
+        return;
+      }
+      const blocked = spokenTurnBlocked();
+      if (blocked) {
+        setJarvisCommandNote(blocked);
+        return;
+      }
+      markAwaiting(false);
+      if (request.type === "ask") {
+        await send(request.prompt);
+        return;
+      }
+      inFlightRef.current = true;
+      setPending(true);
+      setError(null);
+      setSaveError(null);
+      setShowCapabilities(false);
+      setShowSessions(false);
+      try {
+        const result = await runJarvisCommand({ commandId: request.commandId, sessionId });
+        if (!result.ok) {
+          setJarvisCommandNote(result.error);
+          setError(result.error);
+          return;
+        }
+        if (result.sessionId) {
+          shownSession.current = result.sessionId;
+          onSessionChange(result.sessionId);
+        }
+        setSaveError(result.saveError ?? null);
+        setMessages(current => [...current,
+          { id: nextId(), role: "user", text: `Command: ${result.title}` },
+          { id: nextId(), role: "assistant", text: result.reply, steps: result.steps },
+        ]);
+        if (speakReplies) speech.speak(spokenSummary(result.reply));
+      } catch {
+        setError("The command result could not be received. Check the conversation before retrying.");
+      } finally {
+        inFlightRef.current = false;
+        setPending(false);
+      }
+    };
+    void consume();
+  });
 
   /**
    * One final utterance from the hands-free listener.

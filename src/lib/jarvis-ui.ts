@@ -17,7 +17,13 @@ export interface JarvisUtterance {
   token: number;
 }
 
+export type JarvisCommandRequest =
+  | { type: "tool"; commandId: string; title: string }
+  | { type: "ask"; prompt: string };
+
 export interface JarvisUiState {
+  pendingCommand: (JarvisCommandRequest & { token: number }) | null;
+  commandNote: string | null;
   /** The conversation surface — dock or page — is open. */
   open: boolean;
   /** The ambient microphone is open in this browser, right now. */
@@ -36,6 +42,8 @@ export interface JarvisUiState {
 }
 
 const IDLE: JarvisUiState = {
+  pendingCommand: null,
+  commandNote: null,
   open: false,
   ambientArmed: false,
   awaiting: false,
@@ -171,4 +179,33 @@ export function setJarvisApproval(summary: string | null): void {
  */
 export function refreshJarvisPresence(): void {
   emit({ ...state, prefsEpoch: state.prefsEpoch + 1 });
+}
+
+function requestCommand(request: JarvisCommandRequest): void {
+  if (state.pendingCommand) {
+    setJarvisCommandNote("A command is already waiting. Let it finish before asking again.");
+    return;
+  }
+  emit({ ...state, open: true, commandNote: null, pendingCommand: { ...request, token: ++utteranceToken } });
+}
+
+export function requestJarvisCommand(commandId: string, title: string): void {
+  requestCommand({ type: "tool", commandId, title });
+}
+
+export function requestJarvisQuestion(prompt: string): void {
+  if (!prompt.trim()) return;
+  requestCommand({ type: "ask", prompt: prompt.trim() });
+}
+
+export function takeJarvisCommandRequest(): JarvisCommandRequest | null {
+  const request = state.pendingCommand;
+  if (!request) return null;
+  emit({ ...state, pendingCommand: null });
+  return request;
+}
+
+export function setJarvisCommandNote(commandNote: string | null): void {
+  if (state.commandNote === commandNote) return;
+  emit({ ...state, commandNote });
 }

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { matchCommand } from "@/modules/assistant/domain/commands";
 import { cn } from "@/lib/utils";
 import type { SessionUser } from "@/lib/auth/session";
 import {
@@ -22,7 +24,11 @@ import {
   handToJarvisChat,
   jarvisUiOnServer,
   readJarvisUi,
+  requestJarvisCommand,
+  requestJarvisQuestion,
+  setJarvisCommandNote,
   setJarvisAmbient,
+  setJarvisAwaiting,
   setJarvisOpen,
   subscribeJarvisUi,
   toggleJarvisOpen,
@@ -93,11 +99,7 @@ export interface JarvisPresenceProps {
 /**
  * The assistant as a presence: one orb, on every admin screen.
  *
- * It owns three things and nothing else — the microphone while ambient listening is
- * armed, the voice that reads the briefing and the alerts, and the hotkey that
- * opens the conversation. It deliberately owns no conversation: what it hears is
- * handed to `AssistantChat` for interpretation, because the wake phrase, the
- * approval verdicts and the refusals are decided and proved there already.
+ * Saved commands dispatch here; questions and approval verdicts belong to the chat.
  *
  * ## One microphone, one owner
  *
@@ -113,6 +115,7 @@ export interface JarvisPresenceProps {
  * the read returns defaults and the refusal sentence, and nothing arms at all.
  */
 export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
+  const router = useRouter();
   const ui = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
   const [presence, setPresence] = useState<PresenceRead | null>(null);
   // What the orb looks like, read from the same row that says what it may do. The
@@ -198,10 +201,37 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
       // chose to speak to the assistant, rather than at the next briefing.
       wakeAudio();
       tone("heard");
+      const matched = ui.pendingApproval ? null : matchCommand(text, presence?.ok ? presence.commands : []);
+      const action = matched?.command.action;
+      if (matched && action) {
+        setJarvisAwaiting(false);
+        const { command, tail } = matched;
+        setDismissedAnnouncement(null);
+        setJarvisCommandNote(null);
+        switch (action.type) {
+          case "open":
+            router.push(action.href);
+            break;
+          case "note":
+            setJarvisCommandNote(action.text);
+            say(action.text);
+            break;
+          case "ask": {
+            const prompt = action.prompt ?? tail;
+            if (prompt.trim()) requestJarvisQuestion(prompt);
+            else setJarvisCommandNote("Say a question after the command phrase, or save a prompt in Settings.");
+            break;
+          }
+          case "tool":
+            requestJarvisCommand(command.id, command.title);
+            break;
+        }
+        return;
+      }
       setJarvisOpen(true);
       handToJarvisChat(text);
     },
-    [heardOwnVoice, stop, tone, ui.awaiting, voice.speaking, wakeAudio, wakePhrase]
+    [heardOwnVoice, presence, router, say, stop, tone, ui.awaiting, ui.pendingApproval, voice.speaking, wakeAudio, wakePhrase]
   );
 
   // Kept current after commit rather than during render: the listener reads its
@@ -286,7 +316,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
       : watcher.briefing.length
         ? watcher.briefing.join(". ")
         : briefingSentences(watcher.recent)[0] ?? null;
-  const candidate = notice ?? lines ?? watcher.error ?? wake.error ?? readProblem;
+  const candidate = ui.commandNote ?? notice ?? lines ?? watcher.error ?? wake.error ?? readProblem;
   const announcement = candidate && candidate !== dismissedAnnouncement ? candidate : null;
 
   /**
@@ -331,6 +361,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
               type="button"
               onClick={() => {
                 setDismissedAnnouncement(announcement);
+                setJarvisCommandNote(null);
                 dismissNotice();
                 setStopped(false);
               }}

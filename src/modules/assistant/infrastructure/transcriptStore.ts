@@ -87,13 +87,13 @@ async function currentProfileId(): Promise<string | null> {
  */
 export async function saveAssistantTurn(input: {
   sessionId: string | null;
-  engine: AssistantEngine;
+  engine: AssistantEngine | null;
   prompt: string;
   attachment?: { name: string; text: string } | null;
   reply: string;
   steps: AssistantStep[];
-  model: string;
-  provider: string;
+  model: string | null;
+  provider: string | null;
   note?: string | null;
 }): Promise<SaveTurnResult> {
   const ownerId = await currentProfileId();
@@ -173,10 +173,31 @@ export async function saveAssistantTurn(input: {
   // remembers the engine the recruiter last chose for it.
   await restClient
     .from("assistant_sessions")
-    .update({ engine: input.engine, updated_at: new Date().toISOString() })
+    .update({ ...(input.engine === null ? {} : { engine: input.engine }), updated_at: new Date().toISOString() })
     .eq("id", sessionId);
 
   return { ok: true, sessionId };
+}
+
+export async function appendCommandTurn(input: {
+  sessionId: string | null;
+  title: string;
+  reply: string;
+  steps: AssistantStep[];
+}): Promise<SaveTurnResult> {
+  try {
+    return await saveAssistantTurn({
+      sessionId: input.sessionId,
+      prompt: `Command: ${input.title}`,
+      reply: input.reply,
+      steps: input.steps,
+      engine: null,
+      model: null,
+      provider: null,
+    });
+  } catch {
+    return { ok: false, error: "The command result could not be saved. Check the conversation before retrying." };
+  }
 }
 
 /**
