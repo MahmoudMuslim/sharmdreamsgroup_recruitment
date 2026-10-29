@@ -48,7 +48,7 @@ import { AssistantSettings } from "./AssistantSettings";
 import { ApprovalCard } from "./AssistantApprovalCard";
 import { Capabilities } from "./AssistantCapabilities";
 import { GeneratedFileCard, chartOf, filesOf } from "./AssistantFiles";
-import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredSpeechRate, readStoredSpeak, readStoredVoiceId, readStoredVoiceLanguage, readStoredWakePhrase, readStoredWeb, subscribeVoicePrefs, writeDraft, writeStoredEngine, writeStoredModel, writeStoredSpeak, writeStoredVoiceLanguage, writeStoredWakePhrase, writeStoredWeb, type VoiceLanguage } from "./AssistantPrefs";
+import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredSpeechRate, readStoredSpeak, readStoredVoiceId, readStoredWeb, subscribeVoicePrefs, writeDraft, writeStoredEngine, writeStoredModel, writeStoredSpeak, writeStoredWeb } from "./AssistantPrefs";
 import { QuestionChoices, TypedAnswerNote, askBubble } from "./AssistantQuestions";
 import { SessionList } from "./AssistantSessions";
 import { FailureNote, StepChips } from "./AssistantSteps";
@@ -56,18 +56,28 @@ import { VoiceButton } from "@/modules/assistant/presentation/voice/VoiceButton"
 import { transcribeClip } from "@/modules/assistant/presentation/voice/transcribe";
 import { useRecorder } from "@/modules/assistant/presentation/voice/useRecorder";
 import { useSpeech } from "@/modules/assistant/presentation/voice/useSpeech";
-import { useWakeWord } from "@/modules/assistant/presentation/voice/useWakeWord";
+import { useWakeListening, useMicrophoneAvailable } from "@/modules/assistant/presentation/voice/useWakeListening";
+import { useJarvisMeter } from "@/modules/assistant/presentation/useJarvisMeter";
 import { useJarvisAwaitingWriter, useJarvisHandoff } from "@/modules/assistant/presentation/voice/useJarvisHandoff";
 import { VoiceStrip } from "@/modules/assistant/presentation/voice/VoiceStrip";
 import {
   DEFAULT_SPEECH_RATE,
-  DEFAULT_WAKE_PHRASE,
   matchWakePhrase,
   spokenApproval,
   spokenCodeIn,
   spokenSummary,
   wakeRemainder,
 } from "@/modules/assistant/domain/voice";
+import { DEFAULT_WAKE_PHRASE_TEXT } from "@/modules/assistant/domain/jarvis";
+import {
+  getJarvisPresence,
+  type PresenceRead,
+} from "@/app/(admin)/settings/jarvis-actions";
+import {
+  jarvisUiOnServer,
+  readJarvisUi,
+  subscribeJarvisUi,
+} from "@/lib/jarvis-ui";
 
 /**
  * The assistant's conversation: transcript, tool-step chips, cards awaiting a
@@ -164,23 +174,13 @@ export function AssistantChat({
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [handsFree, setHandsFree] = useState(false);
   /*
-   * The three voice preferences live in the browser, so they are read through the
+   * The remaining voice preferences live in the browser, so they are read through the
    * external store the strip writes to: the server render shows the defaults and
    * the saved values apply once hydrated. Restoring them with `setState` in an
    * effect is what the React lint rules refuse, and reading `localStorage` in a
    * `useState` initialiser would make the first client render disagree with the
    * markup the server sent.
    */
-  const storedWakePhrase = useSyncExternalStore(
-    subscribeVoicePrefs,
-    readStoredWakePhrase,
-    () => DEFAULT_WAKE_PHRASE
-  );
-  const voiceLanguage = useSyncExternalStore(
-    subscribeVoicePrefs,
-    readStoredVoiceLanguage,
-    () => "en" as VoiceLanguage
-  );
   const speakReplies = useSyncExternalStore(
     subscribeVoicePrefs,
     () => readStoredSpeak() ?? false,
@@ -195,11 +195,25 @@ export function AssistantChat({
     () => DEFAULT_SPEECH_RATE
   );
   /**
-   * The phrase as typed. The stored copy is trimmed, so a box reading straight
-   * from storage would swallow the space between "Hey" and "Jarvis".
+   * The wake phrase lives on the account now, so the console reads the row the orb
+   * reads rather than this browser's `localStorage`. `prefsEpoch` is what the Settings
+   * console bumps after a save, so a phrase edited there reaches an open conversation
+   * without a reload.
    */
-  const [typedWakePhrase, setTypedWakePhrase] = useState<string | null>(null);
-  const wakePhrase = typedWakePhrase ?? storedWakePhrase;
+  const jarvisUi = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
+  const [presence, setPresence] = useState<PresenceRead | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void getJarvisPresence().then((read) => {
+      if (alive) setPresence(read);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [jarvisUi.prefsEpoch]);
+  const wakePhrase = presence?.ok
+    ? presence.prefs.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT
+    : DEFAULT_WAKE_PHRASE_TEXT;
 
   const speech = useSpeech({ voiceId, rate: speechRate });
   const recorder = useRecorder({
@@ -669,9 +683,9 @@ export function AssistantChat({
    * spoken "approve" is acknowledged and nothing else.
    */
   function hearUtterance(text: string) {
-    // An empty box means "not customised", not "match nothing": the strip shows
-    // the default phrase and this matches the same one.
-    const phrase = wakePhrase.trim() || DEFAULT_WAKE_PHRASE;
+    // The account's phrase already carries the default when the row has none, so
+    // what is matched here is the same sentence the strip shows.
+    const phrase = wakePhrase;
     const wake = matchWakePhrase(text, phrase);
     if (wake.matched) {
       markAwaiting(false);
@@ -778,14 +792,22 @@ export function AssistantChat({
     approvalSummary: liveApproval?.summary ?? null,
   });
 
-  const wake = useWakeWord({
-    // One microphone per tab. While the orb's ambient recogniser is running it owns
-    // the capture and delivers every utterance through the handoff above; a second
-    // continuous recogniser here would hear the same person twice and ask twice.
+  const meter = useJarvisMeter({
     enabled: voiceMode === "console" && handsFree && !ambientArmed,
-    language: voiceLanguage,
+  });
+
+  const wake = useWakeListening({
+    // One microphone per tab. While the orb's ambient listening is running it owns the
+    // capture and delivers every utterance through the handoff above; a second
+    // recorder here would hear the same person twice and ask twice.
+    enabled: voiceMode === "console" && handsFree && !ambientArmed,
+    meter,
+    // Quiet hours govern the orb that speaks on its own, not a conversation the
+    // person opened on this page.
+    quiet: false,
     onUtterance: hearUtterance,
   });
+  const microphoneAvailable = useMicrophoneAvailable();
 
   /** The question a failure can put back in the box, newest first. */
   const lastQuestion = [...messages].reverse().find((message) => message.role === "user") ?? null;
@@ -1084,7 +1106,7 @@ export function AssistantChat({
                 transcribing={recorder.state === "transcribing" || recorder.state === "requesting"}
                 secondsLeft={recorder.secondsLeft}
                 hitLimit={recorder.hitLimit}
-                supported={wake.supported}
+                supported={microphoneAvailable}
                 handsFree={handsFree}
                 onHandsFree={(next) => {
                   setHandsFree(next);
@@ -1095,14 +1117,8 @@ export function AssistantChat({
                 listening={wake.listening}
                 ambientArmed={ambientArmed}
                 wakePhrase={wakePhrase}
-                onWakePhrase={(phrase) => {
-                  setTypedWakePhrase(phrase);
-                  writeStoredWakePhrase(phrase);
-                }}
-                language={voiceLanguage}
-                onLanguage={(next) => {
-                  writeStoredVoiceLanguage(next);
-                }}
+                // Editing the phrase moved to Settings; the strip shows it.
+                onWakePhrase={() => undefined}
                 speakReplies={speakReplies}
                 onSpeakReplies={(next) => {
                   writeStoredSpeak(next);
@@ -1111,7 +1127,7 @@ export function AssistantChat({
                 speaking={speech.speaking}
                 onStopSpeaking={speech.stop}
                 caption={caption}
-                error={voiceError ?? wake.error ?? speech.error}
+                error={voiceError ?? wake.error ?? meter.error ?? speech.error}
               />
             )}
 

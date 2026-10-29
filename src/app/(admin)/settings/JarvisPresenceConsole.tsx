@@ -18,7 +18,7 @@ import {
 } from "@/modules/assistant/domain/voice";
 import { useDeviceVoices } from "@/modules/assistant/presentation/voice/useDeviceVoices";
 import { refreshJarvisPresence } from "@/lib/jarvis-ui";
-import { useRecognizerSupported } from "@/modules/assistant/presentation/voice/useWakeWord";
+import { useMicrophoneAvailable } from "@/modules/assistant/presentation/voice/useWakeListening";
 import {
   readStoredSpeechRate,
   readStoredVoiceId,
@@ -178,7 +178,7 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
-  const supported = useRecognizerSupported();
+  const supported = useMicrophoneAvailable();
 
   // Which voice reads, and how fast: the same browser-level pair the orb speaks its
   // briefing with and the Assistant page reads its answers with, so the two surfaces

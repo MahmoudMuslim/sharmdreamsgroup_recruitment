@@ -9,16 +9,14 @@ import {
   getJarvisAppearance,
   type PresenceRead,
 } from "@/app/(admin)/settings/jarvis-actions";
-import {
-  DEFAULT_SPEECH_RATE,
-  DEFAULT_WAKE_PHRASE,
-  matchWakePhrase,
-} from "@/modules/assistant/domain/voice";
+import { DEFAULT_SPEECH_RATE, matchWakePhrase } from "@/modules/assistant/domain/voice";
 import {
   DEFAULT_JARVIS_PREFS,
+  DEFAULT_WAKE_PHRASE_TEXT,
   briefingSentences,
   canArmAmbient,
   isStopCommand,
+  withinQuietHours,
 } from "@/modules/assistant/domain/jarvis";
 import {
   handToJarvisChat,
@@ -32,12 +30,9 @@ import {
 import {
   readStoredSpeechRate,
   readStoredVoiceId,
-  readStoredVoiceLanguage,
-  readStoredWakePhrase,
   subscribeVoicePrefs,
-  type VoiceLanguage,
 } from "@/app/(admin)/assistant/AssistantPrefs";
-import { useWakeWord } from "@/modules/assistant/presentation/voice/useWakeWord";
+import { useWakeListening } from "./voice/useWakeListening";
 import { DEFAULT_JARVIS_APPEARANCE, type JarvisAppearance, type ReactorState } from "@/modules/assistant/domain/jarvisAppearance";
 import { JarvisReactor } from "./JarvisReactor";
 import { useJarvisMeter } from "./useJarvisMeter";
@@ -69,6 +64,26 @@ const STATE_LABEL: Record<ReactorState, string> = {
  * competing with the content.
  */
 const REST_AFTER_MS = 2500;
+
+/**
+ * Minutes past midnight where the group's clock says it is, for the quiet-hours test.
+ *
+ * A component body may not read a clock — the same purity rule that keeps the chat's
+ * comparison behind a hook method — so this is called from render with a `timeZone`
+ * the server handed down, and its own `new Date()` is a dependency of the render, not
+ * of a memo. The watcher already does this with the pair it is given.
+ */
+function minutesInGroupZone(timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  return hour * 60 + minute;
+}
 
 export interface JarvisPresenceProps {
   user: SessionUser;
@@ -116,16 +131,6 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   const [idle, setIdle] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const wakePhrase = useSyncExternalStore(
-    subscribeVoicePrefs,
-    readStoredWakePhrase,
-    () => DEFAULT_WAKE_PHRASE
-  );
-  const voiceLanguage = useSyncExternalStore(
-    subscribeVoicePrefs,
-    readStoredVoiceLanguage,
-    () => "en" as VoiceLanguage
-  );
   // The same browser-level pair the chat speaks with, so the orb and the answers it
   // reads aloud cannot sound like two different people on one machine.
   const voiceId = useSyncExternalStore(subscribeVoicePrefs, readStoredVoiceId, () => "");
@@ -136,6 +141,10 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
   );
 
   const prefs = presence?.ok ? presence.prefs : null;
+  // The phrase is the account's, so it arrives on the read the orb already does and
+  // survives a different machine. An empty row means the default, which is what the
+  // panel shows too — "Listening for “”" would be a lie.
+  const wakePhrase = prefs?.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT;
   const voice = useJarvisVoice({ voiceId, rate: speechRate });
   const { wakeAudio, tone, say, stop, notice, dismissNotice, heardOwnVoice } = voice;
 
@@ -181,7 +190,7 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
         setStopped(true);
         return;
       }
-      const phrase = wakePhrase.trim() || DEFAULT_WAKE_PHRASE;
+      const phrase = wakePhrase;
       if (!matchWakePhrase(text, phrase).matched && !ui.awaiting) return;
       setStopped(false);
       // A click is what lets a tab make a sound at all, and a wake phrase said out
@@ -203,9 +212,23 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
     hearRef.current = hear;
   });
 
-  const wake = useWakeWord({
-    enabled: prefs !== null && canArmAmbient(prefs),
-    language: voiceLanguage,
+  // One capture, one owner: the meter holds the microphone whenever the wake word is
+  // armed, and the listening hook cuts its segments from that same stream. Arming is
+  // a preference, so the capture follows the preference and not a recogniser's report.
+  const ambientArmed = prefs !== null && canArmAmbient(prefs);
+  const meter = useJarvisMeter({ enabled: ambientArmed });
+
+  const nowMinutes = minutesInGroupZone(timeZone);
+  const segmentsQuiet = withinQuietHours(
+    nowMinutes,
+    prefs?.quietFrom ?? "18:00",
+    prefs?.quietTo ?? "08:00"
+  );
+
+  const wake = useWakeListening({
+    enabled: ambientArmed,
+    meter,
+    quiet: segmentsQuiet,
     onUtterance: (text) => hearRef.current(text),
   });
 
@@ -243,18 +266,6 @@ export function JarvisPresence({ user, timeZone }: JarvisPresenceProps) {
             : watcher.news.length > 0
               ? "alert"
               : "idle";
-
-  /**
-   * The loudness the core breathes with, read while the ambient recogniser is the
-   * one holding the microphone.
-   *
-   * This is a second consumer of the same device, so it is armed for no state but
-   * `wake.listening` — a switch the person set themselves, behind the one-time
-   * explanation, and the only moment the portal is already holding the microphone.
-   * The audio is averaged to one number on this machine and dropped; nothing is
-   * stored and nothing new leaves the browser.
-   */
-  const meter = useJarvisMeter({ enabled: wake.listening });
 
   /**
    * The newest thing the presence has to say, shown without opening a conversation

@@ -748,8 +748,11 @@ async function check11() {
   }
 
   const chat = read("src/app/(admin)/assistant/AssistantChat.tsx");
-  // Hands-free is armed by the console and nowhere else.
-  if (!chat.includes('enabled: voiceMode === "console" && handsFree')) {
+  // Hands-free is armed by the console and nowhere else. Both captures on this page
+  // name the console — the meter that holds the stream and the hook that cuts it — so
+  // a loose scan cannot be satisfied by one while the other reads `handsFree` alone.
+  const consoleGates = chat.match(/enabled: voiceMode === "console" && handsFree/g) ?? [];
+  if (consoleGates.length !== 2) {
     problems.push("hands-free is not confined to the console");
   }
   // Every surface reads an answer when reading is switched on. The gate used to
@@ -970,11 +973,16 @@ async function check13() {
     problems.push("the strip keeps saying it is arming after a fatal error");
   }
 
-  // The same fallback the strip shows is the phrase the matcher uses, or the two
-  // disagree and an empty box listens for nothing.
+  // The phrase lives on the account now, so the empty row has to be resolved once,
+  // where it is read — the strip and the matcher both receive the resolved value. A
+  // panel that showed the default while the matcher waited for nothing would be the
+  // same lie the browser-local phrase used to tell.
   const chat = read("src/app/(admin)/assistant/AssistantChat.tsx");
-  if (!chat.includes("const phrase = wakePhrase.trim() || DEFAULT_WAKE_PHRASE;")) {
-    problems.push("an empty wake phrase leaves hands-free listening for nothing");
+  if (!chat.includes("presence.prefs.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT")) {
+    problems.push("an empty wake phrase on the account leaves hands-free listening for nothing");
+  }
+  if (!chat.includes("const phrase = wakePhrase;")) {
+    problems.push("the matcher builds its own phrase instead of the one the strip shows");
   }
 
   // The panel offers hands-free only with the grant, and a failed save has to
@@ -1843,8 +1851,8 @@ await mutation(
 await mutation(
   "30. Hands-free armed outside the console → check 11 red",
   CHAT_REL,
-  'enabled: voiceMode === "console" && handsFree && !ambientArmed,',
-  "enabled: handsFree,",
+  'enabled: voiceMode === "console" && handsFree && !ambientArmed,\n    meter,',
+  "enabled: handsFree,\n    meter,",
   async () => checkIsRed(11)
 );
 
@@ -1925,8 +1933,8 @@ await mutation(
 await mutation(
   "40. An empty wake phrase leaves hands-free listening for nothing → check 13 red",
   CHAT_REL,
-  "const phrase = wakePhrase.trim() || DEFAULT_WAKE_PHRASE;",
-  "const phrase = wakePhrase;",
+  "presence.prefs.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT",
+  "presence.prefs.wakePhrase",
   async () => checkIsRed(13)
 );
 
