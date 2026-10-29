@@ -15,6 +15,13 @@
 -- src/modules/assistant/domain/commands.ts, so the uniqueness index is over
 -- `lower(btrim(trigger_phrase))` — a near miss in spelling is a different phrase,
 -- but a near miss in case or padding is the same one.
+--
+-- `category` is a label, not a foreign key or an enum: one TEXT column carries both
+-- the identity of a group and the words printed on its badge, so a category the
+-- person invented stores its own name and the console's six defaults keep theirs.
+-- The six are defaults, not a closed set — a second vocabulary held here would be a
+-- second thing to keep in sync, and it would refuse names the portal's write door
+-- accepts.
 
 begin;
 
@@ -32,8 +39,16 @@ create table if not exists public.assistant_jarvis_commands (
       char_length(btrim(title)) between 1 and 80
     ),
   category text not null
+    -- One short label, whether it names one of the console's six defaults or a
+    -- category the person invented. A closed set here would refuse names the portal's
+    -- own write door accepts, and would be a second vocabulary to keep in sync. Width
+    -- only, with headroom: the door refuses above 32 characters
+    -- (COMMAND_LIMITS.categoryMax) and this allows 40, because a CHECK tighter than
+    -- the code feeding it turns an accepted save into a REST error with no field the
+    -- console can blame.
     constraint assistant_jarvis_commands_category_shape check (
-      category in ('navigation','hiring','communication','reports','settings','personal')
+      char_length(category) between 1 and 40
+      and category !~ '[\u0000-\u001F]'
     ),
   action_type text not null
     constraint assistant_jarvis_commands_type_shape check (

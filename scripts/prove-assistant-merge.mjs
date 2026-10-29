@@ -294,7 +294,7 @@ test("command server re-reads the row and saves a first command without a model"
 });
 
 test("command server refuses missing disabled malformed and non-tool commands", async () => {
-  for (const options of [{ absent: true }, { patch: { enabled: false } }, { patch: { category: "unknown" } }, { patch: { action_payload: { tool: "list_candidates", args: [] } } }, { patch: { action_type: "note", action_payload: { text: "Read me" } } }, { readError: { code: "42P01", message: "does not exist" } }]) {
+  for (const options of [{ absent: true }, { patch: { enabled: false } }, { patch: { action_type: "unknown" } }, { patch: { action_payload: { tool: "list_candidates", args: [] } } }, { patch: { action_type: "note", action_payload: { text: "Read me" } } }, { readError: { code: "42P01", message: "does not exist" } }]) {
     const fixture = commandServer(options);
     assert.equal(typeof fixture.actions.runJarvisCommand, "function");
     const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: null });
@@ -303,6 +303,17 @@ test("command server refuses missing disabled malformed and non-tool commands", 
     assert.equal(fixture.executions.length, 0);
     assert.equal(fixture.calls.some(call => call.table === "assistant_messages"), false);
   }
+});
+
+// A category outside the six is a person's own name, not a defect, so it cannot be
+// the reason a phrase stops doing what it was saved to do. The row above refuses an
+// unreadable action; this one runs, and its label reaches the transcript.
+test("a command in its own category still runs and keeps its title", async () => {
+  const fixture = commandServer({ patch: { category: "Payroll" } });
+  const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: "session-1" });
+  assert.equal(result.ok, true);
+  assert.equal(result.title, "Stored label");
+  assert.deepEqual(fixture.executions, [{ name: "list_candidates", args: { status: "APPLIED" } }]);
 });
 
 test("command server keeps destructive and web switches off and holds writes for the owner", async () => {
@@ -771,17 +782,46 @@ test("command manager gives shared readers adoption but not editing or toggling"
 
 test("command manager reports malformed stored values instead of repairing them when opened", () => {
   for (const [problem, patch, expected] of [
-    ["category", { rawCategory: "payroll" }, /payroll/],
     ["action", { action: null, enabled: false }, /action cannot be read/],
     ["phrase", { triggerPhrase: "x", enabled: false }, /stored phrase/],
   ]) {
     const ui = commandConsole({}, { commands: [{ ...commandRows[0], problem, ...patch }] });
     assert.match(commandList(ui), expected);
     ui.click("Edit Review applicants");
-    if (problem === "category") assert.equal(ui.find((n) => n.props.id === "command-category").props.value, "payroll");
     if (problem === "action") assert.equal(ui.find((n) => n.props.id === "command-action_type").props.value, "");
     assert.deepEqual(ui.writes, []);
   }
+});
+
+// A category the person named is not a defect: the row prints its own words, the chip
+// that narrows it is those words, and `personal` — the behaviour it answers as — never
+// becomes a badge, a chip match, or the value the editor opens on.
+test("command manager keeps a custom category when opened", async () => {
+  const payroll = { ...commandRows[0], category: "personal", rawCategory: "Payroll" };
+  const monthEnd = { ...commandRows[1], id: "mine-3", triggerPhrase: "close the month", title: "Month end", category: "personal", rawCategory: "payroll" };
+  const ui = commandConsole({}, { commands: [payroll, monthEnd] });
+  assert.match(commandList(ui), /Payroll/);
+  assert.doesNotMatch(ui.text(), /Uncategorised/, "a name of their own is not an absence of one");
+  const chips = ui.find((node) => node.props["aria-label"] === "Command categories");
+  assert.equal(text(chips).split("Payroll").length - 1, 1, "two spellings of one name are one chip");
+  ui.click("Payroll");
+  assert.match(commandList(ui), /résumé review/);
+  assert.match(commandList(ui), /close the month/, "the chip narrows on the folded name, not the spelling");
+  ui.click("Personal");
+  assert.match(ui.text(), /No commands match these filters/, "what a category answers as is not what it is called");
+  ui.click("All categories");
+  ui.click("Edit Review applicants");
+  assert.equal(ui.find((n) => n.props.id === "command-category").props.value, "Payroll");
+  const labels = ui.all((n) => n.type === "option").map((n) => n.props.value);
+  assert.ok(labels.includes("Payroll"), "the stored name is offered again");
+  assert.deepEqual(ui.writes, [], "opening the editor writes nothing");
+  // Choosing "New category…" reveals the field the words go in; the sentinel itself is
+  // never sent, and an empty name is refused by the write door, not defaulted.
+  ui.change("command-category", "__new_category__");
+  assert.ok(ui.find((n) => n.props.id === "command-new-category"));
+  ui.change("command-new-category", "Shifts");
+  ui.submit(); await ui.settle();
+  assert.equal(ui.writes.at(-1).args[0].category, "Shifts");
 });
 
 test("command manager edits each action payload and preserves entered values on a field refusal", async () => {

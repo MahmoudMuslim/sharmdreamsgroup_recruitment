@@ -36,6 +36,15 @@ export const COMMAND_LIMITS = {
   noteTextMax: 280,
   promptMax: 2000,
   rows: 200,
+  /**
+   * How wide a category may be, in characters.
+   *
+   * A preset id is the longest a machine ever has to sort, and a custom category is
+   * whatever words a person chose — so this is the one ceiling that exists only
+   * because people write the value. It is a badge's width, not a paragraph's: a
+   * category the list cannot print on one line is a category nobody filters by.
+   */
+  categoryMax: 32,
 } as const;
 
 export type CommandCategoryId =
@@ -124,8 +133,9 @@ export interface CommandRow {
  *
  * `problem` is what the console says out loud; `action` being null and `enabled`
  * being false are what stop the matcher from ever reaching it. A row can carry both
- * — an unreadable action in an odd category is two facts, and the one that costs the
- * person their command is the one reported first.
+ * — a long phrase holding an unreadable action is two facts, and the one that costs
+ * the person their command is the one reported first. A category outside the six is
+ * not one of the facts: it is a person's own label, and the row is theirs to name.
  */
 export interface VoiceCommand {
   id: string;
@@ -133,19 +143,109 @@ export interface VoiceCommand {
   ownerProfileId: string | null;
   triggerPhrase: string;
   title: string;
+  /** The stored label mapped onto one of the six — what the row *does*, not what it prints. */
   category: CommandCategoryId;
-  /** The stored string whenever it was not one of the six, so the console can quote it. */
+  /**
+   * The row's own words, or null when they were one of the six.
+   *
+   * The console prints this whenever it is set, which is what makes a custom
+   * category visible without giving it a second home: a preset's own label lives in
+   * `COMMAND_CATEGORIES` and is never duplicated here.
+   */
   rawCategory: string | null;
   action: CommandAction | null;
   notes: string | null;
   enabled: boolean;
-  problem: "phrase" | "category" | "action" | null;
+  problem: "phrase" | "action" | null;
 }
 
 const CATEGORY_IDS = new Set<string>(COMMAND_CATEGORIES.map((entry) => entry.id));
 
 function isCategory(value: unknown): value is CommandCategoryId {
   return typeof value === "string" && CATEGORY_IDS.has(value);
+}
+
+/**
+ * Which of the six a category label means — or that it means none of them.
+ *
+ * The fold decides, and nothing else runs. A label is matched case- and
+ * space-insensitively against the six, so `My Reports` and `my-reports` are the same
+ * category, and a label that spells one of the six *is* that one rather than a rival
+ * wearing its clothes. A label that matches none comes back as its own words, trimmed
+ * and untouched, which is what makes a custom category a value in the one column it
+ * lives in rather than a second vocabulary somebody has to keep in sync.
+ *
+ * This is the fold's single door. `parseCommandDraft` stores what it returns, so the
+ * column already holds what the read door, the chips and the guard compare; a second,
+ * different fold in any of those is a rule that fires at write time and not at read
+ * time, which is exactly the drift this module's two doors exist to prevent.
+ */
+export function canonicalCategory(value: unknown): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (CATEGORY_IDS.has(lower)) return lower;
+  const folded = fold(trimmed);
+  const preset = COMMAND_CATEGORIES.find((entry) => fold(entry.id) === folded);
+  return preset ? preset.id : trimmed;
+}
+
+/**
+ * The comparison key for two stored categories.
+ *
+ * Two labels are the same category when one is a re-cased, re-spaced copy of the
+ * other, and the chips need that identity to put `My Reviews` and `my reviews` on one
+ * button rather than two. It folds the canonical form, so a label naming a preset
+ * folds to that preset's id and can never look like a custom category to a filter.
+ */
+export function foldCategory(value: unknown): string {
+  return fold(canonicalCategory(value) ?? "");
+}
+
+/** The words a row's category is shown with — its own when it has them, the preset's label otherwise. */
+export function categoryLabel(command: VoiceCommand): string {
+  const stored = command.rawCategory ?? command.category;
+  return COMMAND_CATEGORIES.find((entry) => entry.id === stored)?.label ?? stored;
+}
+
+/** What a row's category is *stored* as. Display uses `categoryLabel`; comparison uses `foldCategory`. */
+export function categoryKey(command: VoiceCommand): string {
+  return command.rawCategory ?? command.category;
+}
+
+/**
+ * Every category a set of rows carries, in the order a list shows it.
+ *
+ * `id` is what a surface sends back for the category — a preset's id, or a custom
+ * one's own stored words — so re-saving a row that did not change its category cannot
+ * re-case it. Comparison is `foldCategory`'s job, at every door that asks whether two
+ * categories are the same one.
+ *
+ * Derived rather than stored: a category vocabulary kept in its own table would need
+ * rows, rights and a migration of its own, and the only fact it could report is which
+ * labels somebody already typed. Reading it off the rows the person can already see is
+ * what lets a chip print `My reviews` with no second source to keep in sync — and it
+ * keeps the vocabulary honest, because a category with no commands in it has no chip.
+ */
+export function readCategoryNames(
+  commands: readonly VoiceCommand[]
+): { id: string; label: string }[] {
+  const names = new Map<string, { id: string; label: string }>();
+  for (const command of commands) {
+    const id = categoryKey(command);
+    const folded = foldCategory(id);
+    if (folded && !names.has(folded)) names.set(folded, { id, label: categoryLabel(command) });
+  }
+  return Array.from(names.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** The six, then any custom label these rows carry that is not one of them. */
+export function categoryChoices(
+  commands: readonly VoiceCommand[]
+): { id: string; label: string }[] {
+  const presets = COMMAND_CATEGORIES.map((entry) => ({ id: entry.id, label: entry.label }));
+  const custom = readCategoryNames(commands).filter((entry) => !CATEGORY_IDS.has(entry.id));
+  return [...presets, ...custom];
 }
 
 /**
@@ -265,10 +365,17 @@ function phraseProblem(phrase: unknown): string | null {
  * unknown action type disables the row: a command whose action nobody can read is
  * one that would do something unpredictable, and "unpredictable" is the one thing a
  * wake-gated microphone cannot be.
+ *
+ * A category outside the six is not one of those reasons. It is a person's own name
+ * for a group of their own commands, and the only honest reading is the one below:
+ * `category` says which of the six it behaves as, `rawCategory` keeps the words.
  */
 export function normalizeCommandRow(row: CommandRow): VoiceCommand {
-  const category = isCategory(row.category) ? row.category : "personal";
-  const rawCategory = isCategory(row.category) ? null : String(row.category ?? "");
+  const stored = typeof row.category === "string" ? row.category.trim() : "";
+  const storedCategory = canonicalCategory(stored);
+  const category = isCategory(storedCategory) ? storedCategory : "personal";
+  const rawCategory =
+    storedCategory !== null && !isCategory(storedCategory) ? stored : null;
   const action = readAction(row.action_type, row.action_payload);
   const phrase = typeof row.trigger_phrase === "string" ? row.trigger_phrase.trim() : "";
   const title = typeof row.title === "string" ? row.title.trim() : "";
@@ -277,9 +384,7 @@ export function normalizeCommandRow(row: CommandRow): VoiceCommand {
     ? "phrase"
     : action === null
       ? "action"
-      : !isCategory(row.category)
-        ? "category"
-        : null;
+      : null;
 
   return {
     id: row.id,
@@ -370,11 +475,23 @@ export function parseCommandDraft(
   }
   const title = rawTitle;
 
-  // 3. The category, from the fixed six only.
-  if (!isCategory(draft.category)) {
-    return refuse("category", "That is not one of the categories this portal offers.");
+  // 3. The category. One of the six, or the person's own words for a new one; this
+  // is the fold's single door (see `canonicalCategory`), so what lands in the column
+  // is already what the matcher, the chips and the duplicate guard compare.
+  const storedCategory = canonicalCategory(draft.category);
+  if (!storedCategory) {
+    return refuse("category", "Choose one of the six categories, or name a new one.");
   }
-  const category = draft.category;
+  if (storedCategory.length > COMMAND_LIMITS.categoryMax) {
+    return refuse(
+      "category",
+      `A category is at most ${COMMAND_LIMITS.categoryMax} characters — it has to fit the badge on the row.`
+    );
+  }
+  // A label that is not one of the six keeps its own folded words in the column —
+  // `rawCategory` is what `toRow` writes — and answers to `personal` for behaviour.
+  const category = isCategory(storedCategory) ? storedCategory : "personal";
+  const rawCategory = isCategory(storedCategory) ? null : storedCategory;
 
   // 4. The action type, and then the payload that type can actually carry.
   const actionType = draft.action_type;
@@ -494,7 +611,7 @@ export function parseCommandDraft(
       triggerPhrase,
       title,
       category,
-      rawCategory: null,
+      rawCategory,
       action,
       notes: rawNotes || null,
       enabled: draft.enabled === undefined || draft.enabled === null ? previous.enabled : draft.enabled,

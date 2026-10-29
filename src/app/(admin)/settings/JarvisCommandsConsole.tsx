@@ -8,7 +8,8 @@ import { Field, FormMessage, Select, TextArea, TextInput } from "@/modules/analy
 import { NAV } from "@/modules/analytics/presentation/nav";
 import { fold } from "@/modules/assistant/domain/voice";
 import {
-  COMMAND_ACTION_TYPES, COMMAND_CATEGORIES, COMMAND_LIMITS,
+  COMMAND_ACTION_TYPES, COMMAND_LIMITS,
+  categoryChoices, categoryKey, categoryLabel, foldCategory,
   type CommandDraft, type CommandScope, type CommandTool, type VoiceCommand,
 } from "@/modules/assistant/domain/commands";
 import type { VoiceCommandsRead } from "@/modules/assistant/application/jarvisCommands";
@@ -18,6 +19,10 @@ import {
 } from "./jarvis-command-actions";
 
 type Refusal = { error: string; field?: keyof CommandDraft };
+
+// A select choice, never a stored name: the words typed under it are what the write
+// door receives, and it folds them onto one of the six when they spell one.
+const NEW_CATEGORY = "__new_category__";
 
 export function JarvisCommandsConsole({ initial, canPublish, tools }: {
   initial: VoiceCommandsRead;
@@ -44,8 +49,14 @@ export function JarvisCommandsConsole({ initial, canPublish, tools }: {
   }
   const editable = !initial.problem && (scope === "personal" || canPublish);
   const scoped = rows.filter((row) => row.scope === scope);
+  const choices = categoryChoices(scoped);
+  // A chip is a folded name, not a spelling: two rows called "My Reports" and
+  // "my-reports" are one category, so the chip that narrows them matches both. A
+  // selection that no longer has a chip (the last row in it was refiled) stops
+  // narrowing rather than hiding the list behind a chip nobody can see.
+  const picked = choices.find((entry) => foldCategory(entry.id) === foldCategory(category))?.id ?? "";
   const needle = fold(query);
-  const visible = scoped.filter((row) => (!category || row.category === category)
+  const visible = scoped.filter((row) => (!picked || foldCategory(categoryKey(row)) === foldCategory(picked))
     && (!needle || fold(`${row.triggerPhrase} ${row.title}`).includes(needle)));
 
   function updateQuery(key: "tab" | "q", value: string) {
@@ -75,7 +86,7 @@ export function JarvisCommandsConsole({ initial, canPublish, tools }: {
   }
 
   function editor(command?: VoiceCommand) {
-    return <CommandEditor key={command?.id ?? `new-${scope}`} command={command} tools={tools}
+    return <CommandEditor key={command?.id ?? `new-${scope}`} command={command} categories={choices} tools={tools}
       editable={editable} pending={pending} refusal={refusal} onRefusal={setRefusal}
       onClose={() => { setEditing(null); setRefusal(null); }}
       onSave={(draft) => run(() => saveCommand(draft, scope), "Command saved.", () => setEditing(null))}
@@ -106,8 +117,8 @@ export function JarvisCommandsConsole({ initial, canPublish, tools }: {
     <div className="space-y-3">
       <Field label="Search phrases and titles" htmlFor="command-search"><TextInput id="command-search" type="search" value={query} disabled={pending} onChange={(event) => updateQuery("q", event.target.value)} placeholder="Find a phrase or command title" /></Field>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Command categories">
-        <Button type="button" size="sm" variant={category === "" ? "primary" : "outline"} aria-pressed={category === ""} disabled={pending} onClick={() => { setCategory(""); setEditing(null); }}>All categories</Button>
-        {COMMAND_CATEGORIES.map((entry) => <Button key={entry.id} type="button" size="sm" variant={category === entry.id ? "primary" : "outline"} aria-pressed={category === entry.id} disabled={pending} onClick={() => { setCategory(entry.id); setEditing(null); }}>{entry.label}</Button>)}
+        <Button type="button" size="sm" variant={picked === "" ? "primary" : "outline"} aria-pressed={picked === ""} disabled={pending} onClick={() => { setCategory(""); setEditing(null); }}>All categories</Button>
+        {choices.map((entry) => <Button key={entry.id} type="button" size="sm" variant={picked === entry.id ? "primary" : "outline"} aria-pressed={picked === entry.id} disabled={pending} onClick={() => { setCategory(entry.id); setEditing(null); }}>{entry.label}</Button>)}
       </div>
     </div>
     {editing === null && <FormMessage error={refusal?.error} success={success} />}
@@ -118,11 +129,10 @@ export function JarvisCommandsConsole({ initial, canPublish, tools }: {
           <div className="min-w-0 flex-1 basis-56">
             <p className="break-words font-display text-xl font-semibold">“{row.triggerPhrase}”</p>
             <p className="mt-1 break-words text-sm text-brand-ink/65">{row.title}</p>
-            <div className="mt-3 flex flex-wrap gap-2"><Badge>{row.rawCategory !== null ? "Uncategorised" : COMMAND_CATEGORIES.find((entry) => entry.id === row.category)?.label}</Badge><Badge tone="gold">{COMMAND_ACTION_TYPES.find((entry) => entry.id === row.action?.type)?.label ?? "Unreadable action"}</Badge></div>
-            {row.problem && <p className="mt-3 text-sm text-rose-700">{row.problem === "category"
-              ? `Uncategorised — this row names “${row.rawCategory}”, which this portal does not offer.`
-              : row.problem === "action" ? "Switched off — this row's action cannot be read, so saying its phrase does nothing."
-                : "Switched off — the stored phrase is not one this portal can match."}</p>}
+            <div className="mt-3 flex flex-wrap gap-2"><Badge>{categoryLabel(row)}</Badge><Badge tone="gold">{COMMAND_ACTION_TYPES.find((entry) => entry.id === row.action?.type)?.label ?? "Unreadable action"}</Badge></div>
+            {row.problem && <p className="mt-3 text-sm text-rose-700">{row.problem === "action"
+              ? "Switched off — this row's action cannot be read, so saying its phrase does nothing."
+              : "Switched off — the stored phrase is not one this portal can match."}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="sm" variant="outline" role="switch" aria-checked={row.enabled} aria-label={`${row.enabled ? "Disable" : "Enable"} ${row.title}`} disabled={!editable || pending || (!row.enabled && !!row.problem)} onClick={() => run(() => setCommandEnabled(row.id, !row.enabled), row.enabled ? "Command disabled." : "Command enabled.", () => setRows((current) => current.map((entry) => entry.id === row.id ? { ...entry, enabled: !row.enabled } : entry)))}>{row.enabled ? "Enabled" : "Disabled"}</Button>
@@ -137,8 +147,9 @@ export function JarvisCommandsConsole({ initial, canPublish, tools }: {
   </div>;
 }
 
-function CommandEditor({ command, tools, editable, pending, refusal, onRefusal, onClose, onSave, onDuplicate, onDelete }: {
+function CommandEditor({ command, categories, tools, editable, pending, refusal, onRefusal, onClose, onSave, onDuplicate, onDelete }: {
   command?: VoiceCommand;
+  categories: readonly { id: string; label: string }[];
   tools: readonly CommandTool[];
   editable: boolean;
   pending: boolean;
@@ -152,7 +163,9 @@ function CommandEditor({ command, tools, editable, pending, refusal, onRefusal, 
   const action = command?.action;
   const [phrase, setPhrase] = useState(command?.triggerPhrase ?? "");
   const [title, setTitle] = useState(command?.title ?? "");
-  const [category, setCategory] = useState<string>(command?.rawCategory ?? command?.category ?? "personal");
+  const [category, setCategory] = useState<string>(command ? categoryKey(command) : "personal");
+  const [naming, setNaming] = useState(false);
+  const [named, setNamed] = useState("");
   const [type, setType] = useState<string>(command ? action?.type ?? "" : "ask");
   const [href, setHref] = useState(action?.type === "open" ? action.href : "");
   const [tool, setTool] = useState(action?.type === "tool" ? action.tool : "");
@@ -177,7 +190,7 @@ function CommandEditor({ command, tools, editable, pending, refusal, onRefusal, 
       try { payload = { tool, args: JSON.parse(args) }; }
       catch { onRefusal({ field: "action_payload", error: "Enter valid JSON for the tool's named arguments." }); return; }
     }
-    onSave({ ...(command ? { id: command.id } : {}), trigger_phrase: phrase, title, category, action_type: type, action_payload: payload, notes, enabled: command?.enabled ?? true });
+    onSave({ ...(command ? { id: command.id } : {}), trigger_phrase: phrase, title, category: naming ? named : category, action_type: type, action_payload: payload, notes, enabled: command?.enabled ?? true });
   }
 
   return <form onSubmit={(event) => { event.preventDefault(); submit(); }} className="space-y-4">
@@ -186,8 +199,9 @@ function CommandEditor({ command, tools, editable, pending, refusal, onRefusal, 
     <Field label="Voice trigger phrase (what you speak)" htmlFor="command-trigger_phrase" required hint={`Say this after your wake word. ${phrase.length} / ${COMMAND_LIMITS.phraseMax}`}><TextInput id="command-trigger_phrase" {...control("trigger_phrase")} required minLength={COMMAND_LIMITS.phraseMin} maxLength={COMMAND_LIMITS.phraseMax} value={phrase} onChange={(event) => setPhrase(event.target.value)} /></Field>
     <Field label="Command label / title" htmlFor="command-title" required><TextInput id="command-title" {...control("title")} required maxLength={COMMAND_LIMITS.titleMax} value={title} onChange={(event) => setTitle(event.target.value)} /></Field>
     <div className="grid gap-4 sm:grid-cols-2">
-      <Field label="Category" htmlFor="command-category"><Select id="command-category" {...control("category")} value={category} onChange={(event) => setCategory(event.target.value)}>{command?.rawCategory !== null && command?.rawCategory !== undefined && <option value={command.rawCategory}>Uncategorised — {command.rawCategory}</option>}{COMMAND_CATEGORIES.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</Select></Field>
+      <Field label="Category" htmlFor="command-category" hint="One of the six, or a name of your own."><Select id="command-category" {...control("category")} value={category} onChange={(event) => { const value = event.target.value; setNaming(value === NEW_CATEGORY); setCategory(value); }}>{categories.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}<option value={NEW_CATEGORY}>New category…</option></Select></Field>
       <Field label="Action type" htmlFor="command-action_type"><Select id="command-action_type" {...control("action_type")} value={type} onChange={(event) => setType(event.target.value)}><option value="" disabled>Choose an action</option>{COMMAND_ACTION_TYPES.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}</Select></Field>
+      {naming && <Field label="New category name" htmlFor="command-new-category" hint={`${named.length} / ${COMMAND_LIMITS.categoryMax}`}><TextInput id="command-new-category" {...control("category")} maxLength={COMMAND_LIMITS.categoryMax} value={named} onChange={(event) => setNamed(event.target.value)} placeholder="Payroll" /></Field>}
     </div>
     <p className="text-xs text-brand-ink/60">{COMMAND_ACTION_TYPES.find((entry) => entry.id === type)?.description}</p>
     {type === "open" && <Field label="Staff page" htmlFor="command-href" required><TextInput id="command-href" {...control("action_payload")} required list="command-pages" value={href} onChange={(event) => setHref(event.target.value)} placeholder="/reports" /><datalist id="command-pages">{NAV.map((page) => <option key={page.href} value={page.href}>{page.label}</option>)}</datalist></Field>}

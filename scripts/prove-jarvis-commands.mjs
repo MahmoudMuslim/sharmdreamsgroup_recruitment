@@ -4,12 +4,15 @@
  *
  * The saved-voice-command slice's correctness boundary, over a module that imports
  * only the staff-route guard: the six categories and the four action types that are
- * the shipped vocabulary, the eight ceilings the migration, the console and the two
+ * the shipped vocabulary — the six being defaults rather than a closed set, since a
+ * person may name a category of their own and the one TEXT column carries both its
+ * key and its words — the eight ceilings the migration, the console and the two
  * doors all quote one source for, and what the read door makes of a row it cannot
- * fully understand — a category nobody authored still renders and names the string
- * it came from, an action nobody can read is switched off rather than guessed into
+ * fully understand — an action nobody can read is switched off rather than guessed into
  * being something else, and a phrase too short to match is reported instead of
- * quietly trimmed. An over-long field is returned whole — the ceilings belong to the
+ * quietly trimmed. A category outside the six is not one of those reasons: it is the
+ * person's own name for a group of their own commands, and the honest reading prints
+ * it. An over-long field is returned whole — the ceilings belong to the
  * write door, and a read door that sliced would be a second, silent writer. The
  * write door is this file's group 2: it refuses a draft that cannot be stored, and
  * names the field that made it so. The matcher is group 4: heard words become a
@@ -246,6 +249,7 @@ async function check1() {
   expect(problems, "spoken note ceiling", m.COMMAND_LIMITS.noteTextMax, 280);
   expect(problems, "ask prompt ceiling", m.COMMAND_LIMITS.promptMax, 2000);
   expect(problems, "read ceiling", m.COMMAND_LIMITS.rows, 200);
+  expect(problems, "category ceiling", m.COMMAND_LIMITS.categoryMax, 32);
   // The stop-word splitter and the command splitter are one rule written twice,
   // on purpose (this module may not import `jarvis.ts`). Pinned, because the day
   // they differ, `stop` is a word in one and not in the other — and a person who
@@ -313,8 +317,28 @@ async function check2() {
   refused("an empty title", { ...good, title: "  " }, "title");
   refused("a 200-character title", { ...good, title: "t".repeat(200) }, "title");
 
-  // Category and action type must be in the vocabulary.
-  refused("an invented category", { ...good, category: "payroll" }, "category");
+  // Category: one of the six, or the person's own words for a new one. The six are
+  // defaults, not a closed set — a label that folds onto none of them *is* a
+  // category, keyed and named by the words typed for it.
+  refused("a category that names nothing at all", { ...good, category: "   " }, "category");
+  refusedWith("a category past the badge's width",
+    { ...good, category: "c".repeat(33) }, "category", /32 characters/);
+  const payroll = ok({ ...good, category: "Payroll" });
+  expect(problems, "a new category name is accepted", payroll.ok, true);
+  expect(problems, "it keeps the words as they were typed", payroll.ok ? payroll.command.rawCategory : null, "Payroll");
+  expect(problems, "and behaves as personal, since it is not one of the six",
+    payroll.ok ? payroll.command.category : null, "personal");
+  const spelled = ok({ ...good, category: "  RePoRtS  " });
+  expect(problems, "a label spelling one of the six is that one",
+    spelled.ok ? spelled.command.category : null, "reports");
+  expect(problems, "with no custom words left behind", spelled.ok ? spelled.command.rawCategory : "set", null);
+  // The fold that decides is the same one the chips compare with, so two spellings
+  // of one custom name are one category — and neither of them is a preset.
+  expect(problems, "`My Reports` and `my-reports` are the same category",
+    m.foldCategory("My Reports"), m.foldCategory("my-reports"));
+  expect(problems, "and that category is not `reports`", m.foldCategory("My Reports"), "my reports");
+
+  // Action type is still a closed set: four things a command can do, nothing else.
   refused("an invented action type", { ...good, action_type: "delete" }, "action_type");
 
   // `open` — the guard's own rule, quoted back.
@@ -416,11 +440,20 @@ async function check3() {
   expect(problems, "a sound row carries its action", good.action, { type: "open", href: "/whatsapp" });
   expect(problems, "a sound row keeps its raw category", good.rawCategory, null);
 
-  // A category nobody authored still renders, and says what it is.
-  const odd = m.normalizeCommandRow({ ...base, category: "payroll" });
-  expect(problems, "an unknown category reads as personal", odd.category, "personal");
-  expect(problems, "the original string survives", odd.rawCategory, "payroll");
-  expect(problems, "the row reports itself", odd.problem, "category");
+  // A category outside the six is a person's own name, not a row that failed. It
+  // renders, it stays switched on, and it prints the words it was stored with.
+  const custom = m.normalizeCommandRow({ ...base, category: "Payroll" });
+  expect(problems, "a custom category behaves as personal", custom.category, "personal");
+  expect(problems, "the stored words survive", custom.rawCategory, "Payroll");
+  expect(problems, "and it is not reported as a problem", custom.problem, null);
+  expect(problems, "so the row stays enabled", custom.enabled, true);
+  // A row hand-stored with a preset's name in a different casing is that preset —
+  // not a custom category wearing its clothes.
+  const reSpaced = m.normalizeCommandRow({ ...base, category: "  RePoRtS  " });
+  expect(problems, "a preset spelled oddly reads as the preset", reSpaced.category, "reports");
+  expect(problems, "and carries no custom words", reSpaced.rawCategory, null);
+  expect(problems, "and prints the shipped label", m.categoryLabel(reSpaced), "Reports");
+  expect(problems, "a custom row prints its own words", m.categoryLabel(custom), "Payroll");
 
   // A broken action is switched off, never guessed into being an `ask`.
   const broken = m.normalizeCommandRow({ ...base, action_type: "delete" });
@@ -497,6 +530,59 @@ async function check3() {
   const offSite = m.normalizeCommandRow({ ...base, action_payload: { href: "https://example.com/x" } });
   expect(problems, "a stored off-site href carries no action", offSite.action, null);
   expect(problems, "and is disabled", offSite.enabled, false);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 3b. The category vocabulary is read off the rows, never kept beside them
+// ---------------------------------------------------------------------------
+/**
+ * A custom category has no table of its own: the only fact a name can report is which
+ * labels rows the person can already see. So the chips, the editor's list and the
+ * badge all read the same derived set — and if that derivation folded two spellings of
+ * one name into two chips, or let a preset be re-listed as a custom one, the filter
+ * would offer buttons that match nothing.
+ */
+async function check3b() {
+  const problems = [];
+  const m = await load(DOMAIN_URL);
+  const row = (category, over = {}) => ({
+    id: "11111111-1111-1111-1111-111111111111", scope: "personal", owner_profile_id: "p1",
+    trigger_phrase: "open the outbox", title: "Outbox", category,
+    action_type: "open", action_payload: { href: "/whatsapp" }, notes: null, enabled: true,
+    ...over,
+  });
+  const rows = [
+    row("reports"), row("Payroll"), row("my-reports"), row("My Reports"),
+    row("Navigation"), row("payroll"),
+  ].map(m.normalizeCommandRow);
+
+  expect(problems, "two spellings of one custom name make one chip",
+    m.readCategoryNames(rows).filter((entry) => m.foldCategory(entry.id) === "my reports").length, 1);
+  expect(problems, "and it is keyed by the words the first row stored",
+    m.readCategoryNames(rows).find((entry) => m.foldCategory(entry.id) === "my reports")?.id, "my-reports");
+  expect(problems, "a preset spelled oddly is the preset, not a new name",
+    m.readCategoryNames(rows).some((entry) => entry.id === "navigation"), true);
+  expect(problems, "and never listed twice under two spellings",
+    new Set(m.readCategoryNames(rows).map((entry) => m.foldCategory(entry.id))).size,
+    m.readCategoryNames(rows).length);
+
+  const choices = m.categoryChoices(rows);
+  expect(problems, "the six come first, in their shipped order",
+    choices.slice(0, 6).map((entry) => entry.id),
+    ["navigation", "hiring", "communication", "reports", "settings", "personal"]);
+  expect(problems, "then the custom names the rows actually carry, as they were typed",
+    choices.slice(6).map((entry) => entry.id).sort(), ["Payroll", "my-reports"]);
+  expect(problems, "a custom label is never also one of the six",
+    choices.filter((entry) => entry.id === "reports").length, 1);
+  expect(problems, "and rows carrying nothing custom give exactly the six",
+    m.categoryChoices([row("reports"), row("hiring")].map(m.normalizeCommandRow)).length, 6);
+
+  // `categoryKey` is what a surface sends back, so re-saving a row that did not change
+  // its category cannot re-case it: the words the door stored are the words it returns.
+  expect(problems, "the key of a custom row is its stored words",
+    m.categoryKey(m.normalizeCommandRow(row("My Reports"))), "My Reports");
+  expect(problems, "and the key of a preset row is its id", m.categoryKey(m.normalizeCommandRow(row("Reports"))), "reports");
   return verdict(problems);
 }
 
@@ -595,7 +681,15 @@ async function check5() {
   has("title ceiling", "char_length(btrim(title)) between 1 and 80");
   has("notes ceiling", "char_length(notes) <= 500");
   has("payload size", "octet_length(action_payload::text) <= 16384");
-  has("the six categories", "category in ('navigation','hiring','communication','reports','settings','personal')");
+  // The column's shape, not a closed set: a category is one short label, and the six
+  // are the defaults the console offers rather than the only names the table knows.
+  // 40 against the door's 32 is R13's headroom — the CHECK may never be the tighter
+  // of the two, or an accepted draft dies in the database with no field to blame.
+  has("category width", "char_length(category) between 1 and 40");
+  has("category holds no control characters", "category !~ '[\\u0000-\\u001F]'");
+  if (/assistant_jarvis_commands_category_shape check \(\s*\n?\s*category in/.test(sql)) {
+    problems.push("the category CHECK closes the set; a person's own label must be storable");
+  }
   has("the four action types", "action_type in ('ask','open','tool','note')");
 
   // Two indexes, not one coalesce: the same phrase may exist once per person and
@@ -918,13 +1012,16 @@ async function check2b() {
   expect(problems, "enabling an unreadable action never writes", writes(rest).length, 0);
   expect(problems, "an unreadable action can be disabled", (await actions.setCommandEnabled("c1", false)).ok, true);
 
-  for (const [source, run] of [
-    [{ ...row, category: "unknown" }, () => actions.duplicateCommand("c1")],
-    [{ ...shared, category: "unknown" }, () => actions.adoptSharedCommand("s1")],
+  // A custom category is a person's own name, not a defect — so a copy carries its
+  // words across rather than flattening them to whichever preset `category` answers.
+  for (const [label, source, run] of [
+    ["duplicate", { ...row, category: "Payroll" }, () => actions.duplicateCommand("c1")],
+    ["adoption", { ...shared, category: "Payroll" }, () => actions.adoptSharedCommand("s1")],
   ]) {
     rest = setup([source]);
-    expect(problems, "copying does not repair an unknown stored category", (await run()).ok, false);
-    expect(problems, "an invalid copy never writes", writes(rest).length, 0);
+    expect(problems, `${label} keeps a custom category`, (await run()).ok, true);
+    expect(problems, `${label} writes the stored words, not a preset`,
+      writes(rest)[0]?.body?.category, "Payroll");
   }
 
   rest = setup([{ ...row, trigger_phrase: "a".repeat(64), title: "b".repeat(80) }]);
@@ -955,6 +1052,11 @@ async function check6a() {
   const area = nav.areaById("assistant");
   expect(problems, "commands resolves to its own section", nav.sectionFor(area, "commands").id, "commands");
   expect(problems, "the default stays presence", nav.sectionFor(area, undefined).id, "presence");
+  // Being a dock section is only half of reachability: the manager has to be one
+  // click from the surface where these phrases are actually spoken.
+  const surface = read("src/app/(admin)/assistant/page.tsx");
+  expect(problems, "the JARVIS surface links the manager",
+    surface.includes('settingsHref("assistant", "commands")'), true);
   const { DEFAULT_JARVIS_PREFS } = await load(pathToFileURL(path.join(root, "src/modules/assistant/domain/jarvis.ts")).href);
   const actions = await load(pathToFileURL(path.join(root, "src/app/(admin)/settings/jarvis-actions.ts")).href);
   const row = { id: "presence-command", scope: "personal", owner_profile_id: "p1", trigger_phrase: "open reports", title: "Reports", category: "reports", action_type: "open", action_payload: { href: "/reports" }, notes: null, enabled: true };
@@ -992,11 +1094,14 @@ const CHECKS = [
   ["5b. The list is read once, and says which failure it met", check5b],
   ["5c. The migration-claims proof asks about 051 by the table it creates", check5c],
   ["2b. The five actions write the columns the table has, and never a scope the body named", check2b],
-  ["6a. Settings resolves the manager and presence carries its scoped command read", check6a],
+  ["6a. Settings and the JARVIS surface both reach the manager; presence carries its command read", check6a],
   ["6b. Commands dispatch before the model and retain approval and transcript boundaries", async () => {
     const run = spawnSync(process.execPath, ["--test", "--test-reporter=tap", "--test-name-pattern=command (dispatch|server)", "scripts/prove-assistant-merge.mjs"], { cwd: root, encoding: "utf8", timeout: 60_000 });
     return { pass: run.status === 0, detail: run.status === 0 ? "Behavioral dispatch and server checks passed" : `${run.stdout ?? ""}\n${run.stderr ?? ""}` };
   }],
+  // Registered last so the indices the earlier mutations reach by number stay put;
+  // its label says where the rule it proves actually sits.
+  ["3b. The category vocabulary is read off the rows, never kept beside them", check3b],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1245,11 +1350,63 @@ await mutation(
 );
 
 await mutation(
-  "21. Copying an unknown category silently repairs it → check 2b red",
+  "21. A copy flattening a custom category to the preset it answers as → check 2b red",
   ACTIONS_REL,
   '    category: command.rawCategory ?? command.category,',
   '    category: command.category,',
   async () => checkIsRed(8)
+);
+
+// The custom-category rule, one break per door it touches. The fold is the single
+// place a label becomes a key, so a mutation here is a different fold — a name
+// re-cased by the system, a badge that overflows, a row that loses its own words, or
+// two chips for one category.
+await mutation(
+  "46. The fold re-casing a custom label → check 2 red",
+  DOMAIN_REL,
+  "  return preset ? preset.id : trimmed;",
+  "  return preset ? preset.id : lower;",
+  async () => checkIsRed(2)
+);
+
+await mutation(
+  "47. The write door letting a category wider than its badge through → check 2 red",
+  DOMAIN_REL,
+  "  if (storedCategory.length > COMMAND_LIMITS.categoryMax) {",
+  "  if (false) {",
+  async () => checkIsRed(2)
+);
+
+await mutation(
+  "48. The read door dropping a custom category's words → check 3 red",
+  DOMAIN_REL,
+  "  const rawCategory =\n    storedCategory !== null && !isCategory(storedCategory) ? stored : null;",
+  "  const rawCategory = null;",
+  async () => checkIsRed(3)
+);
+
+await mutation(
+  "49. The category list keyed by spelling instead of by fold → check 3b red",
+  DOMAIN_REL,
+  "    if (folded && !names.has(folded)) names.set(folded, { id, label: categoryLabel(command) });",
+  "    if (folded) names.set(id, { id, label: categoryLabel(command) });",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "50. A preset listed again among the custom names → check 3b red",
+  DOMAIN_REL,
+  "  const custom = readCategoryNames(commands).filter((entry) => !CATEGORY_IDS.has(entry.id));",
+  "  const custom = readCategoryNames(commands);",
+  async () => checkIsRed(11)
+);
+
+await mutation(
+  "51. The table closing the category set again → check 5 red",
+  MIGRATION_REL,
+  "char_length(category) between 1 and 40",
+  "category in ('navigation','hiring','communication','reports','settings','personal')",
+  async () => checkIsRed(5)
 );
 
 function managerIsRed(name) {
@@ -1285,19 +1442,40 @@ for (const [label, needle, replacement, testName] of [
   ["28. Shared authoring sends personal scope",
     'saveCommand(draft, scope)', 'saveCommand(draft, "personal")',
     "command manager lets a publisher author shared commands"],
-  ["29. A malformed stored category loses its raw value",
-    'command?.rawCategory ?? command?.category ?? "personal"', 'command?.category ?? "personal"',
-    "command manager reports malformed stored values"],
+  ["29. The editor opening on the preset a custom name answers as, not its own words",
+    'command ? categoryKey(command) : "personal"', 'command ? command.category : "personal"',
+    "command manager keeps a custom category when opened"],
 ]) {
   await mutation(`${label} → manager assertion red`, MANAGER_REL, needle, replacement,
     async () => managerIsRed(testName));
 }
+
+// A chip is a folded name, so the rows it narrows are matched on the fold. Comparing
+// spellings here hides one of two rows that share a category — a filter that hides the
+// person's own commands from the person who named the group.
+await mutation(
+  "52. A category chip narrowing by spelling instead of by fold → manager assertion red",
+  MANAGER_REL,
+  "foldCategory(categoryKey(row)) === foldCategory(picked)",
+  "categoryKey(row) === picked",
+  async () => managerIsRed("command manager keeps a custom category when opened")
+);
 
 await mutation(
   "30. Presence drops the scoped commands it read → check 6a red",
   "src/app/(admin)/settings/jarvis-actions.ts",
   "commands: commands.commands",
   "commands: []",
+  async () => checkIsRed(9)
+);
+
+// The other door to the manager: a surface that links only its own settings panel
+// leaves the saved phrases one click further away than the person expects.
+await mutation(
+  "53. The JARVIS surface stops linking the manager → check 6a red",
+  "src/app/(admin)/assistant/page.tsx",
+  'settingsHref("assistant", "commands")',
+  'settingsHref("assistant", "appearance")',
   async () => checkIsRed(9)
 );
 
