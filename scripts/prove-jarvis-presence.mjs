@@ -808,9 +808,12 @@ async function check13() {
   expect(problems, "one row per person", write?.opts, { onConflict: "profile_id" });
   expect(
     problems,
-    "the row is the columns plus the session's identity and the clock",
+    "the row is the columns the draft needed, plus the session's identity and the clock",
     Object.keys(write.payload).sort(),
-    [...columns, "profile_id", "updated_at"].sort()
+    // This draft named no wake phrase, so Step 3b's prune keeps `wake_phrase` off
+    // the wire; every other column, plus the session's identity and the clock, still
+    // goes — the phrase is the only field a save can need 050 for.
+    [...columns.filter((c) => c !== "wake_phrase"), "profile_id", "updated_at"].sort()
   );
   expect(problems, "the row is the caller's own", write.payload.profile_id, "staff-1");
   expect(problems, "the switch on the row is on", write.payload.briefing, true);
@@ -926,6 +929,13 @@ async function check14() {
     { ...jarvis.DEFAULT_JARVIS_PREFS, wakePhrase: "Hey Jarvis" }
   );
   problems.push(...(untouched.includes("wake phrase") ? ["the trail names a switch that did not move"] : []));
+
+  // 48 is written in three places: voice.ts, jarvis.ts, and this SQL. The first two
+  // are pinned by check 15; this pins the third, because a ceiling only the database
+  // knows about is a ceiling the panel will offer and the write will refuse.
+  const migration = read("db/migrations/050_jarvis_wake_phrase.sql");
+  expect(problems, "the column check caps the phrase at the same length", migration.includes(`between 1 and ${jarvis.MAX_WAKE_PHRASE_LEN}`), true);
+  expect(problems, "the column is nullable so nobody is seeded a phrase", migration.includes("wake_phrase text"), true);
   return verdict(problems);
 }
 
@@ -978,6 +988,89 @@ async function check16() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 17. A refused write names the file the draft actually needs
+// ---------------------------------------------------------------------------
+async function check17() {
+  const settings = await load(SETTINGS_URL);
+  const staff = { profileId: "p-1", role: "SUPER_ADMIN", name: "T" };
+  const problems = [];
+
+  // A phrase write against a database without 050 must name 050, not the table it
+  // already has.
+  const rejected = fakeRest({
+    read: { data: { profile_id: "p-1" }, error: null },
+    write: { error: { code: "PGRST204", message: 'column assistant_jarvis_prefs.wake_phrase of assistant_jarvis_prefs does not exist' } },
+  });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: rejected.client });
+  const phraseResult = await settings.saveJarvisPrefs({ wakePhrase: "يا Jarvis" });
+  expect(problems, "a phrase write is refused", phraseResult.ok, false);
+  problems.push(
+    ...(!String(phraseResult.ok === false && phraseResult.error).includes("050_jarvis_wake_phrase")
+      ? [`the refusal did not name 050: ${JSON.stringify(phraseResult)}`]
+      : [])
+  );
+  problems.push(
+    ...(String(phraseResult.ok === false && phraseResult.error).includes("047")
+      ? ["the refusal blamed the table that is already there"]
+      : [])
+  );
+
+  // A switch write against the same database still blames the table, because that
+  // is the only file it needs.
+  const switchRejected = fakeRest({
+    read: { data: null, error: null },
+    write: { error: { code: "42P01", message: 'relation "public.assistant_jarvis_prefs" does not exist' } },
+  });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: switchRejected.client });
+  const switchResult = await settings.saveJarvisPrefs({ briefing: true });
+  expect(problems, "a switch write is refused", switchResult.ok, false);
+  problems.push(
+    ...(!String(switchResult.ok === false && switchResult.error).includes("047")
+      ? [`the refusal did not name 047: ${JSON.stringify(switchResult)}`]
+      : [])
+  );
+
+  // Step 3b: a draft that never mentions the phrase must not put its column on the
+  // wire. `fakeRest` records each call, so the check reads the payload it was handed.
+  const pruned = fakeRest({
+    read: { data: { profile_id: "p-1", wake_phrase: "يا Jarvis" }, error: null },
+    write: { error: null },
+  });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: pruned.client });
+  const switchSaved = await settings.saveJarvisPrefs({ briefing: false });
+  expect(problems, "a switch write succeeds with the column absent", switchSaved.ok, true);
+  expect(problems, "and still reports the phrase the row holds", switchSaved.ok === true && switchSaved.prefs.wakePhrase, "يا Jarvis");
+  const prunedBody = pruned.calls.find((entry) => entry.op === "upsert");
+  problems.push(
+    ...(prunedBody && "wake_phrase" in prunedBody.payload
+      ? ["a switch write sent the phrase column anyway"]
+      : [])
+  );
+
+  // And a draft that DOES name the phrase sends it, so clearing the field is real.
+  const named = fakeRest({
+    read: { data: { profile_id: "p-1", wake_phrase: "يا Jarvis" }, error: null },
+    write: { error: null },
+  });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: named.client });
+  await settings.saveJarvisPrefs({ wakePhrase: "   " });
+  const namedBody = named.calls.find((entry) => entry.op === "upsert");
+  problems.push(
+    ...(!namedBody || namedBody.payload.wake_phrase !== null
+      ? ["a cleared phrase did not reach the row as null"]
+      : [])
+  );
+
+  // And a stored phrase arrives whole on the read.
+  const withPhrase = fakeRest({ read: { data: { profile_id: "p-1", wake_phrase: "يا Jarvis" }, error: null } });
+  resetGlobals({ __jarvisUser: staff, __jarvisRest: withPhrase.client });
+  const read = await settings.readJarvisPrefs("p-1");
+  expect(problems, "the reader hands the phrase over", read.prefs.wakePhrase, "يا Jarvis");
+  expect(problems, "and says it was stored", read.stored, true);
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The five queues are the ones the attention feed issues, ranked and thresholded", check1],
   ["2. A clock reading is minutes past midnight, or nothing at all", check2],
@@ -995,6 +1088,7 @@ const CHECKS = [
   ["14. The wake phrase is a stored field that refuses what it cannot express", check14],
   ["15. The phrase ceiling in jarvis.ts is the ceiling in voice.ts", check15],
   ["16. A consent stamp taken under the browser-vendor wording does not carry over", check16],
+  ["17. A refused write names the file the draft actually needs", check17],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1276,7 +1370,7 @@ await mutation(
 await mutation(
   "27. A table that is not applied answered as a set of choices → check 12 red",
   SETTINGS_REL,
-  '  if (state.problem === "absent") return { reason: "absent-table", message: MIGRATION_SENTENCE };',
+  '  if (state.problem === "absent") return { reason: "absent-table", message: TABLE_SENTENCE };',
   "  if (state.problem === \"absent\") return state.prefs;",
   async () => checkIsRed(12)
 );
@@ -1292,7 +1386,7 @@ await mutation(
 await mutation(
   "29. An unapplied table reported as a database refusal → check 13 red",
   SETTINGS_REL,
-  "    if (absent(error)) return { ok: false, error: MIGRATION_SENTENCE };",
+  "    if (absent(error)) return { ok: false, error: migrationSentence(draft) };",
   "    if (absent(error)) return { ok: false, error: \"That setting could not be saved.\" };",
   async () => checkIsRed(13)
 );
@@ -1300,8 +1394,8 @@ await mutation(
 await mutation(
   "30. A save that writes the profile the draft names → check 13 red",
   SETTINGS_REL,
-  "    .upsert({ ...row, profile_id: user.profileId, updated_at: new Date().toISOString() }, {",
-  "    .upsert({ ...row, profile_id: (draft.profile_id as string) ?? user.profileId, updated_at: new Date().toISOString() }, {",
+  "    .upsert(payload, {",
+  "    .upsert({ ...payload, profile_id: (draft.profile_id as string) ?? user.profileId }, {",
   async () => checkIsRed(13)
 );
 
@@ -1367,6 +1461,22 @@ await mutation(
   "    else if (!consentCarriesOver(next.ambientConsentAt)) {",
   "    else if (next.ambientConsentAt === null) {",
   async () => checkIsRed(16)
+);
+
+await mutation(
+  "39. A switch write carries the phrase column anyway → check 17 red",
+  SETTINGS_REL,
+  '  if (!("wakePhrase" in draft)) delete payload.wake_phrase;',
+  "  // prune lifted",
+  async () => checkIsRed(17)
+);
+
+await mutation(
+  "40. Every refusal blames the table → check 17 red",
+  SETTINGS_REL,
+  "return { ok: false, error: migrationSentence(draft) };",
+  "return { ok: false, error: TABLE_SENTENCE };",
+  async () => checkIsRed(17)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);

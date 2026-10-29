@@ -126,6 +126,11 @@ const MIGRATIONS = [
     asks:
       "select exists (select 1 from information_schema.columns where table_schema='public' and table_name='assistant_jarvis_prefs' and column_name='appearance') as present",
   },
+  {
+    file: "050_jarvis_wake_phrase.sql",
+    asks:
+      "select exists (select 1 from information_schema.columns where table_schema='public' and table_name='assistant_jarvis_prefs' and column_name='wake_phrase') as present",
+  },
 ];
 
 // ---------------------------------------------------------------------------

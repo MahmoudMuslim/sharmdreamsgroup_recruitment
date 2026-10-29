@@ -473,8 +473,15 @@ export const JARVIS_PREF_COLUMNS: readonly string[] = Object.freeze([
   "wake_phrase",
 ]);
 
-/** Draft field names, camelCase and the row's own spelling alike, to columns. */
-const COLUMN_BY_DRAFT_KEY: Record<string, string> = {
+/**
+ * Draft field names, camelCase and the row's own spelling alike, to columns.
+ *
+ * The writer (`application/jarvisSettings.ts`) reads this map to name the
+ * migration a refused write actually needs, so a draft that asked for a wake
+ * phrase is told about the file that adds its column, not the one that created
+ * the table it already has.
+ */
+export const COLUMN_BY_DRAFT_KEY: Record<string, string> = {
   ambient: "ambient",
   briefing: "briefing",
   briefingHour: "briefing_hour",
