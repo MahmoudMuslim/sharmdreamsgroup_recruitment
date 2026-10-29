@@ -11,7 +11,9 @@
  * being something else, and a phrase too short to match is reported instead of
  * quietly trimmed. An over-long field is returned whole — the ceilings belong to the
  * write door, and a read door that sliced would be a second, silent writer. The
- * write door, the matcher, the reader and the console are later groups of this file.
+ * write door is this file's group 2: it refuses a draft that cannot be stored, and
+ * names the field that made it so. The matcher, the reader and the console are
+ * later groups of this file.
  *
  * Nothing here needs a database, a browser, a microphone or a model. The mutation
  * proofs that break a rule and re-run the check that must notice use the harness
@@ -209,6 +211,93 @@ async function check1() {
 }
 
 // ---------------------------------------------------------------------------
+// 2. The write door refuses every field it cannot express
+// ---------------------------------------------------------------------------
+async function check2() {
+  const problems = [];
+  const m = await load(DOMAIN_URL);
+  const TOOLS = [
+    { name: "list_candidates", label: "List candidates" },
+    { name: "delete_candidate", label: "Delete a candidate", destructive: true },
+    { name: "search_web", label: "Search the web", web: true },
+  ];
+  const PREV = {
+    id: "c1", scope: "personal", ownerProfileId: "p1", triggerPhrase: "open the outbox",
+    title: "Outbox", category: "communication", rawCategory: null,
+    action: { type: "open", href: "/whatsapp" }, notes: null, enabled: true, problem: null,
+  };
+  const ok = (draft) => m.parseCommandDraft(draft, PREV, TOOLS);
+  const refused = (label, draft, field) => {
+    const out = ok(draft);
+    if (out.ok !== false) problems.push(`${label}: expected a refusal`);
+    else if (out.field !== field) problems.push(`${label}: refused ${out.field}, expected ${field}`);
+  };
+  const good = {
+    trigger_phrase: "open the outbox", title: "Outbox", category: "communication",
+    action_type: "open", action_payload: { href: "/whatsapp" }, notes: "", enabled: true,
+  };
+
+  // The happy path, once, so the refusals below are known to be about their field.
+  const parsed = ok(good);
+  expect(problems, "a sound draft is accepted", parsed.ok, true);
+  if (parsed.ok) {
+    expect(problems, "to an open action", parsed.command.action, { type: "open", href: "/whatsapp" });
+    expect(problems, "with the scope it is stored under", parsed.command.scope, "personal");
+  }
+
+  // Phrase.
+  refused("a one-character phrase", { ...good, trigger_phrase: "x" }, "trigger_phrase");
+  refused("a 65-character phrase", { ...good, trigger_phrase: "p".repeat(65) }, "trigger_phrase");
+  refused("a phrase with a newline", { ...good, trigger_phrase: "open\nthe outbox" }, "trigger_phrase");
+  refused("a phrase that is only spaces", { ...good, trigger_phrase: "     " }, "trigger_phrase");
+
+  // Title.
+  refused("an empty title", { ...good, title: "  " }, "title");
+  refused("a 200-character title", { ...good, title: "t".repeat(200) }, "title");
+
+  // Category and action type must be in the vocabulary.
+  refused("an invented category", { ...good, category: "payroll" }, "category");
+  refused("an invented action type", { ...good, action_type: "delete" }, "action_type");
+
+  // `open` — the guard's own rule, quoted back.
+  refused("an off-site href", { ...good, action_payload: { href: "https://example.com/x" } }, "action_payload");
+  refused("a javascript: href", { ...good, action_payload: { href: "javascript:alert(1)" } }, "action_payload");
+  refused("a path the guard does not cover", { ...good, action_payload: { href: "/candidate-portal" } }, "action_payload");
+  refused("an empty href", { ...good, action_payload: { href: "" } }, "action_payload");
+  expect(problems, "a staff path with a query is accepted",
+    ok({ ...good, action_payload: { href: "/candidates?q=offer" } }).ok, true);
+
+  // `tool` — unknown, destructive and web names are all refused here, not at dispatch.
+  const asTool = { ...good, action_type: "tool" };
+  refused("an unknown tool", { ...asTool, action_payload: { tool: "drop_tables", args: {} } }, "action_payload");
+  refused("a destructive tool", { ...asTool, action_payload: { tool: "delete_candidate", args: {} } }, "action_payload");
+  refused("a web tool", { ...asTool, action_payload: { tool: "search_web", args: {} } }, "action_payload");
+  expect(problems, "a read-only tool is accepted",
+    ok({ ...asTool, action_payload: { tool: "list_candidates", args: { stage: "APPLIED" } } }).ok, true);
+
+  // `note` and `ask` ceilings.
+  refused("a note past its ceiling",
+    { ...good, action_type: "note", action_payload: { text: "n".repeat(281) } }, "action_payload");
+  refused("an empty note", { ...good, action_type: "note", action_payload: { text: "" } }, "action_payload");
+  expect(problems, "an ask with no prompt is a valid ask",
+    ok({ ...good, action_type: "ask", action_payload: {} }).ok, true);
+
+  // Size, measured the way the database measures it.
+  const huge = { ...good, action_type: "ask", action_payload: { prompt: "p".repeat(5000) } };
+  refused("an over-sized payload", huge, "action_payload");
+  expect(problems, "the byte count is the JSON the column holds",
+    m.payloadBytes({ prompt: "abc" }), new TextEncoder().encode(JSON.stringify({ prompt: "abc" })).length);
+
+  // Notes on the row itself.
+  refused("a note past 500", { ...good, notes: "n".repeat(501) }, "notes");
+
+  // A refusal never touches the stored value: the message is the whole answer.
+  const after = ok({ ...good, trigger_phrase: "x" });
+  expect(problems, "a refusal carries no command", "command" in after, false);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
 // 3. The read door renders a hand-edited row and names what it cannot read
 // ---------------------------------------------------------------------------
 async function check3() {
@@ -280,8 +369,9 @@ async function check3() {
 
 const CHECKS = [
   ["1. The six categories and four action types are the shipped vocabulary", check1],
+  ["2. The write door refuses every field it cannot express", check2],
   ["3. The read door renders a hand-edited row and names what it cannot read", check3],
-  // Groups 2, 4, 5 and 6 arrive in Tasks A2, A3, A4 and A8.
+  // Groups 4, 5 and 6 arrive in Tasks A3, A4 and A8.
 ];
 
 for (const [name, run] of CHECKS) {
@@ -345,6 +435,14 @@ async function mutation(label, rel, needle, replacement, verify) {
     restore();
   }
 }
+
+await mutation(
+  "1. The write door letting an off-site href through → check 2 red",
+  DOMAIN_REL,
+  "    if (!isStaffPath(pathname)) {",
+  "    if (pathname.length > 1) {",
+  async () => checkIsRed(2)
+);
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
 console.log("");

@@ -247,3 +247,168 @@ export function normalizeCommandRow(row: CommandRow): VoiceCommand {
     problem,
   };
 }
+
+/**
+ * Payload size as the column sees it.
+ *
+ * The CHECK in `051` measures `octet_length(action_payload::text)`, so the door
+ * measures the same bytes: a draft this module accepted and the database rejected
+ * would surface as a REST error the console has no field to point at.
+ */
+export function payloadBytes(payload: Record<string, unknown>): number {
+  return new TextEncoder().encode(JSON.stringify(payload)).length;
+}
+
+export type CommandDraft = {
+  id?: string;
+  trigger_phrase?: unknown;
+  title?: unknown;
+  category?: unknown;
+  action_type?: unknown;
+  action_payload?: unknown;
+  notes?: unknown;
+  enabled?: unknown;
+};
+
+export type ParseCommandResult =
+  | { ok: true; command: VoiceCommand }
+  | { ok: false; field: keyof CommandDraft; message: string };
+
+/**
+ * The write door.
+ *
+ * `scope` and `owner_profile_id` are not in the draft and are not read from it:
+ * they come from `previous`, which the action supplies from the session, so a body
+ * claiming `shared` cannot make one person's click publish a command for the portal.
+ * `tools` is passed in rather than imported, because the registry imports writers
+ * that import the database, and a rule set that needs a connection to say whether a
+ * name is a tool is a rule set that cannot be proved offline.
+ */
+export function parseCommandDraft(
+  draft: CommandDraft,
+  previous: VoiceCommand,
+  tools: readonly CommandTool[]
+): ParseCommandResult {
+  const refuse = (field: keyof CommandDraft, message: string): ParseCommandResult => ({
+    ok: false,
+    field,
+    message,
+  });
+
+  // 1. The phrase, trimmed and whole.
+  const rawPhrase = typeof draft.trigger_phrase === "string" ? draft.trigger_phrase : "";
+  const triggerPhrase = rawPhrase.trim();
+  const phrase = phraseProblem(triggerPhrase);
+  if (phrase) return refuse("trigger_phrase", `A voice trigger phrase is ${phrase}.`);
+
+  // 2. The title. An empty one is a field nobody filled in and a long one is a field
+  // that will not fit the column; both are refusals that name `title`, not a guess
+  // this door makes on the person's behalf.
+  const rawTitle = typeof draft.title === "string" ? draft.title.trim() : "";
+  if (!rawTitle) return refuse("title", "Give the command a name you will recognise in the list.");
+  if (rawTitle.length > COMMAND_LIMITS.titleMax) {
+    return refuse("title", `A command name is at most ${COMMAND_LIMITS.titleMax} characters.`);
+  }
+  const title = rawTitle;
+
+  // 3. The category, from the fixed six only.
+  if (!isCategory(draft.category)) {
+    return refuse("category", "That is not one of the categories this portal offers.");
+  }
+  const category = draft.category;
+
+  // 4. The action type, and then the payload that type can actually carry.
+  const actionType = draft.action_type;
+  if (
+    actionType !== "ask" &&
+    actionType !== "open" &&
+    actionType !== "tool" &&
+    actionType !== "note"
+  ) {
+    return refuse("action_type", "Choose what the command does.");
+  }
+  const payload =
+    typeof draft.action_payload === "object" && draft.action_payload !== null
+      ? (draft.action_payload as Record<string, unknown>)
+      : {};
+  if (payloadBytes(payload) > COMMAND_LIMITS.payloadBytes) {
+    return refuse("action_payload", "That action is larger than the 4 KB a command may carry.");
+  }
+
+  let action: CommandAction | null = null;
+  if (actionType === "ask") {
+    const rawPrompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+    if (rawPrompt.length > COMMAND_LIMITS.promptMax) {
+      return refuse("action_payload", `A saved question is at most ${COMMAND_LIMITS.promptMax} characters.`);
+    }
+    action = rawPrompt ? { type: "ask", prompt: rawPrompt } : { type: "ask" };
+  } else if (actionType === "open") {
+    const href = typeof payload.href === "string" ? payload.href.trim() : "";
+    if (!href) return refuse("action_payload", "Say which page to open.");
+    // The guard's own predicate: whatever it does not cover, a command may not send
+    // a person to — not an off-site host, not a scheme, not a path outside the staff
+    // table. Checked on the path alone, because a query cannot change which page a
+    // link reaches but it can change what a naive prefix test accepts.
+    const pathname = href.split("?")[0] ?? "";
+    if (!isStaffPath(pathname)) {
+      return refuse(
+        "action_payload",
+        `${href} is not a staff page this portal guards, so no command may open it.`
+      );
+    }
+    action = { type: "open", href };
+  } else if (actionType === "tool") {
+    const name = typeof payload.tool === "string" ? payload.tool.trim() : "";
+    const known = tools.find((entry) => entry.name === name);
+    if (!known) {
+      return refuse("action_payload", "That is not a tool the assistant has.");
+    }
+    // `=== true`, because `AssistantTool` declares both optional and an absent flag
+    // means "not dangerous", not "unknown".
+    if (known.destructive === true) {
+      return refuse("action_payload", `${known.label} deletes something, and a saved command may not.`);
+    }
+    if (known.web === true) {
+      return refuse("action_payload", `${known.label} leaves the portal, and a saved command may not.`);
+    }
+    const rawArgs = typeof payload.args === "object" && payload.args !== null ? payload.args : {};
+    const args: Record<string, string> = {};
+    for (const [key, value] of Object.entries(rawArgs as Record<string, unknown>)) {
+      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+        return refuse("action_payload", `The argument ${key} has to be a single value.`);
+      }
+      args[key] = String(value);
+    }
+    action = { type: "tool", tool: known.name, args };
+  } else {
+    const text = typeof payload.text === "string" ? payload.text.trim() : "";
+    if (!text) return refuse("action_payload", "Say the line to speak.");
+    if (text.length > COMMAND_LIMITS.noteTextMax) {
+      return refuse("action_payload", `A spoken note is at most ${COMMAND_LIMITS.noteTextMax} characters.`);
+    }
+    action = { type: "note", text };
+  }
+
+  // 5. The description, which reaches nobody but the person who wrote it.
+  const rawNotes = typeof draft.notes === "string" ? draft.notes.trim() : "";
+  if (rawNotes.length > COMMAND_LIMITS.notesMax) {
+    return refuse("notes", `Notes are at most ${COMMAND_LIMITS.notesMax} characters.`);
+  }
+
+  return {
+    ok: true,
+    command: {
+      id: typeof draft.id === "string" ? draft.id : previous.id,
+      scope: previous.scope,
+      ownerProfileId: previous.ownerProfileId,
+      triggerPhrase,
+      title,
+      category,
+      rawCategory: null,
+      action,
+      notes: rawNotes || null,
+      enabled: draft.enabled === undefined ? true : draft.enabled === true,
+      problem: null,
+    },
+  };
+}
