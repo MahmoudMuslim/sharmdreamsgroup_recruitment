@@ -40,7 +40,8 @@ export type PermissionKey =
   | "settings.manage_platform"
   | "companies.manage"
   | "users.manage"
-  | "users.create";
+  | "users.create"
+  | "assistant.commands";
 
 export interface Permission {
   key: PermissionKey;

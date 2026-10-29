@@ -253,6 +253,7 @@ const SOFT_FILES = [
   "src/modules/offers/domain/offer.ts",
   "src/modules/form-builder/application/formActions.ts",
   "src/modules/assistant/application/jarvisCommands.ts",
+  "src/app/(admin)/settings/jarvis-command-actions.ts",
 ];
 
 // Phrases, not verbs. `is applied` on its own cannot carry this: "REMOTE and HYBRID

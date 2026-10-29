@@ -54,6 +54,24 @@ const STUB_SOURCES = {
     export const getSessionUser = () => globalThis.__jarvisUser ?? null;
     export const isStaff = (role) =>
       role === "SUPER_ADMIN" || role === "RECRUITER" || role === "HIRING_MANAGER";
+    // A throw stands in for the real guard's redirect outside a request.
+    export const requireStaff = async (next) => {
+      const user = globalThis.__jarvisUser;
+      if (!user) throw new Error("no staff session behind " + next);
+      return user;
+    };
+  `,
+  "@/modules/settings/infrastructure/permissions": `
+    export const hasPermissionForUser = async (permission) =>
+      permission === "assistant.commands" && globalThis.__jarvisPermission === false ? false : true;
+  `,
+  // The registry's three tools, one of each kind the write door reasons about.
+  "@/modules/assistant/domain/tools": `
+    export const ASSISTANT_TOOLS = [
+      { name: "list_candidates", label: "List candidates", args: {}, run: async () => "{}" },
+      { name: "delete_candidate", label: "Delete a candidate", args: {}, destructive: true, run: async () => "{}" },
+      { name: "search_web", label: "Search the web", args: {}, web: true, run: async () => "{}" },
+    ];
   `,
   "@/lib/data-api/server": `
     export const createServerRestClient = async () => globalThis.__jarvisRest;
@@ -130,6 +148,7 @@ const STORE_REL = "src/lib/jarvis-ui.ts";
 
 const DOMAIN_URL = pathToFileURL(path.join(root, DOMAIN_REL)).href;
 const READER_URL = pathToFileURL(path.join(root, READER_REL)).href;
+const ACTIONS_URL = pathToFileURL(path.join(root, ACTIONS_REL)).href;
 // A fresh URL on every load, so a check reads the bytes now on disk: a monotonic
 // counter, because two Date.now() calls in one millisecond would hand a mutated
 // run the module imported before the mutation.
@@ -144,10 +163,11 @@ const GLOBAL_KEYS = [
   "__jarvisUser",
   "__jarvisRest",
   "__jarvisTrail",
+  "__jarvisPermission",
 ];
 function resetGlobals(patch = {}) {
   for (const key of GLOBAL_KEYS) delete globalThis[key];
-  Object.assign(globalThis, patch);
+  Object.assign(globalThis, { __jarvisPermission: true }, patch);
 }
 
 /**
@@ -162,32 +182,29 @@ function fakeRest({ read = { data: null, error: null }, write = { error: null },
   const calls = [];
   const client = {
     from(table) {
-      const entry = { table };
+      const entry = { table, verb: "select", filters: [] };
       calls.push(entry);
       const settle = async () => {
-        if (throwOn === "read") throw new Error("the read door blew up");
-        entry.op = "read";
-        return typeof read === "function" ? read(entry) : read;
+        const writing = entry.verb !== "select";
+        if (throwOn === (writing ? "write" : "read")) throw new Error("the REST door blew up");
+        const response = writing ? write : read;
+        return typeof response === "function" ? response(entry) : response;
+      };
+      const mutate = (verb, body) => {
+        entry.verb = verb;
+        entry.body = body;
+        return chain;
       };
       const chain = {
-        select: () => chain,
-        eq: () => chain,
-        // Recorded, not merely accepted: a capped list is only honest if the read
-        // asked for one row more than it shows, and that number is the mechanism.
-        limit: (value) => {
-          entry.limit = value;
-          return chain;
-        },
-        maybeSingle: settle,
-        upsert: async (payload, opts) => {
-          entry.op = "upsert";
-          entry.payload = payload;
-          entry.opts = opts;
-          if (throwOn === "write") throw new Error("the write door blew up");
-          return typeof write === "function" ? write(entry) : write;
-        },
-        // The real builder is awaitable (query-builder.ts:141), so a chained read
-        // that never picked `.single()` is awaited as a promise of rows.
+        select: (columns = "*") => { entry.columns = columns; return chain; },
+        eq: (column, value) => { entry.filters.push(["eq", column, value]); return chain; },
+        limit: (value) => { entry.limit = value; return chain; },
+        single: () => { entry.single = true; return chain; },
+        maybeSingle: () => { entry.single = true; return chain; },
+        insert: (body) => mutate("insert", body),
+        update: (body) => mutate("update", body),
+        delete: () => mutate("delete"),
+        upsert: (body) => mutate("upsert", body),
         then: (onFulfilled, onRejected) => settle().then(onFulfilled, onRejected),
       };
       return chain;
@@ -752,6 +769,182 @@ async function check5c() {
   return verdict(problems);
 }
 
+async function check2b() {
+  const problems = [];
+  if (!existsSync(path.join(root, ACTIONS_REL))) return verdict(["The five command actions are missing"]);
+  const actions = await load(ACTIONS_URL);
+  const row = {
+    id: "c1", scope: "personal", owner_profile_id: "p1", trigger_phrase: "open mine",
+    title: "Mine", category: "personal", action_type: "note",
+    action_payload: { text: "hello" }, notes: null, enabled: true,
+  };
+  const draft = {
+    trigger_phrase: "open mine", title: "Mine", category: "personal",
+    action_type: "note", action_payload: { text: "hello" }, notes: "", enabled: true,
+  };
+  const user = { profileId: "p1", fullName: "Test staff", role: "SUPER_ADMIN" };
+  const setup = (rows = [row], options = {}, permission = true) => {
+    const rest = fakeRest({
+      read: { data: rows, error: null },
+      write: (call) => ({ data: { ...row, ...call.body, id: call.verb === "insert" ? "created-id" : "c1" }, error: null }),
+      ...options,
+    });
+    const trail = [];
+    resetGlobals({ __jarvisUser: user, __jarvisRest: rest.client, __jarvisTrail: trail, __jarvisPermission: permission });
+    return { ...rest, trail };
+  };
+  const writes = (rest) => rest.calls.filter((call) => call.verb !== "select");
+  const trailed = (rest, label) => {
+    expect(problems, `${label} leaves exactly one trail entry`, rest.trail.length, 1);
+    expect(problems, `${label} records settings`, rest.trail[0]?.area, "settings");
+    expect(problems, `${label} records a setting entity`, rest.trail[0]?.entity, "setting");
+    expect(problems, `${label} records the session actor`, rest.trail[0]?.actorId, "p1");
+  };
+  let rest = setup();
+  const saved = await actions.saveCommand({ ...draft, scope: "shared", owner_profile_id: "p2" }, "personal");
+  expect(problems, "a good save succeeds", saved.ok, true);
+  expect(problems, "the save returns the database identity", saved.command?.id, "created-id");
+  const inserted = writes(rest)[0];
+  expect(problems, "the command table is written", inserted?.table, "assistant_jarvis_commands");
+  expect(problems, "new commands insert", inserted?.verb, "insert");
+  expect(problems, "only table columns are sent", Object.keys(inserted?.body ?? {}).sort(), [
+    "action_payload", "action_type", "category", "enabled", "notes", "owner_profile_id", "scope", "title", "trigger_phrase",
+  ]);
+  expect(problems, "scope comes from the argument", inserted?.body?.scope, "personal");
+  expect(problems, "owner comes from the session", inserted?.body?.owner_profile_id, "p1");
+  expect(problems, "action type is a string", inserted?.body?.action_type, "note");
+  expect(problems, "action payload is separate", inserted?.body?.action_payload, { text: "hello" });
+  trailed(rest, "save");
+
+  rest = setup();
+  expect(problems, "updating an existing row succeeds", (await actions.saveCommand({ ...draft, id: "c1" }, "personal")).ok, true);
+  expect(problems, "update names its row", writes(rest)[0]?.filters?.some((f) => JSON.stringify(f) === JSON.stringify(["eq", "id", "c1"])), true);
+  expect(problems, "existing rows update", writes(rest)[0]?.verb, "update");
+
+  rest = setup([], {}, true);
+  expect(problems, "shared save with permission succeeds", (await actions.saveCommand(draft, "shared")).ok, true);
+  expect(problems, "shared rows have no owner", writes(rest)[0]?.body?.owner_profile_id, null);
+
+  const shared = { ...row, id: "s1", scope: "shared", owner_profile_id: null };
+  for (const [label, run] of [
+    ["save", () => actions.saveCommand(draft, "shared")],
+    ["duplicate", () => actions.duplicateCommand("s1")],
+    ["delete", () => actions.deleteCommand("s1")],
+    ["switch", () => actions.setCommandEnabled("s1", false)],
+    ["move shared into personal", () => actions.saveCommand({ ...draft, id: "s1" }, "personal")],
+  ]) {
+    rest = setup([shared], {}, false);
+    const refused = await run();
+    expect(problems, `${label} refuses shared writes without permission`, refused.ok, false);
+    expect(problems, `${label} has no write`, writes(rest).length, 0);
+    expect(problems, `${label} leaves no false trail`, rest.trail.length, 0);
+  }
+
+  for (const [label, run] of [
+    ["save", () => actions.saveCommand({ ...draft, id: "c1" }, "personal")],
+    ["duplicate", () => actions.duplicateCommand("c1")],
+    ["delete", () => actions.deleteCommand("c1")],
+    ["switch", () => actions.setCommandEnabled("c1", true)],
+  ]) {
+    rest = setup([{ ...row, owner_profile_id: "p2" }]);
+    expect(problems, `${label} cannot write another person's row`, (await run()).ok, false);
+    expect(problems, `${label} stops before transport`, writes(rest).length, 0);
+  }
+
+  rest = setup([], { write: { error: { code: "23505", message: "duplicate key" } } });
+  const clash = await actions.saveCommand(draft, "personal");
+  expect(problems, "duplicate phrase refuses", clash.ok, false);
+  expect(problems, "duplicate phrase names its field", clash.field, "trigger_phrase");
+  expect(problems, "duplicate phrase quotes the phrase", /open mine/.test(clash.error ?? ""), true);
+  expect(problems, "failed writes are not trailed", rest.trail.length, 0);
+
+  for (const error of [ABSENT, UNREADABLE]) {
+    rest = setup([], { read: { data: null, error } });
+    const refused = await actions.saveCommand(draft, "personal");
+    expect(problems, "a failed read refuses a save", refused.ok, false);
+    expect(problems, "only absence names 051", /051_jarvis_voice_commands\.sql/.test(refused.error ?? ""), error === ABSENT);
+    expect(problems, "a failed read never becomes an insert", writes(rest).length, 0);
+  }
+
+  rest = setup();
+  expect(problems, "switch succeeds", (await actions.setCommandEnabled("c1", false)).ok, true);
+  expect(problems, "switch writes only enabled", writes(rest)[0]?.body, { enabled: false });
+  trailed(rest, "switch");
+  rest = setup();
+  expect(problems, "delete succeeds", (await actions.deleteCommand("c1")).ok, true);
+  expect(problems, "one delete only", writes(rest).map((c) => c.verb), ["delete"]);
+  expect(problems, "delete names its row", writes(rest)[0]?.filters?.some((f) => JSON.stringify(f) === JSON.stringify(["eq", "id", "c1"])), true);
+  trailed(rest, "delete");
+  rest = setup();
+  expect(problems, "duplicate succeeds", (await actions.duplicateCommand("c1")).ok, true);
+  expect(problems, "duplicate uses a new phrase", writes(rest)[0]?.body?.trigger_phrase, "open mine copy");
+  expect(problems, "duplicate stays personal", writes(rest)[0]?.body?.owner_profile_id, "p1");
+  trailed(rest, "duplicate");
+  rest = setup([shared], {}, false);
+  expect(problems, "adoption needs no publish permission", (await actions.adoptSharedCommand("s1")).ok, true);
+  expect(problems, "adoption is personal", writes(rest)[0]?.body?.scope, "personal");
+  expect(problems, "adoption keeps phrase", writes(rest)[0]?.body?.trigger_phrase, "open mine");
+  expect(problems, "adoption uses session owner", writes(rest)[0]?.body?.owner_profile_id, "p1");
+  trailed(rest, "adoption");
+
+  for (const [label, run] of [
+    ["missing update", () => actions.saveCommand({ ...draft, id: "missing" }, "personal")],
+    ["invalid scope", () => actions.saveCommand(draft, "invented")],
+    ["invalid enabled", () => actions.setCommandEnabled("c1", "false")],
+    ["invalid draft", () => actions.saveCommand(null, "personal")],
+    ["personal adoption", () => actions.adoptSharedCommand("c1")],
+    ["invalid phrase", () => actions.saveCommand({ ...draft, trigger_phrase: "x" }, "personal")],
+  ]) {
+    rest = setup();
+    expect(problems, `${label} refuses`, (await run()).ok, false);
+    expect(problems, `${label} never writes`, writes(rest).length, 0);
+  }
+  for (const run of [
+    () => actions.saveCommand({ ...draft, id: "c1" }, "personal"),
+    () => actions.deleteCommand("c1"),
+    () => actions.setCommandEnabled("c1", false),
+  ]) {
+    rest = setup([row], { write: { data: null, error: null } });
+    expect(problems, "zero affected rows is not success", (await run()).ok, false);
+    expect(problems, "zero affected rows has no success trail", rest.trail.length, 0);
+  }
+
+  rest = setup([{ ...row, action_payload: { text: "" } }]);
+  expect(problems, "an unreadable action cannot be enabled", (await actions.setCommandEnabled("c1", true)).ok, false);
+  expect(problems, "enabling an unreadable action never writes", writes(rest).length, 0);
+  expect(problems, "an unreadable action can be disabled", (await actions.setCommandEnabled("c1", false)).ok, true);
+
+  for (const [source, run] of [
+    [{ ...row, category: "unknown" }, () => actions.duplicateCommand("c1")],
+    [{ ...shared, category: "unknown" }, () => actions.adoptSharedCommand("s1")],
+  ]) {
+    rest = setup([source]);
+    expect(problems, "copying does not repair an unknown stored category", (await run()).ok, false);
+    expect(problems, "an invalid copy never writes", writes(rest).length, 0);
+  }
+
+  rest = setup([{ ...row, trigger_phrase: "a".repeat(64), title: "b".repeat(80) }]);
+  expect(problems, "a maximum-length command can be duplicated", (await actions.duplicateCommand("c1")).ok, true);
+  expect(problems, "the duplicate retains its phrase suffix", writes(rest)[0]?.body?.trigger_phrase, "a".repeat(59) + " copy");
+  expect(problems, "the duplicate retains its title suffix", writes(rest)[0]?.body?.title, "b".repeat(73) + " (copy)");
+
+  for (const run of [
+    () => actions.saveCommand(draft, "personal"),
+    () => actions.duplicateCommand("c1"),
+    () => actions.deleteCommand("c1"),
+    () => actions.setCommandEnabled("c1", false),
+    () => actions.adoptSharedCommand("s1"),
+  ]) {
+    rest = setup([row, shared]);
+    globalThis.__jarvisUser = null;
+    let rejected = false;
+    try { await run(); } catch (error) { rejected = /no staff session/.test(error.message); }
+    expect(problems, "every action requires a staff session", rejected, true);
+    expect(problems, "signed-out actions never write", writes(rest).length, 0);
+  }
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The six categories and four action types are the shipped vocabulary", check1],
   ["2. The write door refuses every field it cannot express", check2],
@@ -760,6 +953,7 @@ const CHECKS = [
   ["5. 051 stores a command, scopes it, and gates the shared half", check5],
   ["5b. The list is read once, and says which failure it met", check5b],
   ["5c. The migration-claims proof asks about 051 by the table it creates", check5c],
+  ["2b. The five actions write the columns the table has, and never a scope the body named", check2b],
   // Group 6 arrives in Task A8.
 ];
 
@@ -966,6 +1160,54 @@ await mutation(
   "  const capped = rows.length > COMMAND_LIMITS.rows;",
   "  const capped = false;",
   async () => checkIsRed(6)
+);
+
+await mutation(
+  "16. A shared save skipping publish permission → check 2b red",
+  ACTIONS_REL,
+  '  if (scope === "shared" && !(await hasPermissionForUser("assistant.commands"))) {',
+  '  if (scope === "shared" && false) {',
+  async () => checkIsRed(8)
+);
+
+await mutation(
+  "17. Existing shared commands writable without permission → check 2b red",
+  ACTIONS_REL,
+  '    return await hasPermissionForUser("assistant.commands")',
+  '    return true',
+  async () => checkIsRed(8)
+);
+
+await mutation(
+  "18. Personal writes ignoring the session owner → check 2b red",
+  ACTIONS_REL,
+  '  return command.ownerProfileId === profileId ? null : NOT_FOUND;',
+  '  return null;',
+  async () => checkIsRed(8)
+);
+
+await mutation(
+  "19. A zero-row delete reported as successful → check 2b red",
+  ACTIONS_REL,
+  '  if (!data) return { ok: false, error: NOT_FOUND };\n  await trail(staff.profileId, "command deleted",',
+  '  await trail(staff.profileId, "command deleted",',
+  async () => checkIsRed(8)
+);
+
+await mutation(
+  "20. Enabling a stored command whose action cannot be read → check 2b red",
+  ACTIONS_REL,
+  '  if (enabled && command.problem) return',
+  '  if (false) return',
+  async () => checkIsRed(8)
+);
+
+await mutation(
+  "21. Copying an unknown category silently repairs it → check 2b red",
+  ACTIONS_REL,
+  '    category: command.rawCategory ?? command.category,',
+  '    category: command.category,',
+  async () => checkIsRed(8)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
