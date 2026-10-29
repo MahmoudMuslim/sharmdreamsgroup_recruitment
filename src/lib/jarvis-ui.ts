@@ -39,6 +39,8 @@ export interface JarvisUiState {
   pendingUtterance: JarvisUtterance | null;
   /** Increases when the person's saved preferences changed and the presence should re-read them. */
   prefsEpoch: number;
+  /** Turns in the conversation the stage is showing; 0 means the orb keeps the middle. */
+  stageTurns: number;
 }
 
 const IDLE: JarvisUiState = {
@@ -52,6 +54,7 @@ const IDLE: JarvisUiState = {
   speaking: false,
   pendingUtterance: null,
   prefsEpoch: 0,
+  stageTurns: 0,
 };
 
 let state: JarvisUiState = IDLE;
@@ -162,6 +165,12 @@ export function setJarvisSpeaking(speaking: boolean): void {
 export function setJarvisAwaiting(awaiting: boolean): void {
   if (state.awaiting === awaiting) return;
   emit({ ...state, awaiting });
+}
+
+/** The stage asks the orb to step aside once — not on every re-render. */
+export function setJarvisStageTurns(turns: number): void {
+  if (state.stageTurns === turns) return;
+  emit({ ...state, stageTurns: turns });
 }
 
 /** What the orb is waiting for a click on, or nothing. */
