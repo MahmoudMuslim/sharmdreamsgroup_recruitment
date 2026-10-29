@@ -888,13 +888,9 @@ async function check12() {
 async function check13() {
   const problems = [];
 
-  // A denied microphone, a blocked speech service and a missing device cannot
-  // heal by starting again. Without the `stopped` latch the restart loop turns
-  // one refusal into a start → error → end cycle at event speed, while the strip
-  // goes on saying "Arming the microphone…".
   const hook = read("src/modules/assistant/presentation/voice/useWakeListening.ts");
-  if (!hook.includes('name === "NotAllowedError"')) {
-    problems.push("a denied microphone is not treated as fatal by the listening hook");
+  if (!hook.includes("if (stopped) return;")) {
+    problems.push("returning to the tab restarts a run the browser already refused");
   }
   if (!hook.includes('document.visibilityState === "hidden"')) {
     problems.push("a hidden tab keeps its segments running");
@@ -902,11 +898,23 @@ async function check13() {
   if (!hook.includes("transcribeClip(")) {
     problems.push("the listening hook does not send its segments to the voice door");
   }
+  // The gate has two samples that cross no closed→open edge, and the recorder must
+  // answer both or it leaks. A sound under the floor closes the gate with no clip to
+  // post, so a loop that only stops on `sample.clip` leaves a live `MediaRecorder` on
+  // the stream — and the next segment builds a second one over the first, with both
+  // writing into one buffer. A cap closes the gate and re-opens it inside a single
+  // sample, so a loop that only opens on the edge never records the rest of the
+  // sentence. Each line is the whole rule for one direction, so each is pinned.
+  if (!hook.includes("if (sample.clip || !gateOpen) closeSegment();")) {
+    problems.push("a sound under the gate's floor leaves its recorder running");
+  }
+  if (!hook.includes("if (gateOpen && recorder === null) openSegment();")) {
+    problems.push("an utterance longer than the cap loses everything after the cap");
+  }
   // The hook never reaches for a microphone of its own — Task 10's audit counts the
   // sites in the whole tree, and this is the one that must not appear in that list.
-  // The one deviation from the plan's literal here: comments are stripped before
-  // this test, because the hook's own header names `getUserMedia` to explain why it
-  // never calls it, and only the code may not contain it.
+  // Comments are stripped first: the hook's own header names `getUserMedia` to explain
+  // why it never calls it, and only the code may not contain it.
   const hookCode = hook.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
   if (hookCode.includes("getUserMedia")) {
     problems.push("the listening hook opens its own capture instead of the meter's");
@@ -930,7 +938,7 @@ async function check13() {
     problems.push(`the silent-discard needle and the client's sentence disagree: ${nothingHeard ?? "no NOTHING_HEARD constant"}`);
   }
   // The one promise this slice moves without breaking: a segment is a request, not
-  // a file. Comments are stripped so the hook's own header cannot be read as code.
+  // a file. `hookCode` is the comment-stripped source from the check above.
   if (/getFileStore|storageConfig|\.upload\(|createObjectURL|localStorage/i.test(hookCode)) {
     problems.push("the listening hook appears to keep a recording");
   }
@@ -1886,10 +1894,10 @@ await mutation(
 );
 
 await mutation(
-  "38. A refused microphone is retried instead of ending the run → check 13 red",
+  "38. A sound under the gate's floor leaves its recorder running → check 13 red",
   WAKE_HOOK_REL,
-  'name === "NotAllowedError" || name === "SecurityError"',
-  'name === "SecurityError"',
+  "if (sample.clip || !gateOpen) closeSegment();",
+  "if (sample.clip) closeSegment();",
   async () => checkIsRed(13)
 );
 
@@ -2394,6 +2402,14 @@ await mutation(
   "    if (clean === DEFAULT_SPEECH_RATE) window.localStorage.removeItem(SPEECH_RATE_KEY);",
   "    if (clean === DEFAULT_SPEECH_RATE) window.localStorage.setItem(SPEECH_RATE_KEY, \"1\");",
   async () => checkIsRed(16)
+);
+
+await mutation(
+  "97. A capped utterance never gets a recorder for its second half → check 13 red",
+  WAKE_HOOK_REL,
+  "if (gateOpen && recorder === null) openSegment();",
+  "if (gateOpen && recorder !== null) openSegment();",
+  async () => checkIsRed(13)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);

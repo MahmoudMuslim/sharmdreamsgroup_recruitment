@@ -43,16 +43,16 @@ function segmentType(): string | null {
   }) ?? null;
 }
 
-function listeningMessage(error: unknown): string {
-  const name = error instanceof DOMException ? error.name : "";
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    return "The browser refused the microphone, so nothing is being heard. Allow it and arm the wake word again.";
-  }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No microphone is available to this browser. Connect one and arm the wake word again.";
-  }
-  return "This browser cannot encode a recording the transcription model can read. Push to talk still works.";
-}
+/**
+ * What the orb says when no container this browser offers can be recorded.
+ *
+ * A *refused* microphone is not this sentence's business: the capture belongs to the
+ * meter, which is the one place `getUserMedia` runs and so the one place a
+ * `NotAllowedError` lands — `useJarvisMeter.ts` turns it into its own `error`, and
+ * the strip reports that. Naming a refusal reason here would be a branch this file
+ * can never reach, and a check that pins it proves nothing.
+ */
+const CANNOT_RECORD = "This browser cannot encode a recording the transcription model can read. Push to talk still works.";
 
 /**
  * The door's own words for a segment nobody spoke into.
@@ -142,11 +142,13 @@ export function useWakeListening({
   useEffect(() => {
     if (!enabled) {
       // The run is over, and so is what it had to say: a disarmed orb shows no advice
-      // for a capture it no longer holds, and arming again starts clean.
-      // The rule that outlives the recogniser (check 13, `prove-assistant-voice.mjs`)
-      // asks for exactly these three synchronous setters in this branch, and
-      // `useWakeWord.ts` carries the same suppression with the same reason.
-      /* eslint-disable react-hooks/set-state-in-effect -- a disarmed console must clear the last run's error before its first paint, and this is the shape the proof pins; the lint rule's callback advice would defer the clear a frame. */
+      // for a capture it no longer holds, and arming again starts clean. Check 13
+      // pins these three setters as one literal, so a hook that clears two of the
+      // three cannot pass.
+      /* eslint-disable react-hooks/set-state-in-effect -- a disarmed console must
+         clear the last run's advice before its first paint, and clearing it from a
+         render is the cascading shape React's rules refuse; the effect body's
+         `!enabled` branch is where the run ends. */
       setError(null);
       setQuotaHit(false);
       setRunEnded(false);
@@ -156,7 +158,7 @@ export function useWakeListening({
 
     const type = segmentType();
     if (!type) {
-      setError(listeningMessage(null));
+      setError(CANNOT_RECORD);
       setRunEnded(true);
       return;
     }
@@ -164,23 +166,30 @@ export function useWakeListening({
     let alive = true;
     let frame: number | null = null;
     let recorder: MediaRecorder | null = null;
-    let chunks: Blob[] = [];
     let gate: GateState = GATE_CLOSED;
     // The door's refusal no retry can heal: a denied microphone, a missing device or
     // a gateway with no key ends the run and says why, rather than looping
     // start → error at frame speed.
     let stopped = false;
 
-    const stopRecorder = () => {
-      if (recorder && recorder.state !== "inactive") {
+    /** Close the segment that is open, if any. Its own `onstop` posts what it heard. */
+    const closeSegment = () => {
+      const closing = recorder;
+      if (!closing) return;
+      // Unclaimed before `stop()` is called: the frame loop reads `recorder` on the
+      // next sample, and a second `stop()` on an ending recorder is not the only
+      // cost of leaving it — the loop would then think a closing segment was still
+      // the live one and refuse to open its successor.
+      recorder = null;
+      if (closing.state !== "inactive") {
         try {
-          recorder.stop();
+          closing.stop();
         } catch {
-          // Already ending.
+          // Already ending. Its buffered frames go with it: a segment this hook could
+          // not close is a segment it cannot send, and half a container is worse than
+          // silence — the transcription model would be billed for noise.
         }
       }
-      recorder = null;
-      chunks = [];
     };
 
     /** The run is over for good. Nothing here retries; arming again does. */
@@ -189,7 +198,7 @@ export function useWakeListening({
       alive = false;
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
-      stopRecorder();
+      closeSegment();
       gate = GATE_CLOSED;
       setError(message);
       setRunEnded(true);
@@ -220,41 +229,52 @@ export function useWakeListening({
     const openSegment = () => {
       const stream = meterRef.current.stream();
       if (!stream || stopped) return;
-      chunks = [];
+      // One buffer per recorder, held by that recorder's own closures. A cap closes
+      // one segment and opens its successor inside the same frame, and the closing
+      // recorder's `onstop` only lands a frame later: with a buffer shared by the
+      // whole run, that late `onstop` would read — and clear — the frames the new
+      // recorder had already collected, and post them as the old segment's audio.
+      const chunks: Blob[] = [];
+      let segment: MediaRecorder;
       try {
-        recorder = new MediaRecorder(stream, { mimeType: type });
+        segment = new MediaRecorder(stream, { mimeType: type });
       } catch {
-        recorder = null;
-        end(listeningMessage(null));
+        end(CANNOT_RECORD);
         return;
       }
-      recorder.ondataavailable = (event) => {
+      segment.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) chunks.push(event.data);
       };
       // `MediaRecorder` reports no reason worth naming, and a mid-run refusal does
       // not heal by starting again — so the run ends and says what stopped.
-      recorder.onerror = () => end("Listening stopped — the browser refused the recording.");
-      recorder.onstop = () => {
-        const kept = chunks;
-        chunks = [];
-        recorder = null;
-        if (!alive || stopped || kept.length === 0) return;
-        void send(new Blob(kept, { type: type.split(";")[0] }));
+      segment.onerror = () => end("Listening stopped — the browser refused the recording.");
+      segment.onstop = () => {
+        if (!alive || stopped || chunks.length === 0) return;
+        void send(new Blob(chunks, { type: type.split(";")[0] }));
       };
       try {
-        recorder.start();
+        segment.start();
       } catch {
-        stopRecorder();
+        // A recorder that will not start does not start again, and the frame loop
+        // would call this every sixteenth of a second: end the run and say so once.
+        end(CANNOT_RECORD);
+        return;
       }
+      recorder = segment;
     };
 
     const tick = () => {
       if (!alive) return;
       const sample = sampleGate(gate, meterRef.current.read(), performance.now());
-      const wasOpen = gate.openFrom !== null;
       gate = sample.gate;
-      if (!wasOpen && gate.openFrom !== null) openSegment();
-      if (sample.clip) stopRecorder();
+      const gateOpen = gate.openFrom !== null;
+      // The recorder follows the gate's *state*, not the edge the gate crossed. Two
+      // samples cross no closed→open edge and both leak without this: a sound under
+      // the floor closes the gate with no clip to post, and a cap closes and re-opens
+      // it inside one sample. Close first, then open, so a capped sentence hands its
+      // second half to a fresh recorder on this same frame.
+      if (sample.clip || !gateOpen) closeSegment();
+      if (gateOpen && recorder === null) openSegment();
       frame = requestAnimationFrame(tick);
     };
 
@@ -263,7 +283,7 @@ export function useWakeListening({
         alive = false;
         if (frame !== null) cancelAnimationFrame(frame);
         frame = null;
-        stopRecorder();
+        closeSegment();
         gate = GATE_CLOSED;
         return;
       }
@@ -286,7 +306,7 @@ export function useWakeListening({
       document.removeEventListener("visibilitychange", onVisibility);
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
-      stopRecorder();
+      closeSegment();
       gate = GATE_CLOSED;
     };
     // `meter` is deliberately absent: see the `meterRef` above. The React hooks lint
