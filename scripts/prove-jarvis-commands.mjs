@@ -12,8 +12,10 @@
  * quietly trimmed. An over-long field is returned whole — the ceilings belong to the
  * write door, and a read door that sliced would be a second, silent writer. The
  * write door is this file's group 2: it refuses a draft that cannot be stored, and
- * names the field that made it so. The matcher, the reader and the console are
- * later groups of this file.
+ * names the field that made it so. The matcher is group 4: heard words become a
+ * command only on a run of whole folded tokens, the longest phrase wins, the
+ * person's own row wins a tie, and a row the read door already dropped never
+ * reaches it at all. The reader and the console are later groups of this file.
  *
  * Nothing here needs a database, a browser, a microphone or a model. The mutation
  * proofs that break a rule and re-run the check that must notice use the harness
@@ -453,11 +455,79 @@ async function check3() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 4. The matcher reads whole folded phrases, longest first, own scope first
+// ---------------------------------------------------------------------------
+async function check4() {
+  const problems = [];
+  const m = await load(DOMAIN_URL);
+  const cmd = (over) => ({
+    id: "c", scope: "personal", ownerProfileId: "p1", triggerPhrase: "open the outbox",
+    title: "Outbox", category: "communication", rawCategory: null,
+    action: { type: "open", href: "/whatsapp" }, notes: null, enabled: true, problem: null,
+    ...over,
+  });
+
+  // Whole tokens, not substrings.
+  const one = [cmd({})];
+  expect(problems, "an exact phrase matches", !!m.matchCommand("open the outbox", one), true);
+  expect(problems, "a prefix of a longer spoken word does not", !!m.matchCommand("open the outboxes", one), false);
+  expect(problems, "a shorter run does not", !!m.matchCommand("open the", one), false);
+  expect(problems, "a phrase inside another sentence matches", !!m.matchCommand("hey jarvis open the outbox please", one), true);
+
+  // Folding: the same words, differently spelled.
+  const arabic = [cmd({ triggerPhrase: "افتح البريد", action: { type: "open", href: "/whatsapp" } })];
+  expect(problems, "an alef form still matches", !!m.matchCommand("إفتح البريد", arabic), true);
+  expect(problems, "case does not matter", !!m.matchCommand("OPEN   the   Outbox", one), true);
+
+  // Longest wins.
+  const short = cmd({ id: "s", triggerPhrase: "open", title: "Short" });
+  const long = cmd({ id: "l", triggerPhrase: "open the outbox", title: "Long" });
+  const both = m.matchCommand("open the outbox", [short, long]);
+  expect(problems, "the more specific phrase runs", both?.command.id, "l");
+  const onlyShort = m.matchCommand("open now", [short, long]);
+  expect(problems, "and a shorter one still works alone", onlyShort?.command.id, "s");
+
+  // Personal beats shared, at equal length.
+  const mine = cmd({ id: "mine", scope: "personal", ownerProfileId: "p1", triggerPhrase: "open" });
+  const theirs = cmd({ id: "theirs", scope: "shared", ownerProfileId: null, triggerPhrase: "open" });
+  expect(problems, "the person's own wins", m.matchCommand("open", [theirs, mine])?.command.id, "mine");
+
+  // Disabled commands never reach the matcher.
+  expect(problems, "a disabled command is not matched",
+    m.matchCommand("open the outbox", [cmd({ enabled: false })]), null);
+
+  // The tail: what was said after the phrase, in the person's own casing.
+  const ask = [cmd({ triggerPhrase: "ask about", action: { type: "ask" } })];
+  const hit = m.matchCommand("ask about Ahmed Hassan", ask);
+  expect(problems, "the tail is handed back", hit?.tail, "Ahmed Hassan");
+  const noTail = m.matchCommand("ask about", ask);
+  expect(problems, "and is empty when nothing followed", noTail?.tail, "");
+
+  // The same four rules seen from the side a listing order or an unreadable row can
+  // reach, so every guard the matcher has is pinned by a mutation of its own below.
+  // A task that later loosens one of them has to watch it go red rather than mean to
+  // keep it.
+  expect(problems, "a row with no readable action is not matched",
+    m.matchCommand("open the outbox", [cmd({ action: null, problem: "action" })]), null);
+  expect(problems, "a row whose phrase was reported is not matched",
+    m.matchCommand("open the outbox", [cmd({ problem: "phrase" })]), null);
+  expect(problems, "a phrase that folds to no tokens matches nothing",
+    m.matchCommand("open the outbox", [cmd({ triggerPhrase: "!!" })]), null);
+  expect(problems, "an empty transcript matches nothing", m.matchCommand("     ", one), null);
+  expect(problems, "longest wins with the rows listed the other way round",
+    m.matchCommand("open the outbox", [long, short])?.command.id, "l");
+  expect(problems, "and a shared row listed later does not steal the tie",
+    m.matchCommand("open", [mine, theirs])?.command.id, "mine");
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The six categories and four action types are the shipped vocabulary", check1],
   ["2. The write door refuses every field it cannot express", check2],
   ["3. The read door renders a hand-edited row and names what it cannot read", check3],
-  // Groups 4, 5 and 6 arrive in Tasks A3, A4 and A8.
+  ["4. The matcher reads whole folded phrases, longest first, own scope first", check4],
+  // Groups 5 and 6 arrive in Tasks A4 and A8.
 ];
 
 for (const [name, run] of CHECKS) {
@@ -563,6 +633,49 @@ await mutation(
   "      if (!isStaffPath(pathname)) return null;",
   "      if (false) return null;",
   async () => checkIsRed(3)
+);
+
+// The matcher's guards, each loosened exactly once and never tightened: every
+// replacement below accepts something its guard refused, so a mutation that stops
+// turning check 4 red means the guard stopped being what holds the rule.
+await mutation(
+  "6. The matcher accepting a substring instead of a run of tokens → check 4 red",
+  DOMAIN_REL,
+  "    if (haystack[at + index] !== needle[index]) return false;",
+  "    if (!haystack[at + index]?.startsWith(needle[index])) return false;",
+  async () => checkIsRed(4)
+);
+
+await mutation(
+  "7. The matcher letting a row it was told to drop before matching → check 4 red",
+  DOMAIN_REL,
+  '    if (!command.enabled || command.action === null || command.problem === "phrase") continue;',
+  "    if (false) continue;",
+  async () => checkIsRed(4)
+);
+
+await mutation(
+  "8. The matcher letting a phrase that folds to no tokens match every sentence → check 4 red",
+  DOMAIN_REL,
+  "    if (wanted.length === 0) continue;",
+  "    if (false) continue;",
+  async () => checkIsRed(4)
+);
+
+await mutation(
+  "9. The matcher letting a shorter phrase overwrite the longest one → check 4 red",
+  DOMAIN_REL,
+  "        wanted.length > best.length ||",
+  "        true ||",
+  async () => checkIsRed(4)
+);
+
+await mutation(
+  "10. The matcher letting any equal-length phrase overwrite the person's own → check 4 red",
+  DOMAIN_REL,
+  '        (wanted.length === best.length && command.scope === "personal" && best.command.scope === "shared");',
+  "        (wanted.length === best.length && true);",
+  async () => checkIsRed(4)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);

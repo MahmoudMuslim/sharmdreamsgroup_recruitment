@@ -76,8 +76,12 @@ export const MAX_WAKE_PHRASE_CHARS = 48;
  * Case, punctuation, spacing and Arabic diacritics are noise in a spoken phrase.
  * Tatweel and harakat are drawn rather than pronounced, the alef forms sound
  * identical, and a recogniser is free to return any of them for the same words.
+ *
+ * The wake phrase and the command matcher both read through this, and must: a
+ * phrase the wake test folds one way and the command test folds another is two
+ * wake words, and the person only ever set one.
  */
-function fold(text: string): string {
+export function fold(text: string): string {
   return text
     .replace(/[\u0640\u064B-\u065F\u0670]/g, "")
     .replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627")

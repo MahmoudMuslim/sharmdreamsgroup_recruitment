@@ -2,12 +2,12 @@
  * What a spoken JARVIS command is, and what it may do.
  *
  * Pure, like `jarvis.ts`: every rule here is proved without a database, a browser,
- * a microphone or a model. In this task it imports one thing, and that thing
- * imports nothing — `isStaffPath`, because the only safe definition of "a page this
- * person may be sent to" is the guard's own. Task A3 adds the second import,
- * `fold`, because a phrase the wake test folds one way and the command test folds
- * another is two wake words pretending to be one. (`voice.ts` keeps `fold` to itself
- * until then, so importing it here today would be a module that cannot load.)
+ * a microphone or a model. It imports two things, and each one is a rule this module
+ * must not own: `isStaffPath`, because the only safe definition of "a page this
+ * person may be sent to" is the guard's own, and `fold`, because a phrase the wake
+ * test folds one way and the command test folds another is two wake words pretending
+ * to be one — the matcher below reads through the wake phrase's function rather than
+ * writing its own, which is what makes that claim checkable.
  *
  * Two doors read a row, and they are deliberately not equally strict. The write
  * door (`parseCommandDraft`) refuses anything it cannot express, because a person
@@ -24,6 +24,7 @@
  * matched at all — `phraseProblem` switches the row off and names it.
  */
 import { isStaffPath } from "@/lib/auth/staffRoutes";
+import { fold } from "./voice";
 
 /** Every ceiling in one place, so the migration, the console and the door quote one source. */
 export const COMMAND_LIMITS = {
@@ -500,4 +501,77 @@ export function parseCommandDraft(
       problem: null,
     },
   };
+}
+
+/**
+ * Spoken words, split the way `isStopCommand` splits them.
+ *
+ * The same rule for the same reason: `stop` inside `stopwatch` is not a word
+ * anybody said, and a command matched on a substring would fire on a sentence that
+ * merely contains it.
+ */
+const TOKEN_SPLIT = /[\s,.;:!?"'()]+/;
+
+function tokensOf(folded: string): string[] {
+  return folded.split(TOKEN_SPLIT).filter(Boolean);
+}
+
+/** Whether `needle` appears in `haystack` as a run of whole tokens, from its start. */
+function containsRun(haystack: string[], needle: string[], at: number): boolean {
+  if (needle.length > haystack.length - at) return false;
+  for (let index = 0; index < needle.length; index += 1) {
+    if (haystack[at + index] !== needle[index]) return false;
+  }
+  return true;
+}
+
+export interface CommandMatch {
+  command: VoiceCommand;
+  /**
+   * What the person said after the phrase, in their own casing and punctuation.
+   *
+   * The match is made on folded tokens but the tail is taken from the raw words,
+   * because a tail becomes a saved question: lowercased and stripped, it would put
+   * a name in the transcript that the person never typed that way. `wakeRemainder`
+   * in `domain/voice.ts` does the same trick for the wake phrase for the same
+   * reason, and this is its second instance rather than a third copy of it.
+   */
+  tail: string;
+}
+
+/**
+ * The one thing a wake phrase may do besides open a conversation.
+ *
+ * Disabled rows and rows this module could not read are dropped first, so a broken
+ * row is not a command that does something unexpected — it is a command that does
+ * nothing, which the console has already said out loud. Then the longest match wins,
+ * because "open the outbox" is a more precise intent than "open"; a tie between a
+ * personal and a shared row goes to the person's own, which is how somebody
+ * overrides one shared command without touching anyone else's.
+ */
+export function matchCommand(transcript: string, commands: readonly VoiceCommand[]): CommandMatch | null {
+  const spoken = fold(transcript);
+  if (!spoken) return null;
+  const spokenTokens = tokensOf(spoken);
+  if (spokenTokens.length === 0) return null;
+  const rawWords = transcript.trim().split(/\s+/).filter(Boolean);
+
+  let best: { command: VoiceCommand; at: number; length: number } | null = null;
+  for (const command of commands) {
+    if (!command.enabled || command.action === null || command.problem === "phrase") continue;
+    const wanted = tokensOf(fold(command.triggerPhrase));
+    if (wanted.length === 0) continue;
+    for (let at = 0; at <= spokenTokens.length - wanted.length; at += 1) {
+      if (!containsRun(spokenTokens, wanted, at)) continue;
+      const better =
+        best === null ||
+        wanted.length > best.length ||
+        // Equal length, and the person's own phrase beats the portal's.
+        (wanted.length === best.length && command.scope === "personal" && best.command.scope === "shared");
+      if (better) best = { command, at, length: wanted.length };
+      break;
+    }
+  }
+  if (!best) return null;
+  return { command: best.command, tail: rawWords.slice(best.at + best.length).join(" ") };
 }
