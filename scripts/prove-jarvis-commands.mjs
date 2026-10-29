@@ -785,8 +785,8 @@ async function check5b() {
   expect(problems, "an absent table is a problem", absentRead.problem, "absent");
   expect(problems, "with no commands", absentRead.commands.length, 0);
   expect(problems, "nothing capped", absentRead.capped, false);
-  expect(problems, "and the file named",
-    /051_jarvis_voice_commands\.sql is authored but not applied/.test(absentRead.message ?? ""), true);
+  expect(problems, "and the file that would create the table is named",
+    /051_jarvis_voice_commands\.sql/.test(absentRead.message ?? ""), true);
 
   // An outage is not an unapplied file. Saying it was would send the person to a
   // migration they cannot run.
@@ -844,25 +844,42 @@ async function check5b() {
 }
 
 // ---------------------------------------------------------------------------
-// 5c. The migration-claims proof asks about 051 by the table it creates
+// 5c. The copy about 051 states the applied truth, and the refusals do not
 // ---------------------------------------------------------------------------
+/**
+ * 051 is applied on this database, so the two kinds of copy have opposite duties and
+ * `prove-migration-claims.mjs` reads each against its own probe. The Guide is the
+ * manual a recruiter reads: it names this database, so it has to say the file is
+ * applied. The reader's and the write door's sentences only ever print when a table is
+ * missing, so a sentence about THIS database would be false wherever they appear —
+ * they name the file as the thing that would create the table, never as a state.
+ */
 async function check5c() {
   const problems = [];
   const claims = read("scripts/prove-migration-claims.mjs");
-  if (!claims.includes('file: "051_jarvis_voice_commands.sql"')) {
-    problems.push("prove-migration-claims does not ask about 051");
+  expect(problems, "prove-migration-claims asks about 051",
+    claims.includes('file: "051_jarvis_voice_commands.sql"'), true);
+  expect(problems, "its probe names the table",
+    claims.includes("to_regclass('public.assistant_jarvis_commands')"), true);
+
+  const guide = read("src/modules/shell/domain/pageGuide.ts");
+  const guideAt = guide.indexOf("db/migrations/051_jarvis_voice_commands.sql");
+  expect(problems, "the Guide still names 051", guideAt !== -1, true);
+  if (guideAt !== -1) {
+    expect(problems, "and says it is applied on this database",
+      /applied on this database/.test(guide.slice(guideAt, guideAt + 200)), true);
   }
-  if (!claims.includes("to_regclass('public.assistant_jarvis_commands')")) {
-    problems.push("the 051 probe does not name the table");
-  }
-  // That proof requires every migration it asks about to be named in src/, with the
-  // polarity stated within a sentence. This sentence is the one that does it, so the
-  // two halves of the task have to land together or the claims proof goes red.
-  const reader = read(READER_REL);
-  const at = reader.indexOf("db/migrations/051_jarvis_voice_commands.sql");
-  if (at === -1) problems.push("no src/ file names 051, so the claims proof cannot read it");
-  else if (!/not applied/.test(reader.slice(at, at + 200))) {
-    problems.push("the sentence naming 051 does not say whether this database has it");
+
+  // A refusal that claimed this database's state would be a lie on the only database
+  // where it can be reached, so the two doors are checked for the absence of a claim.
+  for (const rel of [READER_REL, ACTIONS_REL]) {
+    const text = read(rel);
+    const at = text.indexOf("db/migrations/051_jarvis_voice_commands.sql");
+    expect(problems, `${rel} still names the file in its refusal`, at !== -1, true);
+    if (at === -1) continue;
+    const around = text.slice(Math.max(0, at - 200), at + 200);
+    expect(problems, `${rel} does not state this database's state beside it`,
+      /not applied|unapplied|has not been (?:run|applied)|created on this database/.test(around), false);
   }
   return verdict(problems);
 }
@@ -1092,7 +1109,7 @@ const CHECKS = [
   ["4. The matcher reads whole folded phrases, longest first, own scope first", check4],
   ["5. 051 stores a command, scopes it, and gates the shared half", check5],
   ["5b. The list is read once, and says which failure it met", check5b],
-  ["5c. The migration-claims proof asks about 051 by the table it creates", check5c],
+  ["5c. The 051 copy states the applied truth and the refusals claim no state", check5c],
   ["2b. The five actions write the columns the table has, and never a scope the body named", check2b],
   ["6a. Settings and the JARVIS surface both reach the manager; presence carries its command read", check6a],
   ["6b. Commands dispatch before the model and retain approval and transcript boundaries", async () => {
@@ -1477,6 +1494,51 @@ await mutation(
   'settingsHref("assistant", "commands")',
   'settingsHref("assistant", "appearance")',
   async () => checkIsRed(9)
+);
+
+// The four sentences the apply of 051 moved. Each mutation is the failure the sweep
+// would leave behind: a refusal that stopped naming the file a person could run, a
+// manual that stopped saying this database has the table, or either door claiming a
+// state this database no longer holds.
+await mutation(
+  "54. The reader's absence refusing without naming the file → check 5b red",
+  READER_REL,
+  'return { commands: [], problem: "absent", message: ABSENT_MESSAGE, capped: false };',
+  'return { commands: [], problem: "absent", message: null, capped: false };',
+  async () => checkIsRed(6)
+);
+
+await mutation(
+  "55. The Guide naming 051 without saying this database has it → check 5c red",
+  "src/modules/shell/domain/pageGuide.ts",
+  "db/migrations/051_jarvis_voice_commands.sql is applied on this database",
+  "db/migrations/051_jarvis_voice_commands.sql, which the platform team applies",
+  async () => checkIsRed(7)
+);
+
+await mutation(
+  "56. The reader's refusal stating this database's state → check 5c red",
+  READER_REL,
+  "db/migrations/051_jarvis_voice_commands.sql is the file that creates it",
+  "db/migrations/051_jarvis_voice_commands.sql is authored but not applied",
+  async () => checkIsRed(7)
+);
+
+await mutation(
+  "57. The write door's refusal stating this database's state → check 5c red",
+  ACTIONS_REL,
+  "db/migrations/051_jarvis_voice_commands.sql is the file that creates it",
+  "db/migrations/051_jarvis_voice_commands.sql is authored but not applied",
+  async () => checkIsRed(7)
+);
+
+await mutation(
+  "58. The write door's refusal stopping short of the file → check 5c red",
+  ACTIONS_REL,
+  `"This command could not be saved, because this database holds no voice commands table to save it into. " +
+        "db/migrations/051_jarvis_voice_commands.sql is the file that creates it, and running it is somebody's decision.",`,
+  `"This command could not be saved, because the voice commands table is not there.",`,
+  async () => checkIsRed(7)
 );
 
 for (const [label, rel, needle, replacement, testName] of [

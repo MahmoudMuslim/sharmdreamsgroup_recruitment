@@ -1,9 +1,19 @@
 -- 051_jarvis_voice_commands.sql
 -- JARVIS voice commands: phrases a person saves, and the action each one runs.
 --
--- NOT APPLIED as of 2026-10-29. Applying this file needs its own named approval;
--- until it is applied the console and the presence say so and list nothing, which
--- is what scripts/prove-migration-claims.mjs checks the copy against.
+-- APPLIED on the local database on 2026-10-29, under the owner's ruling. Applying it
+-- anywhere else is that host's own decision, and a host without it is not broken: the
+-- console and the write door name this file in their refusals rather than listing
+-- nothing, which is what scripts/prove-migration-claims.mjs checks the copy against.
+--
+-- This file is a first-time apply, not an idempotent one. The table, its indexes, its
+-- grants and both seed blocks are guarded, but a policy is not — Postgres has no
+-- `create policy if not exists` — so a second run stops at
+-- `policy "assistant_jarvis_commands_personal_select" already exists` (proven against
+-- this database on 2026-10-29: the run aborted and the row, policy and trigger counts
+-- were unchanged after it). The trigger at the foot is written without the `or replace`
+-- this server offers, so it refuses a second copy too. Both are deliberate: a
+-- half-reapplied migration is harder to read than a refused one.
 --
 -- A row is one person's (`scope = 'personal'`, an owner) or everybody's
 -- (`scope = 'shared'`, no owner) — a CHECK says so, so a row cannot claim both and

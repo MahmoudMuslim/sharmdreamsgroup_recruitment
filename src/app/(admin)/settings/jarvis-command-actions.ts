@@ -42,7 +42,9 @@ function refusal(error: { code?: string | null; message?: string | null }, phras
   if (/42P01|PGRST205|PGRST204|does not exist|schema cache/i.test(`${error.code ?? ""} ${error.message ?? ""}`)) {
     return {
       ok: false,
-      error: "db/migrations/051_jarvis_voice_commands.sql is authored but not applied, so no command can be saved yet.",
+      error:
+        "This command could not be saved, because this database holds no voice commands table to save it into. " +
+        "db/migrations/051_jarvis_voice_commands.sql is the file that creates it, and running it is somebody's decision.",
     };
   }
   if (error.code === "23505") {

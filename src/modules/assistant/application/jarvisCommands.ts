@@ -19,7 +19,8 @@ import {
 const TABLE = "assistant_jarvis_commands";
 const MIGRATION_MISSING = /42P01|PGRST205|PGRST204|does not exist|schema cache/i;
 const ABSENT_MESSAGE =
-  "db/migrations/051_jarvis_voice_commands.sql is authored but not applied, so no voice command is stored yet.";
+  "The voice commands could not be read, because this database holds no such table. " +
+  "db/migrations/051_jarvis_voice_commands.sql is the file that creates it, and running it is somebody's decision.";
 
 export interface VoiceCommandsRead {
   commands: VoiceCommand[];

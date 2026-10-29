@@ -132,9 +132,11 @@ const MIGRATIONS = [
       "select exists (select 1 from information_schema.columns where table_schema='public' and table_name='assistant_jarvis_prefs' and column_name='wake_phrase') as present",
   },
   {
-    // Authored, not applied: the probe asks for the table the file's first
-    // structural act creates, so an applied 051 flips this row to `applied` and the
-    // reader's refusal sentence has to be swept with it.
+    // Applied on this database on 2026-10-29. The probe asks for the table the file's
+    // first structural act creates. The apply moved two halves of the copy: the Guide
+    // names 051 beside `applied on this database`, and the reader's and the write
+    // door's refusals speak of a database that holds no such table as the condition
+    // they print under — never as this database's state, which would be a lie here.
     file: "051_jarvis_voice_commands.sql",
     asks: "select to_regclass('public.assistant_jarvis_commands') is not null as present",
   },
