@@ -1,7 +1,7 @@
 # JARVIS listens in any language
 
 **Date:** 2026-10-29
-**Status:** Approved design — awaiting the owner's read of this spec; no code written
+**Status:** Built and committed (`06a9d4d`); migration 050 applied on this database 2026-10-29; the armed-microphone proof awaits the owner signed in
 **Scope:** one slice — the wake word and hands-free stop being bound to whichever language a browser was told to expect. The browser's speech recogniser is replaced by this portal's own transcription model behind a language-agnostic energy gate, the wake phrase moves out of `localStorage` onto the person's account (`050`), the "Listening language" selector comes out of the assistant controls, and the Settings → Assistant console gains the wake-word control that lives there.
 
 It adds no tool and opens no door. A phrase heard still becomes a question in the same saved conversation, still runs through the assistant's approval card, and still lands in the activity trail.
