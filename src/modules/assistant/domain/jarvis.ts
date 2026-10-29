@@ -251,6 +251,39 @@ export function isStopCommand(utterance: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// The wake phrase
+// ---------------------------------------------------------------------------
+
+/**
+ * The longest phrase a person may be woken by, in characters.
+ *
+ * `domain/voice.ts` owns the same number and `jarvis.ts` imports nothing, so this
+ * is a deliberate duplicate pinned by check 15 in `prove-jarvis-presence.mjs`
+ * rather than a shared import that would break the pure-module rule. The SQL
+ * ceiling in `db/migrations/050_jarvis_wake_phrase.sql` is the third copy.
+ */
+export const MAX_WAKE_PHRASE_LEN = 48;
+
+/**
+ * The phrase an account with none has, spelled here because the panel has to show
+ * it before the person's own row has arrived.
+ *
+ * `domain/voice.ts` owns the same string; check 15 pins the two together.
+ */
+export const DEFAULT_WAKE_PHRASE_TEXT = "Hey Jarvis";
+
+/**
+ * The moment the microphone's destination changed from the browser vendor's speech
+ * service to this portal's own gateway.
+ *
+ * A stamp taken before it was taken under an explanation that is no longer true, so
+ * it no longer arms anything: the panel asks again, once, in the new words. The
+ * date is this slice's, not a rolling one — a stamp written after it can only have
+ * been earned by the explanation now on the screen.
+ */
+export const AMBIENT_CONSENT_V2_AT = "2026-10-29T00:00:00.000Z";
+
+// ---------------------------------------------------------------------------
 // The daily briefing: once a day, in the waking hours
 // ---------------------------------------------------------------------------
 
@@ -292,6 +325,8 @@ export interface JarvisPrefs {
   watchQueues: string[];
   quietFrom: string;
   quietTo: string;
+  /** The words that wake the orb, or null for `Hey Jarvis`. Stored on the account. */
+  wakePhrase: string | null;
 }
 
 /**
@@ -307,6 +342,7 @@ export const DEFAULT_JARVIS_PREFS: JarvisPrefs = Object.freeze({
   watchQueues: [],
   quietFrom: "18:00",
   quietTo: "08:00",
+  wakePhrase: null,
 });
 
 function flag(value: unknown, fallback: boolean): boolean {
@@ -348,6 +384,34 @@ function consentStamp(value: unknown): string | null {
 }
 
 /**
+ * A stored phrase, or null when the value is not one.
+ *
+ * A hand-edited row cannot name a phrase the ceiling refuses or carry a control
+ * character, so an out-of-vocabulary value reads as "no choice made" rather than as
+ * a phrase the orb would try to match.
+ */
+function wakePhraseValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const clean = value.trim();
+  if (!clean || clean.length > MAX_WAKE_PHRASE_LEN) return null;
+  if (/[\u0000-\u001F]/.test(value)) return null;
+  return clean;
+}
+
+/**
+ * Whether a consent stamp was earned under the explanation now on the screen.
+ *
+ * Only the destination of the audio changed, so this is one comparison against a
+ * fixed date rather than a new column: a stamp at exactly the cutoff counts, because
+ * it could not have been taken under wording that had already been replaced.
+ */
+export function consentCarriesOver(stamp: unknown): boolean {
+  const clean = consentStamp(stamp);
+  if (clean === null) return false;
+  return Date.parse(clean) >= Date.parse(AMBIENT_CONSENT_V2_AT);
+}
+
+/**
  * A row from `assistant_jarvis_prefs` as the values the presence code may use.
  *
  * Every field that arrives outside its vocabulary falls back to its default, so
@@ -366,18 +430,22 @@ export function normalizeJarvisPrefs(row: Record<string, unknown> | null): Jarvi
     watchQueues: uniqueKnownQueues(row.watch_queues),
     quietFrom: clockOrDefault(row.quiet_from, DEFAULT_JARVIS_PREFS.quietFrom),
     quietTo: clockOrDefault(row.quiet_to, DEFAULT_JARVIS_PREFS.quietTo),
+    wakePhrase: wakePhraseValue(row.wake_phrase),
   };
 }
 
 /**
  * Whether the background wake word may run for this person.
  *
- * Both halves have to be true: the switch is on, and the audio explanation was
- * accepted with a stamp the server wrote. A browser that flipped `ambient` alone
- * arms nothing, because it cannot produce that stamp.
+ * Three things have to be true: the switch is on, the audio explanation was
+ * accepted with a stamp the server wrote, and that stamp was written under the
+ * explanation now on the panel. The third is what makes the destination change
+ * honest — a yes taken under "Chrome sends this to Google" is not a yes about this
+ * portal's gateway, so `AMBIENT_CONSENT_V2_AT` retires it and the orb stays quiet
+ * until the person answers the new question.
  */
 export function canArmAmbient(prefs: JarvisPrefs): boolean {
-  return prefs.ambient === true && typeof prefs.ambientConsentAt === "string" && prefs.ambientConsentAt.length > 0;
+  return prefs.ambient === true && consentCarriesOver(prefs.ambientConsentAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +470,7 @@ export const JARVIS_PREF_COLUMNS: readonly string[] = Object.freeze([
   "watch_queues",
   "quiet_from",
   "quiet_to",
+  "wake_phrase",
 ]);
 
 /** Draft field names, camelCase and the row's own spelling alike, to columns. */
@@ -417,6 +486,8 @@ const COLUMN_BY_DRAFT_KEY: Record<string, string> = {
   quiet_from: "quiet_from",
   quietTo: "quiet_to",
   quiet_to: "quiet_to",
+  wakePhrase: "wake_phrase",
+  wake_phrase: "wake_phrase",
 };
 
 /** A prefs value back in the row's own shape, so a merge is one normalize. */
@@ -430,6 +501,7 @@ export function prefsToRow(prefs: JarvisPrefs): Record<string, unknown> {
     watch_queues: prefs.watchQueues,
     quiet_from: prefs.quietFrom,
     quiet_to: prefs.quietTo,
+    wake_phrase: prefs.wakePhrase,
   };
 }
 
@@ -462,6 +534,12 @@ function draftValue(column: string, value: unknown, previous: JarvisPrefs): unkn
     // what a garbled field should cause.
     case "watch_queues":
       return uniqueKnownQueues(value);
+    // Refused, not reset: a phrase over the ceiling, blank, or carrying a control
+    // character is a field that cannot express the choice, and quietly moving a
+    // person back to "Hey Jarvis" would un-wake an orb they had just tuned. A
+    // cleared field *is* a request — it reads as null, which is the default.
+    case "wake_phrase":
+      return value === null || (typeof value === "string" && value.trim() === "") ? null : wakePhraseValue(value) ?? previous.wakePhrase;
     default:
       return undefined;
   }
@@ -478,13 +556,15 @@ function draftValue(column: string, value: unknown, previous: JarvisPrefs): unkn
  *   the same ceilings `normalizeJarvisPrefs` applies to a row, and a value that
  *   fails its ceiling leaves the stored choice where it was rather than falling
  *   back to a default the person never picked.
- * - `ambient` is on only where a consent stamp exists: one the server already
- *   wrote, or one this request earned by accepting the audio explanation. A
- *   switch flipped without either is written as off, so the microphone never arms
- *   on a value the person did not agree to.
+ * - `ambient` is on only where a *carrying* consent stamp exists: one this request
+ *   earned by accepting the audio explanation, or one the server already wrote
+ *   after `AMBIENT_CONSENT_V2_AT`. A stamp taken under the retired wording earns
+ *   nothing, and a switch flipped without either is written as off, so the
+ *   microphone never arms on a value the person did not agree to.
  *
- * Turning the switch off deliberately keeps the stamp. The explanation was heard
- * once, and a later re-arming is that same consent, not a new one.
+ * Turning the switch off deliberately keeps a stamp that still carries. The
+ * explanation was heard once, and a later re-arming is that same consent, not a
+ * new one; a stamp that no longer carries is cleared, not kept.
  */
 export function jarvisRowToSave(
   draft: Record<string, unknown>,
@@ -504,7 +584,7 @@ export function jarvisRowToSave(
 
   if (next.ambient) {
     if (earned) next.ambientConsentAt = heard;
-    else if (next.ambientConsentAt === null) {
+    else if (!consentCarriesOver(next.ambientConsentAt)) {
       next.ambient = false;
       next.ambientConsentAt = null;
     }
@@ -551,6 +631,13 @@ export function summarizeJarvisChange(previous: JarvisPrefs, next: JarvisPrefs):
   }
   if (previous.quietFrom !== next.quietFrom || previous.quietTo !== next.quietTo) {
     parts.push(`quiet ${next.quietFrom}-${next.quietTo}`);
+  }
+  if (next.wakePhrase !== previous.wakePhrase) {
+    parts.push(
+      next.wakePhrase === null
+        ? "wake phrase (back to the default)"
+        : `wake phrase “${next.wakePhrase}”`
+    );
   }
 
   return parts.length ? `Assistant presence: ${parts.join(", ")}` : "Assistant presence settings saved";

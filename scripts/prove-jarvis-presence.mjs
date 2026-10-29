@@ -475,12 +475,13 @@ async function check9() {
   expect(problems, "hour clamped down", jarvis.normalizeJarvisPrefs({ briefing_hour: 99 }).briefingHour, jarvis.DEFAULT_JARVIS_PREFS.briefingHour);
   expect(problems, "hour 23 kept", jarvis.normalizeJarvisPrefs({ briefing_hour: 23 }).briefingHour, 23);
   // `canArmAmbient` is the door the client obeys: arming needs a consent stamp
-  // that the server wrote, not a flag toggled beside it.
+  // that the server wrote, not a flag toggled beside it. The stamp is dated after
+  // `AMBIENT_CONSENT_V2_AT` — a stale one is check 16's case, not this door's.
   expect(problems, "armed without consent", jarvis.canArmAmbient({ ...jarvis.DEFAULT_JARVIS_PREFS, ambient: true }), false);
   expect(
     problems,
     "armed with consent",
-    jarvis.canArmAmbient({ ...jarvis.DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: "2026-10-28T06:00:00.000Z" }),
+    jarvis.canArmAmbient({ ...jarvis.DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: "2026-10-29T06:00:00.000Z" }),
     true
   );
   return verdict(problems);
@@ -579,37 +580,40 @@ async function check11() {
     save({ ambient: true }, DEFAULT_JARVIS_PREFS, { given: "yes", stamp: "2026-10-28T06:00:00.000Z" }).ambient,
     false
   );
-  const armed = prefs(save({ ambient: true }, DEFAULT_JARVIS_PREFS, { given: true, stamp: "2026-10-28T06:00:00.000Z" }));
+  const armed = prefs(save({ ambient: true }, DEFAULT_JARVIS_PREFS, { given: true, stamp: "2026-10-29T06:00:00.000Z" }));
   expect(problems, "consent heard by the server arms", [armed.ambient, armed.ambientConsentAt], [
     true,
-    "2026-10-28T06:00:00.000Z",
+    "2026-10-29T06:00:00.000Z",
   ]);
   expect(problems, "the armed row passes the arm door", canArmAmbient(armed), true);
 
   // Consent is one-time: a stored stamp is that same agreement, not a new one,
-  // and switching off must not erase the record that it was given.
-  const once = { ...DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: "2026-10-01T09:00:00.000Z" };
+  // and switching off must not erase the record that it was given. The stamps are
+  // dated after `AMBIENT_CONSENT_V2_AT`, because a retired one is check 16's case.
+  const once = { ...DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: "2026-10-29T09:00:00.000Z" };
   const rearmed = prefs(save({ ambient: true }, once));
   expect(problems, "re-arming keeps the stamp already on the row", [rearmed.ambient, rearmed.ambientConsentAt], [
     true,
-    "2026-10-01T09:00:00.000Z",
+    "2026-10-29T09:00:00.000Z",
   ]);
   expect(
     problems,
     "a fresh stamp refreshes it",
-    prefs(save({ ambient: true }, once, { given: true, stamp: "2026-10-28T06:00:00.000Z" })).ambientConsentAt,
-    "2026-10-28T06:00:00.000Z"
+    prefs(save({ ambient: true }, once, { given: true, stamp: "2026-10-30T06:00:00.000Z" })).ambientConsentAt,
+    "2026-10-30T06:00:00.000Z"
   );
   const off = prefs(save({ ambient: false }, once));
   expect(problems, "off keeps the consent record", [off.ambient, off.ambientConsentAt], [
     false,
-    "2026-10-01T09:00:00.000Z",
+    "2026-10-29T09:00:00.000Z",
   ]);
 
   // A stamp the browser invents is not consent, and must not be written into the
   // row for the server to mistake for the real one later: the microphone stays
-  // off, with no stamp on it either way.
-  const forged = prefs(save({ ambient: true, ambient_consent_at: "2020-01-01T00:00:00.000Z" }));
+  // off, with no stamp on it either way. The forged stamp is dated after the
+  // cutoff on purpose — a retired one would go quiet for the wrong reason and
+  // the mutation that leaks an unmapped draft key into the row would pass.
+  const forged = prefs(save({ ambient: true, ambient_consent_at: "2026-10-29T12:00:00.000Z" }));
   expect(problems, "a draft's own consent stamp does not arm", [forged.ambient, forged.ambientConsentAt], [
     false,
     null,
@@ -875,6 +879,105 @@ async function check13() {
   return verdict(problems);
 }
 
+// ---------------------------------------------------------------------------
+// 14. The wake phrase is a field of the row, with the same ceiling as the code
+// ---------------------------------------------------------------------------
+async function check14() {
+  const jarvis = await load(DOMAIN_URL);
+  const problems = [];
+
+  // A row that names no phrase is the default, not an empty match.
+  expect(problems, "no column is the default", jarvis.DEFAULT_JARVIS_PREFS.wakePhrase, null);
+  expect(problems, "a bare row reads null", jarvis.normalizeJarvisPrefs({}).wakePhrase, null);
+  expect(problems, "a row's phrase survives", jarvis.normalizeJarvisPrefs({ wake_phrase: "يا Jarvis" }).wakePhrase, "يا Jarvis");
+  // 48 is MAX_WAKE_PHRASE_CHARS written here as SQL-shaped refusal; over it is not a phrase.
+  const long = "a".repeat(jarvis.MAX_WAKE_PHRASE_LEN + 1);
+  expect(problems, "a row longer than the ceiling reads null", jarvis.normalizeJarvisPrefs({ wake_phrase: long }).wakePhrase, null);
+  expect(problems, "a blank row value reads null", jarvis.normalizeJarvisPrefs({ wake_phrase: "   " }).wakePhrase, null);
+  expect(problems, "a non-string row value reads null", jarvis.normalizeJarvisPrefs({ wake_phrase: 42 }).wakePhrase, null);
+
+  // The column travels with the eight places every other field travels through.
+  expect(problems, "the column list carries wake_phrase", jarvis.JARVIS_PREF_COLUMNS.includes("wake_phrase"), true);
+  const draft = jarvis.normalizeJarvisPrefs(jarvis.jarvisRowToSave({ wakePhrase: "ابدأ" }, jarvis.DEFAULT_JARVIS_PREFS, { given: false, stamp: "" }));
+  expect(problems, "a draft phrase is stored", draft.wakePhrase, "ابدأ");
+  // Refused, not defaulted: an over-long draft leaves the stored phrase where it was.
+  const refused = jarvis.normalizeJarvisPrefs(
+    jarvis.jarvisRowToSave({ wakePhrase: long }, { ...jarvis.DEFAULT_JARVIS_PREFS, wakePhrase: "يا Jarvis" }, { given: false, stamp: "" })
+  );
+  expect(problems, "an over-long draft keeps the stored phrase", refused.wakePhrase, "يا Jarvis");
+  // A cleared field is a real request: null, which *is* the default.
+  const cleared = jarvis.normalizeJarvisPrefs(
+    jarvis.jarvisRowToSave({ wakePhrase: "   " }, { ...jarvis.DEFAULT_JARVIS_PREFS, wakePhrase: "يا Jarvis" }, { given: false, stamp: "" })
+  );
+  expect(problems, "a cleared field falls back to the default", cleared.wakePhrase, null);
+  // The row the writer sends carries the column and nothing wider.
+  const row = jarvis.jarvisRowToSave({ wakePhrase: "يا Jarvis" }, jarvis.DEFAULT_JARVIS_PREFS, { given: false, stamp: "" });
+  expect(problems, "the saved row's columns", Object.keys(row).sort(), [...jarvis.JARVIS_PREF_COLUMNS].sort());
+
+  // The trail names the phrase it moved and never copies the row into a summary.
+  const said = jarvis.summarizeJarvisChange(
+    { ...jarvis.DEFAULT_JARVIS_PREFS },
+    { ...jarvis.DEFAULT_JARVIS_PREFS, wakePhrase: "يا Jarvis" }
+  );
+  problems.push(...(said.includes("wake phrase") ? [] : [`the trail never names the wake phrase: ${said}`]));
+  problems.push(...(said.includes("يا Jarvis") ? [] : [`the trail names the phrase without quoting the row: ${said}`]));
+  const untouched = jarvis.summarizeJarvisChange(
+    { ...jarvis.DEFAULT_JARVIS_PREFS, wakePhrase: "Hey Jarvis" },
+    { ...jarvis.DEFAULT_JARVIS_PREFS, wakePhrase: "Hey Jarvis" }
+  );
+  problems.push(...(untouched.includes("wake phrase") ? ["the trail names a switch that did not move"] : []));
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 15. The ceiling in this module is the ceiling in voice.ts, in words
+// ---------------------------------------------------------------------------
+async function check15() {
+  const jarvis = await load(DOMAIN_URL);
+  const voice = await load(pathToFileURL(path.join(root, "src/modules/assistant/domain/voice.ts")).href);
+  const problems = [];
+  // jarvis.ts imports nothing, so the 48 is duplicated on purpose — and a proof is
+  // the only thing that keeps the two copies from drifting apart.
+  expect(problems, "the two ceilings agree", jarvis.MAX_WAKE_PHRASE_LEN, voice.MAX_WAKE_PHRASE_CHARS);
+  expect(problems, "the default phrase matches", jarvis.DEFAULT_WAKE_PHRASE_TEXT, voice.DEFAULT_WAKE_PHRASE);
+  return verdict(problems);
+}
+
+// ---------------------------------------------------------------------------
+// 16. A stamp taken under the browser-vendor wording does not carry over
+// ---------------------------------------------------------------------------
+async function check16() {
+  const jarvis = await load(DOMAIN_URL);
+  const problems = [];
+  const old = new Date(Date.parse(jarvis.AMBIENT_CONSENT_V2_AT) - 86_400_000).toISOString();
+  const fresh = new Date(Date.parse(jarvis.AMBIENT_CONSENT_V2_AT) + 86_400_000).toISOString();
+  expect(problems, "an older stamp is refused", jarvis.consentCarriesOver(old), false);
+  expect(problems, "a stamp at the cutoff carries", jarvis.consentCarriesOver(jarvis.AMBIENT_CONSENT_V2_AT), true);
+  expect(problems, "a newer stamp carries", jarvis.consentCarriesOver(fresh), true);
+  expect(problems, "no stamp carries nothing", jarvis.consentCarriesOver(null), false);
+  expect(problems, "a garbled stamp carries nothing", jarvis.consentCarriesOver("last tuesday"), false);
+
+  // The armed microphone obeys the cutoff, so an existing row goes quiet on its own.
+  expect(
+    problems,
+    "an old stamp no longer arms",
+    jarvis.canArmAmbient({ ...jarvis.DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: old }),
+    false
+  );
+  expect(
+    problems,
+    "a fresh stamp still arms",
+    jarvis.canArmAmbient({ ...jarvis.DEFAULT_JARVIS_PREFS, ambient: true, ambientConsentAt: fresh }),
+    true
+  );
+  // A save that does not bring a new acknowledgement cannot revive a stale stamp.
+  const revived = jarvis.normalizeJarvisPrefs(
+    jarvis.jarvisRowToSave({ ambient: true }, { ...jarvis.DEFAULT_JARVIS_PREFS, ambient: false, ambientConsentAt: old }, { given: false, stamp: "" })
+  );
+  expect(problems, "a stale stamp is not re-armed by a switch flip", revived.ambient, false);
+  return verdict(problems);
+}
+
 const CHECKS = [
   ["1. The five queues are the ones the attention feed issues, ranked and thresholded", check1],
   ["2. A clock reading is minutes past midnight, or nothing at all", check2],
@@ -889,6 +992,9 @@ const CHECKS = [
   ["11. A draft row carries the table's columns, the server's stamp, and no wider reach than a stored row", check11],
   ["12. The reader tells an unapplied table from an outage, and never asks a grant for a person's own switch", check12],
   ["13. The writer saves its own row, trails it, and refuses to claim a table that is not applied", check13],
+  ["14. The wake phrase is a stored field that refuses what it cannot express", check14],
+  ["15. The phrase ceiling in jarvis.ts is the ceiling in voice.ts", check15],
+  ["16. A consent stamp taken under the browser-vendor wording does not carry over", check16],
 ];
 
 for (const [name, run] of CHECKS) {
@@ -1092,7 +1198,7 @@ await mutation(
 await mutation(
   "18. Ambient armable without the server's consent stamp → check 9 red",
   DOMAIN_REL,
-  "  return prefs.ambient === true && typeof prefs.ambientConsentAt === \"string\" && prefs.ambientConsentAt.length > 0;",
+  "  return prefs.ambient === true && consentCarriesOver(prefs.ambientConsentAt);",
   "  return prefs.ambient === true;",
   async () => checkIsRed(9)
 );
@@ -1150,7 +1256,7 @@ await mutation(
 await mutation(
   "25. A microphone armed without the server's stamp left on → check 11 red",
   DOMAIN_REL,
-  "    else if (next.ambientConsentAt === null) {",
+  "    else if (!consentCarriesOver(next.ambientConsentAt)) {",
   "    else if (false) {",
   async () => checkIsRed(11)
 );
@@ -1221,6 +1327,46 @@ await mutation(
   "    action: \"jarvis_prefs_changed\",",
   "    action: \"voice_autonomy_changed\",",
   async () => checkIsRed(13)
+);
+
+await mutation(
+  "34. A wake phrase over the ceiling silently reset to the default → check 14 red",
+  DOMAIN_REL,
+  '      return value === null || (typeof value === "string" && value.trim() === "") ? null : wakePhraseValue(value) ?? previous.wakePhrase;',
+  "      return wakePhraseValue(value);",
+  async () => checkIsRed(14)
+);
+
+await mutation(
+  "35. A trail sentence that never quotes the chosen phrase → check 14 red",
+  DOMAIN_REL,
+  '        : `wake phrase “${next.wakePhrase}”`',
+  '        : "wake phrase"',
+  async () => checkIsRed(14)
+);
+
+await mutation(
+  "36. The two ceilings drifting apart → check 15 red",
+  DOMAIN_REL,
+  "export const MAX_WAKE_PHRASE_LEN = 48;",
+  "export const MAX_WAKE_PHRASE_LEN = 47;",
+  async () => checkIsRed(15)
+);
+
+await mutation(
+  "37. A stamp taken under the old wording still arming → check 16 red",
+  DOMAIN_REL,
+  "  return prefs.ambient === true && consentCarriesOver(prefs.ambientConsentAt);",
+  "  return prefs.ambient === true && typeof prefs.ambientConsentAt === \"string\" && prefs.ambientConsentAt.length > 0;",
+  async () => checkIsRed(16)
+);
+
+await mutation(
+  "38. A switch flip reviving a retired stamp → check 16 red",
+  DOMAIN_REL,
+  "    else if (!consentCarriesOver(next.ambientConsentAt)) {",
+  "    else if (next.ambientConsentAt === null) {",
+  async () => checkIsRed(16)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
