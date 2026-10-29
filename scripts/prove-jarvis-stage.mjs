@@ -71,3 +71,44 @@ test("group 2 — the stage variant reserves the gutter and reports its turns", 
   assert.ok(!source.includes('@/modules/assistant/domain/stage'), "the chat reads the store, not the geometry module");
   assert.doesNotMatch(source, /\[(144|96|72)px\]/, "the chat owns no gutter class");
 });
+
+test("group 3 — the route guards itself and reads the session, not the query", () => {
+  const source = readFileSync(path.join(root, "src/app/(admin)/assistant/stage/page.tsx"), "utf8");
+  assert.match(source, /await connection\(\)/);
+  assert.match(source, /requireStaff\("\/assistant"\)/);
+  assert.match(source, /export const instant = false/);
+  // The stage reuses the conversation the page already saves to, and needs nothing else.
+  assert.match(source, /<AssistantStage initialSessionId=\{session\} \/>/);
+  assert.doesNotMatch(source, /readVoiceAutonomy|AutonomyPanel/, "the stage draws no autonomy panel, so it reads no autonomy");
+});
+
+test("group 4 — the shell is bare and the stage keeps the orb's gutter", () => {
+  const shell = readFileSync(path.join(root, "src/modules/analytics/presentation/AdminShell.tsx"), "utf8");
+  assert.match(shell, /if \(pathname === STAGE_ROUTE\)/);
+  // The bare branch is the one place the stage renders; it keeps the orb and drops the rest.
+  const start = shell.indexOf("if (pathname === STAGE_ROUTE)");
+  const branch = shell.slice(start, shell.indexOf("\n  }", start));
+  assert.ok(start > 0 && branch.length > 0, "the stage branch exists to read");
+  assert.match(branch, /<JarvisPresence user=\{user\} timeZone=\{timeZone\} \/>/);
+  assert.match(branch, /\{children\}/);
+  assert.ok(!/<AssistantDock|<LiveChrome|<AppRail|NavigationDrawer/.test(branch), "the bare branch mounts neither a second dock nor a second chrome");
+  assert.equal(shell.split("<JarvisPresence").length - 1, 2, "the shell renders the orb in exactly two branches");
+
+  const stageView = readFileSync(path.join(root, "src/app/(admin)/assistant/stage/AssistantStage.tsx"), "utf8");
+  // The gutter is a literal class spelled from the constant group 1a pins: `pt-` is the
+  // narrow form (orb top-centre, answers below it), `lg:pr-` the wide one (answers to
+  // the orb's left). Both must be the same number the orb reserves.
+  const gutter = String(stage.STAGE_ORB_GUTTER_PX);
+  assert.ok(stageView.includes(`pt-[${gutter}px]`), "the narrow gutter must be the constant");
+  assert.ok(stageView.includes(`lg:pr-[${gutter}px]`), "the wide gutter must be the same constant");
+  assert.match(stageView, /variant="stage"/);
+  assert.match(stageView, /voiceMode="console"/);
+  // A flex column cannot hand its scroller a height without this.
+  assert.match(stageView, /min-h-0/);
+  // Two ways out, because the spec says Escape on its own is not discoverable.
+  assert.match(stageView, /event\.key !== "Escape"/);
+  assert.match(stageView, /router\.push\("\/assistant"\)/);
+  assert.match(stageView, /Exit stage/);
+  assert.match(stageView, /router\.replace\(\`\$\{STAGE_ROUTE\}\?session=\$\{encodeURIComponent\(id\)\}\`, \{ scroll: false \}\)/);
+  assert.ok(!/AssistantDock|<LiveChrome/.test(stageView), "the stage page does not mount a second conversation or a second chrome");
+});

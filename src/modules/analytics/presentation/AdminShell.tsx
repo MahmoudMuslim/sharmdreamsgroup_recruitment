@@ -14,6 +14,7 @@ import { navForward } from "@/modules/shell/domain/navTransition";
 import { LiveChrome } from "@/modules/live/presentation/Live";
 import { AssistantDock } from "@/app/(admin)/assistant/AssistantDock";
 import { JarvisPresence } from "@/modules/assistant/presentation/JarvisPresence";
+import { STAGE_ROUTE } from "@/modules/assistant/domain/stage";
 import {
   expandedOnServer,
   readCollapsed,
@@ -302,6 +303,25 @@ export function AdminShell({
   /** Writing the store is also what re-renders this rail, and any other tab's. */
   function toggleRail() {
     setRailFolded(!collapsed);
+  }
+
+  /**
+   * The stage: the same shell, with nothing in it but the page and the orb. The rail,
+   * the app bar, the drawer, the live chrome and the dock are all dropped here, and
+   * `JarvisPresence` is kept mounted in this branch and nowhere else on the route, so
+   * there is still exactly one microphone owner and exactly one thing that reacts.
+   *
+   * `NavigationPending` survives because this branch's own Escape handler and its Exit
+   * link both navigate, and the line paints above the stage's `z-30` surface at `z-50`.
+   */
+  if (pathname === STAGE_ROUTE) {
+    return (
+      <div className="min-h-screen bg-brand-ivory text-brand-ink">
+        <NavigationPending collapsed={collapsed} />
+        {children}
+        <JarvisPresence user={user} timeZone={timeZone} />
+      </div>
+    );
   }
 
   return (
