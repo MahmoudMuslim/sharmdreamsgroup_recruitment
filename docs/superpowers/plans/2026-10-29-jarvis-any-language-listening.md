@@ -991,7 +991,7 @@ git commit -m "feat(assistant): the energy gate that decides what is worth a tra
 - Create: `src/modules/assistant/presentation/voice/useWakeListening.ts`
 - Modify: `src/modules/assistant/presentation/useJarvisMeter.ts`
 - Delete: `src/modules/assistant/presentation/voice/useWakeWord.ts` — **not in this task.** Three files still import it until Task 5, so removing it here would break `tsc` mid-slice; this task only stops referring to it.
-- Modify: `scripts/prove-assistant-voice.mjs` (the `WAKE_HOOK_REL` block and check 13's hook needles)
+- Modify: `scripts/prove-assistant-voice.mjs` (the `WAKE_HOOK_REL` sentinel, the mutations that use it, and check 13's hook needles)
 
 **Interfaces:**
 - Consumes: `JarvisMeter` from `useJarvisMeter` (which this task widens with `stream`), `sampleGate` / `GATE_CLOSED` / `LISTENING_QUOTA_SENTENCE` from `domain/listening.ts`, `transcribeClip` from `./transcribe`.
@@ -1063,14 +1063,24 @@ In `scripts/prove-assistant-voice.mjs`, the block that reads
   if (!hook.includes("if (stopped) return;")) {
     problems.push("returning to the tab restarts a fatally stopped recognizer");
   }
+  // A disarmed console must not keep reporting why its last armed run stopped.
+  // The strip's status line says "Nothing is being recorded." while the alert
+  // beneath it still reads "the microphone is blocked — arm hands-free again":
+  // advice for a listening state that has ended. Seen live in Chrome with the
+  // microphone denied for localhost:3001, and unchanged 9.5s after disarming.
+  // The teardown of the armed run is where that error belongs — a synchronous
+  // clear in the effect body is the render-cascading shape React's rules refuse.
+  if (!/\n      setError\(null\);\n    \};/.test(hook)) {
+    problems.push("a disarmed console still says the microphone is blocked");
+  }
 ```
 
-describes an API being removed. Replace it with the three rules that survive the swap — a refusal is still fatal, a hidden tab still releases the capture, and no audio is ever kept:
+That fourth assertion is the one the swap cannot leave standing: it is a regex over the *recogniser's* teardown shape, and `useWakeListening.ts` clears the run from the effect body's `!enabled` branch instead. Left in place, it reads the new hook with a needle written for the old one, and check 13 goes red on a rule the new file satisfies in a different shape. It is rewritten below, with the other three. Replace the whole block with the rules that survive the swap — a fatal stop is not undone by returning to the tab, a hidden tab still releases the capture, the recorder follows the gate instead of the edge it crossed, no audio is ever kept, and a disarmed orb keeps no advice from its last run:
 
 ```js
   const hook = read("src/modules/assistant/presentation/voice/useWakeListening.ts");
-  if (!hook.includes('name === "NotAllowedError"')) {
-    problems.push("a denied microphone is not treated as fatal by the listening hook");
+  if (!hook.includes("if (stopped) return;")) {
+    problems.push("returning to the tab restarts a run the browser already refused");
   }
   if (!hook.includes('document.visibilityState === "hidden"')) {
     problems.push("a hidden tab keeps its segments running");
@@ -1078,10 +1088,50 @@ describes an API being removed. Replace it with the three rules that survive the
   if (!hook.includes("transcribeClip(")) {
     problems.push("the listening hook does not send its segments to the voice door");
   }
+  // The gate has two samples that cross no closed→open edge, and the recorder must
+  // answer both or it leaks. A sound under the floor closes the gate with no clip to
+  // post, so a loop that only stops on `sample.clip` leaves a live `MediaRecorder` on
+  // the stream — and the next segment builds a second one over the first, with both
+  // writing into one buffer. A cap closes the gate and re-opens it inside a single
+  // sample, so a loop that only opens on the edge never records the rest of the
+  // sentence. Each line is the whole rule for one direction, so each is pinned.
+  // The close also carries the gate's verdict. `GATE_MIN_SEGMENT_MS` is the shortest
+  // segment worth a transcription call, and the voice door charges its window *before*
+  // it asks the model (`src/app/api/assistant/voice/route.ts`), so a two-hundred-
+  // millisecond cough that still reached a recorder is thrown away — not billed, and
+  // not spent from the twenty slots a noisy desk would otherwise use to lock the
+  // person out of the orb before they ever spoke.
+  if (!hook.includes("if (sample.clip || !gateOpen) closeSegment(sample.clip !== null);")) {
+    problems.push("a sound under the gate's floor leaves its recorder running");
+  }
+  if (!hook.includes("if (gateOpen && recorder === null) openSegment();")) {
+    problems.push("an utterance longer than the cap loses everything after the cap");
+  }
+  // Deciding to discard is only half of discarding: a handler left on a closing
+  // recorder fires a frame later and posts the segment the gate just refused. So the
+  // three come off together before `stop()`, pinned as one literal the way the disarm
+  // trio below is, so a hook that removes two of the three cannot pass.
+  if (!hook.includes("          closing.ondataavailable = null;\n          closing.onstop = null;\n          closing.onerror = null;")) {
+    problems.push("a segment the gate discarded still costs a transcription call");
+  }
   // The hook never reaches for a microphone of its own — Task 10's audit counts the
   // sites in the whole tree, and this is the one that must not appear in that list.
-  if (hook.includes("getUserMedia")) {
+  // Comments are stripped first: the hook's own header names `getUserMedia` to explain
+  // why it never calls it, and only the code may not contain it.
+  const hookCode = hook.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  if (hookCode.includes("getUserMedia")) {
     problems.push("the listening hook opens its own capture instead of the meter's");
+  }
+  // The rule that outlives the recogniser, in the new hook's own shape: disarming
+  // clears everything the run had to say. A disarmed console must not keep reporting
+  // why its last armed run stopped — the strip says "Nothing is being recorded."
+  // while the alert beneath it still advises arming a microphone that is no longer
+  // held. The clear belongs in the effect body's `!enabled` branch (setting it from
+  // a render is the cascading shape React's rules refuse), and these three setters
+  // are its whole content, pinned as one literal so a hook that clears two of the
+  // three cannot pass.
+  if (!hook.includes("      setError(null);\n      setQuotaHit(false);\n      setRunEnded(false);")) {
+    problems.push("a disarmed console still says the microphone is blocked");
   }
   // A quiet room is not a fault, so the literal this hook compares must stay the
   // literal the client writes. Two copies of a sentence, pinned together here.
@@ -1091,8 +1141,7 @@ describes an API being removed. Replace it with the three rules that survive the
     problems.push(`the silent-discard needle and the client's sentence disagree: ${nothingHeard ?? "no NOTHING_HEARD constant"}`);
   }
   // The one promise this slice moves without breaking: a segment is a request, not
-  // a file. Comments are stripped so the hook's own header cannot be read as code.
-  const hookCode = hook.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  // a file. `hookCode` is the comment-stripped source from the check above.
   if (/getFileStore|storageConfig|\.upload\(|createObjectURL|localStorage/i.test(hookCode)) {
     problems.push("the listening hook appears to keep a recording");
   }
@@ -1110,7 +1159,57 @@ with
 const WAKE_HOOK_REL = "src/modules/assistant/presentation/voice/useWakeListening.ts";
 ```
 
-Every mutation whose needle points inside `useWakeWord.ts` is rewritten in Task 9 alongside its check; leaving them here would make a mutation match nothing and so pass for free. Note each one as you go and carry it to Task 9's sweep.
+Repointing that sentinel moves the two mutations that use it — **38**, whose needle was `if (!active || suspended || stopped) return;`, and **45**, whose needle was `"      setError(null);\n    };"`. Both needles are recogniser source, so after the swap they match nothing, and `mutation()` does not shrug that off: a needle it cannot find is recorded `pass: false` with `needle not found in <rel>`, so the run goes red on both. Retarget them in this task, not in Task 9 — a suite left red for five tasks buries a real breakage inside a known one:
+
+```js
+await mutation(
+  "38. A sound under the gate's floor leaves its recorder running → check 13 red",
+  WAKE_HOOK_REL,
+  "if (sample.clip || !gateOpen) closeSegment(sample.clip !== null);",
+  "if (sample.clip) closeSegment(sample.clip !== null);",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "45. A disarmed console keeps the last run's blocked-microphone alert → check 13 red",
+  WAKE_HOOK_REL,
+  "      setError(null);\n      setQuotaHit(false);\n      setRunEnded(false);",
+  "      setQuotaHit(false);\n      setRunEnded(false);",
+  async () => checkIsRed(13)
+);
+```
+
+Each removes exactly one half of the rule check 13 now asserts, so a green check under the mutation would be a rule the proof cannot see break. The other halves — the open side of the gate, and the discard that keeps a sub-floor sound off the bill — have no mutation of their own yet, and the file's labels run to 96. Append these three after mutation 96, at the end of the file:
+
+```js
+await mutation(
+  "97. A capped utterance never gets a recorder for its second half → check 13 red",
+  WAKE_HOOK_REL,
+  "if (gateOpen && recorder === null) openSegment();",
+  "if (gateOpen && recorder !== null) openSegment();",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "98. Every closed segment is kept, so a cough spends a transcription call → check 13 red",
+  WAKE_HOOK_REL,
+  "closeSegment(sample.clip !== null);",
+  "closeSegment(true);",
+  async () => checkIsRed(13)
+);
+
+await mutation(
+  "99. A discarded recorder keeps its `onstop`, so the gate's refusal is posted anyway → check 13 red",
+  WAKE_HOOK_REL,
+  "          closing.ondataavailable = null;\n          closing.onstop = null;\n          closing.onerror = null;",
+  "          closing.ondataavailable = null;\n          closing.onerror = null;",
+  async () => checkIsRed(13)
+);
+```
+
+Mutation 98 is the one that cannot be seen any other way: the loop still closes and still opens, so nothing leaks and nothing is lost — the only difference is that the room's noise is now billed and quota-charged, which is a cost the proof can read only from the argument the close is handed.
+
+Every *other* needle still naming `useWakeWord.ts` — Task 9 keeps that list — is rewritten there alongside its check. Note each one as you go and carry it to Task 9's sweep.
 
 - [ ] **Step 3: Write the hook**
 
@@ -1162,16 +1261,16 @@ function segmentType(): string | null {
   }) ?? null;
 }
 
-function listeningMessage(error: unknown): string {
-  const name = error instanceof DOMException ? error.name : "";
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    return "The browser refused the microphone, so nothing is being heard. Allow it and arm the wake word again.";
-  }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No microphone is available to this browser. Connect one and arm the wake word again.";
-  }
-  return "This browser cannot encode a recording the transcription model can read. Push to talk still works.";
-}
+/**
+ * What the orb says when no container this browser offers can be recorded.
+ *
+ * A *refused* microphone is not this sentence's business: the capture belongs to the
+ * meter, which is the one place `getUserMedia` runs and so the one place a
+ * `NotAllowedError` lands — `useJarvisMeter.ts` turns it into its own `error`, and
+ * the strip reports that. Naming a refusal reason here would be a branch this file
+ * can never reach, and a check that pins it proves nothing.
+ */
+const CANNOT_RECORD = "This browser cannot encode a recording the transcription model can read. Push to talk still works.";
 
 /**
  * The door's own words for a segment nobody spoke into.
@@ -1261,16 +1360,23 @@ export function useWakeListening({
   useEffect(() => {
     if (!enabled) {
       // The run is over, and so is what it had to say: a disarmed orb shows no advice
-      // for a capture it no longer holds, and arming again starts clean.
+      // for a capture it no longer holds, and arming again starts clean. Check 13
+      // pins these three setters as one literal, so a hook that clears two of the
+      // three cannot pass.
+      /* eslint-disable react-hooks/set-state-in-effect -- a disarmed console must
+         clear the last run's advice before its first paint, and clearing it from a
+         render is the cascading shape React's rules refuse; the effect body's
+         `!enabled` branch is where the run ends. */
       setError(null);
       setQuotaHit(false);
       setRunEnded(false);
+      /* eslint-enable react-hooks/set-state-in-effect */
       return;
     }
 
     const type = segmentType();
     if (!type) {
-      setError(listeningMessage(null));
+      setError(CANNOT_RECORD);
       setRunEnded(true);
       return;
     }
@@ -1278,23 +1384,49 @@ export function useWakeListening({
     let alive = true;
     let frame: number | null = null;
     let recorder: MediaRecorder | null = null;
-    let chunks: Blob[] = [];
     let gate: GateState = GATE_CLOSED;
     // The door's refusal no retry can heal: a denied microphone, a missing device or
     // a gateway with no key ends the run and says why, rather than looping
     // start → error at frame speed.
     let stopped = false;
 
-    const stopRecorder = () => {
-      if (recorder && recorder.state !== "inactive") {
+    /**
+     * Close the segment that is open, if any. A kept segment's own `onstop` posts
+     * what it heard; a discarded one has its handlers taken away first.
+     *
+     * The difference is the gate's verdict, not this hook's: `GATE_MIN_SEGMENT_MS` is
+     * "the shortest segment worth a transcription call", and the voice door charges
+     * the window *before* it asks the model. So a two-hundred-millisecond cough that
+     * still reached a recorder must reach the door only if the gate kept it — and a
+     * noisy desk must not spend the ceiling of twenty segments in five minutes on
+     * sounds nobody spoke.
+     */
+    const closeSegment = (keep: boolean) => {
+      const closing = recorder;
+      if (!closing) return;
+      // Unclaimed before `stop()` is called: the frame loop reads `recorder` on the
+      // next sample, and a second `stop()` on an ending recorder is not the only
+      // cost of leaving it — the loop would then think a closing segment was still
+      // the live one and refuse to open its successor.
+      recorder = null;
+      if (closing.state !== "inactive") {
+        if (!keep) {
+          // All three come off together: a buffered frame must not post the segment
+          // the gate refused, and a recorder this hook has already thrown away must
+          // not end the run a frame later with "the browser refused the recording".
+          // Pinned as one literal by check 13, so keep these lines consecutive.
+          closing.ondataavailable = null;
+          closing.onstop = null;
+          closing.onerror = null;
+        }
         try {
-          recorder.stop();
+          closing.stop();
         } catch {
-          // Already ending.
+          // Already ending. Its buffered frames go with it: a segment this hook could
+          // not close is a segment it cannot send, and half a container is worse than
+          // silence — the transcription model would be billed for noise.
         }
       }
-      recorder = null;
-      chunks = [];
     };
 
     /** The run is over for good. Nothing here retries; arming again does. */
@@ -1303,7 +1435,7 @@ export function useWakeListening({
       alive = false;
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
-      stopRecorder();
+      closeSegment(false);
       gate = GATE_CLOSED;
       setError(message);
       setRunEnded(true);
@@ -1334,41 +1466,54 @@ export function useWakeListening({
     const openSegment = () => {
       const stream = meterRef.current.stream();
       if (!stream || stopped) return;
-      chunks = [];
+      // One buffer per recorder, held by that recorder's own closures. A cap closes
+      // one segment and opens its successor inside the same frame, and the closing
+      // recorder's `onstop` only lands a frame later: with a buffer shared by the
+      // whole run, that late `onstop` would read — and clear — the frames the new
+      // recorder had already collected, and post them as the old segment's audio.
+      const chunks: Blob[] = [];
+      let segment: MediaRecorder;
       try {
-        recorder = new MediaRecorder(stream, { mimeType: type });
+        segment = new MediaRecorder(stream, { mimeType: type });
       } catch {
-        recorder = null;
-        end(listeningMessage(null));
+        end(CANNOT_RECORD);
         return;
       }
-      recorder.ondataavailable = (event) => {
+      segment.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) chunks.push(event.data);
       };
       // `MediaRecorder` reports no reason worth naming, and a mid-run refusal does
       // not heal by starting again — so the run ends and says what stopped.
-      recorder.onerror = () => end("Listening stopped — the browser refused the recording.");
-      recorder.onstop = () => {
-        const kept = chunks;
-        chunks = [];
-        recorder = null;
-        if (!alive || stopped || kept.length === 0) return;
-        void send(new Blob(kept, { type: type.split(";")[0] }));
+      segment.onerror = () => end("Listening stopped — the browser refused the recording.");
+      segment.onstop = () => {
+        if (!alive || stopped || chunks.length === 0) return;
+        void send(new Blob(chunks, { type: type.split(";")[0] }));
       };
       try {
-        recorder.start();
+        segment.start();
       } catch {
-        stopRecorder();
+        // A recorder that will not start does not start again, and the frame loop
+        // would call this every sixteenth of a second: end the run and say so once.
+        end(CANNOT_RECORD);
+        return;
       }
+      recorder = segment;
     };
 
     const tick = () => {
       if (!alive) return;
       const sample = sampleGate(gate, meterRef.current.read(), performance.now());
-      const wasOpen = gate.openFrom !== null;
       gate = sample.gate;
-      if (!wasOpen && gate.openFrom !== null) openSegment();
-      if (sample.clip) stopRecorder();
+      const gateOpen = gate.openFrom !== null;
+      // The recorder follows the gate's *state*, not the edge the gate crossed. Two
+      // samples cross no closed→open edge and both leak without this: a sound under
+      // the floor closes the gate with no clip to post, and a cap closes and re-opens
+      // it inside one sample. Close first, then open, so a capped sentence hands its
+      // second half to a fresh recorder on this same frame. The argument is the gate's
+      // verdict, not this hook's opinion: the gate's floor is what decides whether the
+      // segment is worth the door's call.
+      if (sample.clip || !gateOpen) closeSegment(sample.clip !== null);
+      if (gateOpen && recorder === null) openSegment();
       frame = requestAnimationFrame(tick);
     };
 
@@ -1377,7 +1522,9 @@ export function useWakeListening({
         alive = false;
         if (frame !== null) cancelAnimationFrame(frame);
         frame = null;
-        stopRecorder();
+        // A tab that went away was never going to hear a sentence finish, and the
+        // door does not get paid for a fragment nobody can complete.
+        closeSegment(false);
         gate = GATE_CLOSED;
         return;
       }
@@ -1400,7 +1547,9 @@ export function useWakeListening({
       document.removeEventListener("visibilitychange", onVisibility);
       if (frame !== null) cancelAnimationFrame(frame);
       frame = null;
-      stopRecorder();
+      // The run is over because the switch went off, and a clip cut short by a
+      // disarm is not what the person asked.
+      closeSegment(false);
       gate = GATE_CLOSED;
     };
     // `meter` is deliberately absent: see the `meterRef` above.
@@ -1422,12 +1571,15 @@ Delete `src/modules/assistant/presentation/voice/useWakeWord.ts` in Task 5, wher
 - [ ] **Step 4: Typecheck what is provable without a browser**
 
 Run: `node_modules/.bin/tsc --noEmit`
-Expected: **no new** errors naming `useWakeListening.ts` or `useJarvisMeter.ts`. Errors naming `JarvisPresence.tsx`, `AssistantChat.tsx` and `JarvisPresenceConsole.tsx` for `useWakeWord` are expected here and are closed by Task 5; record their exact text in the task report so Task 11 can prove it is gone.
+Expected: **no output at all.** `useWakeWord.ts` and its three importers are untouched until Task 5, so nothing is left dangling yet and the tree still typechecks — the brief that first predicted errors naming `JarvisPresence.tsx`, `AssistantChat.tsx` and `JarvisPresenceConsole.tsx` was wrong about its own task, and Task 11 proves the *Task 5* state instead. If `tsc` does report anything here, it is this task's doing: a `useWakeListening.ts` signature the meter cannot satisfy, or a `MediaRecorder` narrowing mistake.
 
 - [ ] **Step 5: Prove the hook's rules hold**
 
 Run: `node --experimental-strip-types scripts/prove-assistant-voice.mjs`
-Expected: check 13 green against the new hook — Step 2 repointed it at a file that now exists. If it reports `the listening hook appears to keep a recording`, remove whatever `createObjectURL` or storage call crept in; if it reports the `NOTHING_HEARD` disagreement, the two sentences drifted. A mutation whose needle still points inside `useWakeWord.ts` now matches nothing and passes for free — Task 9's sweep retargets every one of them, and until then a green run over those mutations is not evidence.
+Expected: check 13 green against the new hook — Step 2 repointed it at a file that now exists, rewrote its fourth needle to the `!enabled` branch that clears the run, and replaced the recogniser's refusal needle with the lines that make the recorder follow the gate's *state* and keep the gate's verdict. If it reports `the listening hook appears to keep a recording`, remove whatever `createObjectURL` or storage call crept in; if it reports the `NOTHING_HEARD` disagreement, the two sentences drifted; if it reports `a disarmed console still says the microphone is blocked`, the three setters are not the literal block they are in Step 3; if it reports `a sound under the gate's floor leaves its recorder running` or `an utterance longer than the cap loses everything after the cap`, the frame loop was written against the gate's edges instead of its state; if it reports `a segment the gate discarded still costs a transcription call`, the handlers are not coming off together before `stop()`. Then the whole file, mutations included, must be green: the run ends with `16/16 checks held, 99/99 mutations turned red.` Step 2 retargeted mutations 38 and 45 and added 97, 98 and 99 for exactly that reason — a mutation whose needle names a string no file contains reports `needle not found`, which is red, not a free pass.
+
+Run: `node --experimental-strip-types scripts/prove-jarvis-presence.mjs`
+Expected: `19/19 checks held, 44/44 mutations turned red.` — this task's meter widening must not disturb the gate's own proof.
 
 - [ ] **Step 6: Commit**
 
@@ -2074,8 +2226,8 @@ Work the list; for each, retarget the string to what the file says now and re-ru
 `scripts/prove-assistant-voice.mjs`:
 - `:702` area — the privacy needle `"browser vendor"` (Task 6 Step 4).
 - `:721` area — `if (!strip.includes("the browser sends what it hears to its own speech service"))` (Task 6 Step 4).
-- `:895` area, inside `async function check13()` — `const hook = read("…/useWakeWord.ts")` and its three assertions (Task 4 Step 2).
-- `:1840` — `const WAKE_HOOK_REL = "…/useWakeWord.ts"` (Task 4 Step 2).
+- `:895` area, inside `async function check13()` — `const hook = read("…/useWakeWord.ts")` and its four assertions, including the `setError(null)` regex that reads the recogniser's teardown shape. Task 4 Step 2 rewrites all four; confirm none was left standing.
+- `:1840` — `const WAKE_HOOK_REL = "…/useWakeWord.ts"`, and the two mutations that read it (**38**, **45**). Task 4 Step 2 repoints the sentinel and retargets both, because a needle that matches nothing reports `needle not found` and turns the run red.
 - mutation `#27` (`:1777-1780`) and `#30` (`:1801`) — whichever assertions inside them reference the recogniser's `lang` or the `network` error sentence: retarget both to `useWakeListening.ts`'s fatal-refusal rules, or delete the mutation and say so in its place with a one-line comment naming the rule it used to guard. Never leave a mutation pointing at a string no file contains.
 - `:2014-2020` — mutation **55** ("The listening line stops saying where the words go → check 11 red"), whose needle is the strip's listening clause ` — the browser sends what it hears to its own speech service.`. Task 6 Step 2 rewrites that very sentence, so retarget this needle to the clause the new sentence carries in the same pass; left alone, mutation 55 reports `needle not found` and the rule it guarded is unguarded.
 
