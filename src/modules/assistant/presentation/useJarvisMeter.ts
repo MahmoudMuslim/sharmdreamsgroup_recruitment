@@ -5,20 +5,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /**
  * The microphone's loudness, in a number the reactor can breathe with.
  *
- * ## Why this exists beside the recogniser instead of inside it
+ * ## Why the capture lives here and is handed out
  *
- * The browser's speech recogniser reports words, never volume: there is no level to
- * read out of `SpeechRecognition`. So an animation that swells when a person talks to
- * the orb needs its own capture — the same second consumer the standalone JARVIS
- * applet runs, and the reason this one is opt-in rather than always on.
+ * The orb's animation swells with a person's voice, and a level never comes free: it
+ * has to be read out of a capture of its own, which is why this one is opt-in rather
+ * than always on. This hook is that capture's one owner in the tab, and it hands the
+ * stream out because the wake-word recorder cuts its segments from *this* stream —
+ * a second `getUserMedia` would be a second microphone prompt and a second thing to
+ * release, so the recorder reads this stream instead of holding another.
  *
  * ## What it costs, stated plainly
  *
- * A stream opened here is a second microphone consumer in a tab that may already be
- * holding one. It is never opened for a person who did not arm the ambient wake word,
- * it is closed the moment that switch goes off, and the audio is read on this machine
- * and thrown away: no bytes are kept, sent, or written. The number it hands back is a
- * 0–1 loudness average, which is what the canvas needs and nothing else.
+ * A stream opened here is the tab's only microphone consumer. It is never opened for
+ * a person who did not arm the ambient wake word, it is closed the moment that
+ * switch goes off, and the audio is read on this machine and thrown away: no bytes
+ * are kept, sent, or written. The number it hands back is a 0–1 loudness average,
+ * which is what the canvas needs and nothing else.
  *
  * ## Why the level is a ref and not state
  *
@@ -34,6 +36,15 @@ export interface JarvisMeter {
   armed: boolean;
   /** Why there is no level, in words, or null. The orb animates without one. */
   error: string | null;
+  /**
+   * The capture this hook owns, or null while it holds none.
+   *
+   * Handed out because a second `getUserMedia` in the same tab is a second
+   * microphone prompt and a second thing to release: the wake-word recorder cuts its
+   * segments from *this* stream, so one tab has exactly one owner of the capture and
+   * the meter stays it. Read after commit, never during render.
+   */
+  stream(): MediaStream | null;
 }
 
 const ANALYSER_BINS = 64;
@@ -53,8 +64,10 @@ export function useJarvisMeter({ enabled }: { enabled: boolean }): JarvisMeter {
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const level = useRef(0);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const read = useCallback(() => level.current, []);
+  const readStream = useCallback(() => streamRef.current, []);
 
   useEffect(() => {
     if (!enabled) {
@@ -76,6 +89,7 @@ export function useJarvisMeter({ enabled }: { enabled: boolean }): JarvisMeter {
       frame = null;
       stream?.getTracks().forEach((track) => track.stop());
       stream = null;
+      streamRef.current = null;
       void context?.close().catch(() => undefined);
       context = null;
       level.current = 0;
@@ -100,8 +114,11 @@ export function useJarvisMeter({ enabled }: { enabled: boolean }): JarvisMeter {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         if (!alive) {
           stream.getTracks().forEach((track) => track.stop());
+          stream = null;
+          streamRef.current = null;
           return;
         }
+        streamRef.current = stream;
         context = new Ctor();
         if (context.state === "suspended") {
           // A tab nobody has clicked cannot make — or read — sound. Resuming is what
@@ -156,5 +173,5 @@ export function useJarvisMeter({ enabled }: { enabled: boolean }): JarvisMeter {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  return { read, armed: enabled && armed, error: enabled ? error : null };
+  return { read, armed: enabled && armed, error: enabled ? error : null, stream: readStream };
 }

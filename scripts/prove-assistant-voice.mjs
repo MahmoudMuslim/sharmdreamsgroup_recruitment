@@ -892,25 +892,47 @@ async function check13() {
   // heal by starting again. Without the `stopped` latch the restart loop turns
   // one refusal into a start → error → end cycle at event speed, while the strip
   // goes on saying "Arming the microphone…".
-  const hook = read("src/modules/assistant/presentation/voice/useWakeWord.ts");
-  if (!hook.includes('code === "not-allowed" || code === "service-not-allowed" || code === "audio-capture"')) {
-    problems.push("the recognizer does not treat a refusal as fatal");
+  const hook = read("src/modules/assistant/presentation/voice/useWakeListening.ts");
+  if (!hook.includes('name === "NotAllowedError"')) {
+    problems.push("a denied microphone is not treated as fatal by the listening hook");
   }
-  if (!hook.includes("if (!active || suspended || stopped) return;")) {
-    problems.push("the recognizer restarts after a fatal error");
+  if (!hook.includes('document.visibilityState === "hidden"')) {
+    problems.push("a hidden tab keeps its segments running");
   }
-  if (!hook.includes("if (stopped) return;")) {
-    problems.push("returning to the tab restarts a fatally stopped recognizer");
+  if (!hook.includes("transcribeClip(")) {
+    problems.push("the listening hook does not send its segments to the voice door");
   }
-  // A disarmed console must not keep reporting why its last armed run stopped.
-  // The strip's status line says "Nothing is being recorded." while the alert
-  // beneath it still reads "the microphone is blocked — arm hands-free again":
-  // advice for a listening state that has ended. Seen live in Chrome with the
-  // microphone denied for localhost:3001, and unchanged 9.5s after disarming.
-  // The teardown of the armed run is where that error belongs — a synchronous
-  // clear in the effect body is the render-cascading shape React's rules refuse.
-  if (!/\n      setError\(null\);\n    \};/.test(hook)) {
+  // The hook never reaches for a microphone of its own — Task 10's audit counts the
+  // sites in the whole tree, and this is the one that must not appear in that list.
+  // The one deviation from the plan's literal here: comments are stripped before
+  // this test, because the hook's own header names `getUserMedia` to explain why it
+  // never calls it, and only the code may not contain it.
+  const hookCode = hook.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  if (hookCode.includes("getUserMedia")) {
+    problems.push("the listening hook opens its own capture instead of the meter's");
+  }
+  // The rule that outlives the recogniser, in the new hook's own shape: disarming
+  // clears everything the run had to say. A disarmed console must not keep reporting
+  // why its last armed run stopped — the strip says "Nothing is being recorded."
+  // while the alert beneath it still advises arming a microphone that is no longer
+  // held. The clear belongs in the effect body's `!enabled` branch (setting it from
+  // a render is the cascading shape React's rules refuse), and these three setters
+  // are its whole content, pinned as one literal so a hook that clears two of the
+  // three cannot pass.
+  if (!hook.includes("      setError(null);\n      setQuotaHit(false);\n      setRunEnded(false);")) {
     problems.push("a disarmed console still says the microphone is blocked");
+  }
+  // A quiet room is not a fault, so the literal this hook compares must stay the
+  // literal the client writes. Two copies of a sentence, pinned together here.
+  const client = read("src/modules/assistant/presentation/voice/transcribe.ts");
+  const nothingHeard = hook.match(/const NOTHING_HEARD = "([^"]+)";/)?.[1];
+  if (!nothingHeard || !client.includes(`{ error: "${nothingHeard}" }`)) {
+    problems.push(`the silent-discard needle and the client's sentence disagree: ${nothingHeard ?? "no NOTHING_HEARD constant"}`);
+  }
+  // The one promise this slice moves without breaking: a segment is a request, not
+  // a file. Comments are stripped so the hook's own header cannot be read as code.
+  if (/getFileStore|storageConfig|\.upload\(|createObjectURL|localStorage/i.test(hookCode)) {
+    problems.push("the listening hook appears to keep a recording");
   }
 
   // The status line is the only thing that says what the microphone is doing, so
@@ -1837,7 +1859,7 @@ await mutation(
   async () => checkIsRed(11)
 );
 
-const WAKE_HOOK_REL = "src/modules/assistant/presentation/voice/useWakeWord.ts";
+const WAKE_HOOK_REL = "src/modules/assistant/presentation/voice/useWakeListening.ts";
 
 await mutation(
   "35. The whole sentence is sent as the approval code → check 12 red",
@@ -1864,10 +1886,10 @@ await mutation(
 );
 
 await mutation(
-  "38. The recognizer restarts into a refused microphone → check 13 red",
+  "38. A refused microphone is retried instead of ending the run → check 13 red",
   WAKE_HOOK_REL,
-  "if (!active || suspended || stopped) return;",
-  "if (!active || suspended) return;",
+  'name === "NotAllowedError" || name === "SecurityError"',
+  'name === "SecurityError"',
   async () => checkIsRed(13)
 );
 
@@ -1922,8 +1944,8 @@ await mutation(
 await mutation(
   "45. A disarmed console keeps the last run's blocked-microphone alert → check 13 red",
   WAKE_HOOK_REL,
-  "      setError(null);\n    };",
-  "    };",
+  "      setError(null);\n      setQuotaHit(false);\n      setRunEnded(false);",
+  "      setQuotaHit(false);\n      setRunEnded(false);",
   async () => checkIsRed(13)
 );
 
