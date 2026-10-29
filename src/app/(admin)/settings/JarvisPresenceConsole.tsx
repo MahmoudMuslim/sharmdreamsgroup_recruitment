@@ -5,11 +5,15 @@ import Link from "next/link";
 import { Bell, Clock, Ear, Loader2, Mic, Moon, Play, ShieldCheck, Sparkles, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  DEFAULT_WAKE_PHRASE_TEXT,
   JARVIS_QUEUES,
+  MAX_WAKE_PHRASE_LEN,
+  consentCarriesOver,
   readClock,
   summarizeJarvisChange,
   type JarvisPrefs,
 } from "@/modules/assistant/domain/jarvis";
+import { LISTENING_QUOTA_SENTENCE } from "@/modules/assistant/domain/listening";
 import {
   DEFAULT_SPEECH_RATE,
   SPEECH_RATE_MAX,
@@ -73,10 +77,10 @@ const spokenLabel = (phrase: string) => phrase.charAt(0).toUpperCase() + phrase.
 /**
  * What the preview says.
  *
- * Two rules the words have to obey: no wake phrase — the recogniser is running on
- * this very page whenever the wake word is armed, and a preview that contained it
- * would hand the microphone a turn the person never asked for — and no barge-in
- * word, or previewing the voice would stop the voice.
+ * Two rules the words have to obey: no wake phrase — the wake word is listening on
+ * this very page whenever it is armed, and a preview that contained it would hand
+ * the microphone a turn the person never asked for — and no barge-in word, or
+ * previewing the voice would stop the voice.
  */
 const PREVIEW_SENTENCE = "Two offers are waiting for an answer today.";
 
@@ -263,9 +267,10 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
       void save({ ambient: false });
       return;
     }
-    // The explanation is shown once, and the server stamps the moment. A later
-    // arming reuses that stamp rather than pretending to forget it.
-    if (form.ambientConsentAt) {
+    // The explanation is shown once per wording. A stamp taken under the browser-vendor
+    // promise does not cover this portal's gateway, so the box opens again and the
+    // person answers the true question before the microphone re-arms.
+    if (consentCarriesOver(form.ambientConsentAt)) {
       void save({ ambient: true });
       return;
     }
@@ -309,9 +314,36 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
     void save({ [field]: value });
   }
 
+  // The old reason named a browser feature; the new one names a device. Firefox can
+  // do all of this, which is the point of the change.
   const ambientBlocked = !supported
-    ? "This browser has no speech recogniser. Chrome and Edge do; Firefox does not. The Ctrl+Space hotkey and the typed conversation still work."
+    ? "This browser will not open and encode a microphone, so there is nothing to listen with. The Ctrl+Space hotkey, push to talk and the typed conversation all still work."
     : "Arms this browser's wake word on every admin screen. Off by default, and only ever for your own account.";
+
+  /**
+   * Save the phrase, or say why the box cannot hold it.
+   *
+   * A field over the ceiling is refused by the row the server writes, so the panel
+   * refuses it first and leaves the stored phrase alone — the same rule as a quiet
+   * window typed as `9am`. A cleared box is a real request and falls back to the
+   * default, which is what `null` means here, and the notice says so rather than
+   * letting the person believe the orb went deaf.
+   */
+  function commitPhrase(value: string) {
+    const clean = value.trim();
+    if (clean.length > MAX_WAKE_PHRASE_LEN) {
+      setForm(prefs);
+      setNotice(`A wake phrase is at most ${MAX_WAKE_PHRASE_LEN} characters. What you had chosen is still listening.`);
+      return;
+    }
+    const next = clean === "" ? null : clean;
+    if (next === (prefs.wakePhrase?.trim() ?? null)) {
+      setForm(prefs);
+      return;
+    }
+    setForm({ ...prefs, wakePhrase: next });
+    void save({ wakePhrase: next });
+  }
 
   return (
     <div className="grid gap-4">
@@ -352,7 +384,7 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
       <Section
         icon={<Mic className="h-3.5 w-3.5" aria-hidden />}
         title="The microphone"
-        hint="One recogniser, one owner: while the wake word is armed, the Voice page's hands-free mode stands down and this one takes what it hears."
+        hint="One microphone, one owner: while the wake word is armed, the Assistant page's hands-free mode stands down and this one takes what it hears."
       >
         <SwitchRow
           checked={form.ambient}
@@ -361,6 +393,42 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
           hint={ambientBlocked}
           onChange={toggleAmbient}
         />
+        <div className="py-3">
+          <label className="flex items-center gap-2 text-[11px] font-semibold text-brand-ink/70">
+            Wake phrase
+            <input
+              value={form.wakePhrase ?? ""}
+              maxLength={MAX_WAKE_PHRASE_LEN}
+              placeholder={DEFAULT_WAKE_PHRASE_TEXT}
+              disabled={locked}
+              onChange={(event) => {
+                setPreviewProblem(null);
+                // The box keeps what was typed so it can be edited; nothing is written
+                // from a keystroke, because a half-typed phrase is not a choice.
+                setForm((current) => ({ ...current, wakePhrase: event.target.value }));
+              }}
+              onBlur={(event) => commitPhrase(event.target.value)}
+              className="min-w-0 flex-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[11px] outline-none focus:border-brand-gold"
+            />
+          </label>
+          {writable && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-brand-ink/55">
+              Listening for “{prefs.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT}” — said in any
+              language, in any mix, because this portal&apos;s own model decides what it heard. Stored on
+              your account, so the same phrase waits on every machine you sign in from.
+            </p>
+          )}
+          {prefs.wakePhrase !== null && prefs.wakePhrase.trim() !== DEFAULT_WAKE_PHRASE_TEXT && (
+            <button
+              type="button"
+              disabled={locked}
+              onClick={() => void commitPhrase("")}
+              className="mt-2 rounded-full border border-brand-line bg-white px-2.5 py-1 text-[11px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand"
+            >
+              Back to “{DEFAULT_WAKE_PHRASE_TEXT}”
+            </button>
+          )}
+        </div>
         {consentOpen && (
           <div className="py-3">
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
@@ -369,10 +437,17 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
               </p>
               <ul className="mt-2 grid gap-1.5 text-[11px] leading-relaxed text-amber-900">
                 <li>
-                  This browser&apos;s speech recogniser runs continuously while the tab is visible,
-                  and streams what it hears to the browser vendor&apos;s speech service — Chrome
-                  sends it to Google — independently of this portal.
+                  While the tab is visible, this browser watches the microphone&apos;s loudness
+                  locally and cuts a segment whenever someone talks. Nothing leaves the machine
+                  between segments.
                 </li>
+                <li>
+                  A segment is sent to this portal&apos;s own transcription model — not to a browser
+                  vendor&apos;s speech service — for one reason: to find out whether you said the wake
+                  phrase. If you did not, the words are discarded and nothing is logged about the
+                  near-miss.
+                </li>
+                <li>{LISTENING_QUOTA_SENTENCE}</li>
                 <li>
                   Hiding the tab releases the microphone; closing the tab disarms it. The app bar
                   shows a persistent indicator while it is listening.
@@ -421,10 +496,31 @@ export function PresenceConsole({ initial }: PresenceConsoleProps) {
             </div>
           </div>
         )}
-        {form.ambient && !consentOpen && (
+        {form.ambient && !consentOpen && !consentCarriesOver(form.ambientConsentAt) && (
+          <div className="py-2.5">
+            <p className="text-[11px] font-semibold leading-relaxed text-amber-800">
+              The wake word is switched on and not listening. Where your voice goes changed — it was
+              the browser&apos;s own speech service, and it is now this portal&apos;s transcription model
+              — so the explanation you agreed to is no longer the one on this screen. Read it and
+              acknowledge it once; until then nothing is armed and nothing is sent.
+            </p>
+            <button
+              type="button"
+              disabled={locked}
+              onClick={() => {
+                setAcknowledged(false);
+                setConsentOpen(true);
+              }}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-brand-ink px-3 py-1.5 text-[11px] font-bold text-brand-cream transition hover:bg-brand-ink/90 disabled:opacity-50"
+            >
+              Show me what changed
+            </button>
+          </div>
+        )}
+        {form.ambient && !consentOpen && consentCarriesOver(form.ambientConsentAt) && (
           <p className="py-2.5 text-[11px] leading-relaxed text-brand-ink/55">
-            Listening is reported by the recogniser itself, not by this switch: if this browser
-            refuses the microphone, the orb says so and nothing is heard.
+            Listening is reported by the microphone itself, not by this switch: if this browser
+            refuses the capture, the orb says so and nothing is heard.
           </p>
         )}
       </Section>

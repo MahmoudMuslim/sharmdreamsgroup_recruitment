@@ -991,6 +991,16 @@ async function check16() {
     jarvis.jarvisRowToSave({ ambient: true }, { ...jarvis.DEFAULT_JARVIS_PREFS, ambient: false, ambientConsentAt: old }, { given: false, stamp: "" })
   );
   expect(problems, "a stale stamp is not re-armed by a switch flip", revived.ambient, false);
+
+  // The panel that asks again is the only writer of a stamp, so a copy check here is
+  // what keeps "loud, not silent" true: a switch left on with a retired stamp must
+  // render the re-ask rather than the armed-state sentence. The scan pins the switch's
+  // own `if (…)` rather than any mention of the call, because the two armed-state blocks
+  // below also call it — a loose scan would stay green when the switch skipped the ask.
+  const consoleCopy = read("src/app/(admin)/settings/JarvisPresenceConsole.tsx");
+  expect(problems, "the panel tests the stamp, not its presence", consoleCopy.includes("    if (consentCarriesOver(form.ambientConsentAt)) {"), true);
+  expect(problems, "and the switch obeys the same test", consoleCopy.includes("disabled={locked || !supported}"), true);
+  expect(problems, "no recogniser left in the panel's copy", /speech recogniser|recogniser itself/.test(consoleCopy), false);
   return verdict(problems);
 }
 
@@ -1599,6 +1609,16 @@ await mutation(
   "export const TRANSCRIPTION_MAX_SEGMENTS = 20;",
   "export const TRANSCRIPTION_MAX_SEGMENTS = 21;",
   async () => checkIsRed(19)
+);
+
+// The plan numbered this 43, which is the capped-segment gate mutation above; the
+// file's high-water mark is 44 and a repeated number would hide one of the two.
+await mutation(
+  "45. The panel re-arms on a stamp taken under the old wording → check 16 red",
+  "src/app/(admin)/settings/JarvisPresenceConsole.tsx",
+  "    if (consentCarriesOver(form.ambientConsentAt)) {",
+  "    if (form.ambientConsentAt) {",
+  async () => checkIsRed(16)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);
