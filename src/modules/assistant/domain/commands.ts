@@ -148,6 +148,55 @@ function isCategory(value: unknown): value is CommandCategoryId {
 }
 
 /**
+ * A JSON object, as opposed to an array or a string wearing one's clothes.
+ *
+ * Both doors ask this of an action payload and of a tool's argument map: a value
+ * that is not a plain object names no fields, and `Object.entries(["APPLIED"])`
+ * would hand a tool `{0: "APPLIED"}` — arguments nobody typed.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a path says "up", which the guard's prefix test cannot see.
+ *
+ * `isStaffPath` matches the front of a path, so `/candidates/../login` passes it and
+ * the browser resolves the link somewhere the guard never named. The percent form is
+ * folded to a dot first, because a router decodes a segment before it decides which
+ * page that segment reaches.
+ */
+function hasDotSegment(pathname: string): boolean {
+  return pathname
+    .split("/")
+    .some((segment) => {
+      const dotted = segment.replace(/%2e/gi, ".");
+      return dotted === "." || dotted === "..";
+    });
+}
+
+/**
+ * The one shape a tool's arguments may take, asked identically by both doors.
+ *
+ * Absent or null is an argument-less run, which is storable. A plain object of single
+ * values is the map. Anything else returns `null`: the write door refuses it by name,
+ * the read door switches the row off. One predicate, so a draft the save accepts is
+ * always a row the read runs, and never a row the read runs that no save could write.
+ */
+function toolArgs(container: unknown): Record<string, string> | null {
+  if (container === undefined || container === null) return {};
+  if (!isPlainObject(container)) return null;
+  const args: Record<string, string> = {};
+  for (const [key, value] of Object.entries(container)) {
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      return null;
+    }
+    args[key] = String(value);
+  }
+  return args;
+}
+
+/**
  * One action, accepted only in the shape its type can carry.
  *
  * Nothing here guesses. An `open` row whose payload has no href is not a command
@@ -155,7 +204,11 @@ function isCategory(value: unknown): value is CommandCategoryId {
  * words behind a person's saved phrase that they never wrote.
  */
 function readAction(actionType: unknown, payload: unknown): CommandAction | null {
-  const record = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+  // A payload that is not a set of fields is not an empty set of fields. This door
+  // renders what it is given, and a row holding `"open the outbox"` where the table
+  // says object is not a command with no fields — it is one nobody wrote.
+  if (payload !== undefined && payload !== null && !isPlainObject(payload)) return null;
+  const record = isPlainObject(payload) ? payload : {};
 
   switch (actionType) {
     case "ask": {
@@ -166,25 +219,21 @@ function readAction(actionType: unknown, payload: unknown): CommandAction | null
     }
     case "open": {
       const href = typeof record.href === "string" ? record.href.trim() : "";
+      const pathname = href.split("?")[0] ?? "";
       // Read again rather than trusted from the save: a row edited after it was
       // written is the case this door exists for.
-      if (!isStaffPath(href.split("?")[0] ?? "")) return null;
+      if (hasDotSegment(pathname)) return null;
+      if (!isStaffPath(pathname)) return null;
       return { type: "open", href };
     }
     case "tool": {
       const tool = typeof record.tool === "string" ? record.tool.trim() : "";
       if (!tool) return null;
-      const raw = typeof record.args === "object" && record.args !== null ? record.args : {};
-      const args: Record<string, string> = {};
-      for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        // The same refusal the write door makes for this shape, made here as a
-        // switch-off: a run that got fewer arguments than the row holds is a
-        // command nobody wrote, so an argument this type cannot carry is not run.
-        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-          return null;
-        }
-        args[key] = String(value);
-      }
+      // The same predicate the write door refuses with: a run that got fewer
+      // arguments than the row holds is a command nobody wrote, so an argument this
+      // type cannot carry — or a map this shape cannot hold — is not run.
+      const args = toolArgs(record.args);
+      if (args === null) return null;
       return { type: "tool", tool, args };
     }
     case "note": {
@@ -203,7 +252,6 @@ function phraseProblem(phrase: unknown): string | null {
   if (trimmed.length < COMMAND_LIMITS.phraseMin || trimmed.length > COMMAND_LIMITS.phraseMax) {
     return `a phrase is between ${COMMAND_LIMITS.phraseMin} and ${COMMAND_LIMITS.phraseMax} characters`;
   }
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001F]/.test(phrase)) return "a phrase cannot carry a control character";
   return null;
 }
@@ -249,18 +297,28 @@ export function normalizeCommandRow(row: CommandRow): VoiceCommand {
 }
 
 /**
- * Payload size as the column sees it.
+ * Payload size, counted on the compact JSON.
  *
- * The CHECK in `051` measures `octet_length(action_payload::text)`, so the door
- * measures the same bytes: a draft this module accepted and the database rejected
- * would surface as a REST error the console has no field to point at.
+ * The CHECK in `051` measures `octet_length(action_payload::text)`, and a jsonb
+ * value's canonical text is longer than `JSON.stringify` of the same object twice
+ * over: a space after every comma and colon, and octets rather than characters — an
+ * Arabic or Russian prompt costs two or three of them per character. The counts are
+ * not equal and this door cannot quote the column's figure, so the ceilings are
+ * deliberately unequal, ruled in Task A4 as R13: the CHECK is larger than the number
+ * refused here, which is what keeps an accepted draft from dying in the database as
+ * a REST error with no field for the console to point at.
  */
 export function payloadBytes(payload: Record<string, unknown>): number {
   return new TextEncoder().encode(JSON.stringify(payload)).length;
 }
 
 export type CommandDraft = {
-  id?: string;
+  /**
+   * The row this draft belongs to, if it belongs to one. `unknown`, not `string`,
+   * because a body field this door reasons about is a body field it does not
+   * type-promise to believe.
+   */
+  id?: unknown;
   trigger_phrase?: unknown;
   title?: unknown;
   category?: unknown;
@@ -327,10 +385,17 @@ export function parseCommandDraft(
   ) {
     return refuse("action_type", "Choose what the command does.");
   }
-  const payload =
-    typeof draft.action_payload === "object" && draft.action_payload !== null
-      ? (draft.action_payload as Record<string, unknown>)
-      : {};
+  // A payload that is not a set of named fields is not a set of named fields that
+  // happens to be empty: `"open the outbox"` and `{}` are different statements, and
+  // reading the first as the second is the silent default this door exists to avoid.
+  if (
+    draft.action_payload !== undefined &&
+    draft.action_payload !== null &&
+    !isPlainObject(draft.action_payload)
+  ) {
+    return refuse("action_payload", "An action is a set of named fields, not a list or a single value.");
+  }
+  const payload = isPlainObject(draft.action_payload) ? draft.action_payload : {};
   if (payloadBytes(payload) > COMMAND_LIMITS.payloadBytes) {
     return refuse("action_payload", "That action is larger than the 4 KB a command may carry.");
   }
@@ -350,6 +415,15 @@ export function parseCommandDraft(
     // table. Checked on the path alone, because a query cannot change which page a
     // link reaches but it can change what a naive prefix test accepts.
     const pathname = href.split("?")[0] ?? "";
+    // …and the guard's prefix is matched from the front, so a path that steps up is
+    // refused on top of it: `/candidates/../login` passes `/candidates/` here and
+    // lands somewhere the rail never listed.
+    if (hasDotSegment(pathname)) {
+      return refuse(
+        "action_payload",
+        `${href} walks up out of the page it names, so no command may open it.`
+      );
+    }
     if (!isStaffPath(pathname)) {
       return refuse(
         "action_payload",
@@ -371,13 +445,11 @@ export function parseCommandDraft(
     if (known.web === true) {
       return refuse("action_payload", `${known.label} leaves the portal, and a saved command may not.`);
     }
-    const rawArgs = typeof payload.args === "object" && payload.args !== null ? payload.args : {};
-    const args: Record<string, string> = {};
-    for (const [key, value] of Object.entries(rawArgs as Record<string, unknown>)) {
-      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-        return refuse("action_payload", `The argument ${key} has to be a single value.`);
-      }
-      args[key] = String(value);
+    // The read door's predicate, the same one, so the two doors can never disagree
+    // about which argument shapes exist.
+    const args = toolArgs(payload.args);
+    if (args === null) {
+      return refuse("action_payload", "A tool's arguments have to be named single values.");
     }
     action = { type: "tool", tool: known.name, args };
   } else {
@@ -390,15 +462,32 @@ export function parseCommandDraft(
   }
 
   // 5. The description, which reaches nobody but the person who wrote it.
+  if (draft.notes !== undefined && draft.notes !== null && typeof draft.notes !== "string") {
+    return refuse("notes", "Notes are text.");
+  }
   const rawNotes = typeof draft.notes === "string" ? draft.notes.trim() : "";
   if (rawNotes.length > COMMAND_LIMITS.notesMax) {
     return refuse("notes", `Notes are at most ${COMMAND_LIMITS.notesMax} characters.`);
   }
 
+  // 6. The two fields a person does not edit from the form.
+  //
+  // `id` and `enabled` arrive with the rest of the body, so they need the same
+  // treatment every other body field gets. A draft carrying another row's id is a
+  // request to move a saved command's identity, and the update A6 issues is keyed off
+  // the id this door returns; a body that leaves `enabled` out is a partial update,
+  // not a request to switch a switched-off command back on.
+  if (draft.id !== undefined && draft.id !== null && draft.id !== previous.id) {
+    return refuse("id", "A saved command keeps its own id; this draft names another row.");
+  }
+  if (draft.enabled !== undefined && draft.enabled !== null && typeof draft.enabled !== "boolean") {
+    return refuse("enabled", "Enabled is a yes or a no.");
+  }
+
   return {
     ok: true,
     command: {
-      id: typeof draft.id === "string" ? draft.id : previous.id,
+      id: previous.id,
       scope: previous.scope,
       ownerProfileId: previous.ownerProfileId,
       triggerPhrase,
@@ -407,7 +496,7 @@ export function parseCommandDraft(
       rawCategory: null,
       action,
       notes: rawNotes || null,
-      enabled: draft.enabled === undefined ? true : draft.enabled === true,
+      enabled: draft.enabled === undefined || draft.enabled === null ? previous.enabled : draft.enabled,
       problem: null,
     },
   };

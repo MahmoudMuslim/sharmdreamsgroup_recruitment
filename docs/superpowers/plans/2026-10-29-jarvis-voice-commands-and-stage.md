@@ -189,6 +189,46 @@ async function check3() {
   expect(problems, "an inexpressible args map carries no action", objectArgs.action, null);
   expect(problems, "and is disabled", objectArgs.enabled, false);
   expect(problems, "and names the action as the problem", objectArgs.problem, "action");
+
+  // The same switch-off for the two shapes the loop used to coerce, so a row no
+  // save could write is never a row this door runs.
+  const arrayArgs = m.normalizeCommandRow({
+    ...base,
+    action_type: "tool",
+    action_payload: { tool: "search_people", args: ["APPLIED"] },
+  });
+  expect(problems, "an array in the argument map's place carries no action", arrayArgs.action, null);
+  const stringArgs = m.normalizeCommandRow({
+    ...base,
+    action_type: "tool",
+    action_payload: { tool: "search_people", args: "stage=APPLIED" },
+  });
+  expect(problems, "a string in the argument map's place carries no action", stringArgs.action, null);
+  expect(problems, "and an argument-less tool row still runs",
+    m.normalizeCommandRow({ ...base, action_type: "tool", action_payload: { tool: "search_people" } }).action,
+    { type: "tool", tool: "search_people", args: {} });
+
+  // A payload that is not a set of fields is not read as an empty one. The `ask`
+  // branch is the one that runs holding no fields at all, so a string wearing a
+  // payload would otherwise become a command that asks nothing.
+  const scalarPayload = m.normalizeCommandRow({
+    ...base,
+    action_type: "ask",
+    action_payload: "open the outbox",
+  });
+  expect(problems, "a scalar payload carries no action", scalarPayload.action, null);
+  expect(problems, "and names the action as the problem", scalarPayload.problem, "action");
+
+  // A stored path that walks up is not the page its prefix names.
+  const dotHref = m.normalizeCommandRow({ ...base, action_payload: { href: "/candidates/../login" } });
+  expect(problems, "a dot-segment href carries no action", dotHref.action, null);
+  expect(problems, "and is disabled", dotHref.enabled, false);
+
+  // Read again, never trusted from the save: a row whose href left the staff pages
+  // after it was written is switched off by this door whatever the writer allowed.
+  const offSite = m.normalizeCommandRow({ ...base, action_payload: { href: "https://example.com/x" } });
+  expect(problems, "a stored off-site href carries no action", offSite.action, null);
+  expect(problems, "and is disabled", offSite.enabled, false);
   return verdict(problems);
 }
 ```
@@ -355,6 +395,55 @@ function isCategory(value: unknown): value is CommandCategoryId {
 }
 
 /**
+ * A JSON object, as opposed to an array or a string wearing one's clothes.
+ *
+ * Both doors ask this of an action payload and of a tool's argument map: a value
+ * that is not a plain object names no fields, and `Object.entries(["APPLIED"])`
+ * would hand a tool `{0: "APPLIED"}` — arguments nobody typed.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a path says "up", which the guard's prefix test cannot see.
+ *
+ * `isStaffPath` matches the front of a path, so `/candidates/../login` passes it and
+ * the browser resolves the link somewhere the guard never named. The percent form is
+ * folded to a dot first, because a router decodes a segment before it decides which
+ * page that segment reaches.
+ */
+function hasDotSegment(pathname: string): boolean {
+  return pathname
+    .split("/")
+    .some((segment) => {
+      const dotted = segment.replace(/%2e/gi, ".");
+      return dotted === "." || dotted === "..";
+    });
+}
+
+/**
+ * The one shape a tool's arguments may take, asked identically by both doors.
+ *
+ * Absent or null is an argument-less run, which is storable. A plain object of single
+ * values is the map. Anything else returns `null`: the write door refuses it by name,
+ * the read door switches the row off. One predicate, so a draft the save accepts is
+ * always a row the read runs, and never a row the read runs that no save could write.
+ */
+function toolArgs(container: unknown): Record<string, string> | null {
+  if (container === undefined || container === null) return {};
+  if (!isPlainObject(container)) return null;
+  const args: Record<string, string> = {};
+  for (const [key, value] of Object.entries(container)) {
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+      return null;
+    }
+    args[key] = String(value);
+  }
+  return args;
+}
+
+/**
  * One action, accepted only in the shape its type can carry.
  *
  * Nothing here guesses. An `open` row whose payload has no href is not a command
@@ -362,7 +451,11 @@ function isCategory(value: unknown): value is CommandCategoryId {
  * words behind a person's saved phrase that they never wrote.
  */
 function readAction(actionType: unknown, payload: unknown): CommandAction | null {
-  const record = typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+  // A payload that is not a set of fields is not an empty set of fields. This door
+  // renders what it is given, and a row holding `"open the outbox"` where the table
+  // says object is not a command with no fields — it is one nobody wrote.
+  if (payload !== undefined && payload !== null && !isPlainObject(payload)) return null;
+  const record = isPlainObject(payload) ? payload : {};
 
   switch (actionType) {
     case "ask": {
@@ -373,25 +466,21 @@ function readAction(actionType: unknown, payload: unknown): CommandAction | null
     }
     case "open": {
       const href = typeof record.href === "string" ? record.href.trim() : "";
+      const pathname = href.split("?")[0] ?? "";
       // Read again rather than trusted from the save: a row edited after it was
       // written is the case this door exists for.
-      if (!isStaffPath(href.split("?")[0] ?? "")) return null;
+      if (hasDotSegment(pathname)) return null;
+      if (!isStaffPath(pathname)) return null;
       return { type: "open", href };
     }
     case "tool": {
       const tool = typeof record.tool === "string" ? record.tool.trim() : "";
       if (!tool) return null;
-      const raw = typeof record.args === "object" && record.args !== null ? record.args : {};
-      const args: Record<string, string> = {};
-      for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-        // The same refusal the write door makes for this shape, made here as a
-        // switch-off: a run that got fewer arguments than the row holds is a
-        // command nobody wrote, so an argument this type cannot carry is not run.
-        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-          return null;
-        }
-        args[key] = String(value);
-      }
+      // The same predicate the write door refuses with: a run that got fewer
+      // arguments than the row holds is a command nobody wrote, so an argument this
+      // type cannot carry — or a map this shape cannot hold — is not run.
+      const args = toolArgs(record.args);
+      if (args === null) return null;
       return { type: "tool", tool, args };
     }
     case "note": {
@@ -410,7 +499,6 @@ function phraseProblem(phrase: unknown): string | null {
   if (trimmed.length < COMMAND_LIMITS.phraseMin || trimmed.length > COMMAND_LIMITS.phraseMax) {
     return `a phrase is between ${COMMAND_LIMITS.phraseMin} and ${COMMAND_LIMITS.phraseMax} characters`;
   }
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001F]/.test(phrase)) return "a phrase cannot carry a control character";
   return null;
 }
@@ -513,6 +601,14 @@ async function check2() {
     if (out.ok !== false) problems.push(`${label}: expected a refusal`);
     else if (out.field !== field) problems.push(`${label}: refused ${out.field}, expected ${field}`);
   };
+  // A refusal is "stated" only if its sentence is part of the proof, so the refusals
+  // a person has to act on are quoted as well as filed under a field.
+  const refusedWith = (label, draft, field, needle) => {
+    const out = ok(draft);
+    if (out.ok !== false) problems.push(`${label}: expected a refusal`);
+    else if (out.field !== field) problems.push(`${label}: refused ${out.field}, expected ${field}`);
+    else if (!needle.test(out.message ?? "")) problems.push(`${label}: said “${out.message}”, expected ${needle}`);
+  };
   const good = {
     trigger_phrase: "open the outbox", title: "Outbox", category: "communication",
     action_type: "open", action_payload: { href: "/whatsapp" }, notes: "", enabled: true,
@@ -524,6 +620,9 @@ async function check2() {
   if (parsed.ok) {
     expect(problems, "to an open action", parsed.command.action, { type: "open", href: "/whatsapp" });
     expect(problems, "with the scope it is stored under", parsed.command.scope, "personal");
+    // Task A6 issues the update as `.eq("id", parsed.command.id)`, so the identity this
+    // door returns is the row the write lands on. Nothing else in this group reads it.
+    expect(problems, "keeping the row it was given", parsed.command.id, "c1");
   }
 
   // Phrase.
@@ -541,12 +640,21 @@ async function check2() {
   refused("an invented action type", { ...good, action_type: "delete" }, "action_type");
 
   // `open` — the guard's own rule, quoted back.
-  refused("an off-site href", { ...good, action_payload: { href: "https://example.com/x" } }, "action_payload");
-  refused("a javascript: href", { ...good, action_payload: { href: "javascript:alert(1)" } }, "action_payload");
-  refused("a path the guard does not cover", { ...good, action_payload: { href: "/candidate-portal" } }, "action_payload");
+  refusedWith("an off-site href", { ...good, action_payload: { href: "https://example.com/x" } }, "action_payload", /not a staff page/);
+  refusedWith("a javascript: href", { ...good, action_payload: { href: "javascript:alert(1)" } }, "action_payload", /not a staff page/);
+  refusedWith("a path the guard does not cover", { ...good, action_payload: { href: "/candidate-portal" } }, "action_payload", /not a staff page/);
   refused("an empty href", { ...good, action_payload: { href: "" } }, "action_payload");
+  // The guard matches the front of a path; a command link is resolved by a browser,
+  // so a path that walks up out of the page its prefix names is refused here.
+  refused("a path that walks up", { ...good, action_payload: { href: "/candidates/../login" } }, "action_payload");
+  refused("a path that walks up in disguise", { ...good, action_payload: { href: "/candidates/%2E%2E/login" } }, "action_payload");
   expect(problems, "a staff path with a query is accepted",
     ok({ ...good, action_payload: { href: "/candidates?q=offer" } }).ok, true);
+  expect(problems, "a dot inside a name is not a walk",
+    ok({ ...good, action_payload: { href: "/candidates/re.marks" } }).ok, true);
+  // A payload of the wrong kind names no fields; it is not the same as an empty one.
+  refused("a payload that is not a set of fields", { ...good, action_payload: "open the outbox" }, "action_payload");
+  refused("a payload that is a list", { ...good, action_payload: ["/whatsapp"] }, "action_payload");
 
   // `tool` — unknown, destructive and web names are all refused here, not at dispatch.
   const asTool = { ...good, action_type: "tool" };
@@ -555,6 +663,12 @@ async function check2() {
   refused("a web tool", { ...asTool, action_payload: { tool: "search_web", args: {} } }, "action_payload");
   expect(problems, "a read-only tool is accepted",
     ok({ ...asTool, action_payload: { tool: "list_candidates", args: { stage: "APPLIED" } } }).ok, true);
+  expect(problems, "a tool with no arguments at all is accepted",
+    ok({ ...asTool, action_payload: { tool: "list_candidates" } }).ok, true);
+  refusedWith("a list in the argument map's place",
+    { ...asTool, action_payload: { tool: "list_candidates", args: ["APPLIED"] } }, "action_payload", /named single values/);
+  refusedWith("an argument that holds a value",
+    { ...asTool, action_payload: { tool: "list_candidates", args: { filters: { stage: "APPLIED" } } } }, "action_payload", /named single values/);
 
   // `note` and `ask` ceilings.
   refused("a note past its ceiling",
@@ -563,14 +677,34 @@ async function check2() {
   expect(problems, "an ask with no prompt is a valid ask",
     ok({ ...good, action_type: "ask", action_payload: {} }).ok, true);
 
-  // Size, measured the way the database measures it.
-  const huge = { ...good, action_type: "ask", action_payload: { prompt: "p".repeat(5000) } };
-  refused("an over-sized payload", huge, "action_payload");
-  expect(problems, "the byte count is the JSON the column holds",
-    m.payloadBytes({ prompt: "abc" }), new TextEncoder().encode(JSON.stringify({ prompt: "abc" })).length);
+  // Size: the 4 KB ceiling and the question ceiling are two different refusals.
+  refusedWith("an over-sized payload",
+    { ...good, action_type: "ask", action_payload: { prompt: "p".repeat(5000) } }, "action_payload", /4 KB/);
+  refusedWith("a saved question past its own ceiling",
+    { ...good, action_type: "ask", action_payload: { prompt: "p".repeat(2500) } }, "action_payload", /2000 characters/);
+  // 16 is the byte count written out, not recomputed from the door's own formula, so
+  // a wrong constant here is a red check. The column's canonical `::text` is longer
+  // than this compact JSON — which is why `051`'s CHECK has headroom (R13).
+  expect(problems, "the door measures the compact JSON of the payload", m.payloadBytes({ prompt: "abc" }), 16);
 
   // Notes on the row itself.
-  refused("a note past 500", { ...good, notes: "n".repeat(501) }, "notes");
+  refused("notes past 500", { ...good, notes: "n".repeat(501) }, "notes");
+  refused("notes that are not text", { ...good, notes: 123 }, "notes");
+
+  // `enabled`: a draft that leaves it out is a partial update, not a request to
+  // switch a switched-off command back on; a draft that sends a string is refused.
+  const okAgainstOff = (draft) => m.parseCommandDraft(draft, { ...PREV, id: "c9", enabled: false }, TOOLS);
+  const staysOff = okAgainstOff({ ...good, enabled: undefined });
+  expect(problems, "omitting enabled keeps a disabled command disabled",
+    staysOff.ok ? staysOff.command.enabled : "refused", false);
+  const switched = okAgainstOff({ ...good, enabled: true });
+  expect(problems, "and an explicit yes is an explicit yes",
+    switched.ok ? switched.command.enabled : "refused", true);
+  refusedWith("an enabled that is not a yes or a no", { ...good, enabled: "true" }, "enabled", /yes or a no/);
+
+  // `id`: the door does not let a body move a saved command's identity.
+  refusedWith("a draft carrying somebody else's id", { ...good, id: "c2" }, "id", /keeps its own id/);
+  expect(problems, "and its own id is not a refusal", okAgainstOff({ ...good, id: "c9" }).ok, true);
 
   // A refusal never touches the stored value: the message is the whole answer.
   const after = ok({ ...good, trigger_phrase: "x" });
@@ -592,18 +726,28 @@ Append to `commands.ts`:
 
 ```ts
 /**
- * Payload size as the column sees it.
+ * Payload size, counted on the compact JSON.
  *
- * The CHECK in `051` measures `octet_length(action_payload::text)`, so the door
- * measures the same bytes: a draft this module accepted and the database rejected
- * would surface as a REST error the console has no field to point at.
+ * The CHECK in `051` measures `octet_length(action_payload::text)`, and a jsonb
+ * value's canonical text is longer than `JSON.stringify` of the same object twice
+ * over: a space after every comma and colon, and octets rather than characters — an
+ * Arabic or Russian prompt costs two or three of them per character. The counts are
+ * not equal and this door cannot quote the column's figure, so the ceilings are
+ * deliberately unequal, ruled in Task A4 as R13: the CHECK is larger than the number
+ * refused here, which is what keeps an accepted draft from dying in the database as
+ * a REST error with no field for the console to point at.
  */
 export function payloadBytes(payload: Record<string, unknown>): number {
   return new TextEncoder().encode(JSON.stringify(payload)).length;
 }
 
 export type CommandDraft = {
-  id?: string;
+  /**
+   * The row this draft belongs to, if it belongs to one. `unknown`, not `string`,
+   * because a body field this door reasons about is a body field it does not
+   * type-promise to believe.
+   */
+  id?: unknown;
   trigger_phrase?: unknown;
   title?: unknown;
   category?: unknown;
@@ -670,10 +814,17 @@ export function parseCommandDraft(
   ) {
     return refuse("action_type", "Choose what the command does.");
   }
-  const payload =
-    typeof draft.action_payload === "object" && draft.action_payload !== null
-      ? (draft.action_payload as Record<string, unknown>)
-      : {};
+  // A payload that is not a set of named fields is not a set of named fields that
+  // happens to be empty: `"open the outbox"` and `{}` are different statements, and
+  // reading the first as the second is the silent default this door exists to avoid.
+  if (
+    draft.action_payload !== undefined &&
+    draft.action_payload !== null &&
+    !isPlainObject(draft.action_payload)
+  ) {
+    return refuse("action_payload", "An action is a set of named fields, not a list or a single value.");
+  }
+  const payload = isPlainObject(draft.action_payload) ? draft.action_payload : {};
   if (payloadBytes(payload) > COMMAND_LIMITS.payloadBytes) {
     return refuse("action_payload", "That action is larger than the 4 KB a command may carry.");
   }
@@ -693,6 +844,15 @@ export function parseCommandDraft(
     // table. Checked on the path alone, because a query cannot change which page a
     // link reaches but it can change what a naive prefix test accepts.
     const pathname = href.split("?")[0] ?? "";
+    // …and the guard's prefix is matched from the front, so a path that steps up is
+    // refused on top of it: `/candidates/../login` passes `/candidates/` here and
+    // lands somewhere the rail never listed.
+    if (hasDotSegment(pathname)) {
+      return refuse(
+        "action_payload",
+        `${href} walks up out of the page it names, so no command may open it.`
+      );
+    }
     if (!isStaffPath(pathname)) {
       return refuse(
         "action_payload",
@@ -714,13 +874,11 @@ export function parseCommandDraft(
     if (known.web === true) {
       return refuse("action_payload", `${known.label} leaves the portal, and a saved command may not.`);
     }
-    const rawArgs = typeof payload.args === "object" && payload.args !== null ? payload.args : {};
-    const args: Record<string, string> = {};
-    for (const [key, value] of Object.entries(rawArgs as Record<string, unknown>)) {
-      if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-        return refuse("action_payload", `The argument ${key} has to be a single value.`);
-      }
-      args[key] = String(value);
+    // The read door's predicate, the same one, so the two doors can never disagree
+    // about which argument shapes exist.
+    const args = toolArgs(payload.args);
+    if (args === null) {
+      return refuse("action_payload", "A tool's arguments have to be named single values.");
     }
     action = { type: "tool", tool: known.name, args };
   } else {
@@ -733,15 +891,32 @@ export function parseCommandDraft(
   }
 
   // 5. The description, which reaches nobody but the person who wrote it.
+  if (draft.notes !== undefined && draft.notes !== null && typeof draft.notes !== "string") {
+    return refuse("notes", "Notes are text.");
+  }
   const rawNotes = typeof draft.notes === "string" ? draft.notes.trim() : "";
   if (rawNotes.length > COMMAND_LIMITS.notesMax) {
     return refuse("notes", `Notes are at most ${COMMAND_LIMITS.notesMax} characters.`);
   }
 
+  // 6. The two fields a person does not edit from the form.
+  //
+  // `id` and `enabled` arrive with the rest of the body, so they need the same
+  // treatment every other body field gets. A draft carrying another row's id is a
+  // request to move a saved command's identity, and the update A6 issues is keyed off
+  // the id this door returns; a body that leaves `enabled` out is a partial update,
+  // not a request to switch a switched-off command back on.
+  if (draft.id !== undefined && draft.id !== null && draft.id !== previous.id) {
+    return refuse("id", "A saved command keeps its own id; this draft names another row.");
+  }
+  if (draft.enabled !== undefined && draft.enabled !== null && typeof draft.enabled !== "boolean") {
+    return refuse("enabled", "Enabled is a yes or a no.");
+  }
+
   return {
     ok: true,
     command: {
-      id: typeof draft.id === "string" ? draft.id : previous.id,
+      id: previous.id,
       scope: previous.scope,
       ownerProfileId: previous.ownerProfileId,
       triggerPhrase,
@@ -750,7 +925,7 @@ export function parseCommandDraft(
       rawCategory: null,
       action,
       notes: rawNotes || null,
-      enabled: draft.enabled === undefined ? true : draft.enabled === true,
+      enabled: draft.enabled === undefined || draft.enabled === null ? previous.enabled : draft.enabled,
       problem: null,
     },
   };
@@ -764,13 +939,55 @@ Expected: `3/3 checks held, 0/0 mutations turned red.`
 
 - [ ] **Step 5: Add group 2's mutation**
 
+The needle is the guard's own test, and the replacement has to make the door *more*
+permissive, since that is the failure the label names. `pathname.length > 1` made it
+stricter, so the check went red on the accept side and the printed line claimed a
+proof of the off-site refusal it never exercised. `if (false)` is the honest swap: the
+guard stops refusing, the three `refusedWith(… /not a staff page/)` assertions push
+problems, and the accepts stay green.
+
 ```js
 await mutation(
   "1. The write door letting an off-site href through → check 2 red",
   DOMAIN_REL,
   "    if (!isStaffPath(pathname)) {",
-  "    if (pathname.length > 1) {",
+  "    if (false) {",
   async () => checkIsRed(2)
+);
+
+// Every guard this task added is pinned by a mutation of its own, so a later task
+// that quietly restores a coercion has to watch a check go red to do it. The last
+// four are proven from the read door's side — the same breaks, seen there.
+await mutation(
+  "2. The shared argument predicate coercing a container it cannot express → check 3 red",
+  DOMAIN_REL,
+  "  if (!isPlainObject(container)) return null;",
+  "  if (!isPlainObject(container)) return {};",
+  async () => checkIsRed(3)
+);
+
+await mutation(
+  "3. The read door trusting a stored payload it was not given as fields → check 3 red",
+  DOMAIN_REL,
+  "  if (payload !== undefined && payload !== null && !isPlainObject(payload)) return null;",
+  "  if (false) return null;",
+  async () => checkIsRed(3)
+);
+
+await mutation(
+  "4. The read door letting a stored path walk up → check 3 red",
+  DOMAIN_REL,
+  "      if (hasDotSegment(pathname)) return null;",
+  "      if (false) return null;",
+  async () => checkIsRed(3)
+);
+
+await mutation(
+  "5. The read door trusting the save about which pages are staff pages → check 3 red",
+  DOMAIN_REL,
+  "      if (!isStaffPath(pathname)) return null;",
+  "      if (false) return null;",
+  async () => checkIsRed(3)
 );
 ```
 
@@ -1004,7 +1221,7 @@ async function check5() {
   has("no control characters", "trigger_phrase !~ '[\\u0000-\\u001F]'");
   has("title ceiling", "char_length(btrim(title)) between 1 and 80");
   has("notes ceiling", "char_length(notes) <= 500");
-  has("payload size", "octet_length(action_payload::text) <= 4096");
+  has("payload size", "octet_length(action_payload::text) <= 16384");
   has("the six categories", "category in ('navigation','hiring','communication','reports','settings','personal')");
   has("the four action types", "action_type in ('ask','open','tool','note')");
 
@@ -1115,8 +1332,15 @@ create table if not exists public.assistant_jarvis_commands (
       action_type in ('ask','open','tool','note')
     ),
   action_payload jsonb not null default '{}'::jsonb
+    -- Four times the door's ceiling, deliberately (ruling R13). The console refuses a
+    -- draft above 4096 *characters* of compact JSON; this column measures
+    -- octet_length of jsonb's canonical text, which is longer twice over: it re-inserts
+    -- a space after every comma and colon, and it counts UTF-8 bytes, so an `ask`
+    -- prompt written in Arabic or Russian costs two or three octets per character.
+    -- A ceiling equal to the door's would let the console accept a row the database
+    -- then rejects — a save that fails with a message nobody can predict.
     constraint assistant_jarvis_commands_payload_size check (
-      octet_length(action_payload::text) <= 4096
+      octet_length(action_payload::text) <= 16384
     ),
   notes text
     constraint assistant_jarvis_commands_notes_shape check (
