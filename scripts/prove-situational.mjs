@@ -3,9 +3,10 @@
  *
  * #261 adds the situational judgment question type: a workplace scene whose
  * responses each earn a 0–100 percentage of the question's marks instead of one
- * being right. `db/migrations/034_situational_judgment.sql` is authored and NOT
- * applied, so on the live stack the fifth enum value does not exist yet. What
- * can be pinned without a database is the part every door shares:
+ * being right. `db/migrations/034_situational_judgment.sql` is APPLIED on this
+ * local database, so the fifth enum value exists here; on a database where that
+ * file has never run it does not. What can be pinned without a database is the
+ * part every door shares:
  *
  *   1. the arithmetic — one module decides what a pick earns, for the runner,
  *      the submit route, the review desk, the bank and the AI drafter;
@@ -304,7 +305,7 @@ const migration = read(SITUATIONAL_MIGRATION);
 for (const [label, needle] of [
   ["appends the label idempotently", "alter type public.question_type add value if not exists 'SITUATIONAL_JUDGMENT';"],
   ["reloads the REST schema", "notify pgrst, 'reload schema';"],
-  ["says it is not applied", "This migration is NOT applied to any database yet."],
+  ["records the apply on this database", "APPLIED on this local database"],
   ["names the refusal a probe meets", "22P02"],
   ["keeps the scores in config rather than a column", "assessment_questions.config"],
 ]) {

@@ -4,10 +4,18 @@
 -- One line per person and permission: what the role grants, this changes for
 -- one account.
 --
--- STATUS: authored here, NOT applied. Until it is applied the grant resolver
---   finds no table, reads the role's grants alone and reports `applied: false`;
---   the Team console says so in the member panel, naming this file. No account
---   is quietly wider or narrower than its role while the file waits.
+-- STATUS: APPLIED on this local database. The date this file was run is not
+--   recorded here; what is recorded is `user_permission_overrides` read back from
+--   the catalog on 2026-10-29 — row security on and the four policies this file
+--   declares (`staff_read`, `write`, `update`, `delete`) — with zero rows, so no
+--   account is wider or narrower than its role yet. The grant resolver reports
+--   `applied: true` here and the Team console's per-account editor has never been
+--   driven against a real row; that live write is the open half of this slice, not
+--   a fact this file can claim. On a database where this file has never run the
+--   resolver finds no table, reads the role's grants alone and reports
+--   `applied: false`, and the member panel says so naming this file — a condition,
+--   not this database's state. No account is quietly wider or narrower than its
+--   role either way.
 --
 -- REHEARSED, not against a scratch schema but against a clone of the live
 --   applied one (pg_dump --schema-only, then the four real profiles and the real

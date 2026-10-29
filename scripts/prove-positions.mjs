@@ -193,7 +193,7 @@ check(
 );
 
 // ---------------------------------------------------------------------------
-// 3. What Settings and the chat say while 026 is unapplied
+// 3. What Settings and the chat say on a database where 026 never ran
 // ---------------------------------------------------------------------------
 check(
   "the seven lists keep the dock's order",

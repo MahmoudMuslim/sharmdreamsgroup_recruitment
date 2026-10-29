@@ -13,9 +13,16 @@
 --   candidate_consents shape, calls erase_candidate_data, and its backfill
 --   excludes the 'erased+...@erased.invalid' address that 041:405 mints).
 --
--- STATUS: authored here, NOT applied. Applying this file needs the owner's
---   explicit per-file approval. It will be rehearsed on a throwaway database
---   before it lands on the local stack.
+-- STATUS: APPLIED on this local database. The date this file was run is not
+--   recorded here; what is recorded is the catalog re-read on 2026-10-29 — all
+--   thirteen `person_*` tables present, `applications.person_id` present, and the
+--   candidate-photos door present as `files` policies (`candidates upload photos`,
+--   `staff read/upload/delete candidate photos`) over the `bucket` column. On this
+--   self-hosted stack there is no `storage.buckets` catalog to insert into: the
+--   bucket is a name in `src/lib/config.ts` (`candidatePhotos`) and the policies
+--   are what enforce it, so this file's bucket act reads here as policy and code,
+--   not as a catalog row. Applying this file takes the owner's explicit per-file
+--   approval, which is what it was applied under.
 --
 -- See docs/superpowers/specs/2026-10-25-person-profile-spine-design.md §1.
 -- ============================================================================

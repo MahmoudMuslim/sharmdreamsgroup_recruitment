@@ -39,11 +39,17 @@
 -- rewrite what the panel considered. The interview itself cascades: a schedule
 -- row that disappears takes its scorecards, which have no meaning without it.
 --
--- This migration is NOT applied to any database yet. The rounds column is read
--- through its own probe and the scorecard table through another, so the agenda
--- and the booking form keep working while this file is unapplied; both say the
--- migration's name instead of pretending a panel was never scored. Applying it
--- is the owner's decision, so only the file and the schema of record change.
+-- APPLIED on this local database. The date this file was run is not recorded
+-- here; what is recorded is the catalog re-read on 2026-10-29, which found
+-- `interview_scorecards` with row security on and its three policies (staff read,
+-- own add, own change), `interview_schedules.round` beside the
+-- `interview_schedules_round_check` constraint, and the
+-- `trg_interview_scorecards_updated` trigger. The rounds column is read through
+-- its own probe and the scorecard table through another because both were written
+-- against a database that might not have them: on a database where this file has
+-- never run, the agenda and the booking form say the migration's name instead of
+-- pretending a panel was never scored. That is the condition those probes answer,
+-- not this database's state.
 -- ---------------------------------------------------------------------------
 
 alter table public.interview_schedules

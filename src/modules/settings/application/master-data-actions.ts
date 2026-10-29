@@ -1297,7 +1297,7 @@ export async function getMasterOptions(): Promise<{
   locations: { id: string; name: string; city: string | null }[];
   roleFamilies: { id: string; key: string; label: string }[];
   positions: PositionChoice[];
-  /** False while `db/migrations/026_positions.sql` is unapplied; the picker says so. */
+  /** False on a database where `db/migrations/026_positions.sql` has never run; the picker says so. */
   positionsAvailable: boolean;
   skills: { id: string; name: string; category: string | null }[];
   currencies: { id: string; code: string; symbol: string; label: string }[];

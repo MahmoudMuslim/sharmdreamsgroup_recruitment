@@ -151,7 +151,7 @@ check(
 sourceHas("the migration adds the label idempotently", "db/migrations/039_coding_questions.sql", [
   "alter type public.question_type add value if not exists 'CODING';",
   "notify pgrst, 'reload schema';",
-  "NOT APPLIED",
+  "APPLIED on this local database",
 ]);
 sourceHas("the domain never names a dependency that would run code", "src/modules/assessment/domain/coding.ts", [
   "Nothing here touches the database.",

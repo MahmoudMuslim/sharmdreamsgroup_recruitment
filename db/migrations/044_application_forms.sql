@@ -13,9 +13,17 @@
 --   bucket and its files policies are that slice's, and a `person:` binding
 --   writes into tables only 043 creates.
 --
--- STATUS: authored here, NOT applied. Applying this file needs the owner's
---   explicit per-file approval. It is rehearsed on a throwaway database with
---   041 and 043 pre-applied before it lands on the local stack.
+-- STATUS: APPLIED on this local database. The date this file was run is not
+--   recorded here; what is recorded is the catalog re-read on 2026-10-29 — the
+--   four tables (`application_forms`, `application_form_fields`,
+--   `job_application_forms`, `application_form_files`), `applications.form_answers`,
+--   `erase_candidate_data(uuid)` in place from the REPLACE, and the seeded
+--   PUBLISHED global form as 1 row of the 8 the board now lists. The
+--   candidate-photos bucket is 043's, and on this self-hosted stack it is a name in
+--   `src/lib/config.ts` plus its `files` policies, not a `storage.buckets` row.
+--   Applying this file takes the owner's explicit per-file approval and a
+--   throwaway rehearsal with 041 and 043 pre-applied, which is the order the local
+--   stack has them in.
 --
 -- See docs/superpowers/specs/2026-10-25-application-form-builder-design.md §1.
 -- ============================================================================

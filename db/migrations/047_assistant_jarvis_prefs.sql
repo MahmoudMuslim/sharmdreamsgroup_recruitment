@@ -3,9 +3,14 @@
 --
 -- One row per person: how far the assistant's presence may reach.
 --
--- STATUS: authored here, NOT applied. Until it is applied the reader returns
---   defaults with `problem: "absent"` — everything off — and the JARVIS panel
---   says so, naming this file. Nothing is silently assumed on.
+-- STATUS: APPLIED on this local database. The date this file was run is not
+--   recorded here; what is recorded is `assistant_jarvis_prefs` read back from the
+--   catalog on 2026-10-29 — row security on and exactly the three own-row policies
+--   (`own_read`, `own_insert`, `own_update`), which is the no-delete shape this
+--   file promises. On a database where this file has never run the reader returns
+--   defaults with `problem: "absent"` — everything off — and the JARVIS panel says
+--   so, naming this file, so nothing is silently assumed on there. That is the
+--   condition the reader was written against, not this database's state.
 --
 -- Why a row and not localStorage: `ambient` arms a microphone on every admin
 --   screen, and `watching` decides what the portal says out loud. Both are

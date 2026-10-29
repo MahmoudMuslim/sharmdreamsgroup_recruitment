@@ -19,7 +19,7 @@
  * - the picker: does it offer the catalogue in its own order, add at the column's
  *   default, hand the level back as a number, refuse to add a thirteenth, quote
  *   the requirement line a suggestion came from, leave a level the recruiter set
- *   alone, and say nothing but the file name while 037 is unapplied?
+ *   alone, and say nothing but the file name on a database where 037 never ran?
  * - the job form: does an edit load the opening's own rows, does an untouched list
  *   spare the writer entirely, does a changed list go to the id the opening write
  *   returned, and does a skills refusal keep the drawer open on a saved opening?
@@ -621,7 +621,7 @@ test("a matched row says where it came from and a chosen one does not", () => {
   ui.unmount();
 });
 
-test("while 037 is unapplied the picker names the file and offers no checkbox", () => {
+test("on a database where 037 never ran the picker names the file and offers no checkbox", () => {
   const ui = harness("picker", { note: OPENING_SKILLS_SCHEMA_NOTE });
   assert.ok(ui.text().includes(OPENING_SKILLS_SCHEMA_NOTE));
   assert.match(ui.text(), /037_opening_skills\.sql/);

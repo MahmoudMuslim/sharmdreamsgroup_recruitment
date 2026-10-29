@@ -38,11 +38,16 @@
 -- destructive timer that starts on installation, before anybody has read the
 -- console, is not a default anybody chose.
 --
--- NOT APPLIED. This file is authored so the screens, the cron route and the proof
--- can name it; running it is the owner's decision. The apply form enforces
--- processing consent in code and treats the stamps as best-effort, so a database
--- without this migration still accepts applications — it just cannot prove later
--- that the consent was recorded.
+-- APPLIED on this local database. The date this file was run is not recorded
+-- here; what is recorded is the catalog re-read on 2026-10-29 — `candidate_consents`,
+-- `privacy_requests` and the `application_retention` view, all five stamps on
+-- `applications` (`processing_consent_at`, `talent_pool_consent_at`,
+-- `notice_version`, `erased_at`, `retention_warned_at`), and
+-- `erase_candidate_data(uuid)`. The apply form enforces processing consent in
+-- code and treats the stamps as best-effort, so a database without this migration
+-- still accepts applications — it just cannot prove later that the consent was
+-- recorded. That is the condition the code is written against, not this
+-- database's state.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------

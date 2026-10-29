@@ -9,9 +9,10 @@
  * activity row the drawer has are the chat's, and the assistant gains no
  * private route to `job_opening_skills`.
  *
- * `db/migrations/037_opening_skills.sql` is authored and NOT applied, so on this
- * database the table does not exist and no row can be written. Every test here
- * is written around that: an empty skill list has to say WHICH of the two it
+ * `db/migrations/037_opening_skills.sql` is APPLIED on this local database; every
+ * test here is written for the other case — a database where that file has never
+ * run, so the table does not exist and no row can be written. There an empty skill
+ * list has to say WHICH of the two it
  * means — "this opening asks for nothing" or "no requisition can carry a list
  * yet" — and a write has to refuse with the file's name instead of half-applying.
  *
@@ -346,7 +347,7 @@ test("an opening that asks for nothing says so with no note", async () => {
   assert.equal(h.askedFor("skills").length, 0);
 });
 
-test("while 037 is unapplied get_job still answers the opening and names the file", async () => {
+test("on a database where 037 never ran get_job still answers the opening and names the file", async () => {
   const h = harness({ errors: { job_opening_skills: missing } });
   const answer = await h.getJob();
 

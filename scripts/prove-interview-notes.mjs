@@ -205,7 +205,7 @@ test("a panel nobody noted has no notes, which is not a claim about the panel", 
 });
 
 // ---------------------------------------------------------------------------
-// 7. What the portal says while 038 is unapplied.
+// 7. What the portal says on a database where 038 never ran.
 // ---------------------------------------------------------------------------
 test("both unapplied-schema sentences name the migration file", () => {
   assert.match(NOTES_SCHEMA_NOTE, new RegExp(INTERVIEW_NOTES_MIGRATION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

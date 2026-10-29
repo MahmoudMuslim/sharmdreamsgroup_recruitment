@@ -526,10 +526,11 @@ async function check10() {
   if (/grant[^;]*delete[^;]*assistant_jarvis_prefs/i.test(sql)) {
     problems.push("the prefs table must not grant delete to authenticated");
   }
-  // The file is authored, not applied: the claim in the header must stay true
-  // until the owner says otherwise, because the panel repeats it.
-  if (!/STATUS: authored here, NOT applied/i.test(sql)) {
-    problems.push("047's header no longer states that it is unapplied");
+  // The apply is a fact of this database, and the header records the catalog
+  // read-back it was checked against. The panel's copy keys to the reader's
+  // probe, not to this line, so this line carries the history and nothing else.
+  if (!/STATUS: APPLIED on this local database/i.test(sql)) {
+    problems.push("047's header no longer records the apply this database has");
   }
   if (!/notify pgrst, 'reload schema';/i.test(sql)) {
     problems.push("047 must reload the PostgREST schema cache");
@@ -1619,6 +1620,14 @@ await mutation(
   "    if (consentCarriesOver(form.ambientConsentAt)) {",
   "    if (form.ambientConsentAt) {",
   async () => checkIsRed(16)
+);
+
+await mutation(
+  "46. 047's header no longer records the apply → check 10 red",
+  MIGRATION_REL,
+  "STATUS: APPLIED on this local database.",
+  "STATUS: authored here, NOT applied.",
+  async () => checkIsRed(10)
 );
 
 const failed = results.filter(([, outcome]) => !outcome.pass);

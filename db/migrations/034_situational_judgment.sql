@@ -22,10 +22,13 @@
 -- candidate sees a question. The submit route scores the chosen option with the
 -- same percentage, so this file has nothing else to declare.
 --
--- This migration is NOT applied to any database yet. Nothing in the tree names
--- the value in a shared fixed select list: every door probes for it, and while
--- it is missing the database answers 22P02 ("invalid input value for enum") and
--- the door names this file. Applying it is the owner's decision.
+-- APPLIED on this local database. The date this file was run is not recorded
+-- here; what is recorded is `SITUATIONAL_JUDGMENT` read back out of pg_enum on
+-- 2026-10-29. Nothing in the tree names the value in a shared fixed select list:
+-- every door probes for it, and on a database where the label is missing the
+-- answer is 22P02 ("invalid input value for enum") and the door names this file.
+-- That refusal is the condition the probes were written against, not this
+-- database's state.
 -- ============================================================================
 
 alter type public.question_type add value if not exists 'SITUATIONAL_JUDGMENT';

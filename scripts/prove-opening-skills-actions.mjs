@@ -10,10 +10,11 @@
  * puts on the wire and the sentence a failure prints, not the shape of the
  * source.
  *
- * `db/migrations/037_opening_skills.sql` is authored and NOT applied, so the
- * table behind these two files does not exist on this database. That is the
- * single most important thing to prove: a missing table must cost the skill
- * list and nothing else. So the tests below check the refusal names the file,
+ * `db/migrations/037_opening_skills.sql` is APPLIED on this local database, so the
+ * table behind these two files exists here. The absent case is still the single
+ * most important thing to prove: on a database where that file has never run, a
+ * missing table must cost the skill list and nothing else. So the tests below check
+ * the refusal names the file,
  * check that a refusal writes nothing, and check that a failure which is NOT a
  * missing table is not dressed up as one.
  *

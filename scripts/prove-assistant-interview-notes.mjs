@@ -10,9 +10,10 @@
  * activity line and the revalidation the drawer has are the chat's, and the
  * assistant gains no private route to `interview_notes`.
  *
- * `db/migrations/038_interview_notes.sql` is authored and NOT applied, so on this
- * database the table does not exist. Every read here is written around that: an
- * empty list has to say WHICH of the three it means — "nobody wrote a note",
+ * `db/migrations/038_interview_notes.sql` is APPLIED on this local database; the
+ * reads are written for the other case — a database where that file has never run,
+ * so the table does not exist. There an empty list has to say WHICH of the three it
+ * means — "nobody wrote a note",
  * "this database has no notes table", or "no panel has that id" — because all
  * three render as zero rows and only two of them are about the panel.
  *
@@ -419,7 +420,7 @@ test("a panel nobody wrote about says exactly that", async () => {
   assert.equal(answer.notes_note, "Nobody has written a note on this panel yet.");
 });
 
-test("while 038 is unapplied the read names the file instead of calling the panel empty", async () => {
+test("on a database where 038 never ran the read names the file instead of calling the panel empty", async () => {
   const h = harness({ errors: { interview_notes: missingTable } });
   const answer = await h.readNotes();
 
@@ -558,7 +559,7 @@ test("a no-show is refused the same way", async () => {
   assert.equal(h.writes().length, 0);
 });
 
-test("while 038 is unapplied the save refuses in the file's own words and sends nothing", async () => {
+test("on a database where 038 never ran the save refuses in the file's own words and sends nothing", async () => {
   const h = harness({ errors: { interview_notes: missingTable } });
   const answer = await h.saveNotes({ body: "Asked about the gap." });
 

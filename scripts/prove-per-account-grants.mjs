@@ -20,18 +20,18 @@
  *      revocation, and a revocation that silently fails to load is a permission
  *      handed back. "Nothing is provable" is the only honest answer, and it is the
  *      same answer the role read already gives when its own query fails.
- *   4. **An absent table is not a failed read.** Until 048 is applied there are no
- *      lines to read and the role stands; after it is applied and the read errors,
- *      the account holds nothing. Those two states look identical to a caller that
- *      only asks for a set, so the resolver carries the distinction — it is what
- *      lets the Team console name the migration instead of reporting an outage, or
- *      report an outage instead of naming the migration.
+ *   4. **An absent table is not a failed read.** On a database where 048 has never
+ *      run there are no lines to read and the role stands; on one where it has run
+ *      and the read errors, the account holds nothing. Those two states look
+ *      identical to a caller that only asks for a set, so the resolver carries the
+ *      distinction — it is what lets the Team console name the migration instead of
+ *      reporting an outage, or report an outage instead of naming the migration.
  *
  * The pure half runs anywhere. The infrastructure half reads the source text,
  * because `permissions.ts` sits behind `server-only` and cannot be imported by a
  * plain-Node script; it therefore proves the *shape* (which table, which state,
  * cached or not) rather than the result of a live query, and the live queries are
- * proved in the browser once 048 is applied.
+ * proved in the browser against a database where the table exists.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -333,7 +333,7 @@ async function absentFenceNamesTheMigration() {
   // is the writer's own problem to report. Only the missing table is refused here.
   assert.equal(overrideWriteProblem({ ...CLEAN_WRITE(), source: "unreadable" }), null);
 }
-test("a write before 048 is applied is refused by name, and an outage is not", absentFenceNamesTheMigration);
+test("a write where 048 never ran is refused by name, and an outage is not", absentFenceNamesTheMigration);
 
 async function noteCeilingMatchesTheColumn() {
   const { overrideWriteProblem, OVERRIDE_NOTE_MAX_LENGTH } = await load();

@@ -48,12 +48,14 @@
 -- exists describes nothing, and deleting a panel that was cancelled by mistake
 -- should not strand its notes under a row the agenda cannot show.
 --
--- This migration is NOT applied to any database yet. Applying it is the owner's
--- decision; `scripts/prove-migration-claims.mjs` asks the database for
--- `interview_notes` and checks every sentence in the portal that states whether this
--- one has it, and `scripts/prove-interview-notes.mjs` holds the refusal copy — so an
--- unapplied file says "not stored yet" on screen and a stale claim fails the same day
--- it is written.
+-- APPLIED on this local database. The date this file was run is not recorded
+-- here; what is recorded is `interview_notes` read back from the catalog on
+-- 2026-10-29 with row security on and its four policies (staff read, own add, own
+-- change, own remove). `scripts/prove-migration-claims.mjs` asks the database for
+-- that table and checks every sentence in the portal that states whether this one
+-- has it, and `scripts/prove-interview-notes.mjs` holds the refusal copy — so on a
+-- database where this file has never run the screen says "not stored yet", and a
+-- stale claim about this one fails the same day it is written.
 -- ============================================================================
 
 create table if not exists public.interview_notes (

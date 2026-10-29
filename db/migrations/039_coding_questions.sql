@@ -10,11 +10,12 @@
 -- characters) and its own review surface instead of being smuggled into a case
 -- study.
 --
--- NOT APPLIED. This file is authored so the runner, the authoring drawer and
--- the proofs can agree on the label ahead of time. Every door that writes a
--- CODING row checks the enum first and refuses with a note naming this
--- migration. Apply it deliberately, with the same approval any other schema
--- change needs.
+-- APPLIED on this local database. The date this file was run is not recorded
+-- here; what is recorded is `CODING` read back out of pg_enum on 2026-10-29. The
+-- runner, the authoring drawer and the proofs agreed on the label ahead of the
+-- apply, and every door that writes a CODING row still checks the enum first and
+-- refuses with a note naming this migration. That note is the condition a
+-- database without the label gets, not this database's state.
 
 alter type public.question_type add value if not exists 'CODING';
 

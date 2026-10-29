@@ -16,9 +16,10 @@
  * interviewer's; and they check the same bound on the wire for the update, not only
  * in the RLS policy nobody is executing here.
  *
- * `db/migrations/038_interview_notes.sql` is authored and NOT applied, so the table
- * behind these files does not exist on this database. That is the second thing to
- * prove: a missing table must cost the notes and nothing else. So the tests check the
+ * `db/migrations/038_interview_notes.sql` is APPLIED on this local database, so the
+ * table behind these files exists here. The other case is still the second thing to
+ * prove: on a database where that file has never run, a missing table must cost the
+ * notes and nothing else. So the tests check the
  * refusal names the file, that a refusal writes nothing, that a failure which is NOT
  * a missing table is not dressed up as one, and that the read downgrades to an empty
  * layer with a note instead of throwing at the page render.
@@ -487,7 +488,7 @@ test("a blank from someone who never wrote is not a save", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. While 038 is unapplied: the missing table costs the notes and nothing else
+// 3. On a database where 038 never ran: the missing table costs the notes and nothing else
 // ---------------------------------------------------------------------------
 
 test("a missing table on the read is a refusal that names the file, with no write", async () => {

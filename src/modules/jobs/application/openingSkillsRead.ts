@@ -5,11 +5,12 @@ import "server-only";
  *
  * Both are separate queries from the openings grid's own row read, for the reason
  * `openingTermsRead.ts` gives for the seniority column: the table ships ahead of
- * its ALTER. `db/migrations/037_opening_skills.sql` is authored and not applied,
- * so on this database `job_opening_skills` does not exist, and a page that named
- * it inside the grid's `select` would lose the openings, the applicants and the
- * rails to a table only the skill picker wants. Isolated here, a missing table
- * costs the skill list and says which migration is missing.
+ * its ALTER. `db/migrations/037_opening_skills.sql` is APPLIED on this local
+ * database, so `job_opening_skills` is here; on a database where that file has
+ * never run it is not, and a page that named it inside the grid's `select` would
+ * lose the openings, the applicants and the rails to a table only the skill picker
+ * wants. Isolated here, a missing table costs the skill list and says which
+ * migration is missing.
  *
  * The caller passes the ids it already holds. Reading the whole table instead
  * would answer for openings the screen is not showing, and a bounded grid would

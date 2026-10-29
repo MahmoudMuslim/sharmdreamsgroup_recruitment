@@ -303,9 +303,9 @@ export interface MasterData {
   roleFamilies: RoleFamily[];
   positions: Position[];
   /**
-   * False when `db/migrations/026_positions.sql` has not been applied: the table
-   * could not be read, which is not the same as an empty list. The console says
-   * so instead of offering a form that would fail on save.
+   * False on a database where `db/migrations/026_positions.sql` has never run: the
+   * table could not be read, which is not the same as an empty list. The console
+   * says so instead of offering a form that would fail on save.
    */
   positionsAvailable: boolean;
   skills: Skill[];

@@ -9,9 +9,9 @@
  * Tier-3 fact or a photo, the photo bucket's five surfaces, the three new
  * permissions, and the staff-route count.
  *
- * The migration is authored, not applied, so checks 9–16 are text pins against
- * `db/migrations/043_person_profile_spine.sql` (comments stripped, whitespace
- * squashed), not assertions against a live schema.
+ * `db/migrations/043_person_profile_spine.sql` is APPLIED on this local database,
+ * and checks 9–16 are still text pins against that file (comments stripped,
+ * whitespace squashed), not assertions against a live schema.
  *
  * The nine mutation proofs are real edits: each one breaks a file, re-runs the
  * check that must notice, and restores the file in a `finally`. A mutation that

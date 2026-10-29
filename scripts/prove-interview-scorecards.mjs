@@ -4,8 +4,8 @@
  * #258 lets an interviewer record a scorecard — four marks from 1 to 5 and an
  * optional written note — and files each panel under one of four rounds. Most of
  * the feature needs a database, and `db/migrations/032_interview_scorecards.sql`
- * is authored and NOT applied, so no scorecard row can be written here. What can
- * be pinned without one:
+ * is APPLIED on this local database; on a database where that file has never run
+ * no scorecard row can be written. What can be pinned without a database:
  *
  *   1. the 1..5 rule and the written note — the same reader the action and the
  *      chat run, including the values it must refuse;
@@ -367,7 +367,7 @@ for (const [label, needle] of [
   ["checks the session profile on write", "author_profile_id = current_user_profile_id()"],
   ["revokes anon", "revoke all on table public.interview_scorecards from anon"],
   ["reloads the REST schema", "notify pgrst, 'reload schema';"],
-  ["says it is not applied", "This migration is NOT applied to any database yet."],
+  ["records the apply on this database", "APPLIED on this local database"],
 ]) {
   check(`032 ${label}`, migration.includes(needle), needle);
 }

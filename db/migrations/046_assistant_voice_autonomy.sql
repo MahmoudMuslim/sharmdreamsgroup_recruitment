@@ -3,10 +3,15 @@
 --
 -- One word per person: what a spoken confirmation is allowed to do.
 --
--- STATUS: authored here, NOT applied. Until it is applied the reader falls
---   back to `confirm`, and the voice console says so naming this file. `code`
---   and `open` are not offered while the table is absent, because a level that
---   cannot be stored cannot be enforced.
+-- STATUS: APPLIED on this local database. The date this file was run is not
+--   recorded here; what is recorded is `assistant_voice_autonomy` read back from
+--   the catalog on 2026-10-29 — row security on, the three own-row policies
+--   present, and the `mode` column still taking only `confirm`, `code` and `open`.
+--   On a database where this file has never run the reader falls back to
+--   `confirm` and the voice console says so naming this file, and `code` and
+--   `open` are not offered there, because a level that cannot be stored cannot be
+--   enforced. That fallback is the condition the reader was written against, not
+--   this database's state.
 --
 -- Why a row and not a cookie: a browser could otherwise upgrade itself from
 --   "click" to "hands-free" by editing its own storage. The level is read by the

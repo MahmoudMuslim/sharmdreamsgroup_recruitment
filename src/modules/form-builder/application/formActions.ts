@@ -98,7 +98,7 @@ export interface FormUsageRead {
 
 /** The board's read (`/forms`): every form and the openings one may be assigned to. */
 export interface FormsBoardData {
-  /** False while `044_application_forms.sql` is unapplied, or if the read failed; `note` says which. */
+  /** False on a database where `044_application_forms.sql` has never run, or if the read failed; `note` says which. */
   available: boolean;
   note?: string;
   canWrite: boolean;

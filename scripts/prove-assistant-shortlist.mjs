@@ -17,8 +17,8 @@
  * already 36 checks green. Here:
  *   1. a withheld figure never reaches the chat at all — not "sent and unsaid";
  *   2. a capped read says it is capped, and a clipped answer says it was clipped;
- *   3. while 037 is unapplied the ranking still answers, without the skill
- *      component, and names the file that would have supplied it;
+ *   3. on a database where 037 has never run the ranking still answers, without
+ *      the skill component, and names the file that would have supplied it;
  *   4. a failed read is an error, never an empty list that reads as "nobody fit".
  *
  * What runs is real: the shortlist action, the pure ranker and mapper it calls, the
@@ -364,8 +364,8 @@ test("the chat read asks for this opening's live applicants, the drawer's own sc
   );
   // The bound is one row past the ranking's ceiling, so a capped read is knowable.
   assert.equal(request.limit, SHORTLIST_LIMIT + 1);
-  // The requisition's list is read apart from the row select: while 037 is unapplied
-  // the row select still answers.
+  // The requisition's list is read apart from the row select: on a database
+  // where 037 has never run the row select still answers.
   assert.equal(h.askedFor("job_opening_skills").length, 1);
   assert.ok(!request.select.includes("job_opening_skills"));
 });
@@ -455,7 +455,7 @@ test("a masked account with no skill list cannot be ranked, and says why", async
 // 4. What the database cannot offer
 // ---------------------------------------------------------------------------
 
-test("while 037 is unapplied the ranking answers without the skill component and names the file", async () => {
+test("on a database where 037 never ran the ranking answers without the skill component and names the file", async () => {
   const h = harness({ errors: { job_opening_skills: missingSkills } });
   const answer = await h.rank();
 

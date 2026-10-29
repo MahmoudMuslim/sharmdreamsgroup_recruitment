@@ -47,12 +47,13 @@
 -- would be a policy with no consumer, which is the kind of row the
 -- `security.require_oauth` cleanup removed.
 --
--- This migration is NOT applied to any database yet. Applying it is the owner's
--- decision; `scripts/prove-migration-claims.mjs` asks the database for
--- `job_opening_skills` and checks every sentence in the portal that states
--- whether this one has it, and `scripts/prove-opening-skills.mjs` holds the
--- refusal copy — so an unapplied file says "not stored yet" on screen and a
--- stale claim fails the same day it is written.
+-- APPLIED on this local database. The date this file was run is not recorded
+-- here; what is recorded is `job_opening_skills` read back from the catalog on
+-- 2026-10-29. `scripts/prove-migration-claims.mjs` asks the database for that
+-- table and checks every sentence in the portal that states whether this one has
+-- it, and `scripts/prove-opening-skills.mjs` holds the refusal copy — so on a
+-- database where this file has never run the screen says "not stored yet", and a
+-- stale claim about this one fails the same day it is written.
 -- ============================================================================
 
 create table if not exists public.job_opening_skills (
