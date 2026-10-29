@@ -140,12 +140,6 @@ function expect(problems, label, actual, expected) {
   if (!same) problems.push(`${label}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
 }
 
-/** The route's own spelling of a window: `5 * 60_000` for five minutes. */
-function formatMs(ms) {
-  const minutes = ms / 60_000;
-  return Number.isInteger(minutes) && minutes >= 2 ? `${minutes} * 60_000` : String(ms);
-}
-
 const DOMAIN_REL = "src/modules/assistant/domain/commands.ts";
 const MIGRATION_REL = "db/migrations/051_jarvis_voice_commands.sql";
 const READER_REL = "src/modules/assistant/application/jarvisCommands.ts";
