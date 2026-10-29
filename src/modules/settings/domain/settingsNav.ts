@@ -326,7 +326,7 @@ export function credentialsTab(id: string | undefined | null): ProviderGroup | n
 }
 
 /**
- * The Assistant area's two sections, and the address the old JARVIS page means.
+ * The two Assistant sections the old JARVIS page's tabs map onto, and the address it means.
  *
  * `/assistant/jarvis?tab=appearance` was one page with two tabs; the same two
  * halves are now sections of this dock, so the tab name has to be translated to a

@@ -430,6 +430,18 @@ const FIGURES = [
       },
     ],
   },
+  {
+    // Both halves of the voice command sentence are the one table's ceilings: the
+    // read keeps `rows` and says so, and the write door refuses a spoken line longer
+    // than `noteTextMax`. Neither is a window the console chooses at render time.
+    route: "/assistant",
+    want: "the command list's ceiling and the spoken line's",
+    guide: /keeps the first ([\d,]+) phrases and says so when it stops there, a line the orb is told to speak is capped at ([\d,]+) characters/,
+    sources: [
+      { rel: "src/modules/assistant/domain/commands.ts", pattern: /rows: ([\d_]+),/ },
+      { rel: "src/modules/assistant/domain/commands.ts", pattern: /noteTextMax: ([\d_]+),/ },
+    ],
+  },
 ];
 
 for (const figure of FIGURES) {
