@@ -347,12 +347,19 @@ check(
 
 // The stage maps are indexed by the pipeline's own stages, and the WhatsApp dispatch
 // indexes its map with no guard, so a stage added to the enum without a template key
-// would put `undefined` into the ask list. The stages are read out of the type.
-const stageUnion = [
-  .../export type ApplicationStage =([^;]+);/.exec(read("src/types/index.ts"))[1].matchAll(
-    /"([A-Z_]+)"/g
-  ),
-].map((m) => m[1]);
+// would put `undefined` into the ask list. The stages are read out of core's
+// vocabulary tuple — `src/types` stopped writing them when the row types moved to
+// `src/core/entities`, and `prove-core-entities.mjs` pins that tuple to the enum the
+// database holds, so this list is one step away from the schema on purpose.
+const stagesTuple = /export const APPLICATION_STAGES = \[([\s\S]*?)\]/.exec(read("src/core/entities/vocabularies.ts"));
+if (!stagesTuple) {
+  console.log(
+    '\nFAIL src/core/entities/vocabularies.ts no longer writes `export const APPLICATION_STAGES = [...]`.\n' +
+      "     The stage-keyed templates are checked against that tuple, so this proof has nothing to read.\n"
+  );
+  process.exit(1);
+}
+const stageUnion = [...stagesTuple[1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
 const stagesWithoutKey = stageUnion.filter(
   (s) => !WHATSAPP_STAGE_TEMPLATES[s] || !EMAIL_STAGE_TEMPLATES[s]
 );
