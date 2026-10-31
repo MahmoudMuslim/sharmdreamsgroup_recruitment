@@ -325,10 +325,14 @@ check(
   publicColumns.includes("employment_type") && publicColumns.includes("requirements"),
   publicColumns
 );
-sourceHas("the public board probes the level separately", "src/app/careers/actions.ts", [
-  'select("id, experience_level")',
-  "isMissingSchemaError(error)",
+sourceHas("the public board probes the level through the read the layer owns", "src/app/careers/actions.ts", [
+  "readOpeningExperienceLevels(",
+  "read.missingSchema",
   "toJob(row, levels.get(id) ?? null)",
+]);
+sourceHas("that read names the level column and the ids it was given", "src/infrastructure/repositories/jobOpening.ts", [
+  'select("id, experience_level")',
+  '.in("id", [...ids])',
 ]);
 sourceHas("the public cards label the level", "src/app/careers/CareersBoard.tsx", [
   "job.experience_level ? experienceLabel(job.experience_level, lang) : \"\",",
@@ -352,9 +356,9 @@ sourceHas("the assistant merges levels from the id-scoped probe", "src/modules/a
   "getOpeningTermsByIds(",
   "termsNote: terms.note,",
 ]);
-sourceHas("the id-scoped probe reads exactly the ids it was given", "src/modules/jobs/application/openingTermsRead.ts", [
-  'select("id, experience_level")',
-  '.in("id", ids)',
+sourceHas("the id-scoped probe goes through the read the layer owns", "src/modules/jobs/application/openingTermsRead.ts", [
+  "readOpeningExperienceLevels(restClient, ids)",
+  "readOpeningExperienceLevelWindow(restClient, { limit: GRID_ROW_LIMIT })",
 ]);
 sourceHas("the chat's list reports the level and the schema note", "src/modules/assistant/domain/registry/reads.ts", [
   "experience_level: job.experience_level,",

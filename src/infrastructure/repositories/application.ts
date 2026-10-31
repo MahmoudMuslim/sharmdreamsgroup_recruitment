@@ -48,3 +48,42 @@ export async function readApplicationPerson(
   const row = data as Pick<Application, "person_id">;
   return { status: "found", spinePresent: true, personId: row.person_id ?? null };
 }
+
+/**
+ * The applicant a staff door is about to act on.
+ *
+ * The booking desk refuses a rejected candidate, the offer desk refuses a stage
+ * an offer cannot be issued from, and both start from the same three columns:
+ * who this is, which stage they sit at, and whether the row is still there. The
+ * stage rule itself stays in each door's own module — this only says which
+ * columns come back, so a caller never has to cast the row through
+ * `Record<string, unknown>` to read it.
+ *
+ * The answer carries a reason, not a sentence. The two doors word the same
+ * absence differently, and only one of them used to say anything at all when the
+ * database refused: a refused read was reported as a vanished candidate, which
+ * is a different fact and the more damaging one to act on. So the failure comes
+ * back with the database's own message and each door decides what to tell the
+ * person who pressed the button.
+ */
+export type ApplicationStageDoorFields = Pick<Application, "id" | "stage" | "full_name">;
+
+export type ApplicationStageDoorRead =
+  | { ok: true; application: ApplicationStageDoorFields }
+  | { ok: false; reason: "gone" }
+  | { ok: false; reason: "read_failed"; error: string };
+
+export async function readApplicationForStageDoor(
+  restClient: StaffReadClient,
+  applicationId: string
+): Promise<ApplicationStageDoorRead> {
+  const { data, error } = await restClient
+    .from("applications")
+    .select("id, stage, full_name")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (error) return { ok: false, reason: "read_failed", error: error.message };
+  if (!data) return { ok: false, reason: "gone" };
+  return { ok: true, application: data as unknown as ApplicationStageDoorFields };
+}

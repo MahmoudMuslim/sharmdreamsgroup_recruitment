@@ -351,9 +351,16 @@ function readRequests(text) {
 /** The methods that take a column name as their first argument. */
 const COLUMN_METHODS = "select|eq|neq|gt|gte|lt|lte|in|is|not|like|ilike|contains|containedBy|overlaps|order|filter";
 
-/** A `const NAME = "…"` column list, resolved so a shared string is still read. */
+/**
+ * A `const NAME = "…"` column list, resolved so a shared string is still read.
+ *
+ * Only an identifier has a constant to find. A caller's argument that is a whole
+ * object literal — a write's payload, or a read whose chain was cut before it
+ * closed — is not a name, and searching for one would build a pattern out of the
+ * payload itself.
+ */
 function resolveConstant(text, name) {
-  if (!name) return null;
+  if (!name || !/^[A-Za-z_$][\w$]*$/.test(name)) return null;
   const m = new RegExp(`const ${name}\\s*=\\s*\\n?\\s*"([^"]*)"`).exec(text);
   return m ? m[1] : null;
 }
@@ -460,6 +467,179 @@ for (const p of projections) {
     `${p.fn} is called from the app (${callersOf(p.fn)} file${callersOf(p.fn) === 1 ? "" : "s"})`,
     callersOf(p.fn) > 0,
     callersOf(p.fn) === 0 ? "a repository nobody calls is dead code" : ""
+  );
+}
+
+// -- 3c. The reads the layer owns are not written by hand anywhere outside it.
+//
+// Two callers spelling the same read differently are the same read: one writes
+// `.eq("id", jobId)` and the other `.eq("id", openingId)`, one names its columns
+// through a shared constant and the other types them out. So the comparison is
+// made on a chain with every non-literal argument blanked and every column list
+// sorted — which is what the extraction was judged by in the first place, and is
+// the promise the layer keeps: a read it names is a read nobody else repeats.
+function splitArguments(text) {
+  const out = [];
+  let depth = 0;
+  let current = "";
+  let quote = null;
+  for (const ch of text) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    if (ch === ")" || ch === "]" || ch === "}") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+function neutralize(text, arg, isColumnList) {
+  if (/^".*"$/.test(arg) && isColumnList) {
+    return [...new Set(arg.slice(1, -1).split(",").map((w) => w.trim()).filter(Boolean))].sort().join(",");
+  }
+  if (/^".*"$/.test(arg)) return arg;
+  if (/^-?[\d.]+$/.test(arg) || arg === "true" || arg === "false" || arg === "null") return arg;
+  if (/^\{[\s\S]*\}$/.test(arg)) return `{${arg.slice(1, -1).replace(/\s+/g, " ").trim()}}`;
+  const resolved = resolveConstant(text, arg);
+  if (resolved !== null && isColumnList) {
+    return [...new Set(resolved.split(",").map((w) => w.trim()).filter(Boolean))].sort().join(",");
+  }
+  return "?";
+}
+
+/** The chain as a question to the database, with the caller's own names removed. */
+function chainIdentity(text, chain) {
+  const parts = [];
+  const re = /\.([A-Za-z]+)\(/g;
+  let match;
+  while ((match = re.exec(chain))) {
+    let depth = 1;
+    let i = re.lastIndex;
+    let quote = null;
+    while (i < chain.length && depth > 0) {
+      const ch = chain[i];
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+      else if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      i++;
+    }
+    const args = splitArguments(chain.slice(re.lastIndex, i - 1));
+    parts.push(
+      `.${match[1]}(${args.map((arg, n) => neutralize(text, arg, match[1] === "select" && n === 0)).join(",")})`
+    );
+    re.lastIndex = i;
+  }
+  return parts.join("");
+}
+
+const layerReads = repoFiles.flatMap((name) => {
+  const text = read(`${REPO_DIR}/${name}`);
+  return readRequests(text)
+    .map((r) => ({ file: name, table: r.table, identity: chainIdentity(text, r.chain) }))
+    .filter((r) => r.identity.includes(".select("));
+});
+
+check(
+  `the layer names ${layerReads.length} read${layerReads.length === 1 ? "" : "s"} for the app to own`,
+  layerReads.length === repoReads.length,
+  `${repoReads.length - layerReads.length} of the layer's requests are not a read this comparison can name`
+);
+
+const outsideIdentities = new Map();
+for (const source of outsideLayer) {
+  for (const r of readRequests(source.text)) {
+    const identity = chainIdentity(source.text, r.chain);
+    if (!identity.includes(".select(")) continue;
+    if (!outsideIdentities.has(identity)) outsideIdentities.set(identity, []);
+    outsideIdentities.get(identity).push(source.rel);
+  }
+}
+
+/**
+ * The hand-written copies that were already standing when this check was
+ * written, named one by one with the reason it is still standing.
+ *
+ * This is not an allowance. A read the layer owns may be repeated only from a
+ * list like this, so the gate goes red for a copy in a file that is not named,
+ * for one copy more than the number named, and for one that has been wired
+ * through the layer while its entry stayed behind. Each entry is a debt with a
+ * name on it, not a category that was never measured.
+ */
+const STANDING_COPIES = new Map([
+  [
+    '.from("applications").select(person_id).eq("id",?).maybeSingle()',
+    {
+      files: ["src/modules/privacy/application/erasure.ts"],
+      because:
+        "the erasure's person pass folds gone, absent spine and refused read into null on purpose, so that a database without 043 loses only what is new; naming the three would change what an in-flight erasure does.",
+    },
+  ],
+  [
+    '.from("job_openings").select(id,{count: "exact", head: true}).in("status",?)',
+    {
+      files: ["src/app/(admin)/candidates/candidate-actions.ts"],
+      because:
+        "that picker's rows carry `department`, a column the layer's picker read does not return, so only the head-count half of its pair collides; wiring it means widening the layer read for the sourcing pickers that never show a department.",
+    },
+  ],
+  [
+    '.from("user_profiles").select(id).eq("auth_user_id",?).maybeSingle()',
+    {
+      files: [
+        "src/app/(admin)/files/actions.ts",
+        "src/app/(admin)/jobs/job-actions.ts",
+        "src/app/api/files/upload/route.ts",
+        "src/modules/settings/application/credential-actions.ts",
+        "src/modules/settings/application/credential-actions.ts",
+        "src/modules/settings/application/credential-actions.ts",
+        "src/modules/settings/application/credential-actions.ts",
+        "src/modules/settings/application/user-actions.ts",
+        "src/modules/settings/application/user-actions.ts",
+        "src/modules/settings/application/user-actions.ts",
+      ],
+      because:
+        "the layer read exists and four doors use it; ten staff doors still resolve their own account row, and each of them answers a refused lookup as a sign-in problem today — wiring one is a decision about a 401, not a search-and-replace.",
+    },
+  ],
+]);
+
+const ledgeredIdentities = new Set(layerReads.map((r) => r.identity));
+for (const [identity] of STANDING_COPIES) {
+  check(
+    `the ledger names a read the layer actually owns (${identity.slice(0, 46)}…)`,
+    ledgeredIdentities.has(identity),
+    "no read in src/infrastructure/repositories answers this chain — the entry is stale"
+  );
+}
+
+for (const read_ of layerReads) {
+  const repeats = (outsideIdentities.get(read_.identity) ?? []).slice().sort();
+  const standing = STANDING_COPIES.get(read_.identity);
+  if (!standing) {
+    check(
+      `repositories/${read_.file} owns its ${read_.table} read alone (${repeats.length} hand-written copy${repeats.length === 1 ? "" : "ies"} outside)`,
+      repeats.length === 0,
+      repeats.length ? `${read_.identity}  —  ${repeats.join(", ")}` : ""
+    );
+    continue;
+  }
+  const expected = standing.files.slice().sort();
+  check(
+    `repositories/${read_.file} leaves its ${read_.table} read in exactly the ${expected.length} hand-written place${expected.length === 1 ? "" : "s"} the ledger names`,
+    repeats.length === expected.length && repeats.every((f, i) => f === expected[i]),
+    `the ledger names ${expected.join(", ")}; the tree writes it in ${repeats.join(", ") || "nowhere"} — ${standing.because}`
   );
 }
 
@@ -871,6 +1051,149 @@ if (rewordedCopy) {
   check(
     "a copy that rewords the message fallback is named",
     schemaMessageIn(functionBody(rewordedCopy, "isMissingSchemaError")) !== sharedMessage
+  );
+}
+
+// -- 3c, mutated.
+//
+// The ownership check is only worth having if both directions are proven: a copy
+// nobody ledgered has to be named, and a ledger that no longer matches the tree
+// has to be named too.
+
+/** Every read chain one file writes, reduced to the question it asks. */
+function identitiesIn(text) {
+  return readRequests(text).map((r) => chainIdentity(text, r.chain));
+}
+
+const stageDoorRead = layerReads.find((r) => r.file === "application.ts" && r.identity.includes("full_name"));
+const reInlined = stageDoorRead
+  ? mutateOnce(
+      "the offer desk's read",
+      read("src/app/(admin)/candidates/offer-actions.ts"),
+      (t) =>
+        t.replace(
+          "  const existing = await readLatestOffer(input.applicationId);",
+          `  const { data: handWritten } = await restClient
+    .from("applications")
+    .select("id, stage, full_name")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+  if (!handWritten) return { ok: false, error: "gone" };
+
+  const existing = await readLatestOffer(input.applicationId);`
+        )
+    )
+  : null;
+if (reInlined) {
+  const copies = identitiesIn(reInlined).filter((id) => id === stageDoorRead.identity);
+  check(
+    "a door that re-inlines a read the layer owns is named",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${stageDoorRead.identity}`
+  );
+}
+
+const erasureIdentity = [...STANDING_COPIES.keys()].find((id) => id.includes("person_id"));
+const ERASURE_FILE = "src/modules/privacy/application/erasure.ts";
+const wiredErasure = erasureIdentity
+  ? mutateOnce(
+      "the erasure's person read",
+      read(ERASURE_FILE),
+      (t) => t.replace('.select("person_id")', '.select("person_id, email")')
+    )
+  : null;
+if (wiredErasure) {
+  // What the ownership check would compare, with the mutated file standing in for
+  // the real one: the copy is gone from the tree, the ledger still names it.
+  const written = outsideLayer
+    .flatMap((s) =>
+      identitiesIn(s.rel === ERASURE_FILE ? wiredErasure : s.text)
+        .filter((id) => id === erasureIdentity)
+        .map(() => s.rel)
+    )
+    .sort();
+  const expected = STANDING_COPIES.get(erasureIdentity).files.slice().sort();
+  check(
+    "a ledgered copy wired through the layer, with its entry left behind, is named",
+    written.join(",") !== expected.join(","),
+    `the gate would read ${written.join(", ") || "nowhere"} against a ledger of ${expected.join(", ")}`
+  );
+}
+
+// -- 3c mutations for the repointed layer-call needles.
+//
+// The ownership gate went green the moment each door's inline chain became a call
+// to the layer. A needle that now reads for the layer function rather than the
+// chain is only worth checking if replacing it with the old chain turns the gate
+// red again — so each of the three doors whose needle was repointed this session
+// gets a mutation that re-inlines its read and asks whether the comparison names it.
+
+const publishedOpeningRead = layerReads.find(
+  (r) => r.file === "jobOpening.ts" && r.identity.includes("PUBLISHED")
+);
+const FORM_PREFILL_REL = "src/app/api/careers/form-prefill/route.ts";
+const reInlinedPublished = publishedOpeningRead
+  ? mutateOnce(
+      "the form-prefill door's published-opening read",
+      read(FORM_PREFILL_REL),
+      (t) =>
+        t.replace(
+          "  const opening = await readPublishedOpening(restClient, jobId);",
+          `  const { data: opening } = await restClient
+    .from("job_openings")
+    .select("id")
+    .eq("id", jobId)
+    .eq("status", "PUBLISHED")
+    .maybeSingle();`
+        )
+    )
+  : null;
+if (reInlinedPublished) {
+  const copies = identitiesIn(reInlinedPublished).filter((id) => id === publishedOpeningRead.identity);
+  check(
+    "the form-prefill door re-inlines the published-opening read → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${publishedOpeningRead.identity}`
+  );
+}
+
+const experienceLevelsRead = layerReads.find(
+  (r) => r.file === "jobOpening.ts" && r.identity.includes("experience_level") && r.identity.includes('in("id"')
+);
+const EXPERIENCE_INLINE = `  const { data, error } = await restClient
+    .from("job_openings")
+    .select("id, experience_level")
+    .in("id", [...ids]);`;
+
+const reInlinedCareers = experienceLevelsRead
+  ? mutateOnce(
+      "the public board's experience-levels read",
+      read("src/app/careers/actions.ts"),
+      (t) => t.replace("  const read = await readOpeningExperienceLevels(restClient, ids);", EXPERIENCE_INLINE)
+    )
+  : null;
+if (reInlinedCareers) {
+  const copies = identitiesIn(reInlinedCareers).filter((id) => id === experienceLevelsRead.identity);
+  check(
+    "the public board re-inlines the experience-levels read → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${experienceLevelsRead.identity}`
+  );
+}
+
+const reInlinedTermsRead = experienceLevelsRead
+  ? mutateOnce(
+      "the opening-terms probe's experience-levels read",
+      read("src/modules/jobs/application/openingTermsRead.ts"),
+      (t) => t.replace("  const read = await readOpeningExperienceLevels(restClient, ids);", EXPERIENCE_INLINE)
+    )
+  : null;
+if (reInlinedTermsRead) {
+  const copies = identitiesIn(reInlinedTermsRead).filter((id) => id === experienceLevelsRead.identity);
+  check(
+    "the opening-terms probe re-inlines the experience-levels read → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${experienceLevelsRead.identity}`
   );
 }
 

@@ -2,6 +2,7 @@
 
 import { revalidatePath, cacheLife } from "next/cache";
 import { after } from "next/server";
+import { readOpeningExperienceLevels } from "@/infrastructure/repositories/jobOpening";
 import { getAnonRestClient } from "@/lib/data-api/anon";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import { getFileStore } from "@/lib/files/store";
@@ -146,24 +147,21 @@ async function experienceLevels(
 ): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
 
-  const { data, error } = await restClient
-    .from("job_openings")
-    .select("id, experience_level")
-    .in("id", ids);
+  const read = await readOpeningExperienceLevels(restClient, ids);
 
-  if (error) {
+  if (!read.ok) {
     // A database that has never run 033 reports the missing column on every read,
     // which is a fact about its schema rather than an incident, so it is not
     // logged on every cache revalidation; anything else is.
-    if (!isMissingSchemaError(error)) {
-      console.error("[careers] seniority levels unreadable:", error.message);
+    if (!read.missingSchema) {
+      console.error("[careers] seniority levels unreadable:", read.error);
     }
     return new Map();
   }
 
   const levels = new Map<string, string>();
-  for (const row of (data ?? []) as unknown as Record<string, unknown>[]) {
-    const level = typeof row.experience_level === "string" ? row.experience_level : "";
+  for (const row of read.rows) {
+    const level = row.experience_level ?? "";
     if (isExperienceLevel(level)) levels.set(String(row.id), level);
   }
   return levels;

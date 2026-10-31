@@ -1,4 +1,5 @@
 import type { JobOpening, JobStatus } from "@/core/entities";
+import { isMissingSchemaError } from "./missingSchema";
 import type { StaffReadClient } from "./restClient";
 
 /**
@@ -13,6 +14,41 @@ import type { StaffReadClient } from "./restClient";
 
 /** The columns every opening guard reads: what it is, and whether it is still live. */
 export type OpeningGuardFields = Pick<JobOpening, "id" | "title" | "status">;
+
+/**
+ * The public apply doors' one question about an opening: is it open.
+ *
+ * Six doors ask it — the CV upload, the two prefill routes, the gate-question
+ * read, the About-you draft and the form builder's public walk — each with the
+ * same four lines and a comment naming the door it copied. They are kept apart
+ * by what they answer: a role that fell to draft, a role that was deleted and a
+ * database that refused the read are three different things to tell an
+ * applicant, and a door that reports the third as the first sends people away
+ * from a job that is still hiring.
+ */
+export type PublishedOpeningFields = Pick<JobOpening, "id">;
+
+export async function readPublishedOpening(
+  restClient: StaffReadClient,
+  jobId: string
+): Promise<
+  | { ok: true; opening: PublishedOpeningFields }
+  | { ok: false; reason: "not_open" }
+  | { ok: false; reason: "read_failed"; error: string }
+> {
+  const { data, error } = await restClient
+    .from("job_openings")
+    .select("id")
+    .eq("id", jobId)
+    .eq("status", "PUBLISHED")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, reason: "read_failed", error: `That opening could not be read: ${error.message}` };
+  }
+  if (!data) return { ok: false, reason: "not_open" };
+  return { ok: true, opening: data as unknown as PublishedOpeningFields };
+}
 
 /**
  * One opening's title and status, by id — the read that sits in front of every
@@ -85,4 +121,79 @@ export async function readOpeningPickerWindow(
     rows: (rows.data ?? []) as unknown as OpeningGuardFields[],
     total: count.error ? null : count.count ?? null,
   };
+}
+
+/**
+ * The seniority level of an opening, as the column holds it.
+ *
+ * `experience_level` is `text` with a CHECK, not an enum, so a row can carry a
+ * word the vocabulary has never heard. The type says `string | null` rather than
+ * agreeing with the entity's narrower field on purpose: every door that shows
+ * the level classifies the word itself instead of trusting the cast.
+ */
+export type OpeningExperienceRow = Pick<JobOpening, "id"> & { experience_level: string | null };
+
+/**
+ * Whether the seniority column could be read at all.
+ *
+ * Three doors ask the same question of the same column and give three different
+ * answers when it is missing — the public board returns no levels and does not
+ * log a schema refusal on every cache revalidation, the grid says "not stored"
+ * and names the migration, the assistant's scoped read reports the incident. All
+ * three need the one fact this carries: was the refusal about the schema, or
+ * about this request?
+ */
+export type OpeningExperienceRead =
+  | { ok: true; rows: OpeningExperienceRow[] }
+  | { ok: false; missingSchema: boolean; error: string };
+
+/**
+ * The seniority levels of openings already in hand, asked for by id.
+ *
+ * Used where the rows were chosen by a filter rather than by recency, so the
+ * levels cannot silently describe a different window of openings.
+ */
+export async function readOpeningExperienceLevels(
+  restClient: StaffReadClient,
+  ids: readonly string[]
+): Promise<OpeningExperienceRead> {
+  const { data, error } = await restClient
+    .from("job_openings")
+    .select("id, experience_level")
+    .in("id", [...ids]);
+
+  if (error) {
+    return { ok: false, missingSchema: isMissingSchemaError(error), error: error.message };
+  }
+  return { ok: true, rows: (data ?? []) as unknown as OpeningExperienceRow[] };
+}
+
+/**
+ * The seniority levels of the newest openings, in the grid's own order.
+ *
+ * Read apart from the grid's row read, the same way the headcount target is: the
+ * column arrives with its own ALTER, and on a database where that file has not
+ * run naming it in the main `select` would refuse the entire openings page —
+ * including the applicants, the rails and the positions picker, none of which
+ * need it. Isolated here, a missing column costs only the level.
+ *
+ * The window takes the caller's limit and is matched back by id, so a row the
+ * two reads disagree about is reported as "no level recorded" rather than
+ * mismatched onto another opening.
+ */
+export async function readOpeningExperienceLevelWindow(
+  restClient: StaffReadClient,
+  options: { limit: number }
+): Promise<OpeningExperienceRead> {
+  const { data, error } = await restClient
+    .from("job_openings")
+    .select("id, experience_level")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(0, options.limit - 1);
+
+  if (error) {
+    return { ok: false, missingSchema: isMissingSchemaError(error), error: error.message };
+  }
+  return { ok: true, rows: (data ?? []) as unknown as OpeningExperienceRow[] };
 }

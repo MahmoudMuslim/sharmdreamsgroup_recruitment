@@ -1,3 +1,4 @@
+import { readPublishedOpening } from "@/infrastructure/repositories/jobOpening";
 import { getAnonRestClient } from "@/lib/data-api/anon";
 import { parseGateRows, publicGateQuestions } from "@/modules/careers/gate-questions";
 
@@ -32,15 +33,18 @@ export async function GET(request: Request): Promise<Response> {
 
   const restClient = getAnonRestClient();
 
-  // Same re-check the CV upload makes: a draft or closed role has no form.
-  const { data: job } = await restClient
-    .from("job_openings")
-    .select("id")
-    .eq("id", jobId)
-    .eq("status", "PUBLISHED")
-    .maybeSingle();
+  // The re-check every public door makes, through the one read that asks it: a
+  // draft or closed role has no form, and a refused read is not an answer about
+  // the role, so it does not borrow one.
+  const opening = await readPublishedOpening(restClient, jobId);
 
-  if (!job) {
+  if (!opening.ok) {
+    if (opening.reason === "read_failed") {
+      return Response.json(
+        { error: "This role could not be checked right now. Try again in a moment." },
+        { status: 503 }
+      );
+    }
     return Response.json({ error: "This role is not accepting applications." }, { status: 404 });
   }
 

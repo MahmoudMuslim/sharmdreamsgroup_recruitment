@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { readApplicationForStageDoor } from "@/infrastructure/repositories/application";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { publicBaseUrl } from "@/lib/public-url";
 import { formatInZone } from "@/lib/timezone";
@@ -122,17 +123,22 @@ export async function issueOffer(input: {
   }
 
   const restClient = await createServerRestClient();
-  const { data: application, error: readError } = await restClient
-    .from("applications")
-    .select("id, stage, full_name")
-    .eq("id", input.applicationId)
-    .maybeSingle();
+  // The same three columns the booking desk starts from, through the one read the
+  // repositories layer owns. The refusal sentences stay here, in this desk's own
+  // words, and a refused read keeps the database's message rather than borrowing
+  // "no record matches that id".
+  const applicant = await readApplicationForStageDoor(restClient, input.applicationId);
+  if (!applicant.ok) {
+    return {
+      ok: false,
+      error:
+        applicant.reason === "read_failed"
+          ? applicant.error
+          : "No candidate record matches that id.",
+    };
+  }
 
-  if (readError) return { ok: false, error: readError.message };
-
-  const row = application as Record<string, unknown> | null;
-  if (!row) return { ok: false, error: "No candidate record matches that id." };
-
+  const row = applicant.application;
   if (!canIssueOffer(row.stage)) {
     return {
       ok: false,

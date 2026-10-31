@@ -19,6 +19,7 @@
  * today's `ApplyWizard` on that value; the submit door refuses instead.
  */
 
+import { readPublishedOpening } from "@/infrastructure/repositories/jobOpening";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import {
   consentPurposeFor,
@@ -221,18 +222,13 @@ export async function resolveFormForJob(jobId: string): Promise<FormResolution> 
     return { fallback: "wizard", cause: "unavailable", reason: "The application form is unavailable right now." };
   }
 
-  const { data: job, error: jobError } = await client
-    .from("job_openings")
-    .select("id")
-    .eq("id", jobId)
-    .eq("status", "PUBLISHED")
-    .maybeSingle();
+  const opening = await readPublishedOpening(client, jobId);
 
-  if (jobError) {
-    console.error("[forms] the role check was refused:", jobError.message);
-    return { fallback: "wizard", cause: "unavailable", reason: "The application form is unavailable right now." };
-  }
-  if (!job) {
+  if (!opening.ok) {
+    if (opening.reason === "read_failed") {
+      console.error("[forms] the role check was refused:", opening.error);
+      return { fallback: "wizard", cause: "unavailable", reason: "The application form is unavailable right now." };
+    }
     return { fallback: "wizard", cause: "unavailable", reason: "This role is not accepting applications." };
   }
 

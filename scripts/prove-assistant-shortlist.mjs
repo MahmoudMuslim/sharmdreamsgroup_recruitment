@@ -96,7 +96,15 @@ function loadModule(nameOrFile, bindings, cache = new Map()) {
   cache.set(target, loaded.exports);
   function localRequire(name) {
     if (name in bindings) return bindings[name];
-    if (REAL.has(name) || /^@\/modules\/[^/]+\/domain\//.test(name) || name.startsWith(".")) {
+    if (
+      REAL.has(name) ||
+      /^@\/modules\/[^/]+\/domain\//.test(name) ||
+      // The repositories layer is a read's shape with the wire taken out: it only
+      // reaches the database through the client its caller hands it, so loading it
+      // for real keeps this proof exercising one chain rather than a mock of it.
+      /^@\/infrastructure\/repositories\//.test(name) ||
+      name.startsWith(".")
+    ) {
       const resolved = resolveSource(name, target);
       if (!resolved) throw new Error(`loadModule: nothing at ${name} (from ${target})`);
       return loadModule(resolved, bindings, cache);

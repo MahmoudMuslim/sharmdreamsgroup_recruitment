@@ -1,3 +1,4 @@
+import { readPublishedOpening } from "@/infrastructure/repositories/jobOpening";
 import { getAnonRestClient } from "@/lib/data-api/anon";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
@@ -87,19 +88,20 @@ export async function POST(request: Request): Promise<Response> {
 
   const restClient = getAnonRestClient();
 
-  // Same guard the upload route makes: a draft or closed role has no form to
-  // fill, so this endpoint is not a way to spend model calls for nothing.
-  const { data: job } = await restClient
-    .from("job_openings")
-    .select("id")
-    .eq("id", jobId)
-    .eq("status", "PUBLISHED")
-    .maybeSingle();
+  // The guard every public door makes, through the one read that asks it: a draft
+  // or closed role has no form to fill, so this endpoint is not a way to spend
+  // model calls for nothing. A refused read says so rather than closing the role.
+  const opening = await readPublishedOpening(restClient, jobId);
 
-  if (!job) {
+  if (!opening.ok) {
     return Response.json(
-      { error: "This role is no longer accepting applications." },
-      { status: 404 }
+      {
+        error:
+          opening.reason === "read_failed"
+            ? "This role could not be checked right now. Try again in a moment."
+            : "This role is no longer accepting applications.",
+      },
+      { status: opening.reason === "read_failed" ? 503 : 404 }
     );
   }
 

@@ -2232,7 +2232,9 @@ const check23 = (injected = {}) => {
       "isAcceptedCvType(",
       "cvContentError(",
       "cvSizeError(",
-      'eq("status", "PUBLISHED")',
+      // The door still refuses a draft or closed role before the model call; the
+      // four lines that asked are one named read the layer owns.
+      "readPublishedOpening(",
       "extractCvText(",
       "resolveFormForJob(jobId)",
       "cvAskList(",

@@ -2,6 +2,7 @@
 
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
+import { readApplicationForStageDoor } from "@/infrastructure/repositories/application";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { hasAiProvider } from "@/lib/config.server";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
@@ -170,13 +171,21 @@ export async function scheduleInterview(input: {
     return { ok: false, error: `The round must be one of: ${INTERVIEW_ROUNDS.join(", ")}.` };
   }
 
-  const { data: application } = await restClient
-    .from("applications")
-    .select("id, stage, full_name")
-    .eq("id", input.applicationId)
-    .maybeSingle();
-
-  if (!application) return { ok: false, error: "This candidate no longer exists." };
+  // The three columns every staff door starts from come back through the one read
+  // the repositories layer owns. This door used to have no failure branch at all:
+  // a refused read fell through to "no longer exists", which is a different fact
+  // and the more damaging one to act on, so the refusal is now said out loud.
+  const applicant = await readApplicationForStageDoor(restClient, input.applicationId);
+  if (!applicant.ok) {
+    return {
+      ok: false,
+      error:
+        applicant.reason === "read_failed"
+          ? `That candidate could not be read: ${applicant.error}`
+          : "This candidate no longer exists.",
+    };
+  }
+  const application = applicant.application;
   if (application.stage === "REJECTED") {
     return { ok: false, error: "This candidate is rejected — move them back into the pipeline first." };
   }

@@ -1349,14 +1349,18 @@ export async function structurePersonFromCv(applicationId: string): Promise<Extr
   // the read re-checks existence without it, so a live record degrades to the
   // §9 note and a gone one still says so (spec §9 — reads degrade, never a
   // fabricated fact about a person). With no person there is nothing for an
-  // extraction to fill, so the refuse lands before any model call.
+  // extraction to fill, so the refuse lands before any model call. The re-check
+  // is the read the repositories layer owns, and its own failure is refused
+  // rather than folded into "no longer here".
   if (readError && isMissingSchemaError(readError)) {
-    const { data: exists } = await restClient
-      .from("applications")
-      .select("id")
-      .eq("id", applicationId)
-      .maybeSingle();
-    return { ok: false, error: exists ? PERSON_SPINE_MISSING_NOTE : "This candidate record is no longer here." };
+    const person = await readApplicationPerson(restClient, applicationId);
+    if (person.status === "error") {
+      return { ok: false, error: `That candidate could not be read: ${person.error}` };
+    }
+    return {
+      ok: false,
+      error: person.status === "found" ? PERSON_SPINE_MISSING_NOTE : "This candidate record is no longer here.",
+    };
   }
 
   if (!data) return { ok: false, error: "This candidate record is no longer here." };

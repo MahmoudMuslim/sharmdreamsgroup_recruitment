@@ -1,11 +1,15 @@
 import "server-only";
 
+import {
+  readOpeningExperienceLevelWindow,
+  readOpeningExperienceLevels,
+  type OpeningExperienceRow,
+} from "@/infrastructure/repositories/jobOpening";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { GRID_ROW_LIMIT } from "@/modules/jobs/domain/hireable";
 import {
   OPENING_TERMS_SCHEMA_NOTE,
   isExperienceLevel,
-  isMissingSchemaError,
   type ExperienceLevel,
 } from "@/modules/jobs/domain/openingTerms";
 
@@ -25,31 +29,26 @@ export interface OpeningTermsRead {
   note: string | null;
 }
 
-/** Both doors into the column share one reading of what a failure means. */
-function readTerms(
-  data: unknown,
-  error: { code?: string | null; message?: string | null } | null
-): OpeningTermsRead {
-  if (error) {
-    return {
-      experienceById: new Map(),
-      available: false,
-      note: isMissingSchemaError(error)
-        ? OPENING_TERMS_SCHEMA_NOTE
-        : `Seniority levels could not be read: ${error.message}.`,
-    };
-  }
-
+/** Both doors into the column share one reading of the rows it came back with. */
+function termsFromRows(rows: OpeningExperienceRow[]): OpeningTermsRead {
   const experienceById = new Map<string, ExperienceLevel>();
-  for (const row of (data ?? []) as {
-    id: string;
-    experience_level: string | null;
-  }[]) {
+  for (const row of rows) {
     if (typeof row.experience_level === "string" && isExperienceLevel(row.experience_level)) {
       experienceById.set(String(row.id), row.experience_level);
     }
   }
   return { experienceById, available: true, note: null };
+}
+
+/** … and one reading of what a failure means. */
+function termsRefusal(failure: { missingSchema: boolean; error: string }): OpeningTermsRead {
+  return {
+    experienceById: new Map(),
+    available: false,
+    note: failure.missingSchema
+      ? OPENING_TERMS_SCHEMA_NOTE
+      : `Seniority levels could not be read: ${failure.error}.`,
+  };
 }
 
 /**
@@ -67,35 +66,23 @@ export async function getOpeningTermsByIds(
     return { experienceById: new Map(), available: true, note: null };
   }
 
-  const { data, error } = await restClient
-    .from("job_openings")
-    .select("id, experience_level")
-    .in("id", ids);
-
-  return readTerms(data, error);
+  const read = await readOpeningExperienceLevels(restClient, ids);
+  return read.ok ? termsFromRows(read.rows) : termsRefusal(read);
 }
 
 /**
  * The seniority level for the openings the grid holds.
  *
- * Read apart from the grid's own row read, the same way the headcount target
- * is: the column arrives with its own ALTER (migration 033), and on a database
- * where that file has not run naming it in the main `select` would 400 the entire
- * openings page — including the applicants, the rails and the positions picker,
- * none of which need it. Isolated here, a missing column costs only the level,
- * and the note says which migration is missing.
+ * Asked as its own read, apart from the grid's row read, the same way the
+ * headcount target is: a database that has not run the column's ALTER refuses a
+ * read that names it, and isolating it means that costs the level alone rather
+ * than the whole openings page. `readOpeningExperienceLevelWindow` carries why.
  *
  * The read takes the newest `GRID_ROW_LIMIT` openings in the grid's order and
  * is matched back by id, so a row the two reads disagree about is reported as
  * "no level recorded" rather than mismatched onto another opening.
  */
 export async function getOpeningsTerms(restClient: StaffClient): Promise<OpeningTermsRead> {
-  const { data, error } = await restClient
-    .from("job_openings")
-    .select("id, experience_level")
-    .order("created_at", { ascending: false })
-    .order("id", { ascending: false })
-    .range(0, GRID_ROW_LIMIT - 1);
-
-  return readTerms(data, error);
+  const read = await readOpeningExperienceLevelWindow(restClient, { limit: GRID_ROW_LIMIT });
+  return read.ok ? termsFromRows(read.rows) : termsRefusal(read);
 }
