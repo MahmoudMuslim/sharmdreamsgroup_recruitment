@@ -185,15 +185,28 @@ function nullDiff(fields, columns) {
  *
  * A jsonb column may be `unknown`, a `Record`, an array, or a named report
  * shape — anything else is a guess about bytes the database never promised.
+ *
+ * `checkVocab` is `table.column` → the tuple name, for the columns that are
+ * `text` held to a word list by a CHECK instead of an enum type. Those are the
+ * same ladder as an enum and must be typed the same way: naming the tuple's
+ * interface, not `string`.
  */
-function typeDiff(fields, columns) {
+function typeDiff(fields, columns, checkVocab = {}) {
   const out = [];
   for (const c of columns) {
     const f = fields.find((x) => x.name === c.column_name);
     if (!f) continue;
     const base = baseType(f.type);
     if (STRING_UDTS.has(c.udt_name)) {
-      if (base !== "string") out.push(`${c.column_name}: ${c.udt_name} stored, "${base}" declared`);
+      const tupleName = checkVocab[`${c.table_name}.${c.column_name}`];
+      if (tupleName) {
+        const ifaceName = vocabFile.match(new RegExp(`export type (\\w+) = \\(typeof ${tupleName}\\)\\[number\\]`))?.[1];
+        if (base !== ifaceName) {
+          out.push(`${c.column_name}: ${c.udt_name} held to ${tupleName} by a CHECK, field is "${base}"`);
+        }
+      } else if (base !== "string") {
+        out.push(`${c.column_name}: ${c.udt_name} stored, "${base}" declared`);
+      }
     } else if (NUMBER_UDTS.has(c.udt_name)) {
       if (base !== "number") out.push(`${c.column_name}: ${c.udt_name} stored, "${base}" declared`);
     } else if (c.udt_name === "bool") {
@@ -222,18 +235,30 @@ function labelDiff(declared, stored) {
   return { missing, extra };
 }
 
-/** The words one CHECK constraint allows, or an empty list if it bounds a range. */
+/**
+ * A CHECK that bounds a column by shape rather than by words, as the database
+ * prints it: `CHECK ((referral_code ~ '^[0-9A-F]{10}$'::text))`.
+ */
+function patternFromCheckDef(def) {
+  const m = /~\s*'\^(.*?)\$'::text/.exec(def);
+  return m ? m[1] : null;
+}
+
+/**
+ * The words one CHECK constraint allows.
+ *
+ * A pattern CHECK comes back empty: `^[0-9A-F]{10}$` is a shape, not a
+ * vocabulary, and reading it as a one-word ladder would file the column as an
+ * undocumented vocabulary core has never heard of.
+ */
 function labelsFromCheckDef(def) {
-  const anyList = [...def.matchAll(/'([^']*)'::(?:text|bpchar)/g)].map((m) => m[1]);
-  if (anyList.length) return anyList;
-  const pattern = /~\s*'\^(.*?)\$'::text/.exec(def);
-  if (pattern) return pattern[1].split("|");
-  return [];
+  if (patternFromCheckDef(def)) return [];
+  return [...def.matchAll(/'([^']*)'::(?:text|bpchar)/g)].map((m) => m[1]);
 }
 
 /** The column a CHECK constraint is written about, as best the definition says. */
 function columnFromCheckDef(def) {
-  const m = /CHECK \(\s*\(?(\w+)/.exec(def);
+  const m = /CHECK\s*\(*\s*(\w+)/.exec(def);
   return m ? m[1] : null;
 }
 
@@ -255,6 +280,25 @@ for (const name of tuples.keys()) {
   const used = ifaceName && [...entities.values()].some((fields) => fields.some((f) => baseType(f.type) === ifaceName));
   check(`${name} is the type of a real column (${ifaceName ?? "unnamed type"})`, Boolean(used));
 }
+
+// The three shapes a constraint definition comes in, read before the database is
+// asked — every CHECK-backed claim below is only as good as these three parses.
+const wordListDef = "CHECK ((locale = ANY (ARRAY['en'::text, 'ar'::text, 'ru'::text, 'de'::text])))";
+const nullableWordListDef =
+  "CHECK (((experience_level IS NULL) OR (experience_level = ANY (ARRAY['JUNIOR'::text, 'MID'::text]))))";
+const patternDef = "CHECK ((referral_code ~ '^[0-9A-F]{10}$'::text))";
+check(
+  "a CHECK's column is read however deeply its parentheses nest",
+  columnFromCheckDef(wordListDef) === "locale" && columnFromCheckDef(nullableWordListDef) === "experience_level"
+);
+check(
+  "a word-list CHECK gives its words, nullable wrapper or no",
+  labelsFromCheckDef(wordListDef).length === 4 && labelsFromCheckDef(nullableWordListDef).length === 2
+);
+check(
+  "a pattern CHECK is read as a shape, never as a one-word vocabulary",
+  labelsFromCheckDef(patternDef).length === 0 && patternFromCheckDef(patternDef) === "[0-9A-F]{10}"
+);
 
 // The boundary: core sits under everything and therefore imports nothing above it.
 const LAYER_IMPORTS = ["@/app", "@/modules", "@/lib", "@/stores", "@/types", "@/components"];
@@ -724,6 +768,8 @@ try {
 const columnsByTable = new Map();
 const enumLabels = new Map();
 const checksByColumn = new Map();
+/** `table.column` → tuple name, only for the CHECKs this run actually read. */
+const checkVocab = {};
 
 if (onDatabase) {
   const tables = ROW_TYPES.map((t) => t.table);
@@ -741,7 +787,7 @@ if (onDatabase) {
 
   const { rows: enumRows } = await client.query(
     `SELECT t.typname, e.enumlabel FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
-      WHERE t.typnamespace = 'public'::regnamespace ORDER BY t.typname, e.enumsort`
+      WHERE t.typnamespace = 'public'::regnamespace ORDER BY t.typname, e.enumsortorder`
   );
   for (const r of enumRows) {
     if (!enumLabels.has(r.typname)) enumLabels.set(r.typname, []);
@@ -760,6 +806,11 @@ if (onDatabase) {
     if (!labels.length) continue;
     const column = columnFromCheckDef(r.def);
     if (column) checksByColumn.set(`${r.table_name}.${column}`, { name: r.conname, labels });
+  }
+  // A text column counts as a named vocabulary only while the constraint that
+  // makes it one is still on the table and still readable.
+  for (const key of checksByColumn.keys()) {
+    if (CHECK_TUPLES[key]) checkVocab[key] = CHECK_TUPLES[key];
   }
 
   await client.end();
@@ -783,7 +834,7 @@ if (onDatabase) {
     check(`${t.iface}: the fields are in the order the database holds them`, !diff.outOfOrder);
     const nd = nullDiff(fields, columns);
     check(`${t.iface}: every nullable column is nullable here and no other is`, nd.length === 0, nd.join(" | "));
-    const td = typeDiff(fields, columns);
+    const td = typeDiff(fields, columns, checkVocab);
     check(`${t.iface}: every field's type is the family its column stores`, td.length === 0, td.join(" | "));
   }
 
@@ -817,11 +868,13 @@ if (onDatabase) {
     );
   }
 
-  // -- 3d. A text column with a CHECK that core does not name is an undocumented ladder.
+  // -- 3d. A text column with a word-list CHECK that core does not name is an
+  //     undocumented ladder. A CHECK that bounds a shape (`referral_code ~
+  //     '^[0-9A-F]{10}$'`) is not a ladder and is not reported here — see the
+  //     three parser checks in section 2.
   const named = new Set(Object.keys(CHECK_TUPLES));
   for (const [key, con] of checksByColumn) {
     if (named.has(key)) continue;
-    const column = key.split(".")[1];
     const columnType = [...columnsByTable.values()].flat().find((c) => `${c.table_name}.${c.column_name}` === key);
     if (!columnType || columnType.data_type !== "text") continue;
     check(`${key}: a CHECK over text with no core vocabulary (${con.labels.length} labels: ${con.labels.join("/")})`, false);
@@ -831,8 +884,8 @@ if (onDatabase) {
   //
   // `Tenant` is the one row-shaped type `src/types` kept, because the staff
   // session reads six columns off a table the console reads twenty-seven from.
-  // It is legal as a projection, and this is the line that keeps it honest: a
-  // field that stops being a column stops being readable.
+  // Leaving twenty-one out is legal; naming a field that is not a column is not,
+  // because PostgREST answers such a select with an error, not with a null.
   const tenantFields = parseInterface(typesFile, "Tenant");
   const companyRows = columnsByTable.get("tenants_and_companies") ?? [];
   if (!tenantFields || companyRows.length === 0) {
@@ -840,12 +893,14 @@ if (onDatabase) {
   } else {
     const projected = fieldDiff(tenantFields, companyRows);
     check(
-      `Tenant reads ${tenantFields.length} of the ${companyRows.length} columns tenants_and_companies holds`,
-      projected.missing.length === 0 && projected.extra.length === 0,
-      [...projected.missing.map((c) => `no column ${c}`), ...projected.extra.map((f) => `not a column: ${f}`)].join(", ")
+      `Tenant reads ${tenantFields.length} of the ${companyRows.length} columns tenants_and_companies holds, and each is one`,
+      projected.extra.length === 0,
+      projected.extra.map((f) => `not a column: ${f}`).join(", ")
     );
-    const pruned = tenantFields.filter((f) => f.name !== "sector");
-    check("a column dropped from that projection is named", fieldDiff(pruned, companyRows).missing.includes("sector"));
+    const tnd = nullDiff(tenantFields, companyRows);
+    check(`Tenant's ${tenantFields.length} fields are nullable exactly where the column is`, tnd.length === 0, tnd.join(" | "));
+    const ttd = typeDiff(tenantFields, companyRows, checkVocab);
+    check(`Tenant's ${tenantFields.length} fields are the family their columns store`, ttd.length === 0, ttd.join(" | "));
   }
 }
 
@@ -892,6 +947,32 @@ if (onDatabase) {
   const unknownEnum = fields.map((f) => (f.name === "stage" ? { ...f, type: "string" } : f));
   check("an enum column typed as loose string is red", typeDiff(unknownEnum, columns).length > 0);
 
+  // The same two directions on the CHECK end of the ladder, over the table that
+  // holds it: `job_openings.employment_type` is text bounded by a word list.
+  const jobColumns = columnsByTable.get("job_openings");
+  const jobFields = entities.get("job_openings");
+  const looseVocab = jobFields.map((f) => (f.name === "employment_type" ? { ...f, type: "string" } : f));
+  check(
+    "a CHECK-backed vocabulary column typed as loose string is red",
+    typeDiff(looseVocab, jobColumns, checkVocab).some((s) => s.startsWith("employment_type"))
+  );
+
+  const otherVocab = jobFields.map((f) => (f.name === "employment_type" ? { ...f, type: "ExperienceLevel" } : f));
+  check(
+    "a vocabulary column declared as the wrong tuple's interface is red",
+    typeDiff(otherVocab, jobColumns, checkVocab).some((s) => s.startsWith("employment_type"))
+  );
+
+  const lostCon = jobFields.map((f) => (f.name === "employment_type" ? { ...f, type: "string" } : f));
+  const withoutThatVocab = { ...checkVocab };
+  delete withoutThatVocab["job_openings.employment_type"];
+  check(
+    "with the CHECK unreadable the named type is red and a loose string is the only legal spelling",
+    typeDiff(jobFields, jobColumns, checkVocab).filter((s) => s.startsWith("employment_type")).length === 0 &&
+      typeDiff(jobFields, jobColumns, withoutThatVocab).some((s) => s.startsWith("employment_type")) &&
+      typeDiff(lostCon, jobColumns, withoutThatVocab).filter((s) => s.startsWith("employment_type")).length === 0
+  );
+
   // A stored label core has never heard of — the case the header promises to name.
   const grownLabels = [...enumLabels.get("application_stage"), "ONBOARDED"];
   const d5 = labelDiff(tuples.get("APPLICATION_STAGES"), grownLabels);
@@ -899,12 +980,35 @@ if (onDatabase) {
 
   const shrunkTuple = tuples.get("APPLICATION_SOURCES").filter((l) => l !== "REFERRAL");
   const d6 = labelDiff(shrunkTuple, enumLabels.get("application_source"));
-  check("a label dropped from the tuple is named against the enum", d6.extra.includes("REFERRAL"));
+  check("a label dropped from the tuple is named against the enum", d6.missing.includes("REFERRAL"));
+
+  const inventedTuple = [...tuples.get("APPLICATION_SOURCES"), "TELEGRAM"];
+  const d6b = labelDiff(inventedTuple, enumLabels.get("application_source"));
+  check("a label the tuple invents is named against the enum", d6b.extra.includes("TELEGRAM"));
 
   const conKey = "user_profiles.locale";
   const grown = checksByColumn.get(conKey);
   const d7 = labelDiff(tuples.get("LOCALES"), [...grown.labels, "tr"]);
   check("a locale the CHECK gains is named against the tuple", d7.missing.includes("tr"));
+
+  // The projection: leaving a column out is legal, naming a field that is not a
+  // column is not, and each kept field still owes its column its family and its nullability.
+  const companyCols = columnsByTable.get("tenants_and_companies") ?? [];
+  const projection = parseInterface(typesFile, "Tenant") ?? [];
+  const pruned = projection.filter((f) => f.name !== "sector");
+  check(
+    "a column left out of the projection is seen but not named a violation",
+    fieldDiff(pruned, companyCols).missing.includes("sector") && fieldDiff(pruned, companyCols).extra.length === 0
+  );
+
+  const phantomField = projection.map((f) => (f.name === "sector" ? { ...f, name: "sector_kind" } : f));
+  check("a projection field that stops being a column is named", fieldDiff(phantomField, companyCols).extra.includes("sector_kind"));
+
+  const projectionAsNumber = projection.map((f) => (f.name === "country" ? { ...f, type: "number" } : f));
+  check("a projection field retyped away from its column's family is red", typeDiff(projectionAsNumber, companyCols, checkVocab).length > 0);
+
+  const projectionWithNull = projection.map((f) => (f.name === "created_at" ? { ...f, type: "string | null" } : f));
+  check("a projection field given a null the column refuses is red", nullDiff(projectionWithNull, companyCols).length > 0);
 }
 
 // The duplicate-vocabulary check, mutated: a module that edits its own copy.
