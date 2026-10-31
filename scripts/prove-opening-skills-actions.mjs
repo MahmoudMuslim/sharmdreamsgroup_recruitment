@@ -18,9 +18,11 @@
  * check that a refusal writes nothing, and check that a failure which is NOT a
  * missing table is not dressed up as one.
  *
- * Both files are transpiled to CommonJS and run in a fresh context whose only
- * outside calls are the stubs below — no database, session, permission table or
- * provider is touched. The domain module is the real one.
+ * The three files the action now touches — the action, the page read and the
+ * repository read of the opening it guards — are transpiled to CommonJS and run
+ * in a fresh context whose only outside calls are the stubs below — no database,
+ * session, permission table or provider is touched. The domain module and the
+ * repository are the real ones.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -32,6 +34,7 @@ import ts from "typescript";
 
 import * as openingSkillsDomain from "../src/modules/jobs/domain/openingSkills.ts";
 import * as openingTermsDomain from "../src/modules/jobs/domain/openingTerms.ts";
+import { isMissingSchemaError } from "../src/infrastructure/repositories/missingSchema.ts";
 import {
   OPENING_SKILLS_SCHEMA_NOTE,
   OPENING_SKILLS_WRITE_REFUSAL,
@@ -52,6 +55,7 @@ const compile = (rel) =>
 
 const READ_SOURCE = "src/modules/jobs/application/openingSkillsRead.ts";
 const ACTION_SOURCE = "src/app/(admin)/jobs/opening-skills-actions.ts";
+const OPENING_READ_SOURCE = "src/infrastructure/repositories/jobOpening.ts";
 
 const openingId = "10000000-0000-4000-8000-000000000001";
 // As the `skills` table holds them: the picker offers the live rows in the
@@ -182,6 +186,15 @@ function harness(options = {}) {
     { timeout: 5000 }
   );
 
+  const openingRead = {};
+  new Script(compile(OPENING_READ_SOURCE)).runInNewContext(
+    { exports: openingRead, require: (name) => {
+      if (name === "./missingSchema") return { isMissingSchemaError };
+      throw new Error(`Unmocked boundary in the opening read: ${name}`);
+    } },
+    { timeout: 5000 }
+  );
+
   const action = {};
   new Script(compile(ACTION_SOURCE)).runInNewContext(
     { exports: action, require: (name) => {
@@ -193,6 +206,7 @@ function harness(options = {}) {
       if (name === "@/modules/jobs/domain/openingSkills") return openingSkillsDomain;
       if (name === "@/modules/jobs/domain/openingTerms") return openingTermsDomain;
       if (name === "@/modules/jobs/application/openingSkillsRead") return read;
+      if (name === "@/infrastructure/repositories/jobOpening") return openingRead;
       throw new Error(`Unmocked boundary in the action: ${name}`);
     } },
     { timeout: 5000 }
