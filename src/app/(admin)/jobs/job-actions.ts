@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
@@ -263,12 +264,9 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   const { data: userData } = await restClient.auth.getUser();
   let createdBy: string | null = null;
   if (userData.user) {
-    const { data: profile } = await restClient
-      .from("user_profiles")
-      .select("id")
-      .eq("auth_user_id", userData.user.id)
-      .maybeSingle();
-    createdBy = profile?.id ?? null;
+    const found = await readStaffProfileIdByAuthUserId(restClient, userData.user.id);
+    if (found.ok) createdBy = found.profileId;
+    else console.error("[jobs] opening creator lookup:", found.error);
   }
 
   const { data, error } = await restClient

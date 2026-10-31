@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import { requireStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits } from "@/modules/activity/domain/trail";
@@ -257,15 +258,12 @@ export async function saveCredential(input: {
   const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
 
-  const { data: profile } = sessionData.user
-    ? await session
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle()
-    : { data: null as { id: string } | null };
-
-  const actorId = profile?.id ?? null;
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] credential save actor lookup:", found.error);
+  }
   const trimmed = input.secret?.trim() ?? "";
   const hasNewSecret = trimmed.length > 0;
 
@@ -393,9 +391,12 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
   const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
 
-  const { data: profile } = sessionData.user
-    ? await session.from("user_profiles").select("id").eq("auth_user_id", sessionData.user.id).maybeSingle()
-    : { data: null };
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] credential delete actor lookup:", found.error);
+  }
 
   // Read the rows first: a delete is the last moment their shape can be named,
   // and removing nothing must not be reported as a change. The console hides the
@@ -422,7 +423,7 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
   await admin.from("credential_audit_log").insert({
     provider: definition.id,
     action: "DELETED",
-    actor_id: profile?.id ?? null,
+    actor_id: actorId,
     detail: "Reverted to environment variable",
   });
 
@@ -466,13 +467,12 @@ async function recordVerificationOutcome(
   const admin = getServiceRestClient();
   const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
-  const { data: profile } = sessionData.user
-    ? await session
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle()
-    : { data: null as { id: string } | null };
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] credential test actor lookup:", found.error);
+  }
 
   await admin
     .from("provider_credentials")
@@ -486,7 +486,7 @@ async function recordVerificationOutcome(
   await admin.from("credential_audit_log").insert({
     provider,
     action: "VERIFIED",
-    actor_id: profile?.id ?? null,
+    actor_id: actorId,
     detail: message,
   });
 
@@ -502,7 +502,7 @@ async function recordVerificationOutcome(
       provider,
       status,
       outcome: message,
-      ...(profile?.id ? {} : { note: "No profile row was found for the signed-in account." }),
+      ...(actorId ? {} : { note: "No profile row was found for the signed-in account." }),
     },
   });
 
@@ -671,13 +671,12 @@ export async function saveModelRouting(input: {
 
   const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
-  const { data: profile } = sessionData.user
-    ? await session
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle()
-    : { data: null as { id: string } | null };
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] routing save actor lookup:", found.error);
+  }
 
   const routed = {
     primary_model: input.primaryModel.trim(),
@@ -697,7 +696,7 @@ export async function saveModelRouting(input: {
 
   const { error } = await session
     .from("ai_model_config")
-    .upsert({ capability: input.capability, ...routed, updated_by: profile?.id ?? null });
+    .upsert({ capability: input.capability, ...routed, updated_by: actorId });
 
   if (error) return { ok: false, error: error.message };
 

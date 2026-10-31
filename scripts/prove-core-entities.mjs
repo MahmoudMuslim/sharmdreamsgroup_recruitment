@@ -638,25 +638,6 @@ const STANDING_COPIES = new Map([
         "that picker's rows carry `department`, a column the layer's picker read does not return, so only the head-count half of its pair collides; wiring it means widening the layer read for the sourcing pickers that never show a department.",
     },
   ],
-  [
-    '.from("user_profiles").select(id).eq("auth_user_id",?).maybeSingle()',
-    {
-      files: [
-        "src/app/(admin)/files/actions.ts",
-        "src/app/(admin)/jobs/job-actions.ts",
-        "src/app/api/files/upload/route.ts",
-        "src/modules/settings/application/credential-actions.ts",
-        "src/modules/settings/application/credential-actions.ts",
-        "src/modules/settings/application/credential-actions.ts",
-        "src/modules/settings/application/credential-actions.ts",
-        "src/modules/settings/application/user-actions.ts",
-        "src/modules/settings/application/user-actions.ts",
-        "src/modules/settings/application/user-actions.ts",
-      ],
-      because:
-        "the layer read exists and four doors use it; ten staff doors still resolve their own account row, and each of them answers a refused lookup as a sign-in problem today — wiring one is a decision about a 401, not a search-and-replace.",
-    },
-  ],
 ]);
 
 const ledgeredIdentities = new Set(layerReads.map((r) => r.identity));
@@ -673,7 +654,7 @@ for (const read_ of layerReads) {
   const standing = STANDING_COPIES.get(read_.identity);
   if (!standing) {
     check(
-      `repositories/${read_.file} owns its ${read_.table} read alone (${repeats.length} hand-written copy${repeats.length === 1 ? "" : "ies"} outside)`,
+      `repositories/${read_.file} owns its ${read_.table} read alone (${repeats.length} hand-written cop${repeats.length === 1 ? "y" : "ies"} outside)`,
       repeats.length === 0,
       repeats.length ? `${read_.identity}  —  ${repeats.join(", ")}` : ""
     );
@@ -1298,6 +1279,46 @@ if (reInlinedTermsRead) {
     "the opening-terms probe re-inlines the experience-levels read → the 3c gate names it",
     copies.length === 1,
     `the injected chain matched ${copies.length} times against ${experienceLevelsRead.identity}`
+  );
+}
+
+// The account read's ledger entry left with the last ten doors, so its ownership
+// check is now the plain "no copies outside" half. That green only means
+// something if a door writing the chain by hand again turns it red — so this
+// mutation re-inlines one and asks what the comparison would count.
+const accountReadIdentity = layerReads
+  .filter((r) => r.file === "userProfile.ts")
+  .map((r) => r.identity)
+  .find((id) => id.includes('eq("auth_user_id"'));
+const USER_ACTIONS_REL = "src/modules/settings/application/user-actions.ts";
+const reInlinedAccount = accountReadIdentity
+  ? mutateOnce(
+      "a staff door's account read",
+      read(USER_ACTIONS_REL),
+      (t) =>
+        t.replace(
+          "      const found = await readStaffProfileIdByAuthUserId(restClient, sessionData.user.id);",
+          `      const { data: accountRow } = await restClient
+        .from("user_profiles")
+        .select("id")
+        .eq("auth_user_id", sessionData.user.id)
+        .maybeSingle();
+      const found = { ok: true, profileId: accountRow?.id ?? null };`
+        )
+    )
+  : null;
+if (reInlinedAccount) {
+  const written = outsideLayer
+    .flatMap((s) =>
+      identitiesIn(s.rel === USER_ACTIONS_REL ? reInlinedAccount : s.text)
+        .filter((id) => id === accountReadIdentity)
+        .map(() => s.rel)
+    )
+    .sort();
+  check(
+    "a staff door that re-inlines the account read is named with the ledger gone",
+    written.length === 1 && !STANDING_COPIES.has(accountReadIdentity),
+    `the gate would count ${written.length} copy${written.length === 1 ? "" : "ies"}: ${written.join(", ") || "nowhere"}`
   );
 }
 

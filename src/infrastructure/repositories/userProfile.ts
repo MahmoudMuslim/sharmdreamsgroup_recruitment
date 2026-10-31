@@ -13,7 +13,7 @@ import type { StaffReadClient } from "./restClient";
 /**
  * The `user_profiles.id` for a signed-in account, or the reason it is not known.
  *
- * Four call sites wrote this three-line read themselves, each with its own
+ * Ten staff doors wrote this three-line read themselves, each with its own
  * `?? null` that hid the difference between "no such account" and "the read
  * failed". Keeping that distinction here is the point: a caller may still
  * choose `null`, but it has to say so.

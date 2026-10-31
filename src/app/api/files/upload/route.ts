@@ -3,6 +3,7 @@ import { createServerRestClient } from "@/lib/data-api/server";
 import { getFileStore } from "@/lib/files/store";
 import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { readAttachmentAsCv } from "@/app/(admin)/candidates/cv-actions";
@@ -133,11 +134,9 @@ export async function POST(request: NextRequest) {
 
   // The uploader is named from their own profile row, so the candidate record can
   // say who added a file months after they left the company.
-  const { data: profile } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", user.authUserId)
-    .maybeSingle();
+  const found = await readStaffProfileIdByAuthUserId(restClient, user.authUserId);
+  if (!found.ok) console.error("[uploads] uploader profile lookup:", found.error);
+  const uploadedBy = found.ok ? found.profileId : null;
 
   const { data: attachment, error: insertError } = await restClient
     .from("application_attachments")
@@ -148,7 +147,7 @@ export async function POST(request: NextRequest) {
       file_name: file.name.slice(0, 200),
       mime_type: file.type,
       bytes: file.size,
-      uploaded_by: profile?.id ?? null,
+      uploaded_by: uploadedBy,
     })
     .select("id, bucket, storage_path, file_name, mime_type, bytes, created_at")
     .maybeSingle();

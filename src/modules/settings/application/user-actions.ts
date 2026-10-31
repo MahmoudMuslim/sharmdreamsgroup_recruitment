@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getServiceRestClient } from "@/lib/data-api/service";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import {
   canCreateStaffUsers,
   canManageStaffUsers,
@@ -134,14 +135,16 @@ async function requireStaffManager(): Promise<Actor | null> {
   const session = await requireStaff("/settings");
   if (!(await canManageStaffUsers())) return null;
 
-  const restClient = getServiceRestClient();
-  const { data: profile } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", session.authUserId)
-    .maybeSingle();
+  const found = await readStaffProfileIdByAuthUserId(
+    getServiceRestClient(),
+    session.authUserId
+  );
+  if (!found.ok) {
+    console.error("[settings] staff manager lookup:", found.error);
+    return null;
+  }
 
-  return profile ? { profileId: profile.id as string } : null;
+  return found.profileId ? { profileId: found.profileId } : null;
 }
 
 /**
@@ -156,14 +159,16 @@ async function requireStaffManager(): Promise<Actor | null> {
 async function requireStaffActor(): Promise<Actor | null> {
   const session = await requireStaff("/settings");
 
-  const restClient = getServiceRestClient();
-  const { data: profile } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", session.authUserId)
-    .maybeSingle();
+  const found = await readStaffProfileIdByAuthUserId(
+    getServiceRestClient(),
+    session.authUserId
+  );
+  if (!found.ok) {
+    console.error("[settings] staff actor lookup:", found.error);
+    return null;
+  }
 
-  return profile ? { profileId: profile.id as string } : null;
+  return found.profileId ? { profileId: found.profileId } : null;
 }
 
 /**
@@ -360,12 +365,9 @@ export async function createUser(payload: CreateUserPayload): Promise<CreateUser
     // so the auth id must be resolved to the profile row.
     let invitedBy: string | null = null;
     if (sessionData.user) {
-      const { data: inviterProfile } = await restClient
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle();
-      invitedBy = inviterProfile?.id ?? null;
+      const found = await readStaffProfileIdByAuthUserId(restClient, sessionData.user.id);
+      if (found.ok) invitedBy = found.profileId;
+      else console.error("[settings] inviter profile lookup:", found.error);
     }
 
     const { data: invite, error: inviteError } = await restClient

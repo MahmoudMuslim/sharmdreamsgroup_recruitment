@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { getFileStore } from "@/lib/files/store";
 import { displayName, isStoredPath } from "@/lib/files/paths";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -639,17 +640,15 @@ async function recordDeletion(
   path: string,
   before: { bytes: number | null; mimeType: string | null }
 ): Promise<string | null> {
-  const { data: profile } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
+  const found = await readStaffProfileIdByAuthUserId(restClient, authUserId);
+  if (!found.ok) console.error("[files] deletion audit actor lookup:", found.error);
+  const changedBy = found.ok ? found.profileId : null;
 
   const { error } = await restClient.from("settings_audit_log").insert({
     key: `storage.file:${bucket}/${path}`,
     previous_value: { bucket, path, bytes: before.bytes, mime_type: before.mimeType },
     next_value: null,
-    changed_by: stringOrNull(asRecord(profile).id) ?? null,
+    changed_by: changedBy,
   });
 
   if (error) {
