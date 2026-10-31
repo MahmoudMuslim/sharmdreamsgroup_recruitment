@@ -283,7 +283,11 @@ export function AppBar({
             <span className="hidden max-w-[140px] truncate text-xs font-semibold sm:block">
               {user.fullName}
             </span>
-            <ChevronDown className="h-3.5 w-3.5 text-brand-ink/45" aria-hidden />
+            {/* The bar's right cluster is `shrink-0`, so at a phone width every chip
+                here competes for the same 320px and the page scrolled sideways. The
+                chevron is the one piece carrying no information the name and the
+                avatar do not already give, so it yields first. */}
+            <ChevronDown className="hidden h-3.5 w-3.5 text-brand-ink/45 sm:block" aria-hidden />
           </button>
           <AccountMenu user={user} open={panel} />
         </div>

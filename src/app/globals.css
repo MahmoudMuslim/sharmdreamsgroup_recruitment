@@ -867,6 +867,17 @@ html[data-nav-animated] .rail-shift {
   font-family: var(--font-amiri), var(--font-sans);
 }
 
+/* A permission name is one unbreakable token — `settings.manage_platform` is 23
+   characters of monospace — and the notes that quote it sit inside cards, some of
+   them in a flex row whose text item cannot shrink below that token's own width.
+   At a 320px viewport the line was then wider than the card, the card wider than
+   the page, and the whole portal scrolled sideways for a word. Breaking the token
+   mid-string costs nothing a reader needs: the name is spelled out in the
+   sentence around it, and it is still one string when copied. */
+code {
+  overflow-wrap: anywhere;
+}
+
 /* Respect users who ask for less motion. */
 @media (prefers-reduced-motion: reduce) {
   *,

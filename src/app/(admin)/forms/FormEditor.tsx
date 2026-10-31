@@ -971,7 +971,7 @@ export function FormEditor({
                           type="button"
                           disabled={!canEdit || pending}
                           onClick={() => unassign(job.id, job.title)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
+                          className="inline-flex min-h-6 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
                         >
                           <X className="h-3 w-3" aria-hidden />
                           Remove

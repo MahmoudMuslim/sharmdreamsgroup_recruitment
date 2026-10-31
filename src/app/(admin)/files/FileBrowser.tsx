@@ -196,7 +196,7 @@ export function FileBrowser({
               <button
                 type="button"
                 onClick={() => goTo(listing.bucketKey, "")}
-                className="font-bold text-brand-ink/70 hover:text-brand-ink"
+                className="inline-flex min-h-6 items-center font-bold text-brand-ink/70 hover:text-brand-ink"
               >
                 {listing.bucketLabel}
               </button>
@@ -207,7 +207,7 @@ export function FileBrowser({
                     type="button"
                     onClick={() => goTo(listing.bucketKey, segment.prefix)}
                     className={cn(
-                      "rounded-lg px-1.5 py-0.5 font-semibold hover:bg-brand-sand",
+                      "inline-flex min-h-6 items-center rounded-lg px-1.5 py-0.5 font-semibold hover:bg-brand-sand",
                       index === trail.length - 1 ? "text-brand-ink" : "text-brand-ink/60"
                     )}
                   >
@@ -237,7 +237,7 @@ export function FileBrowser({
               onClick={() => setOnlyUnlinked(false)}
               aria-pressed={!onlyUnlinked}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition",
+                "inline-flex min-h-6 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition",
                 !onlyUnlinked ? "bg-brand-ink text-brand-cream" : "text-brand-ink/60 hover:bg-brand-sand"
               )}
             >
@@ -250,7 +250,7 @@ export function FileBrowser({
               aria-pressed={onlyUnlinked}
               disabled={unlinked === 0}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40",
+                "inline-flex min-h-6 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40",
                 onlyUnlinked ? "bg-brand-gold text-brand-ink" : "text-brand-ink/60 hover:bg-brand-sand"
               )}
             >

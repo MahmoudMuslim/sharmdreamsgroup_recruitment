@@ -445,14 +445,15 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
             </div>
 
             {/*
-              Fourteen columns out of a ~300px card give each day about 15px, so a
+              Fourteen columns out of a ~300px card give each day about 18px, so a
               date label squeezed in there is nothing but an ellipsis. Below `sm`
               the strip drops the per-day labels and names its two ends instead —
               the same axis the analytics trend strips use — while each column
               keeps its full date in the accessible name and opens its own day on
-              tap.
+              tap. It scrolls rather than shares the width evenly there: an 18px
+              column is a bar chart, not a target, so each keeps a 24px minimum.
             */}
-            <div className="flex h-36 items-end gap-1 sm:gap-1.5">
+            <div className="flex h-36 items-end gap-1 overflow-x-auto sm:gap-1.5">
               {series.map((day, index) => (
                 <button
                   key={day.date}
@@ -463,7 +464,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                   onBlur={() => setHoverDay(null)}
                   onClick={() => drill({ type: "day", date: day.date })}
                   aria-label={`${day.count} applications on ${day.date} — open the list`}
-                  className="group flex h-full min-w-0 flex-1 flex-col justify-end gap-1 focus:outline-none"
+                  className="group flex h-full min-w-6 shrink-0 flex-col justify-end gap-1 focus:outline-none sm:min-w-0 sm:flex-1"
                 >
                   <div
                     className={cn(
@@ -947,7 +948,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Name, role or department…"
                 aria-label="Search candidates"
-                className="w-40 bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none sm:w-56"
+                className="min-h-6 w-40 bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none sm:w-56"
               />
             </div>
             <Link
@@ -1015,7 +1016,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                           type="button"
                           onClick={() => toggleSort(key)}
                           className={cn(
-                            "inline-flex items-center gap-1 uppercase tracking-wider transition hover:text-brand-ink",
+                            "inline-flex min-h-6 items-center gap-1 uppercase tracking-wider transition hover:text-brand-ink",
                             sortKey === key && "text-brand-gold-dark"
                           )}
                         >

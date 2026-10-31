@@ -36,7 +36,7 @@ export default async function AssistantPage({ searchParams }: { searchParams: Se
         title="Assistant"
         description="Read and change anything your role allows across the portal, then come back to the conversation later — every one of yours is saved here."
         actions={
-          <span className="inline-flex items-center gap-2">
+          <span className="inline-flex flex-wrap items-center gap-2">
             <Link
               href={settingsHref("assistant", "presence")}
               className="inline-flex items-center gap-2 rounded-full border border-brand-line bg-white px-3 py-1.5 text-xs font-semibold text-brand-ink/60 transition hover:bg-brand-sand"

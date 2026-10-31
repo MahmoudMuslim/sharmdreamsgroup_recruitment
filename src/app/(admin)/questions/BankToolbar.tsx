@@ -90,7 +90,11 @@ export function BankToolbar({
           </p>
         ) : (
           <>
-            <label className="flex min-w-0 items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
+            {/* A select is as wide as its longest option, and it cannot shrink below
+                that, so the caption and the control share the line only while they
+                both fit — at a phone width the option names are long enough that the
+                label wraps instead of the page scrolling. */}
+            <label className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
               Where
               <Select
                 aria-label="Filter by the role or suite a question belongs to"
@@ -107,7 +111,7 @@ export function BankToolbar({
               </Select>
             </label>
 
-            <label className="flex min-w-0 items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
+            <label className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
               Group
               <Select
                 aria-label="Group the bank by"

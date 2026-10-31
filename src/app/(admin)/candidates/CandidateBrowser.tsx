@@ -823,7 +823,7 @@ export function CandidateBrowser({
                             onClick={() => void quickAdvance(c)}
                             disabled={pendingAdvance === c.id}
                             title={`Move to ${NEXT_STAGE[c.stage]?.replace("_", " ").toLowerCase()}`}
-                            className="inline-flex items-center gap-1 rounded-lg bg-brand-gold/15 px-2.5 py-1 text-xs font-semibold text-brand-gold-dark transition hover:bg-brand-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex min-h-6 items-center gap-1 rounded-lg bg-brand-gold/15 px-2.5 py-1 text-xs font-semibold text-brand-gold-dark transition hover:bg-brand-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {pendingAdvance === c.id ? (
                               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -937,7 +937,7 @@ export function CandidateBrowser({
                         type="button"
                         onClick={() => void quickAdvance(c)}
                         disabled={pendingAdvance === c.id}
-                        className="inline-flex items-center gap-1 rounded-lg bg-brand-gold/15 px-2.5 py-1 text-xs font-semibold text-brand-gold-dark transition hover:bg-brand-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex min-h-6 items-center gap-1 rounded-lg bg-brand-gold/15 px-2.5 py-1 text-xs font-semibold text-brand-gold-dark transition hover:bg-brand-gold/25 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {pendingAdvance === c.id ? (
                           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />

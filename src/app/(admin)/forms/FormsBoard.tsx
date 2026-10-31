@@ -797,7 +797,7 @@ function FormList({
                       <Link
                         href={`/forms/${form.id}`}
                         transitionTypes={navForward}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand/60 hover:text-brand-ink"
+                        className="inline-flex min-h-6 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand/60 hover:text-brand-ink"
                       >
                         <ExternalLink className="h-3 w-3" aria-hidden />
                         Open
@@ -833,7 +833,7 @@ function FormList({
                           type="button"
                           disabled={pending !== null}
                           onClick={() => onRetireArmed(form.id)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
+                          className="inline-flex min-h-6 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
                         >
                           <Archive className="h-3 w-3" aria-hidden />
                           Retire
@@ -940,7 +940,7 @@ function FormCard({
         <Link
           href={href}
           transitionTypes={navForward}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand/60 hover:text-brand-ink"
+          className="inline-flex min-h-6 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand/60 hover:text-brand-ink"
         >
           <ExternalLink className="h-3 w-3" aria-hidden />
           Open
@@ -949,7 +949,7 @@ function FormCard({
         <Link
           href={formUsageHref(form.id)}
           title={usageHrefTitle(form.name)}
-          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand/60 hover:text-brand-ink"
+          className="inline-flex min-h-6 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-brand-ink/60 transition hover:bg-brand-sand/60 hover:text-brand-ink"
         >
           <FileText className="h-3 w-3" aria-hidden />
           Applications
@@ -983,7 +983,7 @@ function FormCard({
             type="button"
             disabled={pending}
             onClick={onRetireArmed}
-            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
+            className="inline-flex min-h-6 items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-rose-700 transition hover:bg-rose-50 disabled:opacity-40"
           >
             <Archive className="h-3 w-3" aria-hidden />
             Retire

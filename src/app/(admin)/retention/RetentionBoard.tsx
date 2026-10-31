@@ -163,7 +163,7 @@ export function RetentionBoard({ data }: { data: RetentionPageData }) {
         </p>
         <Link
           href="/settings?area=privacy"
-          className="ml-auto text-xs font-semibold text-brand-gold-dark"
+          className="ml-auto inline-flex min-h-6 items-center text-xs font-semibold text-brand-gold-dark"
         >
           Change in Settings
         </Link>
@@ -490,7 +490,7 @@ function RetentionRow({ row }: { row: RetentionReview }) {
         <p className="text-xs text-brand-ink/45">{row.email ?? "no address on file"}</p>
         <Link
           href={`/candidates/${row.applicationId}`}
-          className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-brand-gold-dark"
+          className="mt-1 inline-flex min-h-6 items-center gap-1 text-[11px] font-semibold text-brand-gold-dark"
         >
           <FileSearch className="h-3 w-3" aria-hidden />
           Open the record

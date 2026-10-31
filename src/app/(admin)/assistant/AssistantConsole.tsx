@@ -160,14 +160,14 @@ export function AssistantConsole({
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search by name"
                 aria-label="Search saved conversations by name"
-                className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-brand-ink/40"
+                className="min-h-6 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-brand-ink/40"
               />
               {query !== "" && (
                 <button
                   type="button"
                   onClick={() => setQuery("")}
                   aria-label="Clear the search"
-                  className="shrink-0 rounded-md p-1 text-brand-ink/45 transition hover:bg-white hover:text-brand-ink"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/45 transition hover:bg-white hover:text-brand-ink"
                 >
                   <X className="h-3 w-3" aria-hidden />
                 </button>
@@ -248,7 +248,7 @@ export function AssistantConsole({
                           type="button"
                           onClick={() => void commitRename(session.id)}
                           aria-label="Save the name"
-                          className="rounded-md p-1 text-brand-ink/55 transition hover:bg-white"
+                          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/55 transition hover:bg-white"
                         >
                           <Check className="h-3.5 w-3.5" aria-hidden />
                         </button>
@@ -256,7 +256,7 @@ export function AssistantConsole({
                           type="button"
                           onClick={() => setEditingId(null)}
                           aria-label="Cancel renaming"
-                          className="rounded-md p-1 text-brand-ink/55 transition hover:bg-white"
+                          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/55 transition hover:bg-white"
                         >
                           <X className="h-3.5 w-3.5" aria-hidden />
                         </button>
@@ -302,7 +302,7 @@ export function AssistantConsole({
                                 setTitleDraft(session.title);
                               }}
                               aria-label={`Rename ${session.title}`}
-                              className="rounded-md p-1 text-brand-ink/45 transition hover:bg-white hover:text-brand-ink"
+                              className="grid h-6 w-6 place-items-center rounded-md text-brand-ink/45 transition hover:bg-white hover:text-brand-ink"
                             >
                               <Pencil className="h-3 w-3" aria-hidden />
                             </button>
@@ -310,7 +310,7 @@ export function AssistantConsole({
                               type="button"
                               onClick={() => setConfirmingId(session.id)}
                               aria-label={`Delete ${session.title}`}
-                              className="rounded-md p-1 text-brand-ink/45 transition hover:bg-white hover:text-rose-700"
+                              className="grid h-6 w-6 place-items-center rounded-md text-brand-ink/45 transition hover:bg-white hover:text-rose-700"
                             >
                               <Trash2 className="h-3 w-3" aria-hidden />
                             </button>

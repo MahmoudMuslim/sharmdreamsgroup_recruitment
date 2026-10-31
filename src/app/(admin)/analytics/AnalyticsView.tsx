@@ -80,7 +80,7 @@ const words = (value: string): string => value.replace(/_/g, " ");
 
 /** Every control on this page opens the same popup, so they share one affordance. */
 const HIT =
-  "group/hit text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold";
+  "group/hit min-h-6 min-w-6 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-gold";
 
 function Cue() {
   return (
@@ -726,86 +726,91 @@ export function AnalyticsView({
                   onOpen={open}
                 />
               </div>
-              <table className="mt-4 w-full text-left text-xs">
-                <thead>
-                  <tr className="text-[11px] uppercase tracking-wide text-brand-ink/45">
-                    <th className="py-1.5 font-bold">Channel</th>
-                    <th className="py-1.5 text-right font-bold">Sent</th>
-                    <th className="py-1.5 text-right font-bold">Delivered</th>
-                    <th className="py-1.5 text-right font-bold">Failed</th>
-                    <th className="py-1.5 text-right font-bold">Read</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-brand-line">
-                  {messages.byChannel.map((row) => (
-                    <tr key={row.channel}>
-                      <td className="py-2 font-semibold">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            open({ table: "messages", channel: row.channel, state: "sent" })
-                          }
-                          title={`List every ${words(row.channel)} message in the window`}
-                          className={cn(
-                            HIT,
-                            "rounded-md px-1.5 py-0.5 hover:bg-brand-sand/60 hover:underline hover:underline-offset-2"
-                          )}
-                        >
-                          <span className="inline-flex items-center gap-1.5">
-                            {row.channel === "WHATSAPP" ? (
-                              <MessageCircle className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
-                            ) : null}
-                            {words(row.channel)}
-                            <Cue />
-                          </span>
-                        </button>
-                      </td>
-                      <Cell
-                        value={row.sent}
-                        scope={{ table: "messages", channel: row.channel, state: "sent" }}
-                        onOpen={open}
-                      />
-                      {measuresDelivery(row.channel) ? (
-                        <>
-                          <Cell
-                            value={row.delivered ?? 0}
-                            scope={{ table: "messages", channel: row.channel, state: "delivered" }}
-                            onOpen={open}
-                          />
-                          <Cell
-                            value={row.undelivered ?? 0}
-                            danger
-                            scope={{ table: "messages", channel: row.channel, state: "undelivered" }}
-                            onOpen={open}
-                          />
-                        </>
-                      ) : (
-                        <td
-                          colSpan={2}
-                          className="py-2 text-right text-brand-ink/35"
-                          title="A portal notice is written, not delivered — its own signal is the Read column"
-                        >
-                          —
+              {/* Five columns of figures cannot shrink below the width of the word
+                  "Delivered", so at a phone width the table is the widest thing on the
+                  page. It scrolls on its own instead of sending the whole screen sideways. */}
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="text-[11px] uppercase tracking-wide text-brand-ink/45">
+                      <th className="py-1.5 font-bold">Channel</th>
+                      <th className="py-1.5 text-right font-bold">Sent</th>
+                      <th className="py-1.5 text-right font-bold">Delivered</th>
+                      <th className="py-1.5 text-right font-bold">Failed</th>
+                      <th className="py-1.5 text-right font-bold">Read</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-brand-line">
+                    {messages.byChannel.map((row) => (
+                      <tr key={row.channel}>
+                        <td className="py-2 font-semibold">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              open({ table: "messages", channel: row.channel, state: "sent" })
+                            }
+                            title={`List every ${words(row.channel)} message in the window`}
+                            className={cn(
+                              HIT,
+                              "rounded-md px-1.5 py-0.5 hover:bg-brand-sand/60 hover:underline hover:underline-offset-2"
+                            )}
+                          >
+                            <span className="inline-flex items-center gap-1.5">
+                              {row.channel === "WHATSAPP" ? (
+                                <MessageCircle className="h-3.5 w-3.5 text-brand-gold-dark" aria-hidden />
+                              ) : null}
+                              {words(row.channel)}
+                              <Cue />
+                            </span>
+                          </button>
                         </td>
-                      )}
-                      {row.channel === "IN_APP" ? (
                         <Cell
-                          value={row.read}
-                          scope={{ table: "messages", channel: row.channel, state: "read" }}
+                          value={row.sent}
+                          scope={{ table: "messages", channel: row.channel, state: "sent" }}
                           onOpen={open}
                         />
-                      ) : (
-                        <td
-                          className="py-2 text-right text-brand-ink/35"
-                          title="This channel reports no read signal to the portal"
-                        >
-                          —
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        {measuresDelivery(row.channel) ? (
+                          <>
+                            <Cell
+                              value={row.delivered ?? 0}
+                              scope={{ table: "messages", channel: row.channel, state: "delivered" }}
+                              onOpen={open}
+                            />
+                            <Cell
+                              value={row.undelivered ?? 0}
+                              danger
+                              scope={{ table: "messages", channel: row.channel, state: "undelivered" }}
+                              onOpen={open}
+                            />
+                          </>
+                        ) : (
+                          <td
+                            colSpan={2}
+                            className="py-2 text-right text-brand-ink/35"
+                            title="A portal notice is written, not delivered — its own signal is the Read column"
+                          >
+                            —
+                          </td>
+                        )}
+                        {row.channel === "IN_APP" ? (
+                          <Cell
+                            value={row.read}
+                            scope={{ table: "messages", channel: row.channel, state: "read" }}
+                            onOpen={open}
+                          />
+                        ) : (
+                          <td
+                            className="py-2 text-right text-brand-ink/35"
+                            title="This channel reports no read signal to the portal"
+                          >
+                            —
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               <TrendStrip
                 caption="Messages sent"
                 grain={messages.trendGrain}

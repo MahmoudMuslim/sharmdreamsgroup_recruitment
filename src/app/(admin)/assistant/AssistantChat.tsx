@@ -884,7 +884,7 @@ export function AssistantChat({
     <>
       <div
         className={cn(
-          "flex shrink-0 items-center gap-2 border-b border-brand-line bg-white px-3 py-2",
+          "flex shrink-0 flex-wrap items-center gap-2 border-b border-brand-line bg-white px-3 py-2",
           variant === "page" && "px-4"
         )}
       >
@@ -1209,7 +1209,7 @@ export function AssistantChat({
                   type="button"
                   onClick={() => setAttachment(null)}
                   aria-label={`Remove ${attachment.name}`}
-                  className="rounded-md p-1 text-brand-ink/55 transition hover:bg-white"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/55 transition hover:bg-white"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden />
                 </button>

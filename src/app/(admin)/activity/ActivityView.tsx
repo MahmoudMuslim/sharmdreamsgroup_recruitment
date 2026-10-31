@@ -196,7 +196,7 @@ function TrailRow({
                 type="button"
                 onClick={onHistory}
                 title="Show only this record's history"
-                className="inline-flex items-center gap-1 rounded-full border border-brand-line px-1.5 py-0.5 font-mono text-[10px] transition hover:bg-brand-sand"
+                className="inline-flex min-h-6 items-center gap-1 rounded-full border border-brand-line px-1.5 py-0.5 font-mono text-[10px] transition hover:bg-brand-sand"
               >
                 <History className="h-3 w-3" aria-hidden />
                 {shortId(row.entity_id)}

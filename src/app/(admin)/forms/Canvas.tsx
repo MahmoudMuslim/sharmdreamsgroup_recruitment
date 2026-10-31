@@ -196,7 +196,7 @@ export function Canvas({
                   event.stopPropagation();
                   onMove(index, index - 1);
                 }}
-                className="rounded-md p-1 text-brand-ink/45 hover:bg-brand-sand hover:text-brand-ink disabled:opacity-25"
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/45 hover:bg-brand-sand hover:text-brand-ink disabled:opacity-25"
               >
                 <ArrowUp className="h-3.5 w-3.5" />
               </button>
@@ -209,7 +209,7 @@ export function Canvas({
                   event.stopPropagation();
                   onMove(index, index + 2);
                 }}
-                className="rounded-md p-1 text-brand-ink/45 hover:bg-brand-sand hover:text-brand-ink disabled:opacity-25"
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/45 hover:bg-brand-sand hover:text-brand-ink disabled:opacity-25"
               >
                 <ArrowDown className="h-3.5 w-3.5" />
               </button>
@@ -222,7 +222,7 @@ export function Canvas({
                   event.stopPropagation();
                   onRemove(index);
                 }}
-                className="rounded-md p-1 text-brand-ink/35 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-25"
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/35 hover:bg-rose-50 hover:text-rose-700 disabled:opacity-25"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
