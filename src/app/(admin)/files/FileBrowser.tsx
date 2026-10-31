@@ -122,8 +122,11 @@ export function FileBrowser({
   const sizeHere = listing?.files.reduce((sum, file) => sum + (file.bytes ?? 0), 0) ?? 0;
   const trail = listing ? splitPrefix(listing.prefix) : [];
   /*
-   * A delete control the database would refuse is a false promise, so it only
-   * appears in buckets whose storage policy actually permits staff deletes.
+   * The descriptors say which buckets a storage delete policy permits, and this
+   * portal offers the control only where one exists. The offer is the page's own
+   * decision: the delete itself removes the row on the direct pool, so no policy
+   * is consulted on the way out — `deletable` is a statement about the `files`
+   * policies, and a bucket without one is a bucket this console will not touch.
    */
   const canDeleteHere =
     canDelete && (listing ? (bucketInfo(listing.bucketKey)?.deletable ?? false) : false);
@@ -193,7 +196,7 @@ export function FileBrowser({
               <button
                 type="button"
                 onClick={() => goTo(listing.bucketKey, "")}
-                className="font-bold text-brand-ink/70 hover:text-brand-ink"
+                className="inline-flex min-h-6 items-center font-bold text-brand-ink/70 hover:text-brand-ink"
               >
                 {listing.bucketLabel}
               </button>
@@ -204,7 +207,7 @@ export function FileBrowser({
                     type="button"
                     onClick={() => goTo(listing.bucketKey, segment.prefix)}
                     className={cn(
-                      "rounded-lg px-1.5 py-0.5 font-semibold hover:bg-brand-sand",
+                      "inline-flex min-h-6 items-center rounded-lg px-1.5 py-0.5 font-semibold hover:bg-brand-sand",
                       index === trail.length - 1 ? "text-brand-ink" : "text-brand-ink/60"
                     )}
                   >
@@ -234,7 +237,7 @@ export function FileBrowser({
               onClick={() => setOnlyUnlinked(false)}
               aria-pressed={!onlyUnlinked}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition",
+                "inline-flex min-h-6 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition",
                 !onlyUnlinked ? "bg-brand-ink text-brand-cream" : "text-brand-ink/60 hover:bg-brand-sand"
               )}
             >
@@ -247,7 +250,7 @@ export function FileBrowser({
               aria-pressed={onlyUnlinked}
               disabled={unlinked === 0}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40",
+                "inline-flex min-h-6 items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40",
                 onlyUnlinked ? "bg-brand-gold text-brand-ink" : "text-brand-ink/60 hover:bg-brand-sand"
               )}
             >
@@ -411,8 +414,10 @@ export function FileBrowser({
               <p className="mt-1 text-xs leading-relaxed text-brand-ink/60">{bucket.writtenBy}</p>
               <p className="mt-1 text-[11px] font-semibold text-brand-ink/50">
                 {bucket.deletable
-                  ? "Staff deletes are authorised by the storage policy, so Delete appears here."
-                  : "No storage delete policy for staff, so this portal cannot remove files from it."}
+                  ? bucket.deleteRequires
+                    ? `Its storage delete policy also asks for ${bucket.deleteRequires}. The button here is gated on Manage platform settings.`
+                    : "Staff deletes are authorised by the storage policy. The button here is gated on Manage platform settings."
+                  : "No storage delete policy for staff, so this console will not remove files from it."}
               </p>
             </li>
           ))}

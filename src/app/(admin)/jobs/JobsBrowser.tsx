@@ -7,7 +7,21 @@ import { Badge, Card, EmptyState, FilterRail, Meter } from "@/modules/analytics/
 import { cn } from "@/lib/utils";
 import { formatSalaryRange } from "@/lib/currency";
 import { openingSearchWords, searchOpenings } from "@/modules/jobs/domain/openingSearch";
+import {
+  applicantOrderFromParams,
+  ORDER_PARAM,
+  RANKED_ORDER,
+} from "@/modules/jobs/domain/applicantOrder";
 import { gridWindowNote, isHireable } from "@/modules/jobs/domain/hireable";
+import {
+  demandLine,
+  demandUnavailableNote,
+  type HiringDemand,
+} from "@/modules/jobs/domain/hiringDemand";
+import {
+  EMPLOYMENT_LABELS,
+  experienceLabel,
+} from "@/modules/jobs/domain/openingTerms";
 import { Pagination } from "@/modules/analytics/presentation/Pagination";
 import { PAGE_PARAM, PAGE_ROWS, clampPage, pageFromParams, pageSlice, pageWindow } from "@/lib/paging";
 import { JobCardActions } from "./JobCardActions";
@@ -18,7 +32,15 @@ export interface JobRow extends JobForEdit {
   requirements: string[] | null;
   posted_at: string | null;
   closing_at: string | null;
-  applications: { count: number }[];
+  /** Everyone live (not filed out) — the badge and the drawer count this. */
+  applicants: { count: number }[];
+  /** Applicants still in the working stages — a population now, not a movement. */
+  pipeline: { count: number }[];
+  /** Applicants who reached HIRED. */
+  hired: { count: number }[];
+  /** The `positions_needed` target, or null when none was recorded — or the column
+   * is not there on this database, which the grid flags separately via `headcountUnavailable`. */
+  positions_needed: number | null;
 }
 
 const STATUSES = ["PUBLISHED", "DRAFT", "PAUSED", "CLOSED"] as const;
@@ -31,7 +53,16 @@ const STATUS_TONE: Record<string, "neutral" | "gold" | "success" | "danger"> = {
 };
 
 function applicantsOf(job: JobRow) {
-  return job.applications?.[0]?.count ?? 0;
+  return job.applicants?.[0]?.count ?? 0;
+}
+
+/** The three demand figures for one opening, read off its aliased embeds. */
+function demandOf(job: JobRow): HiringDemand {
+  return {
+    needed: job.positions_needed,
+    inPipeline: job.pipeline?.[0]?.count ?? 0,
+    hired: job.hired?.[0]?.count ?? 0,
+  };
 }
 
 /**
@@ -85,6 +116,8 @@ function closingLabel(closingAt: string | null) {
 export function JobsBrowser({
   jobs,
   scopeTotal,
+  headcountUnavailable,
+  termsNote,
   options,
   canManage,
   canDecide,
@@ -95,6 +128,15 @@ export function JobsBrowser({
    * carry. The strip counts this; the rails and the search count `jobs`.
    */
   scopeTotal: number;
+  /** The `positions_needed` column could not be read at all (nowhere to read it from), so
+   * every card showing "no target set" is a read failure, not a recruiter's blank. */
+  headcountUnavailable: boolean;
+  /**
+   * Why the seniority levels are missing, or null when the column was read.
+   * Named once above the grid so a card's silence is not read as "no level was
+   * recorded" when the database has nowhere to record one.
+   */
+  termsNote: string | null;
   options: JobFormOptions;
   canManage: boolean;
   /** `candidates.write` — who may move an applicant between stages from the drawer. */
@@ -118,12 +160,20 @@ export function JobsBrowser({
   // still sees where it sits among the rest.
   const focusId = params.get("job");
 
+  // `?order=ranked` is where the chat's ranking answer lands: the same opening,
+  // with its applicants drawer open in the order that answer just listed. Without
+  // it the drawer stays closed and the link only rings the card, which is what
+  // every other `?job=` link promises.
+  const order = applicantOrderFromParams(params);
+
   // `?q=` seeds the box, so an assistant answer that searched for a role links to
   // a grid showing the same openings. The words stay local while they are typed:
   // the box is written into the URL by the next rail click, not per keystroke.
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [sortBy, setSortBy] = useState<"newest" | "applicants" | "title">("newest");
-  const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(null);
+  const [applicantsJob, setApplicantsJob] = useState<JobRow | null>(() =>
+    order === RANKED_ORDER ? (jobs.find((job) => job.id === focusId) ?? null) : null
+  );
   /** Which `?job=` link this grid has already turned a page for. */
   const jumpedFor = useRef<string | null>(null);
 
@@ -137,6 +187,20 @@ export function JobsBrowser({
   if (incomingQuery !== lastAppliedQuery) {
     setLastAppliedQuery(incomingQuery);
     setQuery(incomingQuery ?? "");
+  }
+
+  // Likewise for a ranked link clicked while this grid is already open: what the
+  // address names is applied on the render that sees it, and only a change of it
+  // opens anything — the drawer's own chips stay the recruiter's to press. Written
+  // like the box above rather than in an effect: which drawer is open is derived
+  // from the address, not a subscription to something outside React.
+  const arrival = `${focusId ?? ""}|${order}`;
+  const [lastAppliedArrival, setLastAppliedArrival] = useState(arrival);
+  if (arrival !== lastAppliedArrival) {
+    setLastAppliedArrival(arrival);
+    if (order === RANKED_ORDER) {
+      setApplicantsJob(jobs.find((job) => job.id === focusId) ?? null);
+    }
   }
 
   /**
@@ -177,7 +241,10 @@ export function JobsBrowser({
     if (words.trim()) next.set("q", words);
     if (target > 1) next.set(PAGE_PARAM, String(target));
     const ringed = "job" in view ? view.job : focusId;
-    if (ringed) next.set("job", ringed);
+    if (ringed) {
+      next.set("job", ringed);
+      if (order === RANKED_ORDER) next.set(ORDER_PARAM, RANKED_ORDER);
+    }
     const search = next.toString();
     window.history.replaceState(null, "", search ? `${pathname}?${search}` : pathname);
   }
@@ -186,6 +253,19 @@ export function JobsBrowser({
   function openRail(rail: { status?: string; company?: string }) {
     setApplicantsJob(null);
     writeView({ ...rail, job: null });
+  }
+
+  /**
+   * Closes the drawer, and takes a ranked address with it.
+   *
+   * A ranked link has said its piece once the drawer it opened is read; leaving
+   * `?order=ranked` behind would promise a reload a drawer the recruiter has just
+   * closed. A drawer opened by a click was never in the address, so closing it
+   * leaves the ring a plain `?job=` link put there alone.
+   */
+  function closeApplicants() {
+    setApplicantsJob(null);
+    if (order === RANKED_ORDER) writeView({ job: null });
   }
 
   const companyNames = useMemo(() => {
@@ -319,6 +399,21 @@ export function JobsBrowser({
         <p className="text-[11px] leading-relaxed text-brand-ink/50">{windowNote}</p>
       )}
 
+      {/* When the target column is simply not there yet, every card would say "no
+          target set" — and that is a fact about the database, not the openings.
+          The grid says so once here so the per-card copy is not read as "nobody
+          set a headcount". */}
+      {headcountUnavailable && (
+        <p className="text-[11px] leading-relaxed text-brand-ink/50">{demandUnavailableNote()}</p>
+      )}
+
+      {/* The same rule for seniority: where the column is absent there is nothing
+          to hold a level, so no card can say "not recorded" about a value nobody
+          could have set. The grid says why once here. */}
+      {termsNote && (
+        <p className="text-[11px] leading-relaxed text-brand-ink/50">{termsNote}</p>
+      )}
+
       {/* Toolbar */}
       <div className="space-y-2.5">
         <div className="flex flex-wrap items-center gap-3">
@@ -409,6 +504,7 @@ export function JobsBrowser({
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {pageRows.map((job) => {
             const applicants = applicantsOf(job);
+            const demand = demandOf(job);
             const closes = job.status === "PUBLISHED" ? closingLabel(job.closing_at) : null;
             const salary = formatSalaryRange(
               {
@@ -460,8 +556,16 @@ export function JobsBrowser({
                 <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-brand-ink/55">
                   <span className="rounded-full bg-brand-sand px-2.5 py-1">{job.department}</span>
                   <span className="rounded-full bg-brand-sand px-2.5 py-1">
-                    {job.employment_type.replace(/_/g, " ")}
+                    {EMPLOYMENT_LABELS[job.employment_type] ??
+                      job.employment_type.replace(/_/g, " ")}
                   </span>
+                  {/* A level nobody recorded gets no chip: a "not recorded" pill on
+                      every pre-033 opening would be noise, not a fact. */}
+                  {job.experience_level && (
+                    <span className="rounded-full bg-brand-sand px-2.5 py-1">
+                      {experienceLabel(job.experience_level)}
+                    </span>
+                  )}
                   <span className="rounded-full bg-brand-sand px-2.5 py-1">
                     {job.sector.replace(/_/g, " ")}
                   </span>
@@ -490,6 +594,12 @@ export function JobsBrowser({
                     max={maxApplicants}
                     tone={applicants > 0 ? "gold" : "ink"}
                   />
+                  {/* The demand read: the target beside the two populations that sit
+                      in the funnel now. `hiringDemand` says they are counts at this
+                      instant, never a rate or a movement. */}
+                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-brand-ink/50">
+                    {demandLine(demand)}
+                  </p>
                 </div>
 
                 {canManage && (
@@ -513,10 +623,14 @@ export function JobsBrowser({
 
       {applicantsJob && (
         <JobApplicantsDrawer
-          key={applicantsJob.id}
+          key={`${applicantsJob.id}|${order}`}
           job={applicantsJob}
           canDecide={canDecide}
-          onClose={() => setApplicantsJob(null)}
+          // The catalogue the match lines are named from — the same vocabulary the
+          // editor's picker uses, so a skill reads the same in both drawers.
+          skillLabels={options.skillLabels}
+          initialOrder={order}
+          onClose={closeApplicants}
         />
       )}
     </div>

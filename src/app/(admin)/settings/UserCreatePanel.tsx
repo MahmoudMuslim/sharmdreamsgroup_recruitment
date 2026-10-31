@@ -314,7 +314,7 @@ export function UserCreatePanel({
               ? "No account is created yet, so this person cannot sign in."
               : credential
                 ? "Copy the password above before you close this panel — it is shown once."
-                : "Passwords are hashed by Supabase and never stored as text."}
+                : "Passwords are hashed in our own database and never stored as text."}
           </p>
           <div className="flex shrink-0 gap-2">
             <Button type="button" variant="outline" onClick={onClose}>

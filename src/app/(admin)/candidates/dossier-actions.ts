@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
@@ -16,6 +16,11 @@ import {
   parseGateAnswers,
   type GateAnswer,
 } from "@/modules/careers/gate-questions";
+import {
+  parseSnapshot,
+  type SnapshotField,
+  type SnapshotForm,
+} from "@/modules/form-builder/domain/snapshot";
 
 /**
  * The whole candidate record: what they submitted, what the gate asked, and
@@ -132,8 +137,20 @@ export interface DossierAttachment {
   uploaded_by: string | null;
 }
 
+/** The questions this application was filed against, exactly as asked. */
+export interface DossierFormAnswers {
+  fields: SnapshotField[];
+  forms: SnapshotForm[];
+}
+
 export interface CandidateDossier {
   application: DossierApplication;
+  /**
+   * The form snapshot, or null for a pre-044 application and for one whose
+   * answers were erased — the drawer then shows the fixed application fields
+   * and nothing else.
+   */
+  form_answers: DossierFormAnswers | null;
   /** Empty when the role asked no viability questions. */
   gate_answers: GateAnswer[];
   attempts: DossierAttempt[];
@@ -203,8 +220,8 @@ export async function getCandidateDossier(
   applicationId: string
 ): Promise<DossierResult> {
   await requireStaff("/candidates");
-  const [supabase, masked, zone, validityHours, canManageLinks, canWrite] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, zone, validityHours, canManageLinks, canWrite] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     getOrganisationTimeZone(),
     getNumberSetting("assessment.link_validity_hours", DEFAULT_LINK_VALIDITY_HOURS),
@@ -212,10 +229,10 @@ export async function getCandidateDossier(
     hasPermissionForUser("candidates.write"),
   ]);
 
-  const { data: row, error } = await supabase
+  const { data: row, error } = await restClient
     .from("applications")
     .select(
-      "id, full_name, email, phone, tracking_code, source, created_at, cv_file_path, cv_text, gate_answers, job_openings(title, department, location)"
+      "id, full_name, email, phone, tracking_code, source, created_at, cv_file_path, cv_text, gate_answers, form_answers, job_openings(title, department, location)"
     )
     .eq("id", applicationId)
     .maybeSingle();
@@ -230,15 +247,18 @@ export async function getCandidateDossier(
   const job = one<{ title?: unknown; department?: unknown; location?: unknown }>(
     row.job_openings
   );
+  // A malformed entry is dropped by the parser rather than repaired here; an
+  // application filed before 044, or one already erased, has nothing to show.
+  const snapshot = parseSnapshot(row.form_answers);
 
   // The links are short-lived and only this recruiter asked for them, so a CV
   // that cannot be signed degrades to a note rather than an empty drawer.
   const links = path
-    ? await createCvLinks(supabase, path)
+    ? await createCvLinks(path)
     : { cv_url: null, cv_download_url: null };
 
   const [attempts, logs, queued, planResponse, siblings, attached] = await Promise.all([
-    supabase
+    restClient
       .from("candidate_attempts")
       .select(
         "id, access_token, status, total_score, max_score, time_limit_minutes, started_at, submitted_at, expires_at, created_at, assessment_templates(name)"
@@ -246,7 +266,7 @@ export async function getCandidateDossier(
       .eq("application_id", applicationId)
       .order("created_at", { ascending: false })
       .limit(10),
-    supabase
+    restClient
       .from("communication_logs")
       .select(
         "id, channel, direction, recipient, subject, body, delivered, error_message, read_at, created_at"
@@ -254,18 +274,18 @@ export async function getCandidateDossier(
       .eq("application_id", applicationId)
       .order("created_at", { ascending: false })
       .limit(40),
-    supabase
+    restClient
       .from("scheduled_whatsapp_jobs")
       .select("id, recipient_phone, payload, status, error_log, scheduled_for, sent_at, created_at")
       .eq("application_id", applicationId)
       .order("created_at", { ascending: false })
       .limit(20),
-    supabase
+    restClient
       .from("onboarding_plans")
       .select("progress, checklist, retention_risk_score, generated_by_ai, created_at")
       .eq("application_id", applicationId)
       .maybeSingle(),
-    supabase
+    restClient
       .from("applications")
       .select("id, tracking_code, stage, created_at, job_openings(title)")
       .eq("email", row.email)
@@ -273,7 +293,7 @@ export async function getCandidateDossier(
       .is("archived_at", null)
       .order("created_at", { ascending: false })
       .limit(10),
-    supabase
+    restClient
       .from("application_attachments")
       .select("id, bucket, storage_path, file_name, mime_type, bytes, created_at, user_profiles(full_name)")
       .eq("application_id", applicationId)
@@ -336,6 +356,7 @@ export async function getCandidateDossier(
             ? "The attached CV could not be opened — the candidate may have uploaded it before CV storage was enabled."
             : null,
       },
+      form_answers: snapshot,
       gate_answers: parseGateAnswers(row.gate_answers),
       attempts: (attempts.data ?? []).map((attempt: Record<string, unknown>) => ({
         id: String(attempt.id),

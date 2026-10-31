@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { tasksOf, type ChecklistTask } from "./checklist";
 
@@ -35,9 +35,9 @@ export interface OnboardingData {
 
 export async function getOnboardingData(): Promise<OnboardingData> {
   await requireStaff("/onboarding");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("onboarding_plans")
     .select(
       "id, application_id, progress, checklist, skill_gaps, applications(full_name, hired_at, job_openings(title, tenants_and_companies(name)))"
@@ -72,7 +72,7 @@ export async function getOnboardingData(): Promise<OnboardingData> {
   });
 
   // Recent hires with no plan yet, so the recruiter can generate one.
-  const { data: hired } = await supabase
+  const { data: hired } = await restClient
     .from("applications")
     .select("id, full_name, job_openings(title)")
     .eq("stage", "HIRED")

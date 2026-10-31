@@ -1,0 +1,9 @@
+User     mahmoudmuslim
+Server   https://api.rsrs.rs
+Mode     cloud sync (auto)
+Memories 1  (write id e9e88745)
+
+
+# rsrs
+Login password: 9db76e239123c5497551301914c3f9a8
+Super password: A3-25a631-7311e0-2fa119-7e7b95-367624-b50a08

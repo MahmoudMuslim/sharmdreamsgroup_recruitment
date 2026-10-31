@@ -277,8 +277,12 @@ export class EmailConnector {
     }
 
     try {
-      const info = await transporterFor(config).verify();
-      return { ok: true, message: `Signed in to ${config.host}:${config.port} (${String(info)}).` };
+      // verify() resolves a bare `true`, so the sentence names the TLS mode the
+      // handshake actually used — the one thing this probe proves that a caller
+      // can still check against the port it typed.
+      await transporterFor(config).verify();
+      const mode = config.port === 465 ? "TLS from the first byte" : "STARTTLS";
+      return { ok: true, message: `Signed in to ${config.host}:${config.port} over ${mode}.` };
     } catch (error) {
       return { ok: false, message: explainFailure(error) };
     }

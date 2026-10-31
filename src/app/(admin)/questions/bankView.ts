@@ -183,7 +183,7 @@ export const DEFAULT_BANK_VIEW: BankViewState = {
 };
 
 const STORE_TOKENS: readonly string[] = ["", "gate", "suite"];
-const KIND_TOKENS: readonly string[] = ["", "choice", "written", "spreadsheet", "video"];
+const KIND_TOKENS: readonly string[] = ["", "choice", "judgment", "written", "spreadsheet", "video"];
 const LIVE_TOKENS: readonly string[] = ["", "LIVE", "IDLE"];
 const EFFECT_TOKENS: readonly string[] = BANK_EFFECT_RAILS.map((rail) => rail.key);
 const MODE_TOKENS: readonly string[] = ["list", "board"];

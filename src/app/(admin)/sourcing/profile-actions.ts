@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { describeExtractionFailure as describeParseFailure, extractCvText } from "@/modules/screening/infrastructure/cvParser";
@@ -15,6 +15,7 @@ import {
 import { describeExtractionFailure, extractProfile } from "@/modules/sourcing/infrastructure/profile-extract";
 import { normalizeLinkedInUrl } from "@/modules/sourcing/domain/prospect-import";
 import { recordActivity } from "@/modules/activity/application/record";
+import { readProspectCaptureFields } from "@/infrastructure/repositories/sourcedProspect";
 
 /**
  * Reading a prospect's full profile.
@@ -30,7 +31,7 @@ import { recordActivity } from "@/modules/activity/application/record";
  * than the service role.
  */
 
-type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 export interface ProfileReadResult {
   ok: boolean;
@@ -58,21 +59,6 @@ export interface StoredProspectProfile {
   company: string | null;
 }
 
-const PROFILE_COLUMNS =
-  "profile, profile_url, profile_source, profile_captured_at, profile_error, full_name, headline, company, linkedin_url";
-
-interface ProspectProfileRecord {
-  profile: unknown;
-  profile_url: string | null;
-  profile_source: string | null;
-  profile_captured_at: string | null;
-  profile_error: string | null;
-  full_name: string;
-  headline: string | null;
-  company: string | null;
-  linkedin_url: string | null;
-}
-
 function asSource(value: unknown): ProfileSource | null {
   return value === "URL" || value === "PASTE" || value === "FILE" ? value : null;
 }
@@ -89,16 +75,11 @@ function asSource(value: unknown): ProfileSource | null {
 export async function getProspectProfile(id: string): Promise<StoredProspectProfile | null> {
   await requireStaff("/sourcing");
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
+  const restClient = await createServerRestClient();
+  const found = await readProspectCaptureFields(restClient, id);
+  if (!found.ok) return null;
 
-  if (error || !data) return null;
-
-  const row = data as unknown as ProspectProfileRecord;
+  const row = found.row;
   return {
     profile: row.profile ? normalizeProspectProfile(row.profile) : null,
     source: asSource(row.profile_source),
@@ -152,7 +133,7 @@ function profileTally(profile: ProspectProfile): string {
  * matches neither.
  */
 async function storeProfile(
-  supabase: StaffClient,
+  restClient: StaffClient,
   id: string,
   input: {
     profile: ProspectProfile;
@@ -171,7 +152,7 @@ async function storeProfile(
   // Reading the name back doubles as the existence check: an update that matched
   // no row is reported as a success by PostgREST, so a prospect deleted mid-read
   // would otherwise be recorded as saved.
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("sourced_prospects")
     .update(payload)
     .eq("id", id)
@@ -214,8 +195,8 @@ async function storeProfile(
  * unexplained empty section, and the last successful profile stays until a newer
  * one replaces it.
  */
-async function storeRefusal(supabase: StaffClient, id: string, reason: string): Promise<void> {
-  const { data } = await supabase
+async function storeRefusal(restClient: StaffClient, id: string, reason: string): Promise<void> {
+  const { data } = await restClient
     .from("sourced_prospects")
     .update({ profile_error: reason.slice(0, 600) })
     .eq("id", id)
@@ -238,7 +219,7 @@ async function storeRefusal(supabase: StaffClient, id: string, reason: string): 
 
 /** Runs the model over whatever a door produced, then stores the result. */
 async function structureAndStore(
-  supabase: StaffClient,
+  restClient: StaffClient,
   id: string,
   read: ProfileRead,
   anchor: ProspectAnchor,
@@ -265,7 +246,7 @@ async function structureAndStore(
     };
   }
 
-  const stored = await storeProfile(supabase, id, { profile, source, profile_url: profileUrl });
+  const stored = await storeProfile(restClient, id, { profile, source, profile_url: profileUrl });
   if (!stored.ok) return { ok: false, error: stored.error };
 
   return { ok: true, profile, source, detail: read.detail };
@@ -292,15 +273,10 @@ export async function readProspectProfile(input: {
     return { ok: false, error: "You need the Manage candidates permission to read profiles." };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", input.id)
-    .maybeSingle();
-
-  const row = data as unknown as ProspectProfileRecord | null;
-  if (!row) return { ok: false, error: "That prospect is no longer in the pool." };
+  const restClient = await createServerRestClient();
+  const found = await readProspectCaptureFields(restClient, input.id);
+  if (!found.ok) return { ok: false, error: found.error };
+  const row = found.row;
 
   const candidate = (input.url ?? row.profile_url ?? row.linkedin_url ?? "").trim();
   if (!candidate) {
@@ -315,7 +291,7 @@ export async function readProspectProfile(input: {
 
   if (!isWorthExtracting(read)) {
     const refusal = "ok" in read ? read : { reason: "", hint: "" };
-    if (refusal.reason) await storeRefusal(supabase, input.id, refusal.reason);
+    if (refusal.reason) await storeRefusal(restClient, input.id, refusal.reason);
     return {
       ok: false,
       error: refusal.reason || "That page held no text worth reading.",
@@ -323,7 +299,7 @@ export async function readProspectProfile(input: {
     };
   }
 
-  return structureAndStore(supabase, input.id, read, row, "URL", normalizeStoredUrl(candidate));
+  return structureAndStore(restClient, input.id, read, row, "URL", normalizeStoredUrl(candidate));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -357,17 +333,12 @@ export async function pasteProspectProfile(input: {
     };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", input.id)
-    .maybeSingle();
+  const restClient = await createServerRestClient();
+  const found = await readProspectCaptureFields(restClient, input.id);
+  if (!found.ok) return { ok: false, error: found.error };
+  const row = found.row;
 
-  const row = data as unknown as ProspectProfileRecord | null;
-  if (!row) return { ok: false, error: "That prospect is no longer in the pool." };
-
-  return structureAndStore(supabase, input.id, profileTextFromPaste(trimmed), row, "PASTE");
+  return structureAndStore(restClient, input.id, profileTextFromPaste(trimmed), row, "PASTE");
 }
 
 /* -------------------------------------------------------------------------- */
@@ -439,15 +410,10 @@ export async function uploadProspectProfile(formData: FormData): Promise<Profile
     };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
-
-  const row = data as unknown as ProspectProfileRecord | null;
-  if (!row) return { ok: false, error: "That prospect is no longer in the pool." };
+  const restClient = await createServerRestClient();
+  const found = await readProspectCaptureFields(restClient, id);
+  if (!found.ok) return { ok: false, error: found.error };
+  const row = found.row;
 
   let read: ProfileRead;
   try {
@@ -464,7 +430,7 @@ export async function uploadProspectProfile(formData: FormData): Promise<Profile
   // The same floor the other doors use, applied directly: this read cannot
   // come back blocked, it either held text or it did not.
   if (read.text.trim().length < 120) {
-    await storeRefusal(supabase, id, `No readable text came out of ${read.detail}.`);
+    await storeRefusal(restClient, id, `No readable text came out of ${read.detail}.`);
     return {
       ok: false,
       error: `No readable text came out of ${read.detail}.`,
@@ -472,7 +438,7 @@ export async function uploadProspectProfile(formData: FormData): Promise<Profile
     };
   }
 
-  return structureAndStore(supabase, id, read, row, "FILE");
+  return structureAndStore(restClient, id, read, row, "FILE");
 }
 
 /* -------------------------------------------------------------------------- */

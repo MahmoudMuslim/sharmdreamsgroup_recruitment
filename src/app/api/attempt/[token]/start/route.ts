@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
 import { recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
@@ -6,9 +6,9 @@ import { NextResponse } from "next/server";
 
 export async function POST(_request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data: attempt, error } = await supabase
+  const { data: attempt, error } = await restClient
     .from("candidate_attempts")
     .select(`id, status, time_limit_minutes, created_at, expires_at, ${APPLICATION_EMBED}`)
     .eq("access_token", token)
@@ -33,7 +33,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
     : await isLinkExpired(attempt.created_at);
 
   if (overdue) {
-    await supabase.from("candidate_attempts").update({ status: "EXPIRED" }).eq("id", attempt.id);
+    await restClient.from("candidate_attempts").update({ status: "EXPIRED" }).eq("id", attempt.id);
     await recordActivity({
       ...actor,
       area: "assessments",
@@ -47,7 +47,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
   }
 
   const expiresAt = new Date(Date.now() + attempt.time_limit_minutes * 60 * 1000).toISOString();
-  const { error: updateError } = await supabase
+  const { error: updateError } = await restClient
     .from("candidate_attempts")
     .update({ status: "IN_PROGRESS", started_at: new Date().toISOString(), expires_at: expiresAt })
     .eq("id", attempt.id);

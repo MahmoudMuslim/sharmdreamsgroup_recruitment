@@ -152,8 +152,8 @@ export function MemberEditPanel({ member, onClose, onSaved }: MemberEditPanelPro
               />
               {emailChanged && (
                 <p className="mt-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800">
-                  This is the address they sign in with. Saving moves it here and in Supabase
-                  Auth together, so they must use{" "}
+                  This is the address they sign in with. Saving moves it here and in the sign-in
+                  directory together, so they must use{" "}
                   <strong>{draft.email.trim().toLowerCase()}</strong> from now on — the old one
                   stops working. Anyone already signed in stays signed in until their session
                   ends.

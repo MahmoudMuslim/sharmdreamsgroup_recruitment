@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { RestClient } from "@/lib/rest/client";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { hasAiProvider } from "@/lib/config.server";
@@ -23,7 +23,28 @@ import {
   type Difficulty,
   type GeneratedQuestion,
 } from "@/modules/assessment/domain/aiAuthoring";
-import type { QuestionConfig, QuestionType } from "@/types";
+import {
+  judgmentStoredOptions,
+  readJudgmentDraft,
+  type JudgmentDraft,
+} from "@/modules/assessment/domain/situational";
+import {
+  CODING,
+  CODING_SCHEMA_NOTE,
+  readCodingLanguage,
+  starterCodeIssue,
+} from "@/modules/assessment/domain/coding";
+import { readQuestionTypeAvailability } from "@/modules/assessment/application/questionTypeAvailability";
+import { questionWriteError } from "@/modules/assessment/domain/questionWriteErrors";
+import {
+  RUBRIC_WEIGHT_TOTAL,
+  isRubricType,
+  readRubricDraft,
+  rubricCriteriaOf,
+  type RubricDraftRow,
+} from "@/modules/assessment/domain/rubric";
+import { resolveSkillTags } from "@/modules/assessment/domain/skillTags";
+import type { QuestionConfig, QuestionType, RubricCriterion } from "@/types";
 
 /**
  * Per-question authoring.
@@ -51,11 +72,20 @@ const QUESTION_TYPES: QuestionType[] = [
   "CASE_STUDY",
   "EXCEL_MODEL",
   "VIDEO_PITCH",
+  "SITUATIONAL_JUDGMENT",
+  "CODING",
 ];
 
 export interface ChoiceDraft {
   text: string;
   is_correct: boolean;
+  /**
+   * SITUATIONAL_JUDGMENT only: how effective the response is, 0–100.
+   *
+   * Ignored for a quiz, where `is_correct` is the whole answer key. A scene
+   * carries no correct option at all — its ranking lives in these percentages.
+   */
+  score?: number | null;
 }
 
 export interface QuestionDraft {
@@ -69,14 +99,26 @@ export interface QuestionDraft {
   position: number;
   time_limit_minutes: number | null;
   shuffle_options: boolean;
-  /** MULTIPLE_CHOICE only. */
+  /** MULTIPLE_CHOICE and SITUATIONAL_JUDGMENT. */
   options: ChoiceDraft[];
   /** CASE_STUDY only. */
   context: string;
   min_words: number | null;
+  /** CODING only: one of CODING_LANGUAGES, checked before the client opens. */
+  language?: string;
+  /** CODING only: the optional snippet shown beside the prompt. */
+  starter_code?: string;
   /** VIDEO_PITCH only. */
   min_duration_seconds: number | null;
   max_duration_seconds: number | null;
+  /**
+   * CASE_STUDY, VIDEO_PITCH and CODING: the marking scheme, one row per criterion.
+   *
+   * Absent means the caller does not read the marking scheme and must not
+   * destroy it; an array with nothing named or weighted in it is an author
+   * emptying the panel, which retires the rubric.
+   */
+  rubric?: RubricDraftRow[] | null;
   /**
    * EXCEL_MODEL carries a spreadsheet definition that no simple form can
    * represent. When editing, the caller sends the original config back
@@ -90,8 +132,70 @@ async function requireAssessmentEditor(): Promise<string | null> {
   return "You need the Create assessments permission.";
 }
 
-/** Builds the type-specific config, preserving anything this form cannot edit. */
-function buildConfig(draft: QuestionDraft): QuestionConfig {
+/**
+ * What a draft means for the question's marking scheme.
+ */
+type RubricChange =
+  | { kind: "keep" }
+  | { kind: "clear" }
+  | { kind: "set"; criteria: RubricCriterion[] }
+  | { kind: "refuse"; error: string };
+
+/**
+ * Whether a draft row is a criterion at all.
+ *
+ * Mirrors the rows `readRubricDraft` drops, so "the panel is empty" and "the
+ * panel has criteria in it" cannot disagree with the validator that reads them.
+ */
+function rubricRowIsUsed(row: RubricDraftRow | null | undefined): boolean {
+  if (!row) return false;
+  if (typeof row.label === "string" && row.label.trim().length > 0) return true;
+  return (
+    typeof row.weight === "number" &&
+    Number.isInteger(row.weight) &&
+    row.weight >= 1 &&
+    row.weight <= RUBRIC_WEIGHT_TOTAL
+  );
+}
+
+/**
+ * What the draft means for the question's marking scheme.
+ *
+ * Three states arrive as one absent key otherwise: a caller that has no rubric
+ * panel (an Excel config, an older draft) must not destroy criteria it never
+ * read, while an author who emptied the panel means the criteria to go.
+ */
+function resolveRubricChange(draft: QuestionDraft): RubricChange {
+  if (!isRubricType(draft.question_type) || !Array.isArray(draft.rubric)) {
+    return { kind: "keep" };
+  }
+  if (!draft.rubric.some(rubricRowIsUsed)) return { kind: "clear" };
+
+  const read = readRubricDraft(draft.rubric);
+  return read.ok ? { kind: "set", criteria: read.criteria } : { kind: "refuse", error: read.error };
+}
+
+/** Store or retire the marking scheme on a config this form is rebuilding. */
+function applyRubricChange(config: QuestionConfig, rubric: RubricChange): void {
+  if (rubric.kind === "clear") delete config.rubric;
+  else if (rubric.kind === "set") config.rubric = rubric.criteria;
+}
+
+/**
+ * Builds the type-specific config, preserving anything this form cannot edit.
+ *
+ * `judgment` carries the responses a scene already had validated, because
+ * `buildConfig` cannot return a refusal — `saveQuestion` reads them first and
+ * only calls this once they are markable. `rubric` is resolved the same way: an
+ * invalid scheme is refused by the caller, so the config builder only stores
+ * what has already passed.
+ */
+function buildConfig(
+  draft: QuestionDraft,
+  judgment: JudgmentDraft[] = [],
+  rubric: RubricChange = { kind: "keep" },
+  preserve: QuestionConfig | null = draft.preserve_config
+): QuestionConfig {
   switch (draft.question_type) {
     case "MULTIPLE_CHOICE": {
       const options = draft.options
@@ -103,19 +207,31 @@ function buildConfig(draft: QuestionDraft): QuestionConfig {
           text: option.text.trim(),
           is_correct: option.is_correct,
         }));
-      return { ...(draft.preserve_config ?? {}), options };
+      const config: QuestionConfig = { ...(preserve ?? {}), options };
+      delete config.rubric;
+      return config;
+    }
+
+    case "SITUATIONAL_JUDGMENT": {
+      const config: QuestionConfig = {
+        ...(preserve ?? {}),
+        options: judgmentStoredOptions(judgment),
+      };
+      delete config.rubric;
+      return config;
     }
 
     case "CASE_STUDY": {
-      const config: QuestionConfig = { ...(draft.preserve_config ?? {}) };
+      const config: QuestionConfig = { ...(preserve ?? {}) };
       config.context = draft.context.trim() || undefined;
       if (draft.min_words && draft.min_words > 0) config.min_words = draft.min_words;
       else delete config.min_words;
+      applyRubricChange(config, rubric);
       return config;
     }
 
     case "VIDEO_PITCH": {
-      const config: QuestionConfig = { ...(draft.preserve_config ?? {}) };
+      const config: QuestionConfig = { ...(preserve ?? {}) };
       if (draft.max_duration_seconds && draft.max_duration_seconds > 0) {
         config.max_duration_seconds = draft.max_duration_seconds;
       } else {
@@ -126,13 +242,27 @@ function buildConfig(draft: QuestionDraft): QuestionConfig {
       } else {
         delete config.min_duration_seconds;
       }
+      applyRubricChange(config, rubric);
+      return config;
+    }
+
+    case "CODING": {
+      const config: QuestionConfig = { ...(preserve ?? {}) };
+      const language = readCodingLanguage(draft.language);
+      if (!language) throw new Error("A coding question must name its language.");
+      config.language = language;
+      if (draft.starter_code?.trim()) config.starter_code = draft.starter_code;
+      else delete config.starter_code;
+      // CODING is a rubric type, so a scheme the author keeps, edits or clears
+      // lands on the row exactly as it does for a case study.
+      applyRubricChange(config, rubric);
       return config;
     }
 
     // EXCEL_MODEL is not editable through this form; keep the original bytes.
     case "EXCEL_MODEL":
     default:
-      return draft.preserve_config ?? {};
+      return preserve ?? {};
   }
 }
 
@@ -146,10 +276,10 @@ function buildConfig(draft: QuestionDraft): QuestionConfig {
  * agree on what "next" means.
  */
 async function renumberSuite(
-  supabase: SupabaseClient,
+  restClient: RestClient,
   templateId: string
 ): Promise<string | null> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_questions")
     .select("id, position")
     .eq("template_id", templateId)
@@ -163,7 +293,7 @@ async function renumberSuite(
 
   for (let i = 0; i < ordered.length; i += 1) {
     if ((ordered[i].position ?? 0) === i) continue;
-    const { error: updateError } = await supabase
+    const { error: updateError } = await restClient
       .from("assessment_questions")
       .update({ position: i })
       .eq("id", ordered[i].id);
@@ -211,10 +341,88 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     }
   }
 
-  const supabase = await createSupabaseServerClient();
+  let judgment: JudgmentDraft[] = [];
+  if (draft.question_type === "SITUATIONAL_JUDGMENT") {
+    const read = readJudgmentDraft(
+      draft.options.map((option) => ({ text: option.text, score: option.score ?? null }))
+    );
+    if (!read.ok) return { ok: false, error: read.error };
+    judgment = read.options;
+  }
+
+  // The marking scheme is read before a client exists: a scheme that cannot add
+  // up is answered with the sentence that says why, without a database round
+  // trip. Its skill tags are a different question — they are claims about
+  // catalogue rows, so they are resolved below, once there is a client to read.
+  let rubric = resolveRubricChange(draft);
+  if (rubric.kind === "refuse") return { ok: false, error: rubric.error };
+
+  if (draft.question_type === CODING) {
+    if (!readCodingLanguage(draft.language)) {
+      return { ok: false, error: "Pick the language the candidate should write in." };
+    }
+    const starterIssue = starterCodeIssue(draft.starter_code);
+    if (starterIssue) return { ok: false, error: starterIssue };
+  }
+
+  const restClient = await createServerRestClient();
+
+  if (draft.question_type === CODING) {
+    const availability = await readQuestionTypeAvailability(restClient);
+    if (!availability.coding) {
+      return { ok: false, error: availability.codingNote ?? CODING_SCHEMA_NOTE };
+    }
+  }
+
+  // A tag is a claim about a catalogue row, so it is resolved against the
+  // catalogue before anything is written. An unknown or retired id is refused
+  // with the criterion and the skill named; the stored name is always the
+  // catalogue's own spelling, never the one a client sent.
+  if (rubric.kind === "set") {
+    const tagged = await resolveSkillTags(restClient, rubric.criteria);
+    if (!tagged.ok) return { ok: false, error: tagged.error };
+    rubric = { kind: "set", criteria: tagged.criteria };
+  }
+
+  // A preserved rubric arrives as stored config handed straight back, and it
+  // reaches the row through the same spread as one typed in the panel. It must
+  // pass the same catalogue check, or "preserve" would be a door around it.
+  // A preserved row too malformed for `rubricCriteriaOf` (no readable label or
+  // weight) never reaches a grading snapshot, so it is neither checked nor
+  // rewritten here.
+  let preserveConfig = draft.preserve_config;
+  if (rubric.kind === "keep" && isRubricType(draft.question_type) && preserveConfig) {
+    const preserved = rubricCriteriaOf(preserveConfig);
+    if (preserved.length > 0) {
+      const tagged = await resolveSkillTags(restClient, preserved);
+      if (!tagged.ok) return { ok: false, error: tagged.error };
+
+      // The catalogue owns the name. Rows without a tag keep every key they had.
+      const names = new Map<string, string>();
+      for (const criterion of tagged.criteria) {
+        if (criterion.skill_id && criterion.skill_name) {
+          names.set(criterion.skill_id, criterion.skill_name);
+        }
+      }
+      const rows = (
+        Array.isArray(preserveConfig.rubric) ? preserveConfig.rubric : []
+      ) as unknown as RubricDraftRow[];
+      preserveConfig = {
+        ...preserveConfig,
+        rubric: rows.map((row) => {
+          if (!row || typeof row !== "object") return row as unknown as RubricCriterion;
+          const skillId = typeof row.skill_id === "string" ? row.skill_id.trim() : "";
+          const name = skillId ? names.get(skillId) : undefined;
+          return name
+            ? ({ ...row, skill_name: name } as unknown as RubricCriterion)
+            : (row as unknown as RubricCriterion);
+        }),
+      };
+    }
+  }
 
   // Confirm the template exists so a typo cannot create an orphan question.
-  const { data: template } = await supabase
+  const { data: template } = await restClient
     .from("assessment_templates")
     .select("id, name")
     .eq("id", draft.template_id)
@@ -229,23 +437,28 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     title,
     prompt,
     instructions: draft.instructions.trim() || null,
-    config: buildConfig(draft) as Record<string, unknown>,
+    config: buildConfig(draft, judgment, rubric, preserveConfig) as Record<string, unknown>,
     points,
     position: draft.position,
     time_limit_minutes:
       Number.isFinite(limit) && limit > 0 && limit <= 480 ? Math.round(limit) : null,
-    shuffle_options: draft.question_type === "MULTIPLE_CHOICE" ? draft.shuffle_options : false,
+    // A scene's responses are as order-sensitive as a quiz's — the most
+    // effective one must not always sit in the same slot.
+    shuffle_options:
+      draft.question_type === "MULTIPLE_CHOICE" || draft.question_type === "SITUATIONAL_JUDGMENT"
+        ? draft.shuffle_options
+        : false,
   };
 
   if (draft.id === null) {
-    const { data, error } = await supabase
+    const { data, error } = await restClient
       .from("assessment_questions")
       .insert(row)
       .select("id")
       .single();
-    if (error) return { ok: false, error: error.message };
+    if (error) return { ok: false, error: questionWriteError(draft.question_type, error) };
 
-    const renumberError = await renumberSuite(supabase, draft.template_id);
+    const renumberError = await renumberSuite(restClient, draft.template_id);
     if (renumberError) return { ok: false, error: renumberError };
 
     await recordActivity({
@@ -267,7 +480,7 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
     return { ok: true, id: data?.id };
   }
 
-  const { data: previous } = await supabase
+  const { data: previous } = await restClient
     .from("assessment_questions")
     .select(
       "id, template_id, question_type, title, prompt, instructions, config, points, position, time_limit_minutes, shuffle_options"
@@ -277,15 +490,15 @@ export async function saveQuestion(draft: QuestionDraft): Promise<QuestionResult
   if (!previous) return { ok: false, error: "That question no longer exists." };
 
   // Editing must not move a question to a different suite.
-  const { error } = await supabase
+  const { error } = await restClient
     .from("assessment_questions")
     .update(row)
     .eq("id", draft.id)
     .eq("template_id", draft.template_id);
 
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: questionWriteError(draft.question_type, error) };
 
-  const renumberError = await renumberSuite(supabase, draft.template_id);
+  const renumberError = await renumberSuite(restClient, draft.template_id);
   if (renumberError) return { ok: false, error: renumberError };
 
   const edits = changedFields(previous as Record<string, unknown>, row);
@@ -312,12 +525,12 @@ export async function deleteQuestion(
   const denied = await requireAssessmentEditor();
   if (denied) return { ok: false, error: denied };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // A response means a candidate actually did the work. Deleting the question
   // would leave that response pointing at nothing and quietly drop it from
   // grading, so the delete is refused rather than performed and hidden.
-  const { data: responses } = await supabase
+  const { data: responses } = await restClient
     .from("candidate_responses")
     .select("id")
     .eq("question_id", questionId)
@@ -331,7 +544,7 @@ export async function deleteQuestion(
     };
   }
 
-  const { data: removed } = await supabase
+  const { data: removed } = await restClient
     .from("assessment_questions")
     .select("id, title, points, question_type")
     .eq("id", questionId)
@@ -339,7 +552,7 @@ export async function deleteQuestion(
     .maybeSingle();
   if (!removed) return { ok: false, error: "That question is no longer in this suite." };
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("assessment_questions")
     .delete()
     .eq("id", questionId)
@@ -380,9 +593,9 @@ export async function moveQuestion(
   const denied = await requireAssessmentEditor();
   if (denied) return { ok: false, error: denied };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: questions, error } = await supabase
+  const { data: questions, error } = await restClient
     .from("assessment_questions")
     .select("id, position, title")
     .eq("template_id", templateId)
@@ -413,19 +626,19 @@ export async function moveQuestion(
   const target = ordered[index];
   const neighbour = ordered[swapWith];
 
-  const { error: firstError } = await supabase
+  const { error: firstError } = await restClient
     .from("assessment_questions")
     .update({ position: swapWith })
     .eq("id", target.id);
   if (firstError) return { ok: false, error: firstError.message };
 
-  const { error: secondError } = await supabase
+  const { error: secondError } = await restClient
     .from("assessment_questions")
     .update({ position: index })
     .eq("id", neighbour.id);
   if (secondError) return { ok: false, error: secondError.message };
 
-  const renumberError = await renumberSuite(supabase, templateId);
+  const renumberError = await renumberSuite(restClient, templateId);
   if (renumberError) return { ok: false, error: renumberError };
 
   await recordActivity({
@@ -499,17 +712,17 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
 }
 
 async function readSuiteForAuthoring(
-  supabase: SupabaseClient,
+  restClient: RestClient,
   templateId: string
 ): Promise<SuiteAuthoringContext | null> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assessment_templates")
     .select("id, name, description, role_family, time_limit_minutes")
     .eq("id", templateId)
     .maybeSingle();
   if (error || !data) return null;
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("title")
     .eq("template_id", templateId)
@@ -551,8 +764,16 @@ export async function draftQuestions(input: AuthoringInput): Promise<AuthoringRe
     notes: (input.notes ?? "").trim().slice(0, NOTES_CAP),
   };
 
-  const supabase = await createSupabaseServerClient();
-  const suite = await readSuiteForAuthoring(supabase, input.templateId);
+  const restClient = await createServerRestClient();
+  // A coding draft is only worth asking for when the enum carries the label:
+  // without 039 the review would drop every one after the provider was paid for.
+  if (types.includes("CODING")) {
+    const availability = await readQuestionTypeAvailability(restClient);
+    if (!availability.coding) {
+      return { ok: false, error: availability.codingNote ?? CODING_SCHEMA_NOTE };
+    }
+  }
+  const suite = await readSuiteForAuthoring(restClient, input.templateId);
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
   let generated: Awaited<ReturnType<typeof generateAssessmentQuestions>>;
@@ -600,8 +821,8 @@ export async function addDraftedQuestions(
   const chosen = Array.isArray(drafts) ? drafts.slice(0, MAX_DRAFTS_PER_RUN) : [];
   if (chosen.length === 0) return { ok: false, error: "Nothing was chosen to add." };
 
-  const supabase = await createSupabaseServerClient();
-  const suite = await readSuiteForAuthoring(supabase, templateId);
+  const restClient = await createServerRestClient();
+  const suite = await readSuiteForAuthoring(restClient, templateId);
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
   let created = 0;

@@ -14,16 +14,27 @@ import {
 } from "@/app/(admin)/candidates/interview-actions";
 import { cn } from "@/lib/utils";
 import {
-  dayKeyInZone,
-  formatInZone,
-  fromZoneInputValue,
-  toZoneInputValue,
-} from "@/lib/timezone";
+  INTERVIEW_ROUND_LABELS,
+  INTERVIEW_ROUNDS,
+  roundLabel,
+  scorecardsFor,
+  type InterviewScorecardLayer,
+} from "@/modules/interviews/domain/interviewScorecard";
+import { dayKeyInZone, formatInZone, fromZoneInputValue, toZoneInputValue } from "@/lib/timezone";
 import {
   countInterviewsOutsideAgenda,
   getInterviewAgenda,
   type AgendaInterview,
 } from "./actions";
+import { getInterviewScorecardLayer } from "./scorecard-actions";
+import { ScorecardDesk } from "./ScorecardDesk";
+import { NotesDesk } from "./NotesDesk";
+import { getInterviewNotesLayer } from "./notes-actions";
+import {
+  canOpenNotesDesk,
+  notesFor,
+  type InterviewNotesLayer,
+} from "@/modules/interviews/domain/interviewNotes";
 import {
   agendaRangeLabel,
   AGENDA_FUTURE_DAYS,
@@ -120,6 +131,9 @@ export function InterviewAgenda({
   initialStatus,
   outsideAgenda,
   readAt,
+  viewerId,
+  scorecardLayer,
+  notesLayer,
 }: {
   interviews: AgendaInterview[];
   timeZone: string;
@@ -140,10 +154,20 @@ export function InterviewAgenda({
    * so a re-render cannot quietly move the boundary.
    */
   readAt: string;
+  /** The signed-in profile: a scorecard is "yours" by this id, not by name. */
+  viewerId: string;
+  /** Rounds and scorecards, read beside the agenda and reseeded with it. */
+  scorecardLayer: InterviewScorecardLayer;
+  /** Every interviewer's notes on these panels, read beside the agenda for the same reason. */
+  notesLayer: InterviewNotesLayer;
 }) {
   const [rows, setRows] = useState<AgendaInterview[]>(interviews);
   const [outside, setOutside] = useState(outsideAgenda);
   const [seededFrom, setSeededFrom] = useState(interviews);
+  const [layer, setLayer] = useState(scorecardLayer);
+  const [seededLayerFrom, setSeededLayerFrom] = useState(scorecardLayer);
+  const [notes, setNotes] = useState(notesLayer);
+  const [seededNotesFrom, setSeededNotesFrom] = useState(notesLayer);
   // A panel booked from a candidate's profile, or by the assistant, re-renders
   // this page with a fresh read. Adopting it is what keeps the agenda and the
   // interview alert describing one set: the Bell re-counts the database on every
@@ -153,11 +177,27 @@ export function InterviewAgenda({
     setRows(interviews);
     setOutside(outsideAgenda);
   }
+  // The layer is a second read with its own freshness: a scorecard written in
+  // another tab arrives with a new server render while the schedule rows are the
+  // same objects, so it reseeds on its own identity rather than theirs.
+  if (scorecardLayer !== seededLayerFrom) {
+    setSeededLayerFrom(scorecardLayer);
+    setLayer(scorecardLayer);
+  }
+  // Notes are the third read with their own freshness, reseeded on their own identity
+  // for the same reason the scorecards are: a page render carries whatever the database
+  // said when it was cut, and a note saved from a candidate's profile has to reach this
+  // desk without the recruiter reloading.
+  if (notesLayer !== seededNotesFrom) {
+    setSeededNotesFrom(notesLayer);
+    setNotes(notesLayer);
+  }
   const [range, setRange] = useState<AgendaRange>(initialRange);
   const [status, setStatus] = useState<InterviewStatus | null>(initialStatus);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("45");
+  const [round, setRound] = useState("");
   const [interviewerId, setInterviewerId] = useState("");
   const [meetingLink, setMeetingLink] = useState("");
   const [pending, setPending] = useState(false);
@@ -236,12 +276,21 @@ export function InterviewAgenda({
     ]);
     setRows(fresh);
     setOutside(edges);
+    // Both layers are reads of the same rows: a newly booked panel needs its
+    // round, and a scorecard or note just saved has to arrive without a reload.
+    const [scorecards, notes] = await Promise.all([
+      getInterviewScorecardLayer(fresh.map((row) => row.id)),
+      getInterviewNotesLayer(fresh.map((row) => row.id)),
+    ]);
+    setLayer(scorecards);
+    setNotes(notes);
   }
 
   function closeEditor() {
     setEditingId(null);
     setWhen("");
     setDuration("45");
+    setRound("");
     setInterviewerId("");
     setMeetingLink("");
   }
@@ -252,6 +301,7 @@ export function InterviewAgenda({
     setEditingId(row.id);
     setWhen(toZoneInputValue(row.scheduled_at, timeZone));
     setDuration(String(row.duration_minutes));
+    setRound(layer.rounds[row.id] ?? "");
     setInterviewerId(row.interviewer_profile_id ?? "");
     setMeetingLink(row.meeting_link ?? "");
   }
@@ -277,6 +327,9 @@ export function InterviewAgenda({
         durationMinutes: Number(duration),
         meetingLink,
         interviewerProfileId: interviewerId || null,
+        // Omitted while the column is missing, so a move still works on a
+        // database that predates 032. Blank is an explicit clear once it exists.
+        ...(layer.roundsAvailable ? { round: round || null } : {}),
       });
       if (!result.ok) {
         setError(result.error ?? "The panel was not moved.");
@@ -379,10 +432,13 @@ export function InterviewAgenda({
 
       {!canWrite && rows.length > 0 && (
         <p className="text-xs text-brand-ink/50">
-          Reading the calendar. Moving a panel or recording an outcome needs the Edit candidates
-          permission.
+          Reading the calendar. Moving a panel or recording an outcome needs both the Edit
+          candidates and Schedule interviews permissions.
         </p>
       )}
+
+      {layer.note && <p className="text-xs text-brand-ink/50">{layer.note}</p>}
+      {notes.note && <p className="text-xs text-brand-ink/50">{notes.note}</p>}
 
       {(outside.ahead > 0 || outside.overdue > 0) && (
         <p className="text-xs text-brand-ink/50">
@@ -454,6 +510,7 @@ export function InterviewAgenda({
               // offered for one either: a control that can only fail is a trap.
               const inFuture = Date.parse(row.scheduled_at) > Date.now();
               const open = editingId === row.id;
+              const panelRound = roundLabel(layer.rounds[row.id]);
 
               return (
                 <Card key={row.id} className="p-4">
@@ -491,6 +548,7 @@ export function InterviewAgenda({
                       </p>
                       <p className="mt-0.5 text-xs text-brand-ink/60">
                         {row.job_title ?? "No role on file"} · {row.duration_minutes} min
+                        {panelRound ? ` · ${panelRound} round` : ""}
                         {row.interviewer_name
                           ? ` · ${row.interviewer_name}`
                           : " · interviewer not assigned"}
@@ -589,6 +647,26 @@ export function InterviewAgenda({
                             ))}
                           </Select>
                         </Field>
+                        {layer.roundsAvailable && (
+                          <Field
+                            label="Round"
+                            htmlFor={`agenda-round-${row.id}`}
+                            hint="Which stage of the process this panel is. Blank leaves the panel with no round."
+                          >
+                            <Select
+                              id={`agenda-round-${row.id}`}
+                              value={round}
+                              onChange={(event) => setRound(event.target.value)}
+                            >
+                              <option value="">No round</option>
+                              {INTERVIEW_ROUNDS.map((id) => (
+                                <option key={id} value={id}>
+                                  {INTERVIEW_ROUND_LABELS[id]}
+                                </option>
+                              ))}
+                            </Select>
+                          </Field>
+                        )}
                         <Field
                           label="Interviewer"
                           htmlFor={`agenda-interviewer-${row.id}`}
@@ -634,6 +712,34 @@ export function InterviewAgenda({
                       </div>
                     </form>
                   )}
+
+                  {notes.available && (
+                    <NotesDesk
+                      interviewId={row.id}
+                      viewerId={viewerId}
+                      notes={notesFor(notes, row.id)}
+                      timeZone={timeZone}
+                      canWrite={canOpenNotesDesk(row.status, row.scheduled_at, readAt)}
+                      onSaved={reload}
+                    />
+                  )}
+
+                  {layer.scorecardsAvailable &&
+                    (row.status === "COMPLETED" ||
+                      (row.status === "SCHEDULED" && !inFuture)) && (
+                      <ScorecardDesk
+                        interviewId={row.id}
+                        viewerId={viewerId}
+                        cards={scorecardsFor(layer, row.id)}
+                        myNote={
+                          notesFor(notes, row.id).find(
+                            (note) => note.authorProfileId === viewerId
+                          )?.body ?? null
+                        }
+                        timeZone={timeZone}
+                        onSaved={reload}
+                      />
+                    )}
                 </Card>
               );
             })}

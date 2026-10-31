@@ -20,9 +20,17 @@ in the tree. Self-hosting Supabase's own images (GoTrue, its PostgREST) does not
 count as leaving — that option was ruled out on principle, not cost.
 
 "Done" is the live portal running on the owner's own host, on the migrated data,
-with the existing 94 row-level-security policies still doing the enforcing, and
+with the existing 88 row-level-security policies still doing the enforcing, and
 nothing imported from the two vendors. The migration itself is finished only by
 the cut-over in §9.
+
+> **Policy count, corrected 2026-10-21.** This section said 94. The file says 88 —
+> `grep -c "^create policy" supabase/schema.sql` → **88** — and the live database
+> agrees: `select count(*) from pg_policies` on the restored local stack → **88**
+> (80 on `public`, 8 on `storage`). The six gone are the three `to public … using
+> (true)` and three `with check (true)` policies that Plan 1 Task 5 dropped off the
+> legacy `jobs` / `applicants` pair, and revoked `anon`'s table grants on both. The
+> 94 was true when this spec was approved; it is not what the port carried.
 
 ### Locked decisions (from the brainstorming gate)
 
@@ -33,7 +41,7 @@ the cut-over in §9.
 | Sequencing | **Approach A** — build the stack alongside the app, port in ordered slices; dev on this device first | B (port against the VPS), C (leave hosts first, own code later) |
 | Local data | **Restore the live `pg_dump` into the local dev DB too** (owner's deliberate non-recommended pick) | fresh start, seed-only dev DB |
 | Data layer | **Self-host PostgREST; leave the query call sites alone** | `pg` + hand-written SQL; a PostgREST-shaped shim over `pg` |
-| Row-level trust | Port the 94 RLS policies unchanged behind a `auth`/`storage` schema shim | rewrite policies |
+| Row-level trust | Port the RLS policies unchanged behind a `auth`/`storage` schema shim — 88 at execution time, not the 94 this table first said (see §1's correction) | rewrite policies |
 | Sign-in | Hand-rolled signed-cookie sessions over the migrated `auth.users` bcrypt hashes | `better-auth`, GoTrue |
 | Files | `/data/uploads` volume + a `files` table replacing `storage.objects`; own short-lived signed links | MinIO, split-by-size hybrid |
 | Cut-over | One planned freeze with DNS rollback | logical replication, freeze-writes-only |
@@ -42,24 +50,35 @@ the cut-over in §9.
 
 ## 2. Measured seams (these size the hand-written work)
 
-All figures re-derived from the working tree on 2026-10-20. They are the reason
-the migration is a re-point, not a rebuild.
+All figures re-derived from the working tree on 2026-10-20, **and re-measured on
+2026-10-21 after Plan 1 landed**, because several of them moved. They are the
+reason the migration is a re-point, not a rebuild. Each row is checkable with the
+command printed beside it.
 
-| Coupling | Count | Where |
-| --- | --- | --- |
-| `.from("table")` reads against PostgREST | **442** across 65 files | the query layer — kept as-is |
-| `.from(variable)` bucket/table refs | **26** | dynamic table/bucket names |
-| `createSupabaseServerClient()` constructions | **129** across 46 files | per-request; re-point one seam, not 129 |
-| Files importing `@supabase/*` | **13** | the only build-time vendor deps |
-| `supabase.auth.*` call sites | **24** (13 are `auth.admin.*`) | 13 in `src/modules/settings/application/user-actions.ts` |
-| `supabase.storage.from(bucket)` accessor lines | **5** | files slice |
-| RPC names to expose on PostgREST | **2** | `stop_time_entry`, `refresh_attempt_integrity` |
-| Inbound webhooks | **0** | no `hub.verify_token`/`x-hub-signature` anywhere in `src/` |
-| Realtime / Edge Functions / Vault / `generateLink` | **0** | unused — the port is smaller than it looks |
+| Coupling | Count (2026-10-21) | Check | Where |
+| --- | --- | --- | --- |
+| `.from("table")` reads against PostgREST | **442** across 65 files | `grep -rn '\.from("' src/ \| wc -l` | the query layer — kept as-is |
+| `.from(variable)` bucket/table refs | **17** (was 26) | the non-literal half of `grep -rn '\.from([A-Za-z_$]' src/`, after dropping `Array/Buffer/String/Number/Object.from` and comment hits | 12 dynamic table names + the 5 bucket refs now inside the files seam |
+| `createSupabaseServerClient()` call sites | **128** across 45 files, plus the definition at `src/lib/supabase/server.ts:12` (was 129 across 46 — the deleted file was the `middleware.ts` that became `src/proxy.ts`) | `grep -rn 'createSupabaseServerClient()' src/ \| wc -l` | per-request; re-point one seam, not 128 |
+| Files importing `@supabase/*` | **2** in `src/`, **3** repo-wide (was 13) | `grep -rl "@supabase/" src/` → `src/app/(candidate)/portal/actions.ts`, `src/lib/files/store.ts`; `grep -rln @supabase/supabase-js --include=*.{ts,tsx,mjs} . \| grep -v node_modules` adds `scripts/create-staff.mjs` | the vendor package survives Plan 1 exactly because these three still import it |
+| `supabase.auth.*` call sites | **15** — 13 are `auth.admin.*`, all in `user-actions.ts`, plus 2 `supabase.auth.getUser()` (`job-actions.ts:141`, `transcriptStore.ts:71`) (was 24) | `grep -roh 'supabase\.auth\.[a-zA-Z]*' src/ \| sort \| uniq -c` | the 13 became direct `auth.users` writes in Task 14; the 2 `getUser()` reads still resolve against the vendor client |
+| Storage accessors — `supabase.storage.from(bucket)` lines | **5, and they all live in one file now** (`src/lib/files/store.ts:70,76,81,90,94` — one each of `upload`, `createSignedUrl`, `download`, `remove`, `list`) | `grep -c "from(bucket)" src/lib/files/store.ts` → 5; `grep -rn "supabase\.storage" src/ \| wc -l` → **0** | files slice — and this is **not** the 16 the plan told Task 18 to write. Task 10 pulled every bucket call behind `getFileStore()`, so the 16 pre-seam accessor sites became 5 here plus 14 seam callers; quoting 16 now would be the same class of error as the original 5 |
+| …reached from | **14** `await getFileStore()` call sites across **14** files | `grep -rln "getFileStore()" src/ \| grep -v "src/lib/files/store.ts" \| wc -l` → 14 | the seam Task 10 built |
+| …and the naive grep | `grep -rn "\.storage" src/ \| wc -l` → **7** | five are `storage_path` **column** reads (attachment, CV, dossier, profile, files actions), one is a display template string (`attachment-actions.ts:72`) and one is a comment naming the column (`files/actions.ts:291`) — none is an accessor call. The plan's older naive figure of **23** was this same 7 plus the 16 pre-seam accessor lines; both halves are gone from that count now, which is why the seam, not the grep, is the metric |
+| RPC names the app calls | **2** — `stop_time_entry`, `refresh_attempt_integrity` | `grep -rn "\.rpc(" src/` | `timelog/application/ledger.ts:323`, `api/attempt/[token]/integrity/route.ts:88` |
+| …vs the RPC surface actually exposed | **15** | every `public` function carries `execute` for `anon` and `authenticated`, so PostgREST lists all 15 as `/rpc/*` | an exposure to decide about in Plan 2, not a call site |
+| Inbound webhooks | **0** | no `hub.verify_token` / `x-hub-signature` anywhere in `src/` | unchanged |
+| Realtime / Edge Functions / Vault / `generateLink` | **0** each | `grep -rn '\.channel(\|supabase\.realtime\|functions\.invoke\|generateLink' src/` → 0 | unchanged — the port is smaller than it looks |
 
-Behaviour that changes on a persistent process (was serverless): **8** `after()`
-sites and **22** `await connection()` sites, plus module-global singletons at
-`anon.ts:5`, `service.ts:5`, `middleware.ts:34`. Audited in the sessions slice.
+Behaviour that changes on a persistent process (was serverless): **10** `after()`
+sites (was 8) and **25** `await connection()` sites (was 22). Quote the count with
+its pattern: `grep -rn '\bafter(' src/ | wc -l` prints **11**, and the eleventh hit
+is prose, not a call — a comment at `src/modules/settings/infrastructure/settingsReader.ts:9`. The module-global
+singletons this section named at `anon.ts:5`, `service.ts:5` and `middleware.ts:34`
+have moved or gone: measured 2026-10-21, the two that remain are
+`src/lib/supabase/anon.ts:3` (`let anonClient: RestClient | null`) and
+`src/lib/auth/db.ts:12` (the `pg` `Pool`); `service.ts` mints per call and holds no
+singleton, and `middleware.ts` no longer exists — it is `src/proxy.ts`.
 
 ---
 
@@ -75,20 +94,45 @@ Everything below is ordered around that fact.
 
 ## 4. Slice 1 — Local stack topology
 
-Docker Compose on a private bridge network. The app runs **outside** Docker with
-`next dev` on the host, on **port 3000** (the owner's existing dev server on 3001
-is left untouched).
+Docker Compose on a private bridge network. Slice 1 ran the app **outside**
+Docker with `next dev` on the host, on **port 3000** (the owner's existing dev
+server on 3001 is left untouched); the app is now built into the `app` container
+behind nginx on that same 3000, and the host `next dev` remains available by
+pointing the cron container at `host.docker.internal:3000`.
 
 | Service | Image | Role | Host port |
 | --- | --- | --- | --- |
-| `db` | `postgres:17-alpine` | plain Postgres; the restored dump | `54320 → 5432` |
-| `rest` | `postgrest/postgrest` | serves the 442 reads; turns our JWT into `request.jwt.claims` | `54321 → 3000` |
-| `web` | host `next dev` | the app | **3000** |
-| `cron` | thin `curl`/node image | scheduler hitting `/api/cron/grading` + `/api/cron/whatsapp` | outbound only |
+| `db` | `postgres:18.6-alpine3.24` | plain Postgres; the restored dump | `54320 → 5432` |
+| `rest` | `postgrest/postgrest:v16.5` | serves the 442 reads; turns our JWT into `request.jwt.claims` | none — gateway/nginx only |
+| `gateway` | `caddy:2.11.7-alpine` | `/rest/v1` for the host's `next dev` | `54321 → 8080` |
+| `app` | built from `docker/app/Dockerfile`, `node:24.22.0-alpine3.24` | the built Next.js app | none — nginx only |
+| `nginx` | `nginx:1.30.6-alpine3.24` | the public front for app + `/rest/v1` | **3000** → 80 |
+| `cron` | built from `docker/cron/Dockerfile`, `alpine:3.24.2` | scheduler hitting `/api/cron/grading` + `/api/cron/whatsapp` | outbound only |
 
-No MinIO, no Redis, no GoTrue. On KVM2 the same file gains a Caddy/Nginx TLS front,
-`web` becomes a built image, and the browser reaches PostgREST through the reverse
-proxy at `/rest/v1` (locally the app talks to `localhost:54321` directly).
+_Image policy, set 2026-10-21: every base is patch-pinned to the newest **stable**
+release on one Alpine (3.24) so a single CVE sweep covers the stack. Postgres 19
+is excluded as `19rc1` only, nginx 1.31 as mainline (1.30 is the stable branch),
+and Node 26 as `current` (the `lts` alias still resolves to 24). Bump none of
+these from memory — re-read the registry tag list._
+
+No MinIO, no Redis, no GoTrue. On KVM2 this same file gains TLS at nginx and
+secrets that never enter the repo; Caddy goes away when the host's `.env.local`
+line that points at the REST gateway goes with it. **As of 2026-10-21 that line is
+still in the file, so Caddy runs beside nginx deliberately** — nginx serves its own
+`/rest/v1/` on 3000 (`docker/nginx/nginx.conf:138`, `location /rest/v1/ { proxy_pass http://sdg_rest/; }`),
+and the two gateways are not in conflict: the container reads nginx, the host's
+`next dev` reads Caddy. This sentence used to read "Retiring Caddy is a Plan 2
+item, not an oversight." **Plan 2 closed without one** — §15 has no gateway task and
+no gateway claim — so the promise was this spec's defect, not the implementer's, and
+the item now belongs to the owner rather than to a finished plan: it is
+`docs/STATUS-2026-10-20.md` §8.2 action 8.
+
+> Corrected 2026-10-21 after Plan 2 Task 9: the line was `SUPABASE_REST_BASE`, and
+> it is now `REST_BASE_URL` (`grep -c SUPABASE_REST_BASE .env.local` → 0,
+> `grep -c '^REST_BASE_URL=' .env.local` → 1; it still names port 54321, and the
+> `gateway:` service is still in the compose file). The reasoning is unchanged — the
+> rename moved the name, not the dependency. What still has to go before Caddy can is
+> the owner's own `.env.local` edit, which is why the service is parked, not deleted.
 
 `package.json:4` is bare `next dev` and `.env.local` already points `APP_URL` /
 `NEXT_PUBLIC_APP_URL` at 3000, so slice 1 only adds the new `SUPABASE_*`-shaped
@@ -104,26 +148,59 @@ restored dump's policies run unchanged. The existing
 this and already pass.
 
 - **Roles** `anon`, `authenticated`, `service_role` (`service_role` `bypassrls`),
-  created before any grant parses. PostgREST's `db-anon-role` is `authenticated`.
+  created before any grant parses. PostgREST's `db-anon-role` is **`anon`**
+  (`docker/docker-compose.yml:74`, `PGRST_DB_ANON_ROLE: anon`).
+  > This line said `authenticated`. That was wrong, and the wrongness was the
+  > dangerous kind: `db-anon-role` is the role PostgREST uses for a request that
+  > carries **no** JWT, so setting it to `authenticated` would have made every
+  > unauthenticated read arrive as the staff role. RLS would still have answered —
+  > and answered wrongly, because the policies key off the claims, not the role.
+  > `anon` is what makes "no token" mean "no identity" in the database.
 - **`auth` schema**: `auth.users` carrying the migrated `encrypted_password`
   (bcrypt), plus `auth.uid()` reading our own claim —
-  `nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'uid'`.
-  That single function is the door 80 of the 94 policies reach identity through
+  `nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'`.
+  > This line read `->> 'uid'`. The function actually deployed reads **`'sub'`**,
+  > verbatim from the live database:
+  > `select pg_get_functiondef(p.oid) … where n.nspname='auth' and p.proname='uid'`
+  > returns `select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid`.
+  > Our own token mints `sub`, so `'uid'` would have made `auth.uid()` return NULL
+  > and every identity-bearing policy admit nobody — silently, with no error.
+  That single function is the door 80 of the 88 policies reach identity through
   (via `is_staff()` 66, `has_permission()` 41, `is_super_admin()` 12,
-  `current_user_profile_id()` 12, `user_tenant_id()` 11).
+  `current_user_profile_id()` 12, `user_tenant_id()` 11 — those five are
+  **occurrence** counts of the call text inside the file's `create policy`
+  statements, re-verified 2026-10-21 by splitting `supabase/schema.sql` on `;\n`
+  and counting per function). Only **3** policies call `auth.uid()` itself
+  (4 occurrences: `profiles_self_read`, `applications_candidate_self`, and
+  `profiles_self_update` which uses it in both `using` and `with check`); the rest
+  reach it transitively through the five helpers, which is what "the door 80 reach
+  identity through" actually means.
 - **`storage` schema** shimmed so its 8 policies parse, then replaced in §7.
-- **PG17 is forced by the dump** — every grant carries the `maintain` privilege
-  (PG17+ only). `pg_stat_statements` needs `shared_preload_libraries`.
+- **PG17 or newer is forced by the dump** — every grant carries the `maintain`
+  privilege (PG17+ only). `pg_stat_statements` needs `shared_preload_libraries`.
+  The stack runs 18.6: nothing in the dump needs 18, and nothing in it breaks on
+  18, but a major bump means the `db-data` volume must be recreated, not reused.
 - **Delete, don't port**: `create schema vault` + `supabase_vault` (schema.sql:30-31)
   and the two `alter publication supabase_realtime …` lines — nothing uses them.
 - **`jobs` / `applicants`** currently get `grant … to anon` with `using (true)`
   policies and are referenced by no code. **Lock them down during this slice** —
   revoke + drop the `true` policies. Free win; it is the one place "RLS on 41/41"
   ≠ "RLS protecting 41/41".
+  > **Done in Plan 1 Task 5, and it is where the 94 became 88.** Measured on the
+  > live stack 2026-10-21: both tables now hold **0** policies, and a bearer request
+  > for them is refused at the grant, not the policy — `scripts/prove-local-stack.mjs`
+  > records HTTP 403 with PostgreSQL `42501` and "0 policies" for each. The
+  > reconciled partition of the surviving 88: **78** admit an identity and nothing
+  > else, **3** read only the `attempt_token` claim, **2** do both, **5** carry
+  > neither term (`tenants_read using (true)`, `applications_public_insert with
+  > check (true)`, `provider_models_public_read` on `is_active`, and the two
+  > `storage.objects` upload checks keyed on `bucket_id`). So the honest sentence is
+  > "80 of 88 reach identity, 5 read the attempt-token claim, 2 read both, and 5
+  > read neither" — not a set of buckets that sums to 88.
 - PostgREST config: `db-uri`, `db-schemas = public`, `jwt-secret = <our secret>`,
   expose the 2 RPC names.
 
-**Definition of done:** the throwaway proof still passes (41 tables / 94 policies
+**Definition of done:** the throwaway proof still passes (41 tables / 88 policies
 atomic + idempotent), and a signed request against the local PostgREST returns the
 same rows an equivalent Supabase request returns for the same `uid`.
 
@@ -131,9 +208,10 @@ same rows an equivalent Supabase request returns for the same `uid`.
 
 ## 6. Slice 3 — Sessions + cookies (replacing `@supabase/ssr`)
 
-Re-point **one** seam — `src/lib/supabase/server.ts:10` — so
+Re-point **one** seam — `src/lib/supabase/server.ts:12` (this section said `:10`;
+the function is on line 12 today) — so
 `createSupabaseServerClient()` returns a client of the same shape pointed at our
-PostgREST with a bearer from our cookie. The 129 call sites keep working.
+PostgREST with a bearer from our cookie. The 128 call sites keep working.
 
 - **Sign in:** verify the submitted password against the migrated bcrypt hash in
   `auth.users` (staff passwords keep working). Mint a short-lived (~15 min) signed
@@ -165,6 +243,23 @@ guarded by the same `is_staff()` / `candidates.write` predicates, a
 (every browser-facing file URL is already minted server-side). Buckets:
 `candidate-videos`, `candidate-audio`, `resumes`, **plus `candidate-cvs`**, which
 `config.ts:48-52` omits — a latent bug the port would otherwise inherit.
+
+> **Measured 2026-10-21, three changes to this section.** (1) The `candidate-cvs`
+> omission is **already fixed**: `src/lib/config.ts:72-80` lists all four buckets,
+> `candidateCvs: "candidate-cvs"` included, with its own comment naming the broken CV
+> link as the reason. No Plan 2 task should re-fix it. (2) The vendor surface this slice
+> has to swallow is now measured exactly, and it is small: **5 accessor lines**
+> (`src/lib/files/store.ts:70,76,81,90,94`) behind **14** `getFileStore()` call sites in
+> 14 files, and **17 objects / 3.8 MB** still physically in the hosted buckets
+> (`candidate-cvs` 13, `candidate-videos` 2, `resumes` 2, `candidate-audio` 0) — listed
+> read-only with the service key on 2026-10-21. (3) `.from(variable)` refs are **17**,
+> not the 26 this section's first line quotes; §2's row carries the re-measurement.
+> (4) The `files` table drops `owner`: `FileStore` carries no session, so no call
+> site could fill it and no reader would ever query it — the columns are
+> `(bucket, path, mime, bytes, created_at, updated_at)`, and a column nothing reads
+> is debt, not foresight. (5) The five accessor lines are at
+> `src/lib/files/store.ts:69,75,81,90,94` as of this re-read, not `70,76` — the file
+> is unchanged, the earlier pair was counted from a pre-correction read.
 
 ---
 
@@ -219,6 +314,37 @@ and `SUPABASE_DB_PASSWORD` become server-only names for our own service-role tok
 and the Postgres URI. The old `NEXT_PUBLIC_SUPABASE_URL`, anon/service keys and DB
 password all stop existing as Supabase artefacts.
 
+> **Measured 2026-10-21, and this section's premise is half wrong.** No browser reads
+> anything here: walking every `"use client"` file in `src/` for `supabaseConfig`,
+> `SUPABASE_REST_BASE` or `NEXT_PUBLIC_SUPABASE` returns **0 files**, and the four
+> `SUPABASE_REST_BASE` consumers (`supabase/{anon,server,service}.ts`, `auth/guard.ts`)
+> are all server-only. So "the two genuinely browser-read values stay `NEXT_PUBLIC_`"
+> describes the design Plan 1 intended, not the one that shipped — every REST read goes
+> through a server action. Worse, `docker/docker-compose.yml:143-144` still passes
+> `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` as **build args**, which
+> inlines the vendor URL and the anon key into the client bundle for a value nothing in
+> the bundle reads. Plan 2 deletes both build args; that is a real exposure closing, not
+> a rename.
+>
+> Renamed stays, with one exception measured rather than assumed: `SUPABASE_REST_BASE` →
+> `REST_BASE_URL` (12 references, all server-side, mechanical), and
+> `SUPABASE_DB_PASSWORD` retires with the three hosted scripts that parse it
+> (`apply-schema.mjs`, `dump-schema.mjs`, `verify-schema.mjs` — they re-aim at the local
+> stack's existing `LOCAL_DB_PASSWORD`). The four vendor credentials
+> (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+> `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_PROJECT_REF`) have **0 readers left** once the
+> files seam and the portal's dead branch are gone: `supabaseConfig.url` is read by
+> exactly two places today — `src/lib/files/store.ts:60` and
+> `src/app/(candidate)/portal/actions.ts:104`.
+>
+> What does **not** rename: `src/lib/supabase/` and `createSupabaseServerClient()`.
+> Those carry **128 call sites across 45 files** (§2), and after Plan 1 they build a
+> `pg`/PostgREST client that never touches the vendor. Renaming them is 45 files of
+> churn that changes no dependency; the name is now historical, and the module comment
+> says so. `supabase/schema.sql` and `scripts/local-supabase-stub.sql` keep their paths
+> for the same reason — `apply-local-schema.mjs` reads the first and the 88 RLS policies
+> evaluate through the second.
+
 ---
 
 ## 12. Explicit non-goals
@@ -238,6 +364,12 @@ on re-apply, and the **only** skipped statement is `supabase_vault`. So "port th
 policies unchanged behind a shim" is demonstrated end-to-end with zero PII. The
 live-dump restore remains a separate, explicitly-gated step later in slice 2.
 
+> That 94 is a record of what the throwaway run measured on 2026-10-20, and it is
+> left as written rather than edited away. Slice 2 then dropped six policies — the
+> three `to public … using (true)` and three `with check (true)` on the legacy
+> `jobs` / `applicants` pair (§5) — so the same command run today prints **88**
+> (`grep -c "^create policy" supabase/schema.sql`), which is the number §1 now uses.
+
 ---
 
 ## 14. Open items to raise before the freeze
@@ -246,3 +378,219 @@ live-dump restore remains a separate, explicitly-gated step later in slice 2.
   KVM2 vs a host port locally) and the anon JWT's expiry;
 - #376 (Settings → Languages console) and the 21 session-gated live proofs must not
   regress during the port; the data-layer debts #330/#331 intersect this work.
+
+---
+
+## 15. Plan 2 — off the vendor completely (scope approved 2026-10-21)
+
+Plan 1 moved the *rows* and the *identity* onto the self-hosted stack and left the
+*bytes* with the vendor. Plan 2 moves those bytes, and then removes the vendor from
+the dependency graph, the environment surface and the image build. The owner's
+directive is the scope, in their words: *"stop using Supabase and Vercel Completely
+… remove Supabase and vercel Completely."*
+
+### What "done" means — five claims, each mechanically checkable
+
+1. `npm ls @supabase/supabase-js @vercel/speed-insights` answers "not installed", and
+   `grep -rn 'from "@supabase/' src scripts` returns **0**.
+2. A clean image build contains no vendor project reference — grepping the built
+   `.next/` for the hosted project's ref returns **0 files**. §11 measured that
+   nothing in the client bundle reads the two `NEXT_PUBLIC_SUPABASE_*` values today,
+   so this claim is the proof that the build args were pure exposure.
+3. Every byte the portal reads or writes lives under `/data/uploads/<bucket>/<path>`
+   on a named volume with a matching `files` row, and no accessor can resolve a path
+   outside its own bucket.
+   *Measured as of 2026-10-21:* containment is `files:paths` 61/61 and the
+   volume↔row parity is object-for-object on the rebuilt stack. One documented
+   exception to "a matching row" — if the `files` insert fails after the rename,
+   `src/lib/files/disk-store.ts:155` keeps the byte instead of unlinking over the
+   object that was there, logs `byte stored, row refused` and returns
+   `{ ok: false }`. A database outage can therefore leave a byte no listing shows;
+   it can never leave a row pointing at nothing.
+4. The environment carries **zero** vendor credentials: `NEXT_PUBLIC_SUPABASE_URL`,
+   `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `SUPABASE_DB_PASSWORD` no longer exist in any env file, example, build arg or
+   `src/lib/config.ts` field; `scripts/audit-secrets.mjs` asserts their *absence*.
+   *Measured as of 2026-10-21:* true for everything this repo ships — no tracked
+   file, no `docker/.env.example`, no build arg, no `config.ts` field, and the
+   audit's deploy surface reads none. The two files the owner holds and are not
+   tracked still carry them (`.env.local` all four, `docker/.env` the first two),
+   which is why the audit prints those under "owner action, not a leak" and why
+   this claim closes with STATUS §8.2 rather than with code.
+5. The identity spine is untouched: the Plan 1 gates still pass as they did at
+   `28a9467`, and the only schema loss is the storage shim's **8** `storage.objects`
+   policies. (The "88 → 80" written here first counted the file before Task 2 added
+   the 8 `public.files` policies; measured both ends, it is 96 → 88 — the same 8
+   deletions, landing on 80 pre-existing policies plus the 8 that replace them.)
+
+### The vendor surface, measured 2026-10-21 — this is the whole job
+
+| what | how many | where |
+| --- | --- | --- |
+| storage accessor lines left | **5** | `src/lib/files/store.ts:69,75,81,90,94` (upload, signedUrl, download, remove, list) |
+| seam call sites that must not change | **14** in **14** files | every `await getFileStore()` in `src` (the two other grep hits are the definition at `:65` and the comment at `:44`) |
+| objects still at the vendor | **17**, **3.8 MB** | `candidate-cvs` 13, `candidate-videos` 2, `resumes` 2, `candidate-audio` 0 |
+| `@supabase/supabase-js` importers | **3** | `src/lib/files/store.ts`, the dead anon fallback at `src/app/(candidate)/portal/actions.ts:104` (deletion granted by the owner 2026-10-21), `scripts/create-staff.mjs` |
+| `@vercel/speed-insights` importers | **0** | `package.json:29` only — an unused dependency, so its removal is one `npm uninstall`, no code edit |
+| vendor credentials still read in `src` | `url` **2**, `anonKey` **1**, `serviceRoleKey` **1** | all three are the two rows above; after Plan 2 each has 0 readers |
+| `supabaseConfig.buckets` readers | **4** | all four read `candidateVideos` — these stay, they name *our* buckets |
+| `storage.objects` policies to retire | **8** | `supabase/schema.sql:1761-1800` |
+| build args to delete | **2** | `docker/app/Dockerfile:31-34`, `docker/docker-compose.yml:138-144` |
+| `SUPABASE_REST_BASE` refs to rename | **12** | → `REST_BASE_URL` (§11) |
+
+One afternoon of extraction, not a migration: the entire payload is 3.8 MB.
+
+### The ordering rule — extract first, delete last
+
+Deleting the vendor dependency is irreversible in a way the rest of this port is not:
+after it, a byte exists only where we put it. So the sequence is fixed and no step
+may be reordered — **extract** the 17 objects and a hosted `pg_dump` into git-ignored
+`docker/data/`, **prove** the extraction by opening every file back, **cut over** the
+code to the disk store and prove the running app, and only **then** delete the
+package, the credentials and the shim. The hosted Supabase project and the Vercel
+deployment are the owner's to close, and only after they have kept an off-machine
+copy of the dump; nothing in this plan deletes anything on the vendor side.
+
+### The tasks
+
+1. Extract the vendor's 17 objects + a manifest, and take the hosted `pg_dump` (read-only against the vendor; output git-ignored).
+2. `files` table + its RLS, mirroring the 8 storage policies being retired.
+3. Disk-backed `FileStore` over `/data/uploads` + `files` rows, with resolve-and-verify traversal guards.
+4. Own HMAC short-lived signed links streamed by a route handler, with Range support so a video pitch still seeks.
+5. Swap the body of `store.ts` (14 callers unchanged) and live-prove every byte path.
+6. Load the extracted bytes into the volume and verify each one opens.
+7. Delete the granted dead anon-key fallback; retire the hosted `scripts/create-staff.mjs`.
+8. Uninstall `@supabase/supabase-js` + `@vercel/speed-insights`, delete the five HOSTED-ONLY config fields and the dead `process.env.VERCEL` term.
+9. Env surface: drop the four vendor credentials and both build args, rename `SUPABASE_REST_BASE` → `REST_BASE_URL`, retire `SUPABASE_DB_PASSWORD` onto `LOCAL_DB_PASSWORD`.
+10. Retire the `storage` shim and its 8 policies from the schema of record, re-measuring the count.
+11. Acceptance from a wiped volume, plus the STATUS section that names only what the owner still has to do.
+
+What this plan deliberately does **not** rename is §11's non-rename list, and it
+still holds: `src/lib/supabase/`, `createSupabaseServerClient()`,
+`supabase/schema.sql` and `scripts/local-supabase-stub.sql` keep their names.
+
+### Progress and measured corrections, 2026-10-21
+
+**Tasks 1 and 2 are done.** All 17 objects (3,969,349 bytes — candidate-cvs 13
+/ 929,670 B, candidate-videos 2 / 2,841,603 B, resumes 2 / 198,076 B,
+candidate-audio 0) are in git-ignored `docker/data/vendor-files/<bucket>/<path>`
+with a sha256 manifest, re-opened and re-hashed by
+`node scripts/verify-extracted-files.mjs` at 17/17; the hosted schema travels as
+`docker/data/hosted-2026-10-21.dump` (674,321 B, `PGDMP` magic verified).
+`public.files` and its eight policies are in `supabase/schema.sql`, applied to the
+local stack (policies 88 → **96**), and proved 20/20 by `npm run files:prove`.
+
+Three behaviours the proof measured, each of which changes a later task:
+
+1. **A policy refusal answers 401 to `anon` and 403 to `authenticated`,** with the
+   identical body `{"code":"42501","message":"new row violates row-level security
+   policy for table \"files\""}`. Task 5's upload path must key on the SQLSTATE,
+   never on the status: mapping 401 to "your session expired" would bounce an
+   anonymous candidate who merely tripped a predicate, and no staff session is
+   involved.
+2. **`bytes` is a JSON number over the gateway and a JS string over the pool.**
+   node-postgres parses int8 as a string to avoid float precision loss; PostgREST
+   serialises it as a number. So `disk-store.ts` coerces with `Number()` on every
+   row read, and the REST-facing readers must not assume a string.
+3. **The delete and upload paths cannot be proved by a status code.** PostgREST
+   answers 204 for a DELETE that matched zero rows because RLS hid them, so the
+   only evidence is an owner-side count of the specific path. Any future proof of
+   a `files` delete must copy that shape, and the staff SELECT policies are
+   load-bearing for staff DELETE to work at all.
+
+Also corrected: the table's `SUPABASE_REST_BASE` count of 12 is right for
+*tracked* files (`git grep -c`, docs excluded — 7 files, 12 occurrences). Three
+more occurrences sit in the root `.env.example` and `.env.local`, which are
+untracked and therefore the owner's own edit in Task 9, not a repo change.
+
+**Task 10 retired the storage shim.** `docker/db/initdb/03-storage-shim.sql` is
+deleted, and with it the last `storage` object the local stack ever had. Its four
+`storage.buckets` rows were metadata only: `resumes` 10 MB, `candidate-audio` 20 MB
+and `candidate-videos` 50 MB are the exact numbers `ATTACHMENT_RULES` and the video
+route already enforce, and `candidate-cvs` carried no limit at all — the portal's
+own `CV_MAX_BYTES` (5 MB, checked in the wizard and in three routes) has always been
+that bucket's only gate. So nothing loosened here, and from now on the portal's
+checks are all there is, because the disk store deliberately enforces path
+containment and nothing else.
+`supabase/schema.sql` lost the 8 policies on `storage.objects`, the `storage`
+grants block and the bucket inserts. `scripts/local-supabase-stub.sql` — kept by
+name, §11 — lost its `storage` half too, so the proof now stands in exactly what
+`docker/db/initdb/` does.
+
+The drop itself is in `scripts/apply-local-schema.mjs`, not in the schema file:
+`scripts/apply-schema.mjs` reads the same SQL against the hosted project, where
+`storage` is the vendor's real schema and a cascade drop would delete candidate
+bytes. Doing it before the apply turns the apply into the proof — a re-dump that
+restored a storage policy now fails on the local stack instead of quietly keeping
+the shim alive. Measured on a throwaway container and on this stack:
+`node scripts/apply-proof-schema.mjs` applies the file atomically, twice, with no
+`storage` schema in reach (42 tables, 88 policies, 15 functions, 15 triggers);
+`npm run db:apply-local` logged the retirement and reported the same 88 policies
+with the 17 `files` rows intact; `stack:prove` 8/8, `files:prove` 20/20,
+`files:paths` 61/61, `files:links` 76/76, `files:serve` 42/42.
+
+**Task 11 closed the plan: the five claims hold on a stack built from a wiped
+volume.** `docker compose down -v` deleted both named volumes and the network;
+`up -d --build` then rebuilt the image with no build args, and
+`db:apply-local` → `db:seed-local` → bytes back into the fresh volume brought it up
+at **42 tables / 88 policies / 15 functions / 15 triggers / 17 file rows**. Two
+details of that rebuild are worth keeping, because each is a claim that could be
+read the wrong way:
+
+- On the *from-nothing* database the retirement line does not print. The drop is
+  guarded by `select 1 from pg_namespace where nspname = 'storage'`, and a database
+  initialised from `docker/db/initdb/` has no such schema — so the absence of the
+  log is the proof that `03-storage-shim.sql` is gone from the create path, not
+  that the drop failed. `GET /rest/v1/storage.objects` answers **404 PGRST205**
+  through the gateway while anon `GET /rest/v1/files` answers **200 `[]`**: the
+  vendor door is closed and ours is RLS-bound.
+- The rehearsal was made reversible before it ran: the live local database dumped
+  to `docker/data/pre-task11-wipe.dump` (235,889 B, `PGDMP`) and its uploads tree
+  copied to `docker/data/pre-task11-uploads/` (17 files, 3.9 MB), both git-ignored.
+  A wipe nobody can undo is not an acceptance test.
+
+Claim 1: `npm ls @supabase/supabase-js @vercel/speed-insights` → `(empty)`, and both
+`from "@supabase/` and `@vercel/` grep **0** hits across `src scripts` (plus
+`package.json` for the latter). Claim 2: `.next/static` copied out of the *running
+container* — 79 files, **0** hits for the anon key, the hosted project ref and the
+hosted REST host. Claim 3: `public.files` per bucket matches `find /data/uploads
+-type f` object for object (13 / 929,670 B, 2 / 2,841,603 B, 2 / 198,076 B, 0), and
+containment holds at `files:paths` 61/61 with `files:links` 76/76. Claim 4: the
+audit's deploy surface — 340 files — sets and reads no vendor credential. Claim 5:
+the Plan 1 gates all still pass, `stack:prove` 8/8, the nginx session probe 7/7
+(including a 107,908-byte RLS-scoped `/candidates` render and an unbuffered
+`/api/live` stream), `files:serve` 42/42, `check-staff-routes` 16/16/16,
+`check-themes` 4, `eslint src scripts` 0 errors with the single pre-existing
+`PortalTracker.tsx:418` warning.
+
+Two baselines this plan had been quoting wrong, now measured. `tsc --noEmit` is
+**0 errors**, not "2 stale lines": both came from `.next/types/validator.ts`
+(generated 2026-10-14) still validating the deleted
+`src/app/(admin)/apply-questions/page.tsx`, and one `npx next typegen` cleared them.
+And the sentence this record first wrote about the audit was doubly wrong: there is
+no `npm run audit-secrets` script, and `scripts/audit-secrets.mjs` had **no exit
+code at all**, so §15 claim 4's "asserts" was a print, not an assertion. Corrected
+in the final review's fix loop: the deploy-surface name scan and the vendor-SDK
+import scan now set `process.exitCode` and run in `prebuild`, so `next build` —
+host or image — fails on a credential re-added to the surface that builds and runs
+this app; the bundle half stays informational unless a bundle is named as `$1`,
+because the host's `.next/static` is a dev artifact and a stale one must not fail a
+build of code that never ships it; a missing `.env.local` or `.next` is a printed
+skip, which is the only reason the same script can run inside the image builder at
+all. Measured: default run exit **0** with 3 informational LEAK lines (56-file
+pre-Task-9 artifact), that same bundle named as `$1` exit **1**, and a scratch
+`src` file reading `process.env.SUPABASE_SERVICE_ROLE_KEY` exit **1** with a
+`VENDOR` line naming it. Never relax the gate — rebuild, or point it at the image's
+bundle.
+
+**What §15 deliberately leaves to the owner.** `.env.local` still holds
+`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_DB_PASSWORD`, `docker/.env` still holds
+the first two, and the four HOSTED-ONLY scripts still read them. Deleting them
+before an off-machine copy of `docker/data/hosted-2026-10-21.dump` exists would
+burn the only door back to the hosted rows while the copy is still a single local
+file, so the audit prints them under "owner action, not a leak" and the plan ends
+there. The §15 ordering rule — extract, prove, cut over, delete — is why this is the
+last paragraph rather than a task. The owner's remaining list, in order, is in
+[`docs/STATUS-2026-10-20.md`](../../STATUS-2026-10-20.md) §8.2.
+

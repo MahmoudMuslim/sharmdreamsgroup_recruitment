@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { fromZoneInputValue } from "@/lib/timezone";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -28,6 +28,7 @@ import {
   readLedger,
   stopEntry,
   updateEntry,
+  LEDGER_ROW_LIMIT,
   type LedgerWrite,
 } from "@/modules/timelog/application/ledger";
 
@@ -57,6 +58,15 @@ export interface LedgerOptions {
 
 export interface LedgerView {
   entries: TimeEntry[];
+  /**
+   * Every span the window and scope hold. The read stops at 1,000, so this is
+   * what the cut *is*; `entries` is only what the screen received of it.
+   */
+  total: number | null;
+  /** How many of the cut's spans this view carries, newest first. */
+  carried: number;
+  /** The ceiling on one read, so the screen can say when `total` is unknown. */
+  limit: number;
   window: TimeWindowKey;
   scope: TimeScope;
   /** Whose hours this cut is, in a sentence the screen and the header share. */
@@ -136,16 +146,16 @@ function draftOf(
 
 /** The openings and candidates a span can be pointed at, as the caller sees them. */
 async function readOptions(): Promise<LedgerOptions> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [openings, candidates] = await Promise.all([
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title")
       .in("status", ["PUBLISHED", "PAUSED"])
       .order("posted_at", { ascending: false })
       .limit(60),
-    supabase
+    restClient
       .from("applications")
       .select("id, full_name, job_openings(title)")
       .is("archived_at", null)
@@ -199,6 +209,9 @@ export async function getLedger(raw: {
     ok: true,
     view: {
       entries: read.entries,
+      total: read.total,
+      carried: read.carried,
+      limit: LEDGER_ROW_LIMIT,
       window: cut.window,
       scope: cut.scope,
       scopeNote: cut.scopeNote,

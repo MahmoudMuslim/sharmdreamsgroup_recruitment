@@ -18,9 +18,18 @@ export interface InterviewRecord {
   interviewer_name: string | null;
 }
 
-/** Columns every interview query selects, including the joined interviewer. */
+/**
+ * Columns every interview query selects, including the joined interviewer.
+ *
+ * The embed names its foreign key rather than just the table. `interview_notes`
+ * and `interview_scorecards` each point at both a panel and a staff profile, so
+ * a panel reaches a person by three paths and PostgREST answers a bare
+ * `user_profiles (…)` with PGRST201 — a *refused* query. Every reader of this
+ * list logs that and returns `[]`, which the recruiter sees as an empty pipeline.
+ */
 export const INTERVIEW_SELECT =
-  "id, application_id, scheduled_at, duration_minutes, meeting_link, status, interviewer_profile_id, user_profiles ( full_name )";
+  "id, application_id, scheduled_at, duration_minutes, meeting_link, status, interviewer_profile_id, " +
+  "user_profiles!interview_schedules_interviewer_profile_id_fkey ( full_name )";
 
 /** The lengths the pickers offer, matching what the booking form suggests. */
 export const DURATIONS = [30, 45, 60, 90] as const;

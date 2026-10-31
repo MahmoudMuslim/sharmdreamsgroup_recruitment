@@ -3,7 +3,7 @@
  *
  * `jobColumnsFrom` checked that a department, a location and a company were
  * *non-empty*, then wrote the text it was given. The pickers on the screen only
- * offer rows from the six vocabularies, so the human path was safe by accident —
+ * offer rows from the seven vocabularies, so the human path was safe by accident —
  * but the assistant writes the same columns from text the model typed, and nothing
  * refused. Measured against the live database: 5 of the 7 openings — carrying 13 of
  * the 20 applicant rows — name a department or location the vocabulary does not
@@ -36,7 +36,7 @@ import {
   masterRowKey,
   type MasterRowKey,
   type MasterRowLike,
-} from "./masterDataLists";
+} from "./masterDataLists.ts";
 import type { MasterEntity } from "./types";
 
 /** A vocabulary row as the writer reads it: the list itself plus its in-use flag. */

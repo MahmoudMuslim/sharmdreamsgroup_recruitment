@@ -88,7 +88,7 @@ export function PlanChecklist({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-brand-ink/60 transition hover:text-brand-ink"
+          className="inline-flex min-h-6 items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-brand-ink/60 transition hover:text-brand-ink"
         >
           {open ? <ChevronDown className="h-3.5 w-3.5" aria-hidden /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden />}
           Checklist

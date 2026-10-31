@@ -1,0 +1,42 @@
+# KVM2 compose override — ONE public TLS front door on 80/443.
+#
+# The base stack (docker-compose.yml) keeps every published port on loopback so
+# nothing is reachable from the LAN. This file adds a single public listener:
+# Caddy terminates TLS, auto-issues a Let's Encrypt cert, and proxies everything
+# to the stack's internal nginx (which routes /rest/v1/ to PostgREST, serves
+# /healthz, and streams /api/live). No separate host proxy is needed.
+#
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.kvm2.yml \
+#                  --env-file docker/.env up -d
+#   ...or the shorter: npm run docker:up:kvm2
+#
+# Requires in docker/.env:  SDG_DOMAIN, ACME_EMAIL (defaults below if absent).
+# DNS: <SDG_DOMAIN> A/AAAA -> this server. Firewall: allow 80 and 443.
+
+services:
+  front:
+    # Same patch-pinned tag as the `gateway` service in the base file; never use
+    # a floating tag in a production stack.
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    depends_on:
+      - nginx
+    ports:
+      # The only non-loopback mappings in the whole stack. 443/udp enables HTTP/3.
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SDG_DOMAIN: ${SDG_DOMAIN:-sharmdreamsgroup.cloud}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@sharmdreamsgroup.cloud}
+    volumes:
+      # Relative to this file's directory (docker/), same as every other mount.
+      - ./Caddyfile.kvm2:/etc/caddy/Caddyfile:ro
+      # Issued certificates + ACME account. A named volume so a redeploy does not
+      # re-issue and re-hit Let's Encrypt rate limits.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

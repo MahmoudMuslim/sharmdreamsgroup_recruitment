@@ -2,10 +2,16 @@
  * The portal's live channel.
  *
  * An open admin page holds one of these connections. Every few seconds the
- * watched hiring tables are fingerprinted — newest stamp and row count, or a
- * hash of the watched columns where a table keeps no update stamp — and when a
- * fingerprint moves, the areas it feeds are named on the stream. The browser
- * then reloads just the data of the page it is standing on.
+ * hiring tables that feed the open page are fingerprinted — newest stamp and
+ * row count, or a hash of the watched columns where a table keeps no update
+ * stamp — and when a fingerprint moves, the areas it feeds are named on the
+ * stream. The browser then reloads just the data of the page it is standing on.
+ *
+ * The browser names the page in the query string, so only that page's areas are
+ * probed: a tab on /time fingerprints one table, not the whole watch list, and a
+ * page no watched table feeds (Settings, the assistant, the change trail) polls
+ * nothing at all. The reload rule was already filtered by the same paths, so this
+ * cuts reads without changing which changes reach a page.
  *
  * That is the whole contract, and it is worth stating plainly because it is
  * narrower than "database push": no row content crosses here, only which part
@@ -18,13 +24,13 @@
  */
 
 import { getSessionUser, isStaff } from "@/lib/auth/session";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { watchForPath } from "@/modules/live/domain/watch";
 import {
   carryLastRead,
   diffLiveFingerprints,
   readLiveFingerprints,
   type LiveFingerprints,
-  LIVE_WATCH,
 } from "@/modules/live/infrastructure/changeWatch";
 
 /**
@@ -53,7 +59,17 @@ export async function GET(request: Request) {
 
   // Read the cookie jar once, here: the stream outlives the render pass, and
   // `cookies()` is only callable while answering the request.
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
+
+  /**
+   * The tables this connection has to watch.
+   *
+   * The browser sends the pathname it is on. A path this tree does not know
+   * watches nothing rather than everything, so a bad value cannot turn one
+   * tab's probe back into the full sweep. No parameter at all keeps the old
+   * full list for callers that do not name a page.
+   */
+  const scope = watchForPath(new URL(request.url).searchParams.get("path"));
 
   const encoder = new TextEncoder();
   let closed = false;
@@ -87,7 +103,7 @@ export async function GET(request: Request) {
         }
       };
 
-      let seen: LiveFingerprints = await readLiveFingerprints(supabase);
+      let seen: LiveFingerprints = await readLiveFingerprints(restClient, scope);
 
       /**
        * The areas this session is refused.
@@ -99,15 +115,16 @@ export async function GET(request: Request) {
        * so nothing is taken away.
        */
       const unreadOf = (marks: LiveFingerprints) =>
-        LIVE_WATCH.filter((w) => marks[w.area]?.state === "refused").map((w) => w.area);
+        scope.filter((w) => marks[w.area]?.state === "refused").map((w) => w.area);
 
       // The watch list is sent rather than duplicated in client code, so it
-      // lives in one place and a page cannot be left out by accident.
+      // lives in one place and a page cannot be left out by accident. It is the
+      // scoped list: this connection is never promised an area it does not poll.
       let unread = unreadOf(seen);
       const announce = () =>
         send("hello", {
           everyMs: POLL_MS,
-          watch: LIVE_WATCH.map((w) => ({ area: w.area, paths: w.paths })),
+          watch: scope.map((w) => ({ area: w.area, paths: w.paths })),
           unread,
         });
 
@@ -118,12 +135,20 @@ export async function GET(request: Request) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
         if (closed) break;
 
+        // Nothing on this page is fed by a watched table, so there is nothing
+        // to fingerprint and nothing that could be stalled. Keep the stream
+        // open with a beat; the badge already says this page is unwatched.
+        if (scope.length === 0) {
+          if (!beat()) break;
+          continue;
+        }
+
         // Nothing readable this tick is the database being unreachable, not a
         // permissions question — RLS hides rows, it does not hide a table.
-        const next = await readLiveFingerprints(supabase);
+        const next = await readLiveFingerprints(restClient, scope);
         const nextUnread = unreadOf(next);
 
-        if (LIVE_WATCH.every((w) => next[w.area].state !== "ok")) {
+        if (scope.every((w) => next[w.area].state !== "ok")) {
           failures += 1;
           if (failures === STALLED_AFTER && !send("stalled", { at: new Date().toISOString() })) {
             break;
@@ -134,7 +159,7 @@ export async function GET(request: Request) {
         if (failures >= STALLED_AFTER) send("recovered", { at: new Date().toISOString() });
         failures = 0;
 
-        const moved = diffLiveFingerprints(seen, next);
+        const moved = diffLiveFingerprints(seen, next, scope);
         // A tick that read nothing must not overwrite the stamp it could not
         // read, or a colleague's edit made during a blip is compared against
         // nothing and lost for the rest of the tab's life.

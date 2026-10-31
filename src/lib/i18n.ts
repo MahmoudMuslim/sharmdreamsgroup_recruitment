@@ -1,4 +1,4 @@
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 export const locales: readonly Locale[] = ["en", "ar", "ru", "de"];
 
@@ -226,13 +226,15 @@ const en: Dictionary = {
   // ---- The stepped application. One screen at a time, so the words a step
   // owns live under `apply.` and the page that shows them owns nothing else.
   "apply.ctaTitle": "Apply for this role",
-  "apply.ctaNote":
-    "Four short steps — your details, your CV, this role's questions, and a review before anything is sent.",
+  "apply.ctaNote": "A short application, step by step, with a review before anything is sent.",
   "apply.ctaButton": "Start the application",
   "apply.ctaMinutes": "It takes a few minutes, and you get a tracking code at the end.",
   "apply.title": "Apply for {role}",
   "apply.exit": "Back to the role",
-  "apply.intro": "Four short steps. Nothing is sent until you submit on the last one.",
+  // The number is the rail's own, never a word typed here: an authored form can
+  // open any number of steps, so a fixed count would promise a different
+  // application than the one the candidate is standing in.
+  "apply.intro": "{total} steps. Nothing is sent until you submit on the last one.",
   "apply.stepOf": "Step {step} of {total}",
   "apply.steps.about": "About you",
   "apply.steps.cv": "Your CV",
@@ -255,6 +257,8 @@ const en: Dictionary = {
   "apply.source.site": "This careers site",
   "apply.source.board": "A job board",
   "apply.source.referral": "A referral",
+  "apply.source.referred":
+    "You arrived through a team member's link, so this application is credited to them.",
   "apply.optional": "Optional",
   "apply.linkedin": "LinkedIn profile",
   "apply.linkedinPlaceholder": "https://www.linkedin.com/in/your-name",
@@ -330,7 +334,17 @@ const en: Dictionary = {
     "No file attached — our screening step reads your About me from the first step.",
   "apply.reviewQuestions": "This role's questions",
   "apply.privacy":
-    "We store your details to process this application only. You get a tracking code on the next screen.",
+    "Your details are handled as our privacy notice describes, and you get a tracking code on the next screen.",
+  "apply.consentHeading": "Your privacy",
+  "apply.consent.processing":
+    "I agree that Sharm Dreams Group may process my application — my contact details, my CV and my answers — to assess me for this role.",
+  "apply.consent.processingNote": "This is needed to receive and review an application.",
+  "apply.consent.required": "Please tick the processing consent before submitting.",
+  "apply.consent.pool":
+    "Keep my details for {months} months so you can consider me for other roles.",
+  "apply.consent.poolNote":
+    "Optional. Leave it unticked and your details are kept only for this application. You can change your mind on the privacy page at any time.",
+  "apply.consent.privacyLink": "Read the privacy notice",
   "apply.doneTitle": "Application received",
   "apply.doneBody":
     "Thank you for applying for {role}. Our people team will review your application and contact you if there is a fit.",
@@ -350,6 +364,317 @@ const en: Dictionary = {
   "apply.err.failed": "Something went wrong. Please try again.",
   "apply.err.upload": "We could not attach your CV. Try pasting your CV text instead.",
 
+  // ---- The authored form. The step headings, labels, help and placeholders are
+  // the recruiter's own sentences and arrive as filed; everything here is the
+  // furniture around them.
+  "apply.dyn.formStep": "Your application",
+  "apply.dyn.required": "Please answer “{label}”.",
+  // The three verbs the submit door uses for the three kinds you cannot type an
+  // answer into, kept word-for-word the same so the step and the door refuse a
+  // blank field in one voice.
+  "apply.dyn.requiredPhoto": "Please attach a photo for “{label}”.",
+  "apply.dyn.requiredFile": "Please attach a file for “{label}”.",
+  "apply.dyn.requiredTick": "Please tick “{label}”.",
+  "apply.dyn.badUrl": "Enter a full web address starting with http:// or https://.",
+  "apply.dyn.agree": "I agree",
+  "apply.dyn.ratherNot": "I'd rather not say",
+  "apply.dyn.consentNote":
+    "Answering is optional and never decides your application. “I'd rather not say” leaves this part out of your profile; the application carries on.",
+  "apply.dyn.declined":
+    "You chose not to answer this part. It is left out, and your application carries on.",
+  "apply.dyn.cvFillButton": "Fill from my CV",
+  "apply.dyn.cvFillBusy": "Reading your CV…",
+  "apply.dyn.cvFillNoFile": "Attach your CV first — that file is what we read.",
+  "apply.dyn.cvFillNote":
+    "The CV you attached is read again for the questions still blank on this step. Anything you have typed stays exactly as you wrote it.",
+  "apply.dyn.chooseFile": "Choose a file",
+  "apply.dyn.replaceFile": "Choose another file",
+  "apply.dyn.removeFile": "Remove",
+  "apply.dyn.uploading": "Uploading…",
+  "apply.dyn.uploadFailed": "That file could not be uploaded. Try again.",
+  "apply.dyn.tooLarge": "That file is larger than {mb} MB.",
+  "apply.dyn.choose": "Choose one",
+  "apply.dyn.yes": "Yes",
+  "apply.dyn.no": "No",
+  "apply.dyn.amount": "Amount",
+  "apply.dyn.unit": "Unit",
+  "apply.dyn.useLocation": "Use my location",
+  "apply.dyn.locating": "Finding you…",
+  "apply.dyn.locationFailed":
+    "We could not read your location. Type the two numbers instead.",
+  "apply.dyn.lat": "Latitude",
+  "apply.dyn.lng": "Longitude",
+  "apply.dyn.address.line1": "Address line 1",
+  "apply.dyn.address.line2": "Address line 2",
+  "apply.dyn.address.city": "City",
+  "apply.dyn.address.region": "Region",
+  "apply.dyn.address.postalCode": "Postal code",
+  "apply.dyn.address.country": "Country",
+  "privacy.back": "Back to careers",
+  "privacy.eyebrow": "Your data",
+  "privacy.title": "Your privacy choices",
+  "privacy.intro":
+    "You can ask for a copy of what we hold about your application, or ask us to erase it. Requests open from a private link we email to you.",
+  "privacy.signedLink": "Opened from your link",
+  "privacy.recordFor": "Application for",
+  "privacy.linkMask": "This link speaks about the record for {email}.",
+  "privacy.linkExpires": "It stops working on {date}.",
+  "privacy.chooseKind": "What would you like us to do?",
+  "privacy.kind.access": "Send me a copy",
+  "privacy.kind.accessHint": "A list of what we hold, mailed to your address.",
+  "privacy.kind.erasure": "Erase my data",
+  "privacy.kind.erasureHint": "Your name and details are removed from the record.",
+  "privacy.erasureWarning":
+    "This cannot be undone once it runs. Your application keeps its stage and score, but it will no longer name you.",
+  "privacy.noteLabel": "Anything we should know? (optional)",
+  "privacy.file": "Send request",
+  "privacy.filing": "Sending…",
+  "privacy.askLinkBody":
+    "Requests open from a link we email to the address on your application. It works for seven days and speaks about one application only.",
+  "privacy.emailLabel": "The email address you applied with",
+  "privacy.sendLink": "Email me a private link",
+  "privacy.sending": "Sending…",
+  "privacy.linkQuiet":
+    "We answer the same way whether or not that address is on file, and the link goes only to the address we stored. If nothing arrives, check the spelling and the spam folder.",
+  "privacy.unreachable": "We could not reach the portal just now. Try again in a moment.",
+  "privacy.keepTitle": "What we hold, and for how long",
+  "privacy.keepBody":
+    "We keep your application and what you attached to it for {months} months after the last activity on it. If you agreed to be considered for other roles, we keep your details for {poolMonths} months from that agreement. We warn you {warningDays} days before anything is removed, and you can ask for it sooner at any time.",
+  "privacy.noticeVersion": "Notice version {version}.",
+  "privacy.erasureTitle": "What erasing means",
+  "privacy.erasureBody":
+    "Erasing removes your name, contact details, CV, answers and notes, and deletes the files you attached. The record that an application was received and judged stays without your identity, because the group keeps its own hiring history. Someone who was hired stays on record for that reason.",
+  "privacy.decideTitle": "Who decides",
+  "privacy.decideBody":
+    "A recruiter checks that the request comes from the person on the record, and the owner approves what happens next. You hear from us by email before anything is removed. If you were hired, this page does not erase your employment record.",
+
+  // ---- The offer a candidate answers from a mailed link.
+  "offer.back": "Back to careers",
+  "offer.eyebrow": "Your offer",
+  "offer.title": "Your offer",
+  "offer.intro":
+    "This page belongs to the offer we emailed you. You can accept or decline it here, until the deadline shown below.",
+  "offer.for": "Offer for",
+  "offer.deadline": "Please answer by {date}.",
+  "offer.accept": "Accept the offer",
+  "offer.decline": "Decline the offer",
+  "offer.sending": "Recording your answer…",
+  "offer.answered": "This offer has already been answered.",
+  "offer.accepted":
+    "You accepted this offer. A recruiter will confirm the next steps with you directly.",
+  "offer.declined": "You declined this offer. A recruiter will be in touch.",
+  "offer.withdrawn":
+    "This offer was withdrawn. Contact the recruiter who sent it if you have questions.",
+  "offer.expired":
+    "The deadline for this offer has passed. Contact the recruiter who sent it if you would still like to be considered.",
+  "offer.unreachable": "We could not reach the portal just now. Try again in a moment.",
+  "offer.noToken": "This page opens from the link we emailed you about your offer.",
+
+  // ---- The person-profile spine (migration 043). Keys come from the field
+  // registry (`person-fields.ts`), the notice groups (`person-notice.ts`) and
+  // the three desks that write them, so a field added to the store and not to
+  // this dictionary shows as a gap in Settings → Languages instead of an
+  // English word on an Arabic screen.
+  //
+  // Arabic wording for a medical or family field is reviewed by a human, not
+  // drafted by the `translation` capability. A machine guess beside a diagnosis
+  // is a worse failure than a untranslated key.
+  "candidates.person.field.legal_name": "Legal name",
+  "candidates.person.field.preferred_name": "Preferred name",
+  "candidates.person.field.pronouns": "Pronouns",
+  "candidates.person.field.gender": "Gender (as the person wrote it)",
+  "candidates.person.field.date_of_birth": "Date of birth",
+  "candidates.person.field.birthplace": "Birthplace",
+  "candidates.person.field.national_id": "National ID",
+  "candidates.person.field.nationality": "Nationality",
+  "candidates.person.field.phone": "Phone",
+  "candidates.person.field.mailing_address": "Mailing address",
+  "candidates.person.field.current_city": "Current city",
+  "candidates.person.field.photo_path": "Photo",
+  "candidates.person.field.photo_mime": "Photo format",
+  "candidates.person.field.employment": "Work history",
+  "candidates.person.field.education": "Education",
+  "candidates.person.field.languages": "Languages",
+  "candidates.person.field.skills": "Skills",
+  "candidates.person.field.certifications": "Certifications",
+  "candidates.person.field.marital_status": "Marital status",
+  "candidates.person.field.children_count": "Children (count)",
+  "candidates.person.field.household_size": "Household size",
+  "candidates.person.field.housing_tenure": "Housing tenure",
+  "candidates.person.field.commute_mode": "Commute mode",
+  "candidates.person.field.commute_minutes": "Commute (minutes)",
+  "candidates.person.field.relocation_willingness": "Willing to relocate",
+  "candidates.person.field.travel_restrictions": "Travel restrictions",
+  "candidates.person.field.disability_status": "Disability status",
+  "candidates.person.field.accommodations": "Accommodations",
+  "candidates.person.field.chronic_conditions": "Chronic conditions",
+  "candidates.person.field.allergies": "Allergies",
+  "candidates.person.field.dietary_restrictions": "Dietary restrictions",
+  "candidates.person.field.blood_type": "Blood type",
+  "candidates.person.field.health_insurance": "Health insurance",
+  "candidates.person.field.partner_name": "Partner's name",
+  "candidates.person.field.partner_occupation": "Partner's occupation",
+  "candidates.person.field.partner_contact": "Partner's contact",
+  "candidates.person.field.anniversary_date": "Wedding date",
+  "candidates.person.field.household_composition": "Who lives in the house",
+  "candidates.person.field.family_planning": "Family planning",
+  "candidates.person.field.dependants": "Dependants",
+  "candidates.person.field.emergency_contacts": "Emergency contacts",
+
+  "candidates.person.tab.history": "History",
+  "candidates.person.tab.skills": "Skills",
+  "candidates.person.tab.background": "Background",
+  "candidates.person.tab.health": "Health",
+  "candidates.person.tab.family": "Family",
+  "candidates.person.tab.changes": "Changes",
+
+  "candidates.person.section.career": "Career indicators",
+  "candidates.person.section.work": "Work history",
+  "candidates.person.section.education": "Education",
+  "candidates.person.section.languages": "Languages",
+  "candidates.person.section.skills": "Skills claimed",
+  "candidates.person.section.certifications": "Certifications",
+  "candidates.person.section.identity": "Identity",
+  "candidates.person.section.contact": "Contact and location",
+  "candidates.person.section.marital": "Marital status and children",
+  "candidates.person.section.housing": "Housing and commute",
+  "candidates.person.section.health": "Health and disability",
+  "candidates.person.section.family": "Family details",
+  "candidates.person.section.dependants": "Dependants",
+  "candidates.person.section.emergency": "Emergency contacts",
+  "candidates.person.section.changes": "Changes to this person",
+
+  "candidates.person.notice.identity.title": "Your basic identity",
+  "candidates.person.notice.contact.title": "How we reach you",
+  "candidates.person.notice.work_history.title": "Your jobs and experience",
+  "candidates.person.notice.education.title": "Your education",
+  "candidates.person.notice.languages.title": "The languages you speak",
+  "candidates.person.notice.skills.title": "Your skills and certifications",
+  "candidates.person.notice.photo.title": "Your photograph",
+  "candidates.person.notice.marital_status.title": "Marital status and number of children",
+  "candidates.person.notice.family_details.title": "Family details",
+  "candidates.person.notice.dependants.title": "Your dependants",
+  "candidates.person.notice.emergency_contacts.title": "Emergency contacts",
+  "candidates.person.notice.health.title": "Health and disability",
+  "candidates.person.notice.housing.title": "Housing and commute",
+  "candidates.person.notice.extraction.title": "Turning your CV into structured facts",
+
+  "candidates.person.consent.title": "What the candidate agreed to",
+  "candidates.person.consent.blurb":
+    "One row per answer, newest wins. Nothing is edited: a change of mind is a later row, and a field whose group has no live agreement is refused rather than saved. Record here what the candidate said — this desk does not decide it for them.",
+  "candidates.person.consent.notAsked": "not asked yet",
+  "candidates.person.consent.agreed": "agreed",
+  "candidates.person.consent.olderNotice": "agreed to an older notice — record it again",
+  "candidates.person.consent.declined": "declined",
+  "candidates.person.consent.recordAgreement": "Record agreement",
+  "candidates.person.consent.recordRefusal": "Record refusal",
+  "candidates.person.consent.wording": "The wording they were asked",
+
+  "candidates.person.extract.title": "Structure the CV into the profile",
+  "candidates.person.extract.blurb":
+    "Reads the stored CV and reports dated roles, schooling, languages, skills and certificates. Nothing is written until you read the preview and confirm it, and a value it finds fills an empty field only — it never overwrites a hand.",
+  "candidates.person.extract.noConsent":
+    "The candidate has no live agreement to the CV-structuring notice, so this door is shut. Record their answer in the consent list above first.",
+  "candidates.person.extract.preview": "Preview what the CV says",
+  "candidates.person.extract.reading": "Reading the CV…",
+  "candidates.person.extract.previewHeading": "Preview · nothing saved yet",
+  "candidates.person.extract.write": "Write it into the profile",
+  "candidates.person.extract.discard": "Discard the preview",
+  "candidates.person.extract.dropped":
+    "The model returned {fields} — outside the operational list this extraction may write, so they were dropped and named here rather than saved.",
+  "candidates.person.extract.written": "Wrote {count} sections into the profile.",
+
+  "candidates.indicators.total": "Total experience",
+  "candidates.indicators.roles": "{count} dated roles",
+  "candidates.indicators.longest": "Longest role",
+  "candidates.indicators.shortest": "shortest {value}",
+  "candidates.indicators.gaps": "Gaps between roles",
+  "candidates.indicators.longestGap": "longest {value}",
+  "candidates.indicators.noGap": "one role, so no gap to measure",
+  "candidates.indicators.churn": "Roles per five years",
+  "candidates.indicators.churnNote": "a count over the dated span, not a verdict",
+  "candidates.indicators.coverage":
+    "{withMonths} of {rows} roles state a start month, so the rest are counted as whole years. {withEnd} state an end — an ongoing role's end is “now”. No figure here is a score, and none is attached to the AI screening above.",
+  "candidates.indicators.empty":
+    "No dated roles are on file, so there is nothing to count. A hand edit or the CV structuring fills this — zero experience is not a figure this page will print.",
+
+  "candidates.health.withheldTitle": "Health data is not shown to you",
+  "candidates.health.withheldNote":
+    "This is a special-category group behind its own grant. The absence of rows here is a statement about your account, not about this person.",
+  "candidates.health.openLogged":
+    "You hold the health-data grant, so this open is recorded in the activity trail. Health answers are never handed to a model, never used to screen and never scored.",
+  "candidates.health.noConsent":
+    "The person's agreement to this group is not live, so a hand edit here will be refused until the answer is recorded in Background.",
+  "candidates.health.groupBlurb":
+    "Every question is optional; the group may be declined as a whole.",
+  "candidates.health.noRow":
+    "No health row has been written. That is one of three different facts — never asked, asked and declined, or asked and left blank — and the consent list in Background tells them apart.",
+  "candidates.health.noColumns": "No health columns are on file yet.",
+
+  "candidates.family.withheldTitle": "{label} is not shown to you",
+  "candidates.family.withheldNote":
+    "This is other people's data behind a named grant. An empty list here does not mean there is nothing to see.",
+  "candidates.family.groupBlurb":
+    "Partner details, the wedding date and who lives in the house. Held for the person who shared them, not for screening.",
+  "candidates.family.notLogged":
+    "Opens of emergency contacts and family details are not written to the activity trail — only the health open is logged.",
+
+  "candidates.person.card.title": "Who they are",
+  "candidates.person.card.metaPerson": "the person behind every application",
+  "candidates.person.card.metaRecord": "what this application record knows",
+  "candidates.person.card.born": "Born",
+  "candidates.person.card.basedIn": "Based in",
+  "candidates.person.card.trackingCodes": "Tracking codes",
+  "candidates.person.card.cameThrough": "Came through",
+  "candidates.person.card.firstSeen": "First seen",
+  "candidates.person.card.lastActivity": "Last activity",
+  "candidates.person.card.records": "Records",
+  "candidates.person.label.email": "Email",
+  "candidates.person.label.notOnFile": "not on file",
+  "candidates.person.label.notStated": "not stated",
+  "candidates.person.label.noneOnFile": "none on file",
+
+  "candidates.person.changes.blurb":
+    "Every write to this person, with the door it came through. A row about a Tier-3 group is only here when your account holds that group's grant.",
+  "candidates.person.changes.empty": "No change has been recorded on the profile spine yet.",
+
+  "candidates.person.save.nothingChanged": "Nothing has changed in this section.",
+  "candidates.person.save.saved": "Saved {count} fields.",
+  "candidates.person.save.nothingWritten": "Nothing was written.",
+  "candidates.person.save.onlyChanged":
+    "Only the fields you changed are written, each with its own history row.",
+  "candidates.person.save.button": "Save {count} changes",
+  "candidates.person.save.readOnly":
+    "This account can read the profile but not edit it. Editing needs the Edit candidates permission.",
+  "candidates.person.save.conflict":
+    "{label}: kept the value a higher door wrote. The incoming {value} does not outrank it.",
+
+  "candidates.person.drawer.button": "Record a candidate",
+  "candidates.person.drawer.eyebrow": "Talent database",
+  "candidates.person.drawer.title": "Record a candidate by hand",
+  "candidates.person.drawer.subtitle":
+    "For someone who never applied through the careers site. Add their CV and photo now.",
+  "candidates.person.drawer.filed":
+    "Filed under New — the CV is attached and read in before screening.",
+  "candidates.person.drawer.submit": "Record candidate",
+  "candidates.person.drawer.submitAnother": "Record another",
+  "candidates.person.drawer.note":
+    "Nothing is sent to the candidate. They didn't apply, so a confirmation would be wrong.",
+  "candidates.person.drawer.job": "Job opening",
+  "candidates.person.drawer.loading": "Loading openings…",
+  "candidates.person.drawer.selectOpening": "Select opening…",
+  "candidates.person.drawer.name": "Full name",
+  "candidates.person.drawer.source": "Where they came from",
+  "candidates.person.drawer.cv": "CV file",
+  "candidates.person.drawer.photo": "Profile photo",
+  "candidates.person.drawer.personDetails": "Person details (optional)",
+  "candidates.person.drawer.groupIdentity": "Identity",
+  "candidates.person.drawer.groupContact": "Contact",
+  "candidates.person.drawer.groupMarital": "Marital & family status",
+  "candidates.person.drawer.groupHousing": "Housing & commute",
+  "candidates.person.drawer.groupHealth": "Health (restricted)",
+  "candidates.person.drawer.groupFamily": "Family details (restricted)",
+
   // ---- The closed enums a job row carries. A value with no key here is shown
   // as the English label instead, so an enum the build has no words for never
   // prints its own key.
@@ -361,6 +686,12 @@ const en: Dictionary = {
   "enum.part_time": "Part time",
   "enum.contract": "Contract",
   "enum.internship": "Internship",
+  "enum.remote": "Remote",
+  "enum.hybrid": "Hybrid",
+  "enum.junior": "Junior",
+  "enum.mid": "Mid",
+  "enum.senior": "Senior",
+  "enum.lead": "Lead",
 };
 
 const ar: Dictionary = {
@@ -564,13 +895,15 @@ const ar: Dictionary = {
   "careers.viewApply": "العرض والتقديم",
 
   "apply.ctaTitle": "قدّم على هذه الوظيفة",
-  "apply.ctaNote":
-    "أربع خطوات قصيرة — بياناتك، سيرتك الذاتية، أسئلة هذه الوظيفة، ثم مراجعة قبل أن يُرسل أي شيء.",
+  "apply.ctaNote": "طلب قصير، خطوة بخطوة، مع مراجعة قبل أن يُرسل أي شيء.",
   "apply.ctaButton": "ابدأ الطلب",
   "apply.ctaMinutes": "لا تستغرق سوى دقائق، وتحصل في نهايتها على رمز تتبّع.",
   "apply.title": "التقديم على {role}",
   "apply.exit": "العودة إلى الوظيفة",
-  "apply.intro": "أربع خطوات قصيرة. لا يُرسل شيء قبل أن تضغط إرسال في الخطوة الأخيرة.",
+  // The count sits after a colon, so it never has to agree with the word for
+  // "steps" — an authored form can open eleven of them, and the broken plural
+  // would read wrong at exactly the number a long form reaches.
+  "apply.intro": "مجموع الخطوات: {total}. لا يُرسل شيء قبل أن تضغط إرسال في الخطوة الأخيرة.",
   "apply.stepOf": "الخطوة {step} من {total}",
   "apply.steps.about": "بياناتك",
   "apply.steps.cv": "سيرتك الذاتية",
@@ -593,6 +926,8 @@ const ar: Dictionary = {
   "apply.source.site": "موقع التوظيف هذا",
   "apply.source.board": "موقع إعلانات وظيفية",
   "apply.source.referral": "ترشيح من شخص",
+  "apply.source.referred":
+    "لقد وصلت عبر رابط أحد أعضاء الفريق، لذا يُنسب هذا الطلب إليه.",
   "apply.optional": "اختياري",
   "apply.linkedin": "حساب لينكدإن",
   "apply.linkedinPlaceholder": "https://www.linkedin.com/in/your-name",
@@ -633,6 +968,11 @@ const ar: Dictionary = {
     "نبذتك موجودة في الخطوة الأولى، وهي مع هذا الملف ما تقرأه خطوة الفرز. اضغط الزر هناك لصياغتها من هذه السيرة.",
   "apply.cvNoAbout":
     "بدون ملف مرفق، تقرأ خطوة الفرز نبذتك من الخطوة الأولى. أرفق سيرتك هنا أو اكتب تلك السطور هناك.",
+  "apply.dyn.cvFillButton": "املأ من سيرتي الذاتية",
+  "apply.dyn.cvFillBusy": "نقرأ سيرتك الذاتية…",
+  "apply.dyn.cvFillNoFile": "أرفق سيرتك الذاتية أولاً — ذلك الملف هو ما نقرأه.",
+  "apply.dyn.cvFillNote":
+    "تُقرأ سيرتك المرفقة من جديد عن الأسئلة التي ما زالت فارغة في هذه الخطوة. وكل ما كتبته يبقى كما كتبته.",
   "apply.fill.written": "تم ملء {fields}.",
   "apply.fill.kept": "كنت قد كتبت {fields} بنفسك، فبقيت كما كتبتها.",
   "apply.fill.absent": "لم تذكر سيرتك الذاتية {fields}.",
@@ -665,7 +1005,17 @@ const ar: Dictionary = {
   "apply.reviewFile": "مرفق — {name}",
   "apply.reviewCvFromAbout": "لا ملف مرفق — تقرأ خطوة الفرز نبذتك من الخطوة الأولى.",
   "apply.reviewQuestions": "أسئلة هذه الوظيفة",
-  "apply.privacy": "نحفظ بياناتك لمعالجة هذا الطلب فقط. وستحصل على رمز تتبّع في الشاشة التالية.",
+  "apply.privacy":
+    "نتعامل مع بياناتك وفقاً لإشعار الخصوصية، وستحصل على رمز تتبّع في الشاشة التالية.",
+  "apply.consentHeading": "خصوصيتك",
+  "apply.consent.processing":
+    "أوافق على أن تعالج مجموعة شرم دريمز طلبي — بيانات التواصل وسيرتي الذاتية وإجاباتي — لتقييمي لهذه الوظيفة.",
+  "apply.consent.processingNote": "هذه الموافقة لازمة لاستلام طلبك ومراجعته.",
+  "apply.consent.required": "يرجى تحديد الموافقة على معالجة الطلب قبل الإرسال.",
+  "apply.consent.pool": "احتفظوا ببياناتي لمدة {months} شهراً لتنظروا في ترشيحي لأدوار أخرى.",
+  "apply.consent.poolNote":
+    "اختياري. إن تركته دون تحديد، تُحفظ بياناتك لهذا الطلب فقط. ويمكنك تغيير رأيك في صفحة الخصوصية في أي وقت.",
+  "apply.consent.privacyLink": "اقرأ إشعار الخصوصية",
   "apply.doneTitle": "وصلنا طلبك",
   "apply.doneBody":
     "شكرًا لتقديمك على {role}. سيراجع فريق الموارد البشرية طلبك ويتواصل معك إن وجد توافقاً.",
@@ -683,6 +1033,217 @@ const ar: Dictionary = {
   "apply.err.fileSize": "هذا الملف أكبر من {mb} ميغابايت. أرفق ملفاً أصغر.",
   "apply.err.failed": "حدث خطأ ما. حاول مرة أخرى.",
   "apply.err.upload": "لم نتمكن من إرفاق سيرتك الذاتية. جرّب لصق نصّها بدلاً من ذلك.",
+  "privacy.back": "العودة إلى الوظائف",
+  "privacy.eyebrow": "بياناتك",
+  "privacy.title": "خياراتك في الخصوصية",
+  "privacy.intro":
+    "يمكنك طلب نسخة من البيانات التي نحتفظ بها عن طلبك، أو طلب حذفها. تُفتح الطلبات من رابط خاص نرسله إلى بريدك الإلكتروني.",
+  "privacy.signedLink": "فُتحت الصفحة من رابطك",
+  "privacy.recordFor": "طلب التقديم لـ",
+  "privacy.linkMask": "يتعلق هذا الرابط بسجل {email}.",
+  "privacy.linkExpires": "ويتوقف عن العمل في {date}.",
+  "privacy.chooseKind": "ماذا تريد أن نفعل؟",
+  "privacy.kind.access": "أرسلوا لي نسخة",
+  "privacy.kind.accessHint": "قائمة بما نحتفظ به، تُرسل إلى بريدك.",
+  "privacy.kind.erasure": "احذفوا بياناتي",
+  "privacy.kind.erasureHint": "يُزال اسمك وبياناتك من السجل.",
+  "privacy.erasureWarning":
+    "لا يمكن التراجع عن هذا بعد تنفيذه. سيحتفظ طلبك بمرحلته ودرجته، لكنه لن يحمل اسمك.",
+  "privacy.noteLabel": "هل هناك ما ينبغي أن نعرفه؟ (اختياري)",
+  "privacy.file": "إرسال الطلب",
+  "privacy.filing": "جارٍ الإرسال…",
+  "privacy.askLinkBody":
+    "تُفتح الطلبات من رابط نرسله إلى البريد الإلكتروني الموجود في طلبك. يعمل سبعة أيام ويتعلق بطلب واحد فقط.",
+  "privacy.emailLabel": "البريد الإلكتروني الذي قدّمت به",
+  "privacy.sendLink": "أرسلوا لي رابطاً خاصاً",
+  "privacy.sending": "جارٍ الإرسال…",
+  "privacy.linkQuiet":
+    "نجيب بالطريقة نفسها سواء كان هذا البريد مسجلاً أم لا، ويُرسل الرابط إلى البريد المحفوظ لدينا فقط. إن لم يصل شيء، تحقق من الإملاء ومن مجلد الرسائل غير المرغوب فيها.",
+  "privacy.unreachable": "لم نتمكن من الوصول إلى البوابة الآن. حاول بعد قليل.",
+  "privacy.keepTitle": "ما نحتفظ به، وإلى متى",
+  "privacy.keepBody":
+    "نحتفظ بطلبك وبما أرفقته به لمدة {months} شهراً بعد آخر نشاط عليه. وإن وافقت على أن ننظر في ترشيحك لأدوار أخرى، نحتفظ ببياناتك لمدة {poolMonths} شهراً من تلك الموافقة. ننبهك قبل {warningDays} يوماً من أي حذف، ويمكنك طلب الحذف قبل ذلك في أي وقت.",
+  "privacy.noticeVersion": "إصدار الإشعار {version}.",
+  "privacy.erasureTitle": "ماذا يعني الحذف",
+  "privacy.erasureBody":
+    "الحذف يزيل اسمك وبيانات التواصل وسيرتك الذاتية وإجاباتك وملاحظاتك، ويحذف الملفات التي أرفقتها. يبقى سجل استلام الطلب وتقييمه دون هويتك، لأن المجموعة تحتفظ بتاريخها الوظيفي. ومن جرى تعيينه يبقى سجله لهذا السبب.",
+  "privacy.decideTitle": "من يقرر",
+  "privacy.decideBody":
+    "يتحقق مسؤول التوظيف من أن الطلب صادر من صاحب السجل، ويعتمد المالك ما يحدث بعده. سنراسلك بالبريد قبل حذف أي شيء. وإن كنت قد عُيّنت، فلا تحذف هذه الصفحة سجل التوظيف.",
+  "offer.back": "العودة إلى الوظائف",
+  "offer.eyebrow": "عرض العمل",
+  "offer.title": "عرض العمل الخاص بك",
+  "offer.intro":
+    "هذه الصفحة خاصة بعرض العمل الذي أرسلناه إلى بريدك الإلكتروني. يمكنك قبوله أو رفضه من هنا حتى الموعد المبيّن أدناه.",
+  "offer.for": "عرض العمل لـ",
+  "offer.deadline": "يُرجى الرد قبل {date}.",
+  "offer.accept": "أقبل عرض العمل",
+  "offer.decline": "أرفض عرض العمل",
+  "offer.sending": "جارٍ تسجيل ردك…",
+  "offer.answered": "تم الرد على هذا العرض بالفعل.",
+  "offer.accepted":
+    "لقد قبلت هذا العرض. سيتواصل معك مسؤول التوظيف لتأكيد الخطوات التالية.",
+  "offer.declined": "لقد رفضت هذا العرض. سيتواصل معك مسؤول التوظيف.",
+  "offer.withdrawn": "سُحب هذا العرض. تواصل مع مسؤول التوظيف الذي أرسله إن كانت لديك أسئلة.",
+  "offer.expired":
+    "انتهت المهلة المحددة لهذا العرض. تواصل مع مسؤول التوظيف الذي أرسله إن كنت لا تزال ترغب في أن ننظر في ترشيحك.",
+  "offer.unreachable": "لم نتمكن من الوصول إلى البوابة الآن. حاول بعد قليل.",
+  "offer.noToken": "تُفتح هذه الصفحة من الرابط الذي أرسلناه إلى بريدك الإلكتروني عن عرض العمل.",
+
+  // ---- The person-profile spine. The `ar` dictionary deliberately carries no
+  // wording for the four Tier-3 groups (health, family details, dependants,
+  // emergency contacts): a human reviewer supplies those labels, and Settings →
+  // Languages shows each gap as an empty field rather than an English fallback.
+  "candidates.person.field.legal_name": "الاسم القانوني",
+  "candidates.person.field.preferred_name": "الاسم المفضل",
+  "candidates.person.field.pronouns": "الضمائر",
+  "candidates.person.field.gender": "الجنس (كما كتبه الشخص)",
+  "candidates.person.field.date_of_birth": "تاريخ الميلاد",
+  "candidates.person.field.birthplace": "مكان الميلاد",
+  "candidates.person.field.national_id": "الرقم القومي",
+  "candidates.person.field.nationality": "الجنسية",
+  "candidates.person.field.phone": "الهاتف",
+  "candidates.person.field.mailing_address": "عنوان المراسلة",
+  "candidates.person.field.current_city": "المدينة الحالية",
+  "candidates.person.field.photo_path": "الصورة",
+  "candidates.person.field.photo_mime": "صيغة الصورة",
+  "candidates.person.field.employment": "الخبرة العملية",
+  "candidates.person.field.education": "التعليم",
+  "candidates.person.field.languages": "اللغات",
+  "candidates.person.field.skills": "المهارات",
+  "candidates.person.field.certifications": "الشهادات",
+  "candidates.person.field.marital_status": "الحالة الاجتماعية",
+  "candidates.person.field.children_count": "عدد الأطفال",
+  "candidates.person.field.household_size": "عدد أفراد الأسرة",
+  "candidates.person.field.housing_tenure": "نوع السكن",
+  "candidates.person.field.commute_mode": "وسيلة التنقل",
+  "candidates.person.field.commute_minutes": "مدة التنقل (بالدقائق)",
+  "candidates.person.field.relocation_willingness": "الاستعداد للانتقال",
+  "candidates.person.field.travel_restrictions": "قيود السفر",
+
+  "candidates.person.tab.history": "السجل",
+  "candidates.person.tab.skills": "المهارات",
+  "candidates.person.tab.background": "الخلفية",
+  "candidates.person.tab.health": "الصحة",
+  "candidates.person.tab.family": "الأسرة",
+  "candidates.person.tab.changes": "التغييرات",
+
+  "candidates.person.section.career": "مؤشرات المسار المهني",
+  "candidates.person.section.work": "الخبرة العملية",
+  "candidates.person.section.education": "التعليم",
+  "candidates.person.section.languages": "اللغات",
+  "candidates.person.section.skills": "المهارات المعلنة",
+  "candidates.person.section.certifications": "الشهادات",
+  "candidates.person.section.identity": "الهوية",
+  "candidates.person.section.contact": "التواصل والموقع",
+  "candidates.person.section.marital": "الحالة الاجتماعية والأطفال",
+  "candidates.person.section.housing": "السكن والتنقل",
+  "candidates.person.section.changes": "التغييرات على هذا الشخص",
+
+  "candidates.person.notice.identity.title": "هويتك الأساسية",
+  "candidates.person.notice.contact.title": "كيف نتواصل معك",
+  "candidates.person.notice.work_history.title": "وظائفك وخبرتك",
+  "candidates.person.notice.education.title": "تعليمك",
+  "candidates.person.notice.languages.title": "اللغات التي تتحدثها",
+  "candidates.person.notice.skills.title": "مهاراتك وشهاداتك",
+  "candidates.person.notice.photo.title": "صورتك",
+  "candidates.person.notice.marital_status.title": "الحالة الاجتماعية وعدد الأطفال",
+  "candidates.person.notice.housing.title": "السكن والتنقل",
+  "candidates.person.notice.extraction.title": "تحويل سيرتك الذاتية إلى حقائق منظمة",
+
+  "candidates.person.consent.title": "ما وافق عليه المرشح",
+  "candidates.person.consent.blurb":
+    "سطر واحد لكل إجابة، والأحدث هو المعتمد. لا يُعدَّل شيء: تغيّر الرأي يُسجَّل في سطر لاحق، وأي حقل لا تحده موافقة سارية يُرفض بدل حفظه. سجّل هنا ما قاله المرشح — هذا المكتب لا يقرره عنه.",
+  "candidates.person.consent.notAsked": "لم يُسأل بعد",
+  "candidates.person.consent.agreed": "موافق",
+  "candidates.person.consent.olderNotice": "وافق على إشعار أقدم — سجّله مرة أخرى",
+  "candidates.person.consent.declined": "رافض",
+  "candidates.person.consent.recordAgreement": "سجّل الموافقة",
+  "candidates.person.consent.recordRefusal": "سجّل الرفض",
+  "candidates.person.consent.wording": "الصيغة التي سُئل عنها",
+
+  "candidates.person.extract.title": "حوّل السيرة الذاتية إلى الملف الشخصي",
+  "candidates.person.extract.blurb":
+    "يقرأ السيرة المحفوظة ويستخرج الوظائف المؤرخة والتعليم واللغات والمهارات والشهادات. لا يُكتب شيء حتى تقرأ المعاينة وتؤكدها، والقيمة التي يجدها تملأ حقلاً فارغاً فقط — ولا تستبدل ما كتبه إنسان.",
+  "candidates.person.extract.noConsent":
+    "لا توجد موافقة سارية على إشعار تحويل السيرة الذاتية، لذا هذا الباب مغلق. سجّل إجابته في قائمة الموافقات أعلاه أولاً.",
+  "candidates.person.extract.preview": "عاين ما تقوله السيرة الذاتية",
+  "candidates.person.extract.reading": "جارٍ قراءة السيرة الذاتية…",
+  "candidates.person.extract.previewHeading": "معاينة · لم يُحفظ شيء بعد",
+  "candidates.person.extract.write": "اكتبها في الملف الشخصي",
+  "candidates.person.extract.discard": "تجاهل المعاينة",
+  "candidates.person.extract.dropped":
+    "أعاد النموذج {fields} — خارج القائمة التشغيلية التي يجوز لهذا الاستخراج كتابتها، فأُسقطت وسُمّيت هنا بدل حفظها.",
+  "candidates.person.extract.written": "كُتبت {count} أقسام في الملف الشخصي.",
+
+  "candidates.indicators.total": "إجمالي الخبرة",
+  "candidates.indicators.roles": "{count} وظائف مؤرخة",
+  "candidates.indicators.longest": "أطول وظيفة",
+  "candidates.indicators.shortest": "الأقصر {value}",
+  "candidates.indicators.gaps": "الفجوات بين الوظائف",
+  "candidates.indicators.longestGap": "الأطول {value}",
+  "candidates.indicators.noGap": "وظيفة واحدة، فلا فجوة تُقاس",
+  "candidates.indicators.churn": "الوظائف لكل خمس سنوات",
+  "candidates.indicators.churnNote": "عدد على المدى المؤرخ، لا حكم",
+  "candidates.indicators.coverage":
+    "{withMonths} من {rows} وظائف تذكر شهر بداية، لذا تُحتسب البقية بسنوات كاملة. {withEnd} تذكر نهاية — ونهاية الوظيفة الجارية هي «الآن». لا رقم هنا درجة، ولا شيء منها يغذي الفحص الآلي أعلاه.",
+  "candidates.indicators.empty":
+    "لا توجد وظائف مؤرخة في الملف، فلا شيء يُحتسب. تعديل يدوي أو تحويل السيرة الذاتية يملأ هذا — ولا تطبع هذه الصفحة صفر خبرة كرقم.",
+
+  "candidates.person.card.title": "من هم",
+  "candidates.person.card.metaPerson": "الشخص خلف كل طلب",
+  "candidates.person.card.metaRecord": "ما يعرفه سجل الطلب هذا",
+  "candidates.person.card.born": "الميلاد",
+  "candidates.person.card.basedIn": "مقر الإقامة",
+  "candidates.person.card.trackingCodes": "أكواد التتبع",
+  "candidates.person.card.cameThrough": "عبر",
+  "candidates.person.card.firstSeen": "أول ظهور",
+  "candidates.person.card.lastActivity": "آخر نشاط",
+  "candidates.person.card.records": "السجلات",
+  "candidates.person.label.email": "البريد الإلكتروني",
+  "candidates.person.label.notOnFile": "غير موجود في الملف",
+  "candidates.person.label.notStated": "غير مذكور",
+  "candidates.person.label.noneOnFile": "لا شيء في الملف",
+
+  "candidates.person.changes.blurb":
+    "كل كتابة على هذا الشخص، والباب الذي جاءت منه. لا يظهر سطر عن مجموعة من المستوى الثالث إلا إذا كان حسابك يحمل تصريح تلك المجموعة.",
+  "candidates.person.changes.empty": "لم يُسجَّل أي تغيير على محور الشخص بعد.",
+
+  "candidates.person.save.nothingChanged": "لم يتغير شيء في هذا القسم.",
+  "candidates.person.save.saved": "حُفظت {count} حقول.",
+  "candidates.person.save.nothingWritten": "لم يُكتب شيء.",
+  "candidates.person.save.onlyChanged":
+    "تُكتب الحقول التي غيّرتها فقط، ولكل منها سطر سجل خاص.",
+  "candidates.person.save.button": "احفظ {count} تغييرات",
+  "candidates.person.save.readOnly":
+    "هذا الحساب يستطيع قراءة الملف الشخصي لكن لا يستطيع تعديله. التعديل يحتاج تصريح تعديل المرشحين.",
+  "candidates.person.save.conflict":
+    "{label}: أُبقي على القيمة التي كتبها باب أعلى. الوارد {value} لا يتجاوزها.",
+
+  "candidates.person.drawer.button": "سجّل مرشحاً",
+  "candidates.person.drawer.eyebrow": "قاعدة المواهب",
+  "candidates.person.drawer.title": "سجّل مرشحاً يدوياً",
+  "candidates.person.drawer.subtitle":
+    "لمن لم يتقدم عبر موقع الوظائف. أضف سيرته الذاتية وصورته الآن.",
+  "candidates.person.drawer.filed":
+    "حُفظ في «جديد» — السيرة الذاتية مرفقة وتُقرأ قبل الفحص.",
+  "candidates.person.drawer.submit": "سجّل المرشح",
+  "candidates.person.drawer.submitAnother": "سجّل آخر",
+  "candidates.person.drawer.note":
+    "لا يُرسل شيء إلى المرشح. لم يتقدم، فالرسالة التأكيدية ستكون خطأ.",
+  "candidates.person.drawer.job": "الوظيفة",
+  "candidates.person.drawer.loading": "جارٍ تحميل الوظائف…",
+  "candidates.person.drawer.selectOpening": "اختر وظيفة…",
+  "candidates.person.drawer.name": "الاسم الكامل",
+  "candidates.person.drawer.source": "المصدر",
+  "candidates.person.drawer.cv": "ملف السيرة الذاتية",
+  "candidates.person.drawer.photo": "الصورة الشخصية",
+  "candidates.person.drawer.personDetails": "بيانات الشخص (اختياري)",
+  "candidates.person.drawer.groupIdentity": "الهوية",
+  "candidates.person.drawer.groupContact": "التواصل",
+  "candidates.person.drawer.groupMarital": "الحالة الاجتماعية والأسرة",
+  "candidates.person.drawer.groupHousing": "السكن والتنقل",
+
   "enum.hospitality": "الضيافة",
   "enum.real_estate": "العقارات",
   "enum.commercial_development": "التطوير التجاري",
@@ -691,6 +1252,12 @@ const ar: Dictionary = {
   "enum.part_time": "دوام جزئي",
   "enum.contract": "عقد",
   "enum.internship": "تدريب",
+  "enum.remote": "عن بُعد",
+  "enum.hybrid": "هجين",
+  "enum.junior": "مبتدئ",
+  "enum.mid": "متوسط",
+  "enum.senior": "خبير",
+  "enum.lead": "قيادي",
 };
 
 const ru: Dictionary = {
@@ -905,6 +1472,12 @@ const ru: Dictionary = {
   "enum.part_time": "Частичная занятость",
   "enum.contract": "Контракт",
   "enum.internship": "Стажировка",
+  "enum.remote": "Удалённо",
+  "enum.hybrid": "Гибрид",
+  "enum.junior": "Младший",
+  "enum.mid": "Средний",
+  "enum.senior": "Старший",
+  "enum.lead": "Ведущий",
 };
 
 const de: Dictionary = {
@@ -1122,6 +1695,12 @@ const de: Dictionary = {
   "enum.part_time": "Teilzeit",
   "enum.contract": "Befristet",
   "enum.internship": "Praktikum",
+  "enum.remote": "Remote",
+  "enum.hybrid": "Hybrid",
+  "enum.junior": "Junior",
+  "enum.mid": "Mid-Level",
+  "enum.senior": "Senior",
+  "enum.lead": "Lead",
 };
 
 const dictionaries: Record<Locale, Dictionary> = { en, ar, ru, de };

@@ -5,7 +5,7 @@ import {
   getStringListSetting,
   getStringSetting,
 } from "@/modules/settings/infrastructure/settingsReader";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 /**
  * The two language settings reduced to something a page can render.

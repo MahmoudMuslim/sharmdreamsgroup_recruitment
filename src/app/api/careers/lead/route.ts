@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { recordActivity } from "@/modules/activity/application/record";
 import { parseTurns, renderTranscript, type ChatTurn } from "@/modules/careers/chatbot/conversation";
 import { getPublicJob } from "@/app/careers/actions";
@@ -82,12 +82,12 @@ export async function POST(request: Request): Promise<Response> {
     .join("")
     .slice(0, NOTES_CHARS);
 
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
   // Only an email identifies a person here: plenty of visitors leave a phone and
   // nothing else, and matching those on an empty string would merge strangers.
   const { data: prior } = email
-    ? await supabase
+    ? await restClient
         .from("sourced_prospects")
         .select("id, full_name, stage")
         .eq("origin", "CHATBOT")
@@ -110,7 +110,7 @@ export async function POST(request: Request): Promise<Response> {
   let id: string | null = null;
 
   if (existing) {
-    const { data: updated, error } = await supabase
+    const { data: updated, error } = await restClient
       .from("sourced_prospects")
       .update(patch)
       .eq("id", existing.id)
@@ -122,7 +122,7 @@ export async function POST(request: Request): Promise<Response> {
     }
     id = (updated as { id: string }).id;
   } else {
-    const { data: created, error } = await supabase
+    const { data: created, error } = await restClient
       .from("sourced_prospects")
       .insert({ ...patch, origin: "CHATBOT", stage: "NEW" })
       .select("id")

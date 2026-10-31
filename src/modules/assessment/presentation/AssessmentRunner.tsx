@@ -20,12 +20,15 @@ import {
 import { SdgMark } from "@/modules/analytics/presentation/BrandLogo";
 import { VideoPitchRecorder } from "@/modules/assessment/presentation/components/VideoPitchRecorder";
 import { CaseStudyRunner } from "@/modules/assessment/presentation/components/CaseStudyRunner";
+import { CodingRunner } from "@/modules/assessment/presentation/components/CodingRunner";
 import { QuizRunner } from "@/modules/assessment/presentation/components/QuizRunner";
+import { SituationalRunner } from "@/modules/assessment/presentation/components/SituationalRunner";
 import {
   useAssessmentStore,
   type AttemptQuestionClient,
   type AttemptPayload,
 } from "@/stores/useAssessmentStore";
+import { codingAnswerAnswered } from "@/modules/assessment/domain/coding";
 import { cn, formatDuration } from "@/lib/utils";
 
 /**
@@ -76,7 +79,7 @@ export function AssessmentRunner() {
   const nextQuestion = useAssessmentStore((s) => s.nextQuestion);
   const prevQuestion = useAssessmentStore((s) => s.prevQuestion);
   const decrementTimer = useAssessmentStore((s) => s.decrementTimer);
-  const syncDraft = useAssessmentStore((s) => s.syncDraftToSupabase);
+  const syncDraft = useAssessmentStore((s) => s.syncDraft);
   const submitAttempt = useAssessmentStore((s) => s.submitAttempt);
 
   const isLoading = useAssessmentStore((s) => s.isLoading);
@@ -125,6 +128,7 @@ export function AssessmentRunner() {
   const videos = useAssessmentStore((s) => s.videoPathsMap);
   const videoBlobs = useAssessmentStore((s) => s.videoBlobMap);
   const caseStudies = useAssessmentStore((s) => s.caseStudyAnswersMap);
+  const codeAnswers = useAssessmentStore((s) => s.codeAnswersMap);
   const choices = useAssessmentStore((s) => s.choiceAnswersMap);
   const goToQuestion = useAssessmentStore((s) => s.goToQuestion);
 
@@ -156,13 +160,21 @@ export function AssessmentRunner() {
         case "CASE_STUDY":
           flags[index] = (caseStudies[id] ?? "").trim().length > 0;
           break;
+        case "CODING":
+          // Same rule as a case study: any non-whitespace text counts, and the
+          // starter is never seeded into the answer, so an untouched box is not.
+          flags[index] = codingAnswerAnswered(codeAnswers[id] ?? "");
+          break;
         case "MULTIPLE_CHOICE":
+        case "SITUATIONAL_JUDGMENT":
+          // Both store the pick in `choice_answers_map`; a judgment scene is
+          // answered the moment one response is selected, like a quiz.
           flags[index] = Boolean(choices[id]);
           break;
       }
     });
     return flags;
-  }, [questions, spreadsheet, videos, videoBlobs, caseStudies, choices]);
+  }, [questions, spreadsheet, videos, videoBlobs, caseStudies, codeAnswers, choices]);
 
   const answeredCount = answered.filter(Boolean).length;
   const outstanding = questions
@@ -376,8 +388,14 @@ export function AssessmentRunner() {
             {currentQuestion.question_type === "CASE_STUDY" && (
               <CaseStudyRunner question={currentQuestion} />
             )}
+            {currentQuestion.question_type === "CODING" && (
+              <CodingRunner question={currentQuestion} />
+            )}
             {currentQuestion.question_type === "MULTIPLE_CHOICE" && (
               <QuizRunner question={currentQuestion} />
+            )}
+            {currentQuestion.question_type === "SITUATIONAL_JUDGMENT" && (
+              <SituationalRunner question={currentQuestion} />
             )}
           </div>
 

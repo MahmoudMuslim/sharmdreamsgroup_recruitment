@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ChevronDown,
   ChevronRight,
@@ -20,7 +21,9 @@ import {
   ACTIVITY_AREAS,
   ACTIVITY_SURFACES,
   ACTOR_KIND_LABELS,
+  areaLabel,
   describeActor,
+  prettyAction,
   recordHref,
   TRAIL_WINDOWS,
   type ActivityRow,
@@ -119,7 +122,7 @@ function DetailList({ row, timeZone }: { row: ActivityRow; timeZone: string }) {
   return (
     <div className="border-t border-brand-line bg-brand-cream/60 px-4 py-3">
       <p className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
-        {row.action.replace(/[_.]/g, " ")}
+        {prettyAction(row.action)}
         {!row.detail && " — no field values were recorded for this change"}
       </p>
       {entries.length > 0 && (
@@ -186,14 +189,14 @@ function TrailRow({
           </p>
           <p className="mt-0.5 text-sm leading-relaxed text-brand-ink/75">{row.summary}</p>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-brand-ink/45">
-            <span className="rounded-full bg-brand-sand px-2 py-0.5 font-semibold">{row.area}</span>
+            <span className="rounded-full bg-brand-sand px-2 py-0.5 font-semibold">{areaLabel(row.area)}</span>
             <span>{row.entity}</span>
             {row.entity_id && (
               <button
                 type="button"
                 onClick={onHistory}
                 title="Show only this record's history"
-                className="inline-flex items-center gap-1 rounded-full border border-brand-line px-1.5 py-0.5 font-mono text-[10px] transition hover:bg-brand-sand"
+                className="inline-flex min-h-6 items-center gap-1 rounded-full border border-brand-line px-1.5 py-0.5 font-mono text-[10px] transition hover:bg-brand-sand"
               >
                 <History className="h-3 w-3" aria-hidden />
                 {shortId(row.entity_id)}
@@ -250,6 +253,28 @@ export function ActivityView({
   const [open, setOpen] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // The cut in the address bar is the screen's own: the assistant's link carries
+  // the filters its answer read, and the page server-rendered that cut as
+  // `initial`. Arriving on this route again re-renders rather than remounts, so
+  // the last query taken from the address bar is tracked and re-applied here
+  // too. `pull` writes the URL itself, and this Next build patches
+  // `replaceState` into the router, so that write also moves `useSearchParams` —
+  // which is why the written query is recorded: a seed this screen wrote must
+  // not rewind the rows it just loaded to the server's first cut.
+  const params = useSearchParams();
+  const seed = params.toString();
+  const [written, setWritten] = useState<string | null>(null);
+  const [lastSeed, setLastSeed] = useState(seed);
+  if (seed !== lastSeed) {
+    setLastSeed(seed);
+    if (seed !== written) {
+      setView(initial);
+      setForm(formOf(initial.filters));
+      setOpen(null);
+      setError(null);
+    }
+  }
+
   function pull(patch: Partial<FormState>, page = 1) {
     const merged: FormState = { ...form, ...patch };
     setForm(merged);
@@ -281,7 +306,9 @@ export function ActivityView({
       // instead of replaying every chip the reader clicked.
       const params = queryToParams(result.view.filters);
       if (result.view.page > 1) params.set("page", String(result.view.page));
-      window.history.replaceState(null, "", `?${params.toString()}`);
+      const next = params.toString();
+      setWritten(next);
+      window.history.replaceState(null, "", `?${next}`);
     });
   }
 
@@ -351,7 +378,7 @@ export function ActivityView({
             <option value="">Everything</option>
             {ACTIVITY_AREAS.map((area) => (
               <option key={area} value={area}>
-                {area}
+                {areaLabel(area)}
               </option>
             ))}
           </select>

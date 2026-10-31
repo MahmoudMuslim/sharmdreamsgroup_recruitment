@@ -6,6 +6,8 @@
  * surface type-safe and gives the UI a single place to declare its shape.
  */
 
+import type { Company } from "@/core/entities";
+
 export type AppRole =
   | "SUPER_ADMIN"
   | "SUBSIDIARY_HR_MANAGER"
@@ -22,6 +24,9 @@ export type PermissionKey =
   | "candidates.write"
   | "candidates.delete"
   | "candidates.view_scores"
+  | "candidates.view_health_data"
+  | "candidates.view_family_data"
+  | "candidates.view_emergency_contacts"
   | "scores.view_unmasked"
   | "assessments.create"
   | "assessments.grade"
@@ -37,7 +42,8 @@ export type PermissionKey =
   | "settings.manage_platform"
   | "companies.manage"
   | "users.manage"
-  | "users.create";
+  | "users.create"
+  | "assistant.commands";
 
 export interface Permission {
   key: PermissionKey;
@@ -126,62 +132,10 @@ export interface SettingRow {
 /* --------------------------------------------------------------------------
  * Master data — the controlled vocabularies the rest of the app selects from
  * instead of free text.
- * ----------------------------------------------------------------------- */
-
-/**
- * One entry of a company's history timeline. `year` is null for the entry the
- * group writes about itself today, which is why the page sorts by year last
- * rather than treating every entry as a date.
- */
-export interface Milestone {
-  year: number | null;
-  title: string;
-  detail: string | null;
-}
-
-/** One item of a company's "why work here" list, as the group's own site writes it. */
-export interface CompanyBenefit {
-  title: string;
-  text: string | null;
-}
-
-/**
- * A company, and the profile the public careers page prints under its name.
  *
- * Every profile column is nullable and blank means "not filed yet" — the page
- * shows no placeholder for one, so an empty column reads as silence rather than
- * as an invented claim. `is_group_profile` marks the single row whose story is
- * the whole group's: the careers header reads it, and the pickers a job or a
- * suite is filed under leave it out.
- */
-export interface Company {
-  id: string;
-  name: string;
-  legal_name: string | null;
-  slug: string;
-  sector: string;
-  country: string;
-  website: string | null;
-  contact_email: string | null;
-  contact_phone: string | null;
-  address: string | null;
-  city: string | null;
-  logo_url: string | null;
-  is_active: boolean;
-  sort_order: number;
-  tagline: string | null;
-  description: string | null;
-  history: string | null;
-  careers_pitch: string | null;
-  founded_year: number | null;
-  ownership_type: string | null;
-  employee_range: string | null;
-  headquarters: string | null;
-  milestones: Milestone[] | null;
-  benefits: CompanyBenefit[] | null;
-  cover_url: string | null;
-  is_group_profile: boolean;
-}
+ * The company row itself is `Company` in `src/core/entities/company.ts`, beside
+ * the other row types; this file keeps the lists' own shapes.
+ * ----------------------------------------------------------------------- */
 
 export interface Department {
   id: string;
@@ -241,12 +195,50 @@ export interface Currency {
   sort_order: number;
 }
 
+/**
+ * A post a company or the group hires for, and the copy a new opening inherits.
+ *
+ * Not a requisition: it carries no location, employment type or status, because
+ * those belong to one intake. `department` is the department's own name, exactly
+ * as the list spells it, matching what a job opening stores.
+ */
+export interface Position {
+  id: string;
+  tenant_id: string | null;
+  title: string;
+  department: string;
+  grade: string | null;
+  responsibilities: string | null;
+  requirements: string[];
+  min_salary_usd: number | null;
+  max_salary_usd: number | null;
+  salary_currency: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+/** The columns a job form needs to inherit from a position, and nothing else. */
+export type PositionChoice = Pick<
+  Position,
+  | "id"
+  | "tenant_id"
+  | "title"
+  | "department"
+  | "grade"
+  | "responsibilities"
+  | "requirements"
+  | "min_salary_usd"
+  | "max_salary_usd"
+  | "salary_currency"
+>;
+
 /** The controlled vocabularies that can be added, edited and retired. */
 export type MasterEntity =
   | "companies"
   | "departments"
   | "locations"
   | "role_families"
+  | "positions"
   | "skills"
   | "currencies";
 
@@ -259,6 +251,13 @@ export interface MasterData {
   departments: Department[];
   locations: Location[];
   roleFamilies: RoleFamily[];
+  positions: Position[];
+  /**
+   * False on a database where `db/migrations/026_positions.sql` has never run: the
+   * table could not be read, which is not the same as an empty list. The console
+   * says so instead of offering a form that would fail on save.
+   */
+  positionsAvailable: boolean;
   skills: Skill[];
   currencies: Currency[];
 }

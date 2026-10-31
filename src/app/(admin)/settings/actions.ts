@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath, updateTag } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
 import { shippedTemplate, type TemplateWriteResult } from "@/modules/settings/domain/templates";
@@ -29,17 +30,17 @@ import type {
  */
 export async function loadSettings(): Promise<SettingsBundle> {
   await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const [settingsResult, rolesResult, permsResult, grantsResult, companiesResult, staffResult, templatesResult] =
     await Promise.all([
-      supabase.from("app_settings").select("key, value, description, company_id, scope").eq("scope", "GLOBAL"),
-      supabase.from("roles").select("key, label, description, is_system").order("label"),
-      supabase.from("permissions").select("key, label, group_name, description").order("group_name"),
-      supabase.from("role_permissions").select("role_key, permission_key, granted"),
-      supabase.from("tenants_and_companies").select("id, name, slug, sector, country").order("name"),
-      supabase.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, phone, created_at").in("role", STAFF_ROLES),
-      supabase.from("notification_templates").select("id, key, channel, subject, body, is_active").order("key"),
+      restClient.from("app_settings").select("key, value, description, company_id, scope").eq("scope", "GLOBAL"),
+      restClient.from("roles").select("key, label, description, is_system").order("label"),
+      restClient.from("permissions").select("key, label, group_name, description").order("group_name"),
+      restClient.from("role_permissions").select("role_key, permission_key, granted"),
+      restClient.from("tenants_and_companies").select("id, name, slug, sector, country").order("name"),
+      restClient.from("user_profiles").select("id, auth_user_id, full_name, email, role, tenant_id, phone, created_at").in("role", STAFF_ROLES),
+      restClient.from("notification_templates").select("id, key, channel, subject, body, is_active").order("key"),
     ]);
 
   const values: Record<string, unknown> = {};
@@ -64,15 +65,15 @@ export async function loadSettings(): Promise<SettingsBundle> {
  * to their profile row before either column can name them.
  */
 async function staffProfileId(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   authUserId: string
 ): Promise<string | null> {
-  const { data } = await supabase
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+  const found = await readStaffProfileIdByAuthUserId(restClient, authUserId);
+  if (!found.ok) {
+    console.error("[settings] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 /** The channel a template row belongs to, in the words a trail row uses. */
@@ -131,7 +132,7 @@ export async function saveSettings(
     };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const entries = Object.entries(payload).filter(([key]) => ALLOWED_SETTING_KEYS.has(key));
 
@@ -139,10 +140,10 @@ export async function saveSettings(
     return { ok: false, saved: [], error: "No recognised settings were supplied." };
   }
 
-  const changedBy = await staffProfileId(supabase, user.authUserId);
+  const changedBy = await staffProfileId(restClient, user.authUserId);
 
   // Record the change with the current value before overwriting.
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("app_settings")
     .select("id, key, value")
     .eq("scope", "GLOBAL")
@@ -153,7 +154,7 @@ export async function saveSettings(
 
   const previous = new Map((existing ?? []).map((row) => [row.key, row.value]));
 
-  const { error: auditError } = await supabase.from("settings_audit_log").insert(
+  const { error: auditError } = await restClient.from("settings_audit_log").insert(
     entries.map(([key, value]) => ({
       key,
       previous_value: previous.get(key) ?? null,
@@ -194,12 +195,12 @@ export async function saveSettings(
     }));
 
   if (updates.length > 0) {
-    const { error } = await supabase.from("app_settings").upsert(updates, { onConflict: "id" });
+    const { error } = await restClient.from("app_settings").upsert(updates, { onConflict: "id" });
     if (error) return { ok: false, saved: [], error: error.message };
   }
 
   if (inserts.length > 0) {
-    const { error } = await supabase.from("app_settings").insert(inserts);
+    const { error } = await restClient.from("app_settings").insert(inserts);
     if (error) return { ok: false, saved: [], error: error.message };
   }
 
@@ -242,27 +243,32 @@ export async function updateRolePermission(
 ): Promise<{ ok: boolean; error?: string }> {
   const user = await requireStaff("/settings");
 
-  if (!(await hasPermissionForUser("settings.manage_platform"))) {
-    return { ok: false, error: "Editing roles and permissions requires the Manage platform settings permission." };
+  // The gate is `settings.manage_roles`, not the `manage_platform` switch the rest
+  // of this console reads, because the `role_permissions_write` policy on
+  // `role_permissions` (db/schema.sql:1650) checks that same key — a caller
+  // who holds only `manage_platform` would pass an app check here and then be
+  // rejected by the database on the upsert below. Keep the two gates identical.
+  if (!(await hasPermissionForUser("settings.manage_roles"))) {
+    return { ok: false, error: "Editing roles and permissions requires the Manage roles permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const changedBy = await staffProfileId(supabase, user.authUserId);
+  const restClient = await createServerRestClient();
+  const changedBy = await staffProfileId(restClient, user.authUserId);
 
-  const { data: before } = await supabase
+  const { data: before } = await restClient
     .from("role_permissions")
     .select("granted")
     .eq("role_key", roleKey)
     .eq("permission_key", permissionKey)
     .maybeSingle();
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("role_permissions")
     .upsert({ role_key: roleKey, permission_key: permissionKey, granted });
 
   if (error) return { ok: false, error: error.message };
 
-  await supabase.from("settings_audit_log").insert({
+  await restClient.from("settings_audit_log").insert({
     key: `role_permission:${roleKey}`,
     previous_value: before ? { permissionKey, granted: before.granted } : null,
     next_value: { permissionKey, granted },
@@ -312,9 +318,9 @@ export async function saveNotificationTemplate(input: {
   if (!body) return { ok: false, error: "A template needs message copy." };
   if (body.length > 4000) return { ok: false, error: "Keep templates under 4000 characters." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: previous } = await supabase
+  const { data: previous } = await restClient
     .from("notification_templates")
     .select("key, channel, subject, body, is_active")
     .eq("id", input.id)
@@ -333,16 +339,16 @@ export async function saveNotificationTemplate(input: {
     return { ok: true, channel: previous.channel, key: previous.key };
   }
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("notification_templates")
     .update(next)
     .eq("id", input.id);
 
   if (error) return { ok: false, error: error.message };
 
-  const changedBy = await staffProfileId(supabase, user.authUserId);
+  const changedBy = await staffProfileId(restClient, user.authUserId);
 
-  await supabase.from("settings_audit_log").insert({
+  await restClient.from("settings_audit_log").insert({
     key: `notification_template:${previous.key}`,
     previous_value: { subject: previous.subject, body: previous.body, is_active: previous.is_active },
     next_value: { subject, body, is_active: input.is_active },
@@ -383,9 +389,9 @@ export async function resetNotificationTemplate(input: {
     return { ok: false, error: "Editing templates requires settings.manage_platform." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: row } = await supabase
+  const { data: row } = await restClient
     .from("notification_templates")
     .select("key, channel, subject, body, is_active")
     .eq("id", input.id)
@@ -410,16 +416,16 @@ export async function resetNotificationTemplate(input: {
     return { ok: true, channel: row.channel, key: row.key };
   }
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("notification_templates")
     .update(next)
     .eq("id", input.id);
 
   if (error) return { ok: false, error: error.message };
 
-  const changedBy = await staffProfileId(supabase, user.authUserId);
+  const changedBy = await staffProfileId(restClient, user.authUserId);
 
-  await supabase.from("settings_audit_log").insert({
+  await restClient.from("settings_audit_log").insert({
     key: `notification_template:${row.key}`,
     previous_value: { subject: row.subject, body: row.body, is_active: row.is_active },
     next_value: { ...next, reset: true },
@@ -459,9 +465,9 @@ export async function deleteNotificationTemplate(input: {
     return { ok: false, error: "Deleting templates requires settings.manage_platform." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: row } = await supabase
+  const { data: row } = await restClient
     .from("notification_templates")
     .select("key, channel, subject, body, is_active")
     .eq("id", input.id)
@@ -469,13 +475,13 @@ export async function deleteNotificationTemplate(input: {
 
   if (!row) return { ok: false, error: "That template no longer exists." };
 
-  const { error } = await supabase.from("notification_templates").delete().eq("id", input.id);
+  const { error } = await restClient.from("notification_templates").delete().eq("id", input.id);
 
   if (error) return { ok: false, error: error.message };
 
-  const changedBy = await staffProfileId(supabase, user.authUserId);
+  const changedBy = await staffProfileId(restClient, user.authUserId);
 
-  await supabase.from("settings_audit_log").insert({
+  await restClient.from("settings_audit_log").insert({
     key: `notification_template:${row.key}`,
     previous_value: { channel: row.channel, subject: row.subject, body: row.body, is_active: row.is_active },
     next_value: { deleted: true },

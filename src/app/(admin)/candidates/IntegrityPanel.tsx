@@ -31,6 +31,7 @@ const QUESTION_TYPE_LABELS: Record<string, string> = {
   VIDEO_PITCH: "Video pitch",
   CASE_STUDY: "Case study",
   MULTIPLE_CHOICE: "Multiple choice",
+  SITUATIONAL_JUDGMENT: "Situational judgment",
 };
 
 function severityTone(severity: string) {
@@ -50,9 +51,9 @@ function scoreTone(score: number | null) {
  * What the report may honestly say about an unfinished attempt.
  *
  * The chip this replaces promised "Grading in progress" for every non-GRADED
- * status. Nothing is in progress: no scheduler calls `/api/cron/grading`, so
- * the retry sweep only runs if someone hits it, and an answer the engine parked
- * stays parked. Each line here states only what the status and the response
+ * status. Nothing is in progress: the scheduled sweep retries open answers but
+ * deliberately leaves a parked one alone, so a paper still waiting on a person
+ * stays that way. Each line here states only what the status and the response
  * rows prove — and names the desk below when this reviewer can finish the job.
  */
 function statusNote(grades: AttemptGrades): { text: string; actionable: boolean } | null {
@@ -157,7 +158,9 @@ export function IntegrityPanel({
       setRunNote({
         text:
           scored === 0 && left === 0
-            ? "Every answer already carried a mark."
+            ? result.finalized
+              ? "Every answer already carried a mark — the test is now graded."
+              : "Every answer already carried a mark."
             : scored === 0
               ? `The AI took another pass — all ${left} still open${finish}`
               : left === 0
@@ -270,6 +273,15 @@ export function IntegrityPanel({
                   </div>
                 </div>
 
+                {/* The rank beside its own population. The note carries the count,
+                    so a suite with too few graded papers shows the number found
+                    and says no rank is claimed rather than leaving a blank. */}
+                {grades?.benchmark && (
+                  <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/65">
+                    {grades.benchmark.note}
+                  </p>
+                )}
+
                 {report.scores_masked && (
                   <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/60">
                     The marks are withheld because “Mask scores for interviewers” is on and your
@@ -303,11 +315,14 @@ export function IntegrityPanel({
                             {note.text}
                           </span>
                         )}
-                        {/* Only offered when the engine can actually run, so the
-                            button never promises a pass that would refuse. */}
+                        {/* Offered when the engine can make a run: a pass over
+                            open answers needs AI ready, while closing a paper
+                            whose answers all carry a mark needs only the grade
+                            permission. */}
                         {grades.can_retry &&
-                          grades.unscored > 0 &&
-                          grades.ai_grading === "READY" && (
+                          (grades.unscored > 0
+                            ? grades.ai_grading === "READY"
+                            : grades.status === "SUBMITTED") && (
                             <button
                               type="button"
                               disabled={retrying}
@@ -319,7 +334,11 @@ export function IntegrityPanel({
                               ) : (
                                 <RefreshCw className="h-3 w-3" aria-hidden />
                               )}
-                              {retrying ? "Grading…" : "Ask the AI again"}
+                              {retrying
+                                ? "Grading…"
+                                : grades.unscored > 0
+                                  ? "Ask the AI again"
+                                  : "Finish grading"}
                             </button>
                           )}
                         {runNote && (

@@ -23,11 +23,28 @@ import {
 } from "@/app/(admin)/candidates/candidate-actions";
 import { formatDateTime, sourceLabel, cn } from "@/lib/utils";
 import {
+  matchRequiredSkills,
+  skillMatchSentence,
+  type CatalogueSkill,
+  type RequiredSkill,
+  type SkillMatchLine,
+} from "@/modules/jobs/domain/openingSkills";
+import {
+  skillEvidenceSentence,
+  type SkillEvidenceLine,
+} from "@/modules/assessment/domain/skillEvidence";
+import { shortlistReason } from "@/modules/jobs/domain/shortlist";
+import {
+  DEFAULT_APPLICANT_ORDER,
+  type ApplicantOrder,
+} from "@/modules/jobs/domain/applicantOrder";
+import {
   getApplicantSubmission,
   getJobApplicants,
   type ApplicantSubmission,
   type JobApplicant,
 } from "./applicant-actions";
+import { getJobShortlist, type JobShortlist } from "./shortlist-actions";
 
 function stageTone(stage: string) {
   if (stage === "HIRED") return "success" as const;
@@ -55,6 +72,80 @@ function Detail({ label, value }: { label: string; value: string }) {
       </dd>
     </div>
   );
+}
+
+/**
+ * One required skill beside what this record shows of it.
+ *
+ * A skill nobody recorded says "no evidence", never a level and never a missing
+ * skill: `candidate_skills` is only filled when screening reads a level out of the
+ * CV, so an absent row is a fact about the record, not about the person.
+ */
+function matchLine(line: SkillMatchLine): string {
+  const shown = line.evidence === "no_evidence" ? "no evidence" : `shown ${line.demonstrated_level}`;
+  return `${line.name} · required ${line.required_level} · ${shown}`;
+}
+
+/** The same ask with the candidate's level left off — what a masked reviewer is granted. */
+function askLine(line: SkillMatchLine): string {
+  return `${line.name} · required ${line.required_level}`;
+}
+
+/**
+ * The requisition's skill list, printed against one applicant.
+ *
+ * Quiet when the opening requires nothing: an empty list is not a candidate who
+ * fails on every skill, and a drawer that said "0 of 0" would be inventing a
+ * verdict out of an unset field.
+ */
+function RequiredSkillLines({
+  lines,
+  masked,
+  compact,
+}: {
+  lines: readonly SkillMatchLine[];
+  masked: boolean;
+  /** The collapsed row, which is inside a `<button>` and so takes spans, not blocks. */
+  compact: boolean;
+}) {
+  if (lines.length === 0) return null;
+
+  const say = masked
+    ? `${skillAskHeadline(lines.length)} — the levels applicants demonstrated are not granted to your role.`
+    : skillMatchSentence(lines);
+  const item = (line: SkillMatchLine) => (masked ? askLine(line) : matchLine(line));
+  const size = compact ? "text-[11px]" : "text-xs";
+
+  if (compact) {
+    return (
+      <span className="mt-1 block space-y-0.5">
+        <span className={`block truncate font-semibold text-brand-ink/60 ${size}`}>{say}</span>
+        {lines.map((line) => (
+          <span key={line.skill_id} className={`block truncate text-brand-ink/55 ${size}`}>
+            {item(line)}
+          </span>
+        ))}
+      </span>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <p className={`font-semibold text-brand-ink/60 ${size}`}>{say}</p>
+      <ul className="space-y-1">
+        {lines.map((line) => (
+          <li key={line.skill_id} className={`truncate text-brand-ink/55 ${size}`}>
+            {item(line)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Counting sentence for the masked branch, which cannot report what is met. */
+function skillAskHeadline(required: number): string {
+  return `This opening lists ${required} required ${required === 1 ? "skill" : "skills"}`;
 }
 
 /**
@@ -256,12 +347,15 @@ function ApplicantDetail({
   submission,
   error,
   canDecide,
+  skillLines,
   onMoved,
 }: {
   applicant: JobApplicant;
   submission: ApplicantSubmission | null;
   error: string | null;
   canDecide: boolean;
+  /** The requisition's requirements beside this record, mapped once for the whole row. */
+  skillLines: readonly SkillMatchLine[];
   onMoved: (applicationId: string, stage: PipelineStage) => void;
 }) {
   // A decision never waits on the CV: the stage lives on the application row,
@@ -289,6 +383,28 @@ function ApplicantDetail({
     );
   }
 
+  /**
+   * The context the test line is read against.
+   *
+   * `getJobApplicants` returns `demonstrated` whole even when this reviewer's
+   * scores are withheld, because a masked level is still a recorded level; the
+   * grant is applied here, as `RequiredSkillLines` does. The requisition's
+   * `required_level` is the ask, not a score, and stays visible either way.
+   *
+   * The mask is the OR of the two reads: the list row and this submission were
+   * fetched separately, so a stale row must not out-vote a submission read that
+   * says withheld. When either says so, neither a level nor a figure is printed.
+   */
+  const withheld = applicant.scores_masked || submission.skill_evidence_masked;
+  const contextOf = (line: SkillEvidenceLine) => {
+    const match = skillLines.find((row) => row.skill_id === line.skill_id) ?? null;
+    return {
+      required_level: match?.required_level ?? null,
+      demonstrated_level: withheld ? null : (match?.demonstrated_level ?? null),
+      figures_withheld: withheld,
+    };
+  };
+
   return (
     <div className={wrap}>
       {decision}
@@ -309,6 +425,53 @@ function ApplicantDetail({
           <Detail label="Applied on" value={formatDateTime(applicant.applied_at)} />
         </dl>
       </section>
+
+      {/* Named against the requisition, not against prose: `ai_gaps` used to be the
+          only thing this drawer said about skills, and it was a sentence nobody
+          could check. These lines are the opening's own rows beside the levels this
+          record carries. */}
+      {skillLines.length > 0 && (
+        <section>
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+            Against the requisition’s skills
+          </h4>
+          <RequiredSkillLines lines={skillLines} masked={withheld} compact={false} />
+        </section>
+      )}
+
+      {/* The test read is separate evidence from the CV read: it never moves the
+          meets/below verdict above, and a skill with marks but no CV row is still
+          "no evidence" about the CV. The note prints even with nothing to list, so
+          a failed or capped read cannot look like an applicant who sat nothing. */}
+      {(submission.skill_evidence.length > 0 || submission.skill_evidence_note) && (
+        <section>
+          <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+            From this applicant’s tests
+          </h4>
+          {submission.skill_evidence.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {submission.skill_evidence.map((line) => (
+                <li
+                  key={line.skill_id}
+                  className="text-xs leading-relaxed text-brand-ink/75"
+                >
+                  {skillEvidenceSentence(line, contextOf(line))}
+                </li>
+              ))}
+            </ul>
+          )}
+          {submission.skill_evidence_coverage && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-brand-ink/50">
+              {submission.skill_evidence_coverage}
+            </p>
+          )}
+          {submission.skill_evidence_note && (
+            <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
+              {submission.skill_evidence_note}
+            </p>
+          )}
+        </section>
+      )}
 
       <section>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -366,7 +529,7 @@ function ApplicantDetail({
         <h4 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
           AI screening
         </h4>
-        {applicant.scores_masked ? (
+        {withheld ? (
           <p className="mt-2 text-xs text-brand-ink/50">
             Hidden — your role is not granted &ldquo;View unmasked scores&rdquo;.
           </p>
@@ -399,7 +562,7 @@ function ApplicantDetail({
               </Badge>
               <span className="text-xs text-brand-ink/55">
                 {applicant.template_name ?? "Assessment"}
-                {applicant.attempt_score !== null
+                {!withheld && applicant.attempt_score !== null
                   ? ` · ${applicant.attempt_score}/${applicant.attempt_max ?? "?"}`
                   : ""}
               </span>
@@ -421,6 +584,16 @@ function ApplicantDetail({
 }
 
 /**
+ * The two orders a recruiter can ask this list for — `applicantOrder.ts` defines
+ * them and the address that asks for each.
+ *
+ * The order starts as the address names it, because a chat link can now open this
+ * drawer already ranked (`/jobs?job=<id>&order=ranked`). Switching the chip here
+ * stays local, like the grid's search box: the address seeds the view a link
+ * promises, and typing over it is the recruiter's, not the link's.
+ */
+
+/**
  * Every applicant for one opening, with their submission and the stage decision.
  *
  * Mounted from a job card so a recruiter works a role's shortlist in order: read
@@ -430,11 +603,17 @@ function ApplicantDetail({
 export function JobApplicantsDrawer({
   job,
   canDecide,
+  skillLabels,
+  initialOrder = DEFAULT_APPLICANT_ORDER,
   onClose,
 }: {
-  job: { id: string; title: string; status: string };
+  job: { id: string; title: string; status: string; required_skills: RequiredSkill[] };
   /** `candidates.write` — the grant the stage writer re-checks on the server. */
   canDecide: boolean;
+  /** The catalogue with its retired rows, so a required skill is named rather than shown as an id. */
+  skillLabels: CatalogueSkill[];
+  /** The order the address asked for — ranked when a chat link opened this drawer. */
+  initialOrder?: ApplicantOrder;
   onClose: () => void;
 }) {
   const [applicants, setApplicants] = useState<JobApplicant[] | null>(null);
@@ -442,6 +621,9 @@ export function JobApplicantsDrawer({
   const [openId, setOpenId] = useState<string | null>(null);
   const [submissions, setSubmissions] = useState<Record<string, ApplicantSubmission | null>>({});
   const [detailErrors, setDetailErrors] = useState<Record<string, string>>({});
+  const [order, setOrder] = useState<ApplicantOrder>(initialOrder);
+  const [shortlist, setShortlist] = useState<JobShortlist | null>(null);
+  const [shortlistError, setShortlistError] = useState<string | null>(null);
 
   // Load on open. The shortlist belongs to the opening that was clicked, so a
   // new drawer instance always fetches its own rather than reusing a stale list.
@@ -457,6 +639,45 @@ export function JobApplicantsDrawer({
       active = false;
     };
   }, [job.id]);
+
+  // Asked for the ranked order, and only then: the newest-first list is what a
+  // recruiter opens the drawer to read, and the second read costs a request.
+  useEffect(() => {
+    if (order !== "ranked" || shortlist || shortlistError) return;
+    let active = true;
+    void (async () => {
+      const result = await getJobShortlist(job.id);
+      if (!active) return;
+      if (result.ok) setShortlist(result.shortlist);
+      else setShortlistError(result.error);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [order, job.id, shortlist, shortlistError]);
+
+  /**
+   * The list in the order the address bar asked for.
+   *
+   * The rows stay the drawer's own — email, attempt badge, stage — because the
+   * ranking decides only who comes first. An applicant the shortlist does not name
+   * keeps their place at the bottom rather than vanishing: a row the read returned
+   * has to stay visible for the recruiter to act on it.
+   */
+  const rows = (() => {
+    if (order !== "ranked" || !shortlist || !applicants) return applicants ?? [];
+    const position = new Map(shortlist.lines.map((line, index) => [line.applicationId, index]));
+    return [...applicants].sort((a, b) => {
+      const left = position.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const right = position.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      if (left !== right) return left - right;
+      return a.full_name.localeCompare(b.full_name);
+    });
+  })();
+  const lineFor = (applicant: JobApplicant) =>
+    order === "ranked"
+      ? (shortlist?.lines.find((line) => line.applicationId === applicant.id) ?? null)
+      : null;
 
   async function toggle(applicant: JobApplicant) {
     if (openId === applicant.id) {
@@ -526,6 +747,43 @@ export function JobApplicantsDrawer({
       }
     >
       <FormMessage error={listError} />
+      <FormMessage error={shortlistError} />
+
+      {applicants && applicants.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="flex rounded-xl border border-brand-line bg-white p-0.5">
+            {(["newest", "ranked"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setOrder(mode)}
+                aria-pressed={order === mode}
+                className={cn(
+                  "rounded-[10px] px-3 py-1.5 text-xs font-semibold transition",
+                  order === mode
+                    ? "bg-brand-ink text-white"
+                    : "text-brand-ink/60 hover:bg-brand-cream"
+                )}
+              >
+                {mode === "newest" ? "Newest first" : "Ranked by fit"}
+              </button>
+            ))}
+          </div>
+          {order === "ranked" && !shortlist && !shortlistError && (
+            <span className="flex items-center gap-1.5 text-xs text-brand-ink/55">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              Ranking…
+            </span>
+          )}
+        </div>
+      )}
+
+      {shortlist && (
+        <div className="mb-3 space-y-1 rounded-xl border border-brand-line bg-brand-cream px-3 py-2.5">
+          <p className="text-xs font-semibold text-brand-ink/75">{shortlist.basis_note}</p>
+          {shortlist.note && <p className="text-xs text-brand-ink/60">{shortlist.note}</p>}
+        </div>
+      )}
 
       {!applicants && !listError && (
         <p className="flex items-center gap-2 py-6 text-sm text-brand-ink/50">
@@ -542,10 +800,19 @@ export function JobApplicantsDrawer({
         />
       )}
 
-      {applicants && applicants.length > 0 && (
+      {rows.length > 0 && (
         <ul className="divide-y divide-brand-line rounded-xl border border-brand-line bg-white">
-          {applicants.map((applicant) => {
+          {rows.map((applicant) => {
             const expanded = openId === applicant.id;
+            // Same rule as the detail panel: a stale list row must not out-vote a masked submission read.
+            const masked =
+              applicant.scores_masked || (submissions[applicant.id]?.skill_evidence_masked ?? false);
+            const skillLines = matchRequiredSkills(
+              job.required_skills,
+              applicant.demonstrated,
+              skillLabels
+            );
+            const line = lineFor(applicant);
             return (
               <li key={applicant.id}>
                 <button
@@ -567,9 +834,31 @@ export function JobApplicantsDrawer({
                     <span className="mt-0.5 block truncate text-xs text-brand-ink/55">
                       {applicant.email} · applied {formatDateTime(applicant.applied_at)}
                     </span>
+                    {line && (
+                      <span className="mt-1 block text-[11px] text-brand-ink/55">
+                        {shortlistReason(line)}
+                        {line.gateFailed && " · below the gate"}
+                      </span>
+                    )}
+                    <RequiredSkillLines
+                      lines={skillLines}
+                      masked={masked}
+                      compact
+                    />
                   </span>
 
                   <span className="flex shrink-0 items-center gap-2">
+                    {line && (
+                      <span
+                        className={cn(
+                          "font-display text-sm font-bold tabular-nums",
+                          line.score === null ? "text-brand-ink/35" : "text-brand-ink"
+                        )}
+                        title={line.score === null ? "Nothing recorded to rank on" : "Shortlist score"}
+                      >
+                        {line.score === null ? "—" : `${line.score}%`}
+                      </span>
+                    )}
                     {applicant.attempt_token && (
                       <Badge tone={attemptTone(applicant.attempt_status ?? "NOT_STARTED")}>
                         {humanizeStage(applicant.attempt_status ?? "NOT_STARTED")}
@@ -585,6 +874,7 @@ export function JobApplicantsDrawer({
                     submission={submissions[applicant.id] ?? null}
                     error={detailErrors[applicant.id] ?? null}
                     canDecide={canDecide}
+                    skillLines={skillLines}
                     onMoved={markMoved}
                   />
                 )}

@@ -1,17 +1,19 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { buildPaper } from "@/modules/assessment/application/buildPaper";
 import { getAttemptSettings } from "@/modules/assessment/application/attemptSettings";
 import { isLinkExpired } from "@/modules/assessment/application/linkValidity";
 import { recordActivity } from "@/modules/activity/application/record";
 import { attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
+import { splitCodingAnswers } from "@/modules/assessment/domain/coding";
 import type { AttemptPayload } from "@/stores/useAssessmentStore";
+import type { QuestionConfig } from "@/types";
 import { NextResponse } from "next/server";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data: attempt, error } = await supabase
+  const { data: attempt, error } = await restClient
     .from("candidate_attempts")
     .select("*, applications!inner(full_name, job_openings(title))")
     .eq("access_token", token)
@@ -28,7 +30,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   let closedBy: "test_time" | "invitation" | null = null;
 
   if (attempt.status === "IN_PROGRESS" && attempt.expires_at && new Date(attempt.expires_at) < new Date()) {
-    await supabase
+    await restClient
       .from("candidate_attempts")
       .update({ status: "EXPIRED" })
       .eq("id", attempt.id);
@@ -44,7 +46,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
       : await isLinkExpired(attempt.created_at);
 
     if (overdue) {
-      await supabase
+      await restClient
         .from("candidate_attempts")
         .update({ status: "EXPIRED" })
         .eq("id", attempt.id);
@@ -82,19 +84,19 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     );
   }
 
-  const { data: template } = await supabase
+  const { data: template } = await restClient
     .from("assessment_templates")
     .select("name")
     .eq("id", attempt.template_id)
     .single();
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("*")
     .eq("template_id", attempt.template_id)
     .order("position", { ascending: true });
 
-  const { data: responses } = await supabase
+  const { data: responses } = await restClient
     .from("candidate_responses")
     .select("*")
     .eq("attempt_id", attempt.id);
@@ -107,16 +109,27 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
 
   const byId = new Map((questions ?? []).map((q) => [q.id, q]));
 
-  // Sanitize: strip correct-answer flags before exposing to candidates, and
-  // apply this candidate's option order.
+  // Sanitize: rebuild the candidate's copy from the keys the runner reads.
+  //
+  // This column holds the marking scheme, not only the question, so a spread
+  // hands out whatever the author form grows next. Correct-answer flags, a cell
+  // formula hint and a rubric's criteria and weights all live beside the text a
+  // candidate needs, and the ones we knew about were deleted one at a time. The
+  // payload type is the allow-list: a config key not named here stays behind
+  // the server, which is the only guarantee that survives the next field.
   const sanitize = (question: (typeof questions extends undefined ? never : NonNullable<typeof questions>)[number]) => {
-    const config = {
-      ...(question.config as AttemptPayload["questions"][number]["config"]),
-    };
+    const source = (question.config ?? {}) as QuestionConfig;
+    const config: AttemptPayload["questions"][number]["config"] = {};
 
-    if (config.options) {
+    if (source.initial_sheet) config.initial_sheet = source.initial_sheet;
+    if (source.context) config.context = source.context;
+    if (source.min_words) config.min_words = source.min_words;
+    if (source.min_duration_seconds) config.min_duration_seconds = source.min_duration_seconds;
+    if (source.max_duration_seconds) config.max_duration_seconds = source.max_duration_seconds;
+
+    if (source.options) {
       const order = optionOrder[question.id];
-      const options = config.options.map((option) => ({
+      const options = source.options.map((option) => ({
         label: option.label,
         text: option.text,
       }));
@@ -125,12 +138,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
         : options;
     }
 
-    if (config.expected_outputs) {
-      config.expected_outputs = config.expected_outputs.map((output) => ({
+    if (source.expected_outputs) {
+      config.expected_outputs = source.expected_outputs.map((output) => ({
         cell: output.cell,
         description: output.description,
       }));
     }
+
+    if (source.language) config.language = source.language;
+    if (source.starter_code) config.starter_code = source.starter_code;
 
     return {
       id: question.id,
@@ -158,6 +174,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     ? applicationRow.job_openings[0]?.title
     : applicationRow?.job_openings?.title;
 
+  const answeredWritten = Object.fromEntries(
+    (responses ?? [])
+      .filter((r) => r.answer_text)
+      .map((r) => [r.question_id, r.answer_text as string])
+  );
+  const split = splitCodingAnswers(
+    answeredWritten,
+    new Map(sanitizedQuestions.map((question) => [question.id, question.question_type] as const))
+  );
+
   const draft =
     attempt.status === "IN_PROGRESS" && (responses ?? []).length > 0
       ? {
@@ -173,11 +199,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
               .filter((r) => r.spreadsheet_state)
               .map((r) => [r.question_id, r.spreadsheet_state as Record<string, { value: string | number | null }>])
           ),
-          case_study_answers_map: Object.fromEntries(
-            (responses ?? [])
-              .filter((r) => r.answer_text)
-              .map((r) => [r.question_id, r.answer_text as string])
-          ),
+          case_study_answers_map: split.cases,
+          code_answers_map: split.code,
           choice_answers_map: {},
           video_paths_map: Object.fromEntries(
             (responses ?? [])

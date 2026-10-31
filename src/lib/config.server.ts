@@ -1,8 +1,8 @@
 import "server-only";
 
 /**
- * Server-only configuration: AI provider keys, the Supabase service-role
- * secret and third-party integration credentials.
+ * Server-only configuration: AI provider keys and third-party integration
+ * credentials.
  *
  * The `server-only` guard makes it a build error if any Client Component ever
  * imports this file, which is what previously broke every page in the app
@@ -83,7 +83,9 @@ export function requireOpenRouterKey(): string {
 
 export const omnichannelConfig = {
   whatsapp: {
-    apiToken: optional("WHATSAPP_CLOUD_API_TOKEN", process.env.WHATSAPP_CLOUD_API_TOKEN),
+    // The access token is resolved by `resolveSecret("whatsapp")` in the
+    // connector, whose env fallback is the registry's `WHATSAPP_TOKEN` — this
+    // object never carries it, only the sender id and verify token below.
     phoneNumberId: optional("WHATSAPP_PHONE_NUMBER_ID", process.env.WHATSAPP_PHONE_NUMBER_ID),
     verifyToken: optional(
       "WHATSAPP_VERIFY_TOKEN",
@@ -111,4 +113,11 @@ export const cronConfig = {
   secret: optional("CRON_SECRET", process.env.CRON_SECRET),
   whatsappBatchSize: Number(process.env.WHATSAPP_CRON_BATCH_SIZE ?? 50),
   gradingBatchSize: Number(process.env.GRADING_CRON_BATCH_SIZE ?? 10),
+  /**
+   * How many records one nightly retention pass may warn and erase. Small on
+   * purpose: a first run after the switch is turned on can have a whole book
+   * due at once, and a bound keeps one tick from mailing hundreds of letters or
+   * erasing in an unbounded burst. The next tick continues where it stopped.
+   */
+  retentionBatchSize: Number(process.env.RETENTION_CRON_BATCH_SIZE ?? 25),
 } as const;

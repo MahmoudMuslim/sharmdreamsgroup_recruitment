@@ -1,9 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { after } from "next/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
-import { supabaseConfig } from "@/lib/config";
+import { storageConfig } from "@/lib/config";
+import { getFileStore } from "@/lib/files/store";
 import { hasAiProvider } from "@/lib/config.server";
 import { getAiAutomationSettings } from "@/modules/screening/application/screen-application";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
@@ -13,6 +15,9 @@ import {
   gradeAttemptResponses,
   resyncAttemptTotals,
 } from "@/modules/assessment/application/gradeAttempt";
+import { routeFollowUp } from "@/modules/assessment/application/routeFollowUp";
+import { readAttemptBenchmark } from "@/modules/assessment/application/attemptBenchmark";
+import type { AttemptBenchmark } from "@/modules/assessment/domain/benchmark";
 
 export interface QuestionGrade {
   id: string;
@@ -41,6 +46,11 @@ export interface AttemptGrades {
   status: string;
   total_score: number | null;
   max_score: number | null;
+  /**
+   * This paper among the papers the same suite produced, or null when there is
+   * nothing to rank — an ungraded paper, or a reviewer whose marks are masked.
+   */
+  benchmark: AttemptBenchmark | null;
   /** `security.mask_scores_for_reviewers` — marks were dropped from these rows. */
   scores_masked: boolean;
   /**
@@ -48,8 +58,8 @@ export interface AttemptGrades {
    *
    * A count, not a mark, so it survives masking and can still tell a reviewer
    * the attempt is unfinished. Nothing else on this console closes that gap:
-   * the grading engine is the only other writer, and no scheduler runs its
-   * retry sweep — see `scoreAttemptResponse`.
+   * the grading engine is the only other writer, and its scheduled sweep leaves
+   * an answer parked for a person alone — see `scoreAttemptResponse`.
    */
   unscored: number;
   /**
@@ -81,9 +91,9 @@ export interface AttemptGrades {
  */
 export async function getAttemptAiGrades(accessToken: string): Promise<AttemptGrades | null> {
   await requireStaff("/candidates");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_attempts")
     .select("id")
     .eq("access_token", accessToken)
@@ -113,31 +123,40 @@ export async function getAttemptGrades(attemptId: string): Promise<AttemptGrades
  * The marks themselves follow the same rule as the candidate table: under
  * `security.mask_scores_for_reviewers` they are dropped here, so a reviewer
  * without `scores.view_unmasked` cannot recover them from this report either.
- * Answers, recordings and the AI's written feedback stay visible.
+ * Answers, recordings and the AI's written feedback stay visible — but the
+ * benchmark does not, because it is a claim built out of everybody else's marks.
  */
 async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
-  const [supabase, masked, mayGrade, automation] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked, mayGrade, automation] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
     hasPermissionForUser("assessments.grade"),
     getAiAutomationSettings(),
   ]);
+  const files = await getFileStore();
 
-  const { data: attempt } = await supabase
+  const { data: attempt } = await restClient
     .from("candidate_attempts")
-    .select("id, application_id, status, total_score, max_score, assessment_templates(name)")
+    .select(
+      "id, application_id, template_id, status, total_score, max_score, assessment_templates(name)"
+    )
     .eq("id", attemptId)
     .maybeSingle();
 
   if (!attempt) return null;
 
-  const { data: responses } = await supabase
-    .from("candidate_responses")
-    .select(
-      "id, question_id, answer_text, video_path, transcript, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
-    )
-    .eq("attempt_id", attempt.id)
-    .order("position", { referencedTable: "assessment_questions", ascending: true });
+  const [{ data: responses }, benchmark] = await Promise.all([
+    restClient
+      .from("candidate_responses")
+      .select(
+        "id, question_id, answer_text, video_path, transcript, score, max_score, ai_evaluation, assessment_questions(title, question_type, position)"
+      )
+      .eq("attempt_id", attempt.id)
+      .order("position", { referencedTable: "assessment_questions", ascending: true }),
+    // Skipped, not just hidden, for a masked reviewer: the rank speaks about
+    // other candidates' marks, so asking for it at all is the wrong read.
+    masked ? Promise.resolve(null) : readAttemptBenchmark(restClient, attempt),
+  ]);
 
   const grades: QuestionGrade[] = [];
   let unscored = 0;
@@ -168,10 +187,12 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     // short-lived playback link rather than exposing a public URL.
     let videoUrl: string | null = null;
     if (row.video_path) {
-      const { data: signed } = await supabase.storage
-        .from(supabaseConfig.buckets.candidateVideos)
-        .createSignedUrl(row.video_path, 60 * 60);
-      videoUrl = signed?.signedUrl ?? null;
+      const { url } = await files.signedUrl({
+        bucket: storageConfig.buckets.candidateVideos,
+        path: row.video_path,
+        seconds: 60 * 60,
+      });
+      videoUrl = url ?? null;
     }
 
     grades.push({
@@ -207,6 +228,7 @@ async function attemptGrades(attemptId: string): Promise<AttemptGrades | null> {
     status: attempt.status,
     total_score: masked || attempt.total_score === null ? null : Number(attempt.total_score),
     max_score: masked || attempt.max_score === null ? null : Number(attempt.max_score),
+    benchmark,
     scores_masked: masked,
     unscored,
     can_score: mayGrade && !masked,
@@ -293,9 +315,9 @@ export async function scoreAttemptResponse(input: {
   }
   const note = (input.note ?? "").trim().slice(0, 500);
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_responses")
     .select(
       "id, attempt_id, score, max_score, ai_evaluation, assessment_questions(title), candidate_attempts(status, applications(id, full_name))"
@@ -333,7 +355,7 @@ export async function scoreAttemptResponse(input: {
   const candidateName = one(attempt?.applications)?.full_name ?? "the candidate";
   const questionTitle = one(row.assessment_questions)?.title ?? "the question";
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("candidate_responses")
     .update({
       score: awarded,
@@ -390,6 +412,19 @@ export async function scoreAttemptResponse(input: {
     },
   });
 
+  // The hand-awarded last mark is the third door into GRADED, so a suite's
+  // second-test rule has to fire here too. Deferred: the recruiter's click is
+  // already answered, and sending a letter must not make the desk wait.
+  if (completedIt) {
+    after(async () => {
+      try {
+        await routeFollowUp(row.attempt_id);
+      } catch (error) {
+        console.error("Follow-up routing after a hand grade failed:", error);
+      }
+    });
+  }
+
   revalidatePath("/candidates");
 
   return {
@@ -407,16 +442,21 @@ export interface GradingRetryResult {
   /** What this run moved, so the report can say it out loud instead of reloading in silence. */
   scored?: number;
   still_unscored?: number;
+  /**
+   * A paper whose answers all carried a mark was moved from SUBMITTED to
+   * GRADED. False when the paper was already graded and nothing changed.
+   */
+  finalized?: boolean;
   /** So a chat answer can link back to the person whose answers it just graded. */
   application_id?: string | null;
 }
 
 /** How many of an attempt's answers carry no mark, as the caller's session sees them. */
 async function openAnswers(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   attemptId: string
 ): Promise<number> {
-  const { count } = await supabase
+  const { count } = await restClient
     .from("candidate_responses")
     .select("id", { count: "exact", head: true })
     .eq("attempt_id", attemptId)
@@ -425,13 +465,24 @@ async function openAnswers(
 }
 
 /**
- * Ask the engine to try this attempt's open answers again.
+ * Ask the engine to try this attempt's open answers again — or to close a paper
+ * every answer of which already carries a mark.
  *
- * The retry path lived only in `/api/cron/grading`, and nothing schedules that
- * route — so an answer the AI failed to score at submit had no way of ever
- * getting a mark except from a person. One pass, deliberately: whoever asks is
- * watching a spinner or waiting on a reply, and the engine's three-pass budget
- * with its twenty-second waits is for callers nobody is waiting on.
+ * The sweep reaches this path on its own schedule, but a recruiter should not
+ * have to wait for the next pass to find out whether an answer can still be
+ * scored. One pass, deliberately: whoever asks is watching a spinner or waiting
+ * on a reply, and the engine's three-pass budget with its twenty-second waits is
+ * for callers nobody is waiting on.
+ *
+ * This door also re-offers an answer the engine parked for a person, which the
+ * sweep deliberately skips: most parked answers are blockers no repeat call can
+ * clear, but a person may have just fixed the cause.
+ *
+ * A paper can also sit SUBMITTED with nothing left to score: the AI-off grading
+ * path used to return before finalizing, and a finalize write can fail. The
+ * report beside this action says "only the status is behind" in that state, so
+ * the action has to be able to close the paper rather than answer that there is
+ * nothing to do.
  *
  * The marks the engine writes are recorded as the engine's own. This row is the
  * separate fact that a person asked for the run — from the report's button or
@@ -447,24 +498,86 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
     };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("candidate_attempts")
-    .select("id, applications ( id, full_name )")
+    .select("id, status, applications ( id, full_name )")
     .eq("id", attemptId)
     .maybeSingle();
 
   if (!found) return { ok: false, error: "That attempt is no longer on file." };
 
-  const openBefore = await openAnswers(supabase, attemptId);
+  const applicationId = one(found.applications)?.id ?? null;
+  const candidateName = one(found.applications)?.full_name ?? "the candidate";
+
+  const openBefore = await openAnswers(restClient, attemptId);
   if (openBefore === 0) {
-    // Nothing for the engine to do — saying so beats spending a provider call.
+    // A graded paper has no run left in it, and saying `ok` here would let the
+    // chat report a change this call made none of — the desk hides its button in
+    // this state, so the only door that reaches it is the assistant's.
+    if (found.status === "GRADED") {
+      return {
+        ok: false,
+        error: "This test is already graded, so there is no grading run to make.",
+      };
+    }
+
+    if (found.status !== "SUBMITTED") {
+      return {
+        ok: false,
+        error: "This attempt is not submitted, so there is no grading run to make.",
+      };
+    }
+
+    const { count: stored } = await restClient
+      .from("candidate_responses")
+      .select("id", { count: "exact", head: true })
+      .eq("attempt_id", attemptId);
+
+    if ((stored ?? 0) === 0) {
+      return {
+        ok: false,
+        error: "This attempt stored no answers, so there is nothing to grade.",
+      };
+    }
+
+    // Nothing for a model, but the engine is still the door that decides the
+    // paper is finished — and that crossing is what the trail and a suite's
+    // second-test rule read.
+    await gradeAttemptResponses(attemptId, { passes: 1 });
+
+    const { data: after } = await restClient
+      .from("candidate_attempts")
+      .select("status")
+      .eq("id", attemptId)
+      .maybeSingle();
+
+    if (after?.status !== "GRADED") {
+      return {
+        ok: false,
+        error:
+          "Every answer carries a mark, but the record would not take the graded status. Try again.",
+      };
+    }
+
+    await recordActivity({
+      area: "assessments",
+      action: "grading_retried",
+      entity: "attempt",
+      entityId: attemptId,
+      summary: `Closed ${candidateName}'s test — every answer already carried a mark, so the engine moved the paper to graded`,
+      detail: { open_before: 0, scored: 0, open_after: 0, finalized: true },
+    });
+
+    revalidatePath("/candidates");
+
     return {
       ok: true,
       scored: 0,
       still_unscored: 0,
-      application_id: one(found.applications)?.id ?? null,
+      finalized: true,
+      application_id: applicationId,
     };
   }
 
@@ -480,9 +593,8 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
 
   await gradeAttemptResponses(attemptId, { passes: 1 });
 
-  const openAfter = await openAnswers(supabase, attemptId);
+  const openAfter = await openAnswers(restClient, attemptId);
   const scored = Math.max(0, openBefore - openAfter);
-  const candidateName = one(found.applications)?.full_name ?? "the candidate";
   const outcome =
     openAfter === 0
       ? `it scored all ${openBefore} and the test is now graded`
@@ -505,6 +617,6 @@ export async function retryAttemptGrading(attemptId: string): Promise<GradingRet
     ok: true,
     scored,
     still_unscored: openAfter,
-    application_id: one(found.applications)?.id ?? null,
+    application_id: applicationId,
   };
 }

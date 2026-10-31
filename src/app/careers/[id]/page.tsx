@@ -3,7 +3,12 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ArrowLeft, ArrowRight, CheckCircle2, MapPin } from "lucide-react";
 import { getPublicCompanies, getPublicJob, getPublicJobs } from "../actions";
-import { enumKeyFor, employmentLabel, sectorLabel } from "@/modules/careers/job-board";
+import {
+  enumKeyFor,
+  employmentLabel,
+  experienceLabel,
+  sectorLabel,
+} from "@/modules/careers/job-board";
 import {
   companyAtAGlance,
   companyOfJob,
@@ -12,7 +17,10 @@ import {
   type PublicCompany,
 } from "@/modules/careers/company-profile";
 import { starterKeys } from "@/modules/careers/chatbot/role-card";
+import { readReferralCode, referralApplyLink } from "@/modules/referrals/domain/referral";
 import { formatSalaryRange } from "@/lib/currency";
+import { appConfig } from "@/lib/config";
+import { jobPosting, jobPostingJsonLd } from "@/modules/careers/job-posting";
 import { CareersChat } from "../CareersChat";
 import { Badge } from "@/modules/analytics/presentation/ui";
 import { PublicText } from "@/modules/shell/presentation/PublicChrome";
@@ -45,23 +53,17 @@ export async function generateMetadata({
  * Which role is on screen comes from the URL, and a role published after the
  * build is only known on request — so navigating into this page is not instant,
  * exactly like every other dynamic route here.
+ *
+ * There is deliberately no `generateStaticParams` on this route. Listing the
+ * published roles means reading them, and the only place that read could run is
+ * `next build` — which, in the Docker image, happens in a build container with
+ * no database and no secrets by design (`.dockerignore` excludes `.env*`). So
+ * every role is served from the App Shell and upgraded on first request, which
+ * is what the local stack wants anyway: it has no CDN to bake HTML into, and
+ * `use cache` on the reads already keeps the board off the database between
+ * revalidations.
  */
 export const instant = false;
-
-export async function generateStaticParams() {
-  // Prerenders every published role at build time. A role published later is
-  // picked up on the first request via dynamicParams.
-  const jobs = await getPublicJobs();
-  
-  // During build without valid Supabase credentials, return a dummy job
-  // to satisfy Next.js static param validation. The real job data will
-  // be fetched at request time via dynamicParams.
-  if (jobs.length === 0) {
-    return [{ id: "build-time-placeholder" }];
-  }
-  
-  return jobs.map((job) => ({ id: job.id }));
-}
 
 /**
  * Who would be hiring, in the words they filed for themselves.
@@ -161,7 +163,7 @@ function CompanyPanel({ company }: { company: PublicCompany }) {
           href={company.website}
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-5 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
+          className="mt-5 inline-flex min-h-6 items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
         >
           <PublicText k="careers.online" vars={{ name: company.name }} />
           <ArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -179,7 +181,20 @@ function CompanyPanel({ company }: { company: PublicCompany }) {
  * they applied or not. What stays is the invitation and the button; the steps
  * live on their own page at `/careers/apply/[id]`, reached by one click.
  */
-function ApplyPanel({ jobId }: { jobId: string }) {
+function ApplyPanel({
+  jobId,
+  referralCode,
+}: {
+  jobId: string;
+  /** A staff member's code from the shared link, or null on a direct visit. */
+  referralCode: string | null;
+}) {
+  // The code travels one step further than the ad: the application is where it is
+  // recorded, so a referred applicant who clicks Apply must not lose it.
+  const href = referralCode
+    ? referralApplyLink("", jobId, referralCode)
+    : `/careers/apply/${jobId}`;
+
   return (
     <section className="rounded-2xl border border-brand-line bg-white p-6 shadow-soft sm:p-7">
       <h2 className="font-display text-xl font-bold">
@@ -190,7 +205,7 @@ function ApplyPanel({ jobId }: { jobId: string }) {
       </p>
 
       <Link
-        href={`/careers/apply/${jobId}`}
+        href={href}
         className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-ink px-6 py-3.5 text-sm font-bold text-brand-cream shadow-lift transition hover:bg-brand-ink/90"
       >
         <PublicText k="apply.ctaButton" />
@@ -210,7 +225,7 @@ function ApplyPanel({ jobId }: { jobId: string }) {
         </p>
         <Link
           href="/portal"
-          className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
+          className="mt-3 inline-flex min-h-6 items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
         >
           <PublicText k="careers.trackMine" />
           <ArrowRight className="h-3.5 w-3.5 shrink-0 rtl:rotate-180" aria-hidden />
@@ -220,8 +235,14 @@ function ApplyPanel({ jobId }: { jobId: string }) {
   );
 }
 
-export default async function CareerDetailPage({ params }: PageProps<"/careers/[id]">) {
-  const { id } = await params;
+export default async function CareerDetailPage({
+  params,
+  searchParams,
+}: PageProps<"/careers/[id]">) {
+  const [{ id }, query] = await Promise.all([params, searchParams]);
+  // A shared employee link arrives with `?ref=`; the code is only a hint here and
+  // is re-resolved against the database when the application is submitted.
+  const referralCode = readReferralCode(query.ref);
   const [job, jobs, companies] = await Promise.all([
     getPublicJob(id),
     getPublicJobs(),
@@ -231,6 +252,17 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
   if (!job) notFound();
 
   const company = companyOfJob(job, companies);
+  // The structured card a crawler reads. The group name comes from the group's
+  // own profile row when one is active; the module owns the literal fallback, so
+  // the page does not restate it. An undated role gets no card at all — the page
+  // still renders, the role simply carries no structured claim it cannot date.
+  const posting = jobPosting(job, company, {
+    baseUrl: appConfig.url,
+    groupName: groupProfile(companies)?.name,
+  });
+  if (!posting) {
+    console.warn(`[careers] role without a date is not published: ${job.id}`);
+  }
   // Openings from the same company row, so the applicant who is not right for this
   // one is sent somewhere real rather than back to the whole board.
   const siblings = job.company_id
@@ -247,9 +279,15 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-14">
+      {posting && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: jobPostingJsonLd(posting) }}
+        />
+      )}
       <Link
         href="/careers"
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-ink/55 transition hover:text-brand-ink"
+        className="inline-flex min-h-6 items-center gap-1.5 text-sm font-semibold text-brand-ink/55 transition hover:text-brand-ink"
       >
         <ArrowLeft className="h-4 w-4 shrink-0 rtl:rotate-180" aria-hidden />
         <PublicText k="careers.allRoles" />
@@ -278,6 +316,16 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
                 <PublicText
                   k={enumKeyFor(job.employment_type)}
                   fallback={employmentLabel(job.employment_type)}
+                />
+              </span>
+            )}
+            {/* Printed only when a level was recorded — the role page has no
+                "not recorded" line, because a missing tag is not a claim. */}
+            {job.experience_level && (
+              <span>
+                <PublicText
+                  k={enumKeyFor(job.experience_level)}
+                  fallback={experienceLabel(job.experience_level)}
                 />
               </span>
             )}
@@ -385,7 +433,7 @@ export default async function CareerDetailPage({ params }: PageProps<"/careers/[
         {/* `panel-fold` — the film rule reads `.sticky`, which `lg:sticky` does not
             compile to, so a sidebar that only sticks from `lg` up names itself. */}
         <div className="panel-fold lg:sticky lg:top-24">
-          <ApplyPanel jobId={job.id} />
+          <ApplyPanel jobId={job.id} referralCode={referralCode} />
         </div>
       </div>
 

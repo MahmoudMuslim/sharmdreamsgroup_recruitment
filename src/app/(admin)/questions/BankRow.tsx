@@ -145,6 +145,17 @@ export function BankRow({
     ? undefined
     : "Held while the bank is filtered or grouped another way — a move swaps with the question the form asks next in its own scope, which this view may be hiding.";
 
+  // The best-rated response, so a judgment scene reads at a glance the way the
+  // review desk prints it. Everything else in the bank is a key, not a scale.
+  const bestScore =
+    question.kind === "judgment"
+      ? question.answers.reduce<number | null>(
+          (top, answer) =>
+            answer.score === null ? top : Math.max(top ?? 0, answer.score),
+          null
+        )
+      : null;
+
   return (
     <div
       className={`rounded-2xl border border-brand-line bg-white p-4 shadow-soft transition sm:p-5 ${
@@ -185,28 +196,43 @@ export function BankRow({
 
           {question.answers.length > 0 && (
             <ul className="mt-2.5 flex flex-wrap gap-1.5">
-              {question.answers.map((answer, index) => (
-                <li
-                  key={`${index}-${answer.text}`}
-                  className={
-                    answer.accepted
-                      ? "rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800"
-                      : "rounded-lg border border-brand-line bg-brand-sand px-2 py-1 text-[11px] text-brand-ink/60"
-                  }
-                >
-                  {answer.text}
-                  <span className="ml-1.5 font-normal opacity-70">
-                    {question.store === "gate"
-                      ? answer.accepted
-                        ? "keeps them in the running"
-                        : "rules them out"
-                      : answer.accepted
-                        ? "right answer"
-                        : "wrong"}
-                  </span>
-                </li>
-              ))}
+              {question.answers.map((answer, index) => {
+                const strongest = bestScore !== null && answer.score === bestScore;
+                return (
+                  <li
+                    key={`${index}-${answer.text}`}
+                    className={
+                      answer.accepted || strongest
+                        ? "rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800"
+                        : "rounded-lg border border-brand-line bg-brand-sand px-2 py-1 text-[11px] text-brand-ink/60"
+                    }
+                  >
+                    {answer.text}
+                    <span className="ml-1.5 font-normal opacity-70">
+                      {question.kind === "judgment"
+                        ? answer.score === null
+                          ? "not scored"
+                          : strongest
+                            ? `${answer.score}% — strongest response`
+                            : `${answer.score}% effective`
+                        : question.store === "gate"
+                          ? answer.accepted
+                            ? "keeps them in the running"
+                            : "rules them out"
+                          : answer.accepted
+                            ? "right answer"
+                            : "wrong"}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
+          )}
+
+          {question.kind === "judgment" && question.answers.length > 0 && (
+            <p className="mt-1.5 text-[11px] leading-relaxed text-brand-ink/45">
+              Each response earns its percentage of the marks; none is simply right or wrong.
+            </p>
           )}
 
           <p className="mt-2.5 text-[11px] text-brand-ink/45">
@@ -243,7 +269,7 @@ export function BankRow({
           </div>
         )}
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"

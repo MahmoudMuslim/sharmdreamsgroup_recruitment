@@ -1,4 +1,5 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import { MAX_HISTORY_ATTACHMENT_CHARS } from "@/modules/assistant/domain/attachments";
 import { withoutStepFileBytes, type AssistantStep } from "@/modules/assistant/infrastructure/agent";
@@ -65,19 +66,18 @@ function stepsFrom(value: unknown): AssistantStep[] {
 
 /** The signed-in staff member's `user_profiles` row, which owns the session. */
 async function currentProfileId(): Promise<string | null> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const {
     data: { user },
-  } = await supabase.auth.getUser();
+  } = await restClient.auth.getUser();
   if (!user) return null;
 
-  const { data } = await supabase
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
-
-  return (data as { id?: string } | null)?.id ?? null;
+  const found = await readStaffProfileIdByAuthUserId(restClient, user.id);
+  if (!found.ok) {
+    console.error("[assistant] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 /**
@@ -87,23 +87,23 @@ async function currentProfileId(): Promise<string | null> {
  */
 export async function saveAssistantTurn(input: {
   sessionId: string | null;
-  engine: AssistantEngine;
+  engine: AssistantEngine | null;
   prompt: string;
   attachment?: { name: string; text: string } | null;
   reply: string;
   steps: AssistantStep[];
-  model: string;
-  provider: string;
+  model: string | null;
+  provider: string | null;
   note?: string | null;
 }): Promise<SaveTurnResult> {
   const ownerId = await currentProfileId();
   if (!ownerId) return { ok: false, error: "No staff profile is attached to this session." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   let sessionId = input.sessionId;
   if (sessionId) {
-    const { data: existing } = await supabase
+    const { data: existing } = await restClient
       .from("assistant_sessions")
       .select("id")
       .eq("id", sessionId)
@@ -112,7 +112,7 @@ export async function saveAssistantTurn(input: {
     // would put this recruiter's question where they cannot read it back.
     if (!existing) return { ok: false, error: "That conversation no longer exists." };
   } else {
-    const { data: created, error } = await supabase
+    const { data: created, error } = await restClient
       .from("assistant_sessions")
       .insert({ owner_id: ownerId, title: titleFrom(input.prompt), engine: input.engine })
       .select("id")
@@ -166,17 +166,38 @@ export async function saveAssistantTurn(input: {
     },
   ];
 
-  const { error: inserted } = await supabase.from("assistant_messages").insert(rows);
+  const { error: inserted } = await restClient.from("assistant_messages").insert(rows);
   if (inserted) return { ok: false, error: inserted.message };
 
   // Touches the row so the history rail orders this conversation to the top and
   // remembers the engine the recruiter last chose for it.
-  await supabase
+  await restClient
     .from("assistant_sessions")
-    .update({ engine: input.engine, updated_at: new Date().toISOString() })
+    .update({ ...(input.engine === null ? {} : { engine: input.engine }), updated_at: new Date().toISOString() })
     .eq("id", sessionId);
 
   return { ok: true, sessionId };
+}
+
+export async function appendCommandTurn(input: {
+  sessionId: string | null;
+  title: string;
+  reply: string;
+  steps: AssistantStep[];
+}): Promise<SaveTurnResult> {
+  try {
+    return await saveAssistantTurn({
+      sessionId: input.sessionId,
+      prompt: `Command: ${input.title}`,
+      reply: input.reply,
+      steps: input.steps,
+      engine: null,
+      model: null,
+      provider: null,
+    });
+  } catch {
+    return { ok: false, error: "The command result could not be saved. Check the conversation before retrying." };
+  }
 }
 
 /**
@@ -196,16 +217,16 @@ export async function appendApprovalOutcome(input: {
   const ownerId = await currentProfileId();
   if (!ownerId) return { ok: false, error: "No staff profile is attached to this session." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("assistant_sessions")
     .select("id")
     .eq("id", input.sessionId)
     .maybeSingle();
   if (!existing) return { ok: false, error: "That conversation no longer exists." };
 
-  const { error } = await supabase.from("assistant_messages").insert({
+  const { error } = await restClient.from("assistant_messages").insert({
     session_id: input.sessionId,
     owner_id: ownerId,
     role: "assistant",
@@ -221,7 +242,7 @@ export async function appendApprovalOutcome(input: {
 
   if (error) return { ok: false, error: error.message };
 
-  await supabase
+  await restClient
     .from("assistant_sessions")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", input.sessionId);
@@ -231,9 +252,9 @@ export async function appendApprovalOutcome(input: {
 
 /** The recruiter's conversations, most recently spoken in first. */
 export async function listAssistantSessions(limit = 60): Promise<AssistantSessionSummary[]> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assistant_sessions")
     .select("id, title, engine, updated_at, assistant_messages(count)")
     .order("updated_at", { ascending: false })
@@ -263,16 +284,16 @@ export async function listAssistantSessions(limit = 60): Promise<AssistantSessio
 export async function readAssistantSession(
   sessionId: string
 ): Promise<{ title: string; engine: AssistantEngine | null; messages: StoredAssistantMessage[] } | null> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: session } = await supabase
+  const { data: session } = await restClient
     .from("assistant_sessions")
     .select("id, title, engine")
     .eq("id", sessionId)
     .maybeSingle();
   if (!session) return null;
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("assistant_messages")
     .select(
       "id, role, content, steps, model, provider, note, attachment_name, attachment_text, created_at"
@@ -310,8 +331,8 @@ export async function renameAssistantSession(sessionId: string, title: string): 
   const clean = title.replace(/\s+/g, " ").trim().slice(0, MAX_TITLE_CHARS);
   if (!clean) return false;
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("assistant_sessions")
     .update({ title: clean })
     .eq("id", sessionId)
@@ -322,8 +343,8 @@ export async function renameAssistantSession(sessionId: string, title: string): 
 
 /** Deletes a conversation; its messages go with it. */
 export async function deleteAssistantSession(sessionId: string): Promise<boolean> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("assistant_sessions")
     .delete()
     .eq("id", sessionId)

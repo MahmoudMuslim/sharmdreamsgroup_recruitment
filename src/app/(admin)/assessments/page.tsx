@@ -1,4 +1,12 @@
-import { getTemplates, getAssignableCandidates, getQuestionsForEditor, getIssuedLinks } from "./actions";
+import {
+  getTemplates,
+  getAssignableCandidates,
+  getQuestionsForEditor,
+  getIssuedLinks,
+  getQuestionTypeAvailability,
+  getFollowUpRules,
+  getSkillTagOptions,
+} from "./actions";
 import { AssessmentGrid } from "./AssessmentGrid";
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
@@ -17,16 +25,39 @@ export const metadata = {
 export const instant = false;
 
 async function loadTemplates() {
-  const [templates, candidates, options, questionsByTemplate, links, timeZone] = await Promise.all([
+  const [
+    templates,
+    candidates,
+    options,
+    questionsByTemplate,
+    links,
+    timeZone,
+    availability,
+    followUps,
+    skills,
+  ] = await Promise.all([
     getTemplates(),
     getAssignableCandidates(),
     getMasterOptions(),
     getQuestionsForEditor(),
     getIssuedLinks(),
     getOrganisationTimeZone(),
+    getQuestionTypeAvailability(),
+    getFollowUpRules(),
+    getSkillTagOptions(),
   ]);
 
-  return { templates, candidates, options, questionsByTemplate, links, timeZone };
+  return {
+    templates,
+    candidates,
+    options,
+    questionsByTemplate,
+    links,
+    timeZone,
+    availability,
+    followUps,
+    skills,
+  };
 }
 
 export default async function AssessmentsBuilderPage() {
@@ -38,8 +69,17 @@ export default async function AssessmentsBuilderPage() {
   // here only produced a static shell whose hole the client had to re-fetch —
   // and on a hard load that fetch never landed, leaving the skeleton up
   // forever and every button unclickable.
-  const { templates, candidates, options, questionsByTemplate, links, timeZone } =
-    await loadTemplates();
+  const {
+    templates,
+    candidates,
+    options,
+    questionsByTemplate,
+    links,
+    timeZone,
+    availability,
+    followUps,
+    skills,
+  } = await loadTemplates();
   const canEdit = await hasPermissionForUser("assessments.create");
   const defaultDurationMinutes = await getNumberSetting(
     "assessment.default_duration_minutes",
@@ -69,6 +109,10 @@ export default async function AssessmentsBuilderPage() {
         canEdit={canEdit}
         links={links}
         timeZone={timeZone}
+        situational={availability}
+        followUps={followUps}
+        skillOptions={skills.skills}
+        skillsNote={skills.note}
       />
     </PageTransition>
   );

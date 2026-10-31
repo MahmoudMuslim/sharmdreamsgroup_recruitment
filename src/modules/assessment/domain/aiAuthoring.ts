@@ -1,14 +1,17 @@
 import type { QuestionConfig, QuestionType } from "@/types";
 import type { QuestionDraft } from "@/app/(admin)/assessments/question-actions";
 import { refToRowAndColumn } from "./attemptAnswers";
+import { CODING_LANGUAGES, readCodingLanguage, starterCodeIssue } from "./coding";
+import { readJudgmentDraft } from "./situational";
 
 /**
  * What a model is allowed to hand back before it can be offered to a recruiter.
  *
  * A generated question looks finished, which is exactly the danger: a quiz with
  * two options marked correct, a spreadsheet whose required cell is already
- * filled in by the question itself, or a video pitch capped at nine seconds all
- * pass as plausible prose and then fail on a candidate's screen. Everything here
+ * filled in by the question itself, a judgment scene whose responses all score
+ * 100, or a video pitch capped at nine seconds all pass as plausible prose and
+ * then fail on a candidate's screen. Everything here
  * decides, from the runner's own rules, whether a draft could actually be sat —
  * and says in one sentence what was refused instead of writing a broken row.
  *
@@ -41,6 +44,8 @@ const TYPE_WORDS: Record<QuestionType, string> = {
   CASE_STUDY: "case study",
   EXCEL_MODEL: "spreadsheet model",
   VIDEO_PITCH: "video pitch",
+  SITUATIONAL_JUDGMENT: "situational judgment",
+  CODING: "coding task",
 };
 
 export interface AuthoringBrief {
@@ -55,6 +60,8 @@ export interface AuthoringBrief {
 export interface GeneratedOption {
   text: string;
   is_correct: boolean;
+  /** SITUATIONAL_JUDGMENT only: 0–100 effectiveness, or null when unscored. */
+  score?: number | null;
 }
 
 export interface GeneratedOutput {
@@ -79,6 +86,10 @@ export interface GeneratedQuestion {
   max_duration_seconds: number | null;
   sheet: (string | number | null)[][];
   outputs: GeneratedOutput[];
+  /** CODING only: one of `CODING_LANGUAGES`. */
+  language?: string;
+  /** CODING only: the optional snippet shown beside the prompt, never graded. */
+  starter_code?: string;
   /** What the recruiter has to look at before this can be handed to a candidate. */
   cautions: string[];
 }
@@ -98,27 +109,36 @@ export interface DraftReview {
 export const GENERATED_JSON_SHAPE = `{
   "questions": [
     {
-      "question_type": "MULTIPLE_CHOICE" | "CASE_STUDY" | "EXCEL_MODEL" | "VIDEO_PITCH",
+      "question_type": "MULTIPLE_CHOICE" | "CASE_STUDY" | "EXCEL_MODEL" | "VIDEO_PITCH" | "SITUATIONAL_JUDGMENT" | "CODING",
       "title": "short label for the candidate's contents list",
       "prompt": "the question the candidate is asked",
       "instructions": "one or two lines shown under the question, or an empty string",
       "points": number,
       "time_limit_minutes": number or null,
-      "options": [{ "text": "string", "is_correct": boolean }],
+      "options": [{ "text": "string", "is_correct": boolean, "score": number or null }],
       "context": "scenario the candidate reads first, or empty string",
       "min_words": number or null,
       "min_duration_seconds": number or null,
       "max_duration_seconds": number or null,
       "initial_sheet": [["label", "label"], ["input", "input"]],
-      "expected_outputs": [{ "cell": "C5", "description": "what belongs there", "formula_hint": "how to work it out" }]
+      "expected_outputs": [{ "cell": "C5", "description": "what belongs there", "formula_hint": "how to work it out" }],
+      "language": "Python or null when the type is not CODING",
+      "starter_code": "optional snippet for a CODING question, or null"
     }
   ]
 }
 
 Field rules:
-- "options": MULTIPLE_CHOICE only, 2 to 6 entries, exactly one with "is_correct": true.
+- "options": MULTIPLE_CHOICE and SITUATIONAL_JUDGMENT only, 2 to 6 entries.
+- MULTIPLE_CHOICE: exactly one option with "is_correct": true, and every "score" null.
+- SITUATIONAL_JUDGMENT: a workplace scene in "prompt", then responses the candidate
+  could plausibly give. Every option has "is_correct": false and a whole-number
+  "score" from 0 (makes things worse) to 100 (the response to coach). At least two
+  scores must differ. There is no single right answer — rank the responses.
 - "context" and "min_words": CASE_STUDY only.
 - "min_duration_seconds" and "max_duration_seconds": VIDEO_PITCH only.
+- "language": CODING only, and required — exactly one of ${CODING_LANGUAGES.join(", ")}.
+- "starter_code": CODING only and optional; a snippet shown beside the prompt, never graded.
 - "initial_sheet" and "expected_outputs": EXCEL_MODEL only. The sheet ships with
   the question, so it holds only labels and given figures — never the answer.
 - "expected_outputs": 1 to 6 cells the candidate must produce, and every one of
@@ -130,6 +150,8 @@ const QUESTION_TYPES: readonly string[] = [
   "CASE_STUDY",
   "EXCEL_MODEL",
   "VIDEO_PITCH",
+  "SITUATIONAL_JUDGMENT",
+  "CODING",
 ];
 
 /**
@@ -141,9 +163,11 @@ const QUESTION_TYPES: readonly string[] = [
  */
 export const QUESTION_RULES = `Each question must be answerable with only what its type gives the candidate:
 - MULTIPLE_CHOICE: exactly one option is correct. Wrong options must be plausible, not jokes. Never use "all of the above" or "none of the above" — options are shuffled per candidate.
+- SITUATIONAL_JUDGMENT: a short workplace scene in "prompt", then 2 to 6 responses the candidate could give. Every response carries a 0–100 "score" saying how effective it is, and at least two scores must differ. None is marked correct — the percentages are the ranking. Write responses that a reasonable person might actually choose; a scene where only the 100-scored response is plausible tests nothing.
 - CASE_STUDY: put the scenario the candidate reads first in "context", then ask one thing of them in "prompt".
 - EXCEL_MODEL: the candidate edits a grid. "initial_sheet" is the paper handed to them: labels and given figures ONLY. Every cell listed in "expected_outputs" must be BLANK there — a required cell that the sheet already prints is an answer given away, not a question.
 - VIDEO_PITCH: the candidate speaks to a camera. Ask something answerable out loud in the seconds allowed, with nothing to look up.
+- CODING: the candidate writes code in "language", which must be exactly one of ${CODING_LANGUAGES.join(", ")}. Ask for something one file can answer, so a reviewer can read it in full. Nothing here runs, compiles or tests the code, so never ask the candidate to run, execute or test what they write, or to paste a program's output. "starter_code" is optional — a snippet to start from, never the answer and never graded.
 
 Do not invent company figures you then ask the candidate to find. Do not ask for something the question itself states. Set every number a candidate needs inside the question.`;
 
@@ -307,6 +331,59 @@ function optionsOf(raw: unknown): {
   return { options: kept, cautions, reason: null };
 }
 
+/**
+ * The responses of a judgment scene, reduced to what the desk can store.
+ *
+ * Wording is deduplicated before the scores are judged: two identical responses
+ * with different percentages are impossible to tell apart on a candidate's
+ * screen, so the second is dropped with a caution. `readJudgmentDraft` then
+ * applies the same rules the manual editor uses — at least two responses, whole
+ * percentages from 0 to 100, and at least two that differ.
+ */
+function judgedOptionsOf(raw: unknown): {
+  options: GeneratedOption[];
+  cautions: string[];
+  reason: string | null;
+} {
+  const cautions: string[] = [];
+  const list = Array.isArray(raw) ? raw : [];
+  if (list.length > 6) cautions.push("Only the first six responses were kept.");
+
+  const candidates: { text: string; score: number | null }[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of list.slice(0, 6)) {
+    const record = (entry ?? {}) as Record<string, unknown>;
+    const optionText = text(record.text, OPTION_CAP);
+    if (!optionText) continue;
+    const fingerprint = optionText.toLowerCase();
+    if (seen.has(fingerprint)) {
+      cautions.push("Two responses carried the same wording, so one was removed.");
+      continue;
+    }
+    seen.add(fingerprint);
+    const rawScore = record.score;
+    candidates.push({
+      text: optionText,
+      score: typeof rawScore === "number" && Number.isFinite(rawScore) ? rawScore : null,
+    });
+  }
+
+  const read = readJudgmentDraft(candidates);
+  if (!read.ok) return { options: [], cautions, reason: read.error };
+
+  return {
+    options: read.options.map((option) => ({
+      text: option.text,
+      // No response is *the* correct one; the percentages rank them.
+      is_correct: false,
+      score: option.score,
+    })),
+    cautions,
+    reason: null,
+  };
+}
+
 /** Turns a model's reply into drafts a human can review, naming every refusal. */
 export function reviewDrafts(
   parsed: unknown,
@@ -384,6 +461,20 @@ export function reviewDrafts(
       );
     }
 
+    if (questionType === "SITUATIONAL_JUDGMENT") {
+      const judged = judgedOptionsOf(record.options);
+      if (judged.reason) {
+        dropped.push(`${where} — ${judged.reason}`);
+        return;
+      }
+      options = judged.options;
+      cautions.push(...judged.cautions);
+      const best = Math.max(...options.map((option) => option.score ?? 0));
+      cautions.push(
+        `The model rated the responses itself, and its most effective one scores ${best}% — check the ranking is the one you would coach.`
+      );
+    }
+
     if (questionType === "EXCEL_MODEL") {
       sheet = normaliseSheet(record.initial_sheet);
       const checked = normaliseOutputs(record.expected_outputs, sheet);
@@ -408,6 +499,32 @@ export function reviewDrafts(
       cautions.push("Read the required cells against the figures the sheet ships with.");
     }
 
+    if (questionType === "CODING") {
+      const language = readCodingLanguage(record.language);
+      if (!language) {
+        dropped.push(
+          `${where} is a coding question, and its language must be one of ${CODING_LANGUAGES.join(", ")}.`
+        );
+        return;
+      }
+      const starterIssue = starterCodeIssue(record.starter_code);
+      if (starterIssue) {
+        dropped.push(`${where} — ${starterIssue}`);
+        return;
+      }
+      cautions.push(
+        "Nothing here has been run: the platform never compiles or executes code."
+      );
+      if (typeof record.starter_code === "string" && record.starter_code.trim()) {
+        cautions.push(
+          "Read the starter code before issuing this question — it is shown to the candidate exactly as written."
+        );
+      }
+      cautions.push(
+        "Read the prompt to be sure it asks for one file of code and never asks the candidate to run or test it — there is nowhere to run it."
+      );
+    }
+
     const maxSeconds = whole(record.max_duration_seconds, 10, 1800);
     const minSeconds = whole(record.min_duration_seconds, 0, 1800);
     if (questionType === "VIDEO_PITCH" && maxSeconds === null && minSeconds === null) {
@@ -423,7 +540,8 @@ export function reviewDrafts(
       time_limit_minutes: whole(record.time_limit_minutes, 1, 480),
       // Left off: a shuffled quiz whose model wrote "All of the above" as its
       // last option puts that option in the middle and makes the question
-      // unanswerable, so the recruiter switches shuffling on once they have read it.
+      // unanswerable, and a shuffled scene hides the order the model ranked.
+      // The recruiter switches shuffling on once they have read it.
       shuffle_options: false,
       options,
       context: text(record.context, PROMPT_CAP),
@@ -435,6 +553,11 @@ export function reviewDrafts(
       max_duration_seconds: maxSeconds,
       sheet,
       outputs,
+      language: questionType === "CODING" ? (readCodingLanguage(record.language) ?? undefined) : undefined,
+      starter_code:
+        questionType === "CODING" && typeof record.starter_code === "string" && record.starter_code.trim()
+          ? record.starter_code
+          : undefined,
       cautions,
     });
   });
@@ -478,7 +601,16 @@ export function asReviewedDraft(raw: unknown): GeneratedQuestion {
     shuffle_options: record.shuffle_options === true,
     options: options.map((entry) => {
       const option = (entry ?? {}) as Record<string, unknown>;
-      return { text: text(option.text, OPTION_CAP), is_correct: option.is_correct === true };
+      return {
+        text: text(option.text, OPTION_CAP),
+        is_correct: option.is_correct === true,
+        // A scene's percentages must survive the round trip through the browser;
+        // a quiz's options carry none, and null is what the review gave them.
+        score:
+          typeof option.score === "number" && Number.isFinite(option.score)
+            ? option.score
+            : null,
+      };
     }),
     context: text(record.context, PROMPT_CAP),
     min_words: whole(record.min_words, 1, 3000),
@@ -498,6 +630,8 @@ export function asReviewedDraft(raw: unknown): GeneratedQuestion {
         formula_hint: text(output.formula_hint, 200) || null,
       };
     }),
+    language: typeof record.language === "string" ? record.language : undefined,
+    starter_code: typeof record.starter_code === "string" ? record.starter_code : undefined,
     cautions: Array.isArray(record.cautions)
       ? record.cautions.map((line) => text(line, 400)).filter(Boolean)
       : [],
@@ -545,6 +679,14 @@ export function asReviewedDraft(raw: unknown): GeneratedQuestion {
     min_duration_seconds: draft.min_duration_seconds,
     max_duration_seconds: draft.max_duration_seconds,
     preserve_config: Object.keys(config).length > 0 ? config : null,
+    // `buildConfig`'s CODING case reads these two at the top level of the draft,
+    // so a generated coding question is stored exactly like a hand-authored one.
+    ...(draft.question_type === "CODING"
+      ? {
+          language: readCodingLanguage(draft.language) ?? undefined,
+          starter_code: draft.starter_code?.trim() ? draft.starter_code : undefined,
+        }
+      : {}),
   };
 }
 

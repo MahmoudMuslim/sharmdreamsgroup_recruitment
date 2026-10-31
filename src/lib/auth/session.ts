@@ -1,8 +1,11 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { cookies } from "next/headers";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { verifySessionToken } from "@/lib/auth/token";
+import { SESSION_COOKIE } from "@/lib/auth/cookies";
 import { loginSearch } from "@/lib/auth/login-target";
-import type { UserRole } from "@/types";
+import type { UserRole } from "@/core/entities";
 
 export interface SessionUser {
   authUserId: string;
@@ -21,45 +24,53 @@ export interface SessionUser {
 /**
  * Resolves the signed-in staff member from the request cookie jar.
  *
- * The Supabase server client carries the user's JWT, so every query made with
- * it is evaluated against Row Level Security using `auth.uid()`. Staff roles
- * are stored in `user_profiles`; the RLS helper functions read from there.
+ * The bearer is verified locally against `AUTH_JWT_SECRET` — there is no auth
+ * service to ask — and `user_profiles` is then read *through that bearer*, so
+ * Row Level Security still decides whether the profile is visible. That second
+ * part matters: verifying the signature proves who the caller is, not what they
+ * may see, and skipping the RLS read here would hand a revoked account its old
+ * role until the token aged out.
  *
  * Returns `null` when there is no session or the profile row is missing.
  *
- * Cached per request: `auth.getUser()` is a network call to the auth service,
- * and one admin page asks half a dozen times (the guard, each read action, each
- * permission check). Without this the same JWT was verified on every one of
- * them, which dominated the settings page's time to first byte.
+ * Cached per request, on purpose. It was added because `auth.getUser()` was a
+ * network call to the auth service and one admin page asked half a dozen times
+ * (the guard, each read action, each permission check); verify is local now, but
+ * the profile read below is still a round trip, so the wrapper still earns its
+ * keep.
  */
-export const getSessionUser = cache(
-  async (): Promise<SessionUser | null> => {
-    const supabase = await createSupabaseServerClient();
+export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
+  const jar = await cookies();
+  const bearer = jar.get(SESSION_COOKIE)?.value;
+  if (!bearer) return null;
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+  const claims = await verifySessionToken(bearer);
+  if (!claims || claims.role !== "authenticated") return null;
 
-    if (!user) return null;
+  const restClient = await createServerRestClient();
+  const { data: profile } = await restClient
+    .from("user_profiles")
+    .select("id, auth_user_id, full_name, email, role, tenant_id")
+    .eq("auth_user_id", claims.sub)
+    .maybeSingle();
 
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("id, auth_user_id, full_name, email, role, tenant_id")
-      .eq("auth_user_id", user.id)
-      .maybeSingle();
+  if (!profile) return null;
 
-    if (!profile) return null;
-
-    return {
-      authUserId: user.id,
-      profileId: profile.id as string,
-      email: profile.email ?? user.email ?? "",
-      fullName: profile.full_name ?? user.email ?? "Unknown user",
-      role: profile.role as UserRole,
-      tenantId: profile.tenant_id ?? null,
-    };
-  }
-);
+  return {
+    authUserId: claims.sub,
+    profileId: profile.id as string,
+    // Both identity fields come from `user_profiles`, not from the token's
+    // claims. A claim is a signature, not a directory: the old code could fall
+    // back to `user.email` because GoTrue put the address in the token, and this
+    // one deliberately does not, so a renamed account is never read under its
+    // stale claim. The profile row is where this portal keeps the address a
+    // recruiter is known by.
+    email: (profile.email as string) ?? "",
+    fullName: (profile.full_name as string) ?? "Unknown user",
+    role: profile.role as UserRole,
+    tenantId: (profile.tenant_id as string | null) ?? null,
+  };
+});
 
 /** Roles allowed inside the recruiter/admin portal. */
 export const STAFF_ROLES: readonly UserRole[] = [

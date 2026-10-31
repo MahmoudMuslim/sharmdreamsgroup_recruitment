@@ -26,6 +26,7 @@ import {
   requiresApproval,
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
+import type { VoiceAutonomy } from "@/modules/assistant/domain/voice";
 import { chartForTool } from "@/modules/assistant/domain/charts";
 import { fileChipLine, splitFilePayload } from "@/modules/assistant/domain/generatedFiles";
 import { fitResult } from "@/modules/assistant/domain/resultBudget";
@@ -168,7 +169,9 @@ function definitionFor(
   steps: AssistantStep[],
   enders: TurnEnder[],
   /** The recruiter this write is held for, so only their click can release it. */
-  profileId: string
+  profileId: string,
+  /** Their stored autonomy: `code` mints a challenge the click must carry. */
+  autonomy: VoiceAutonomy
 ): SdkMcpToolDefinition {
   const handler = AsyncResource.bind(async (args: ToolArgs): Promise<CallToolResult> => {
     const input = (args ?? {}) as ToolArgs;
@@ -177,7 +180,7 @@ function definitionFor(
     // card. The arguments are held server-side, so what the recruiter approves is
     // exactly what this call asked with.
     if (requiresApproval(tool.name)) {
-      const approval = mintApproval(tool, input, profileId);
+      const approval = mintApproval(tool, input, profileId, autonomy);
       enders.push({ kind: "approval", approval });
       const detail = approvalToolResult(approval);
       steps.push({
@@ -388,7 +391,9 @@ export async function runQoderAssistantTurn(
   /** The panel's web switch: hands the runtime its own search and page-reader for one turn. */
   allowWeb: boolean,
   /** `user_profiles.id` of the signed-in recruiter, who must approve any write. */
-  profileId: string
+  profileId: string,
+  /** The caller's stored voice-autonomy level; see `mintApproval`. */
+  autonomy: VoiceAutonomy = "confirm"
 ): Promise<AssistantTurn> {
   const token = await resolveSecret("qoder");
   if (!token) {
@@ -413,7 +418,9 @@ export async function runQoderAssistantTurn(
   );
   const steps: AssistantStep[] = [];
   const enders: TurnEnder[] = [];
-  const definitions = tools.map((tool) => definitionFor(sdk, tool, steps, enders, profileId));
+  const definitions = tools.map((tool) =>
+    definitionFor(sdk, tool, steps, enders, profileId, autonomy)
+  );
   const server = sdk.createSdkMcpServer({ name: MCP_SERVER_NAME, tools: definitions });
 
   const allowed = tools.map((tool) => `mcp__${MCP_SERVER_NAME}__${tool.name}`);

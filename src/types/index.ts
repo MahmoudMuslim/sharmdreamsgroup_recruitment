@@ -1,139 +1,47 @@
 /**
- * Shared domain interfaces & DTOs for the entire platform.
- * Every entity, payload, and state object is strictly typed — no `any`.
+ * Shared DTOs for the entire platform — the shapes that are not a table row.
+ *
+ * Row types live in `src/core/entities`, proven against the live schema. The
+ * column vocabularies come from there too, so a stage or a source is only ever
+ * spelled one way. Every payload here is strictly typed — no `any`.
  */
 
-import type { GateAnswer } from "@/modules/careers/gate-questions";
+import type { DemonstratedSkill } from "@/modules/jobs/domain/openingSkills";
+import type { ApplicationSource, ApplicationStage, BusinessSector } from "@/core/entities";
 
 // ---------------------------------------------------------------------------
-// Enums (mirrored in supabase/schema.sql)
+// Enums that belong to no entity row
 // ---------------------------------------------------------------------------
 
-export type UserRole = "SUPER_ADMIN" | "RECRUITER" | "HIRING_MANAGER" | "CANDIDATE";
-
-export type BusinessSector = "HOSPITALITY" | "REAL_ESTATE" | "COMMERCIAL_DEVELOPMENT" | "CORPORATE";
-
-export type JobStatus = "DRAFT" | "PUBLISHED" | "PAUSED" | "CLOSED";
-
-export type ApplicationStage =
-  | "NEW"
-  | "AI_SCREENING"
-  | "ASSESSMENT"
-  | "INTERVIEW"
-  | "OFFER"
-  | "HIRED"
-  | "REJECTED";
-
-export type ApplicationSource = "LINKEDIN" | "WHATSAPP" | "JOB_BOARD" | "CAREER_SITE" | "REFERRAL" | "ATS_IMPORT";
-
-export type QuestionType = "EXCEL_MODEL" | "VIDEO_PITCH" | "CASE_STUDY" | "MULTIPLE_CHOICE";
-
-export type AttemptStatus = "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "GRADED" | "EXPIRED";
+export type QuestionType =
+  | "EXCEL_MODEL"
+  | "VIDEO_PITCH"
+  | "CASE_STUDY"
+  | "MULTIPLE_CHOICE"
+  | "SITUATIONAL_JUDGMENT"
+  | "CODING";
 
 export type MessageChannel = "WHATSAPP" | "EMAIL" | "IN_APP";
 
 export type MessageDirection = "INBOUND" | "OUTBOUND";
 
-export type Locale = "en" | "ar" | "ru" | "de";
-
 // ---------------------------------------------------------------------------
 // Database entities
 // ---------------------------------------------------------------------------
 
+/**
+ * The six columns `tenants_and_companies` has always had.
+ *
+ * The full row — profile copy, logo, the jsonb milestones and benefits — is
+ * `Company` in `src/core/entities/company.ts`, in the order the database holds
+ * it. This stays the short projection the staff session reads.
+ */
 export interface Tenant {
   id: string;
   name: string;
   slug: string;
   sector: BusinessSector;
   country: string;
-  created_at: string;
-}
-
-export interface UserProfile {
-  id: string;
-  auth_user_id: string;
-  tenant_id: string | null;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  role: UserRole;
-  avatar_url: string | null;
-  locale: Locale;
-  created_at: string;
-}
-
-export interface JobOpening {
-  id: string;
-  tenant_id: string;
-  title: string;
-  department: string;
-  sector: BusinessSector;
-  location: string;
-  employment_type: "FULL_TIME" | "PART_TIME" | "CONTRACT" | "INTERNSHIP";
-  description: string;
-  requirements: string[];
-  min_salary_usd: number | null;
-  max_salary_usd: number | null;
-  status: JobStatus;
-  posted_at: string | null;
-  closing_at: string | null;
-  created_by: string | null;
-  created_at: string;
-}
-
-export interface Application {
-  id: string;
-  job_id: string;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  cv_file_path: string | null;
-  cv_text: string | null;
-  tracking_code: string;
-  stage: ApplicationStage;
-  source: ApplicationSource;
-  ai_match_score: number | null;
-  ai_screening_summary: string | null;
-  ai_strengths: string[] | null;
-  ai_gaps: string[] | null;
-  ai_soft_skills: SoftSkillReport | null;
-  ai_feedback: string | null;
-  diversity_flags: Record<string, string> | null;
-  /**
-   * Viability gate answers as scored when the application arrived, or null when
-   * the role asked no questions. Stored, never recomputed — the recruiter reads
-   * what the candidate actually answered.
-   */
-  gate_answers: GateAnswer[] | null;
-  rejection_reason: string | null;
-  hired_at: string | null;
-  /**
-   * Staff filing door. Set means the record is hidden from every staff surface
-   * but kept whole — answers, notices and scores included — and can be restored.
-   */
-  archived_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SoftSkillReport {
-  emotional_intelligence: number;
-  communication: number;
-  leadership_potential: number;
-  cultural_fit: number;
-  overall_sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE";
-  sentiment_score: number;
-  summary: string;
-}
-
-export interface AssessmentTemplate {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description: string;
-  role_family: string;
-  time_limit_minutes: number;
-  is_active: boolean;
   created_at: string;
 }
 
@@ -152,10 +60,66 @@ export interface MultipleChoiceOption {
   label: string;
   text: string;
   is_correct: boolean;
+  /**
+   * SITUATIONAL_JUDGMENT only: how effective this response is, 0–100.
+   *
+   * A judgment scene has no single correct option — every response earns a
+   * share of the question's marks — so the quiz's `is_correct` is left false and
+   * this percentage is what the submit route scores. Older quiz rows have no
+   * score, and the sanitizer strips both before a candidate sees the options.
+   */
+  score?: number;
 }
 
 export interface SpreadsheetCellData {
   value: string | number | null;
+}
+
+/**
+ * One named share of a question's marks, written by the recruiter who set it.
+ *
+ * A rubric replaces the fixed criteria the grading prompt used to hardcode, so
+ * this is the marking scheme the reviewer reads and the candidate must never
+ * see — `label` and `weight` together say exactly how many marks each sentence
+ * of the answer is worth.
+ */
+export interface RubricCriterion {
+  /** The name a mark is matched and reported by. Unique within its rubric. */
+  label: string;
+  /** Whole 1–100. A question's criteria add up to 100. */
+  weight: number;
+  /** What a strong answer shows, in the author's words. Optional. */
+  description?: string;
+  /** The `skills` catalogue row this criterion is evidence of. */
+  skill_id?: string;
+  /** The catalogue spelling at authoring time, so a later rename does not relabel a mark. */
+  skill_name?: string;
+}
+
+/**
+ * One criterion's mark, as it was awarded.
+ *
+ * Produced by `scoreRubric` from the bands a grader returns and the question's
+ * own points, then stored inside the response's `ai_evaluation` rather than read
+ * back from the question — so editing a rubric tomorrow cannot reinterpret a mark
+ * given today.
+ */
+export interface RubricLine {
+  label: string;
+  /** The criterion's share of the rubric, as its author set it. */
+  weight: number;
+  /** What the criterion is worth on this question, in whole marks. */
+  allowance: number;
+  /** How well this answer showed it, 0–100. */
+  percent: number;
+  /** `allowance` × `percent`, rounded once. */
+  marks: number;
+  /** A quote from the answer, or null when nothing was quoted. */
+  evidence: string | null;
+  /** What the criterion asks for, as the author wrote it, when they said. */
+  description?: string;
+  skill_id?: string;
+  skill_name?: string;
 }
 
 export interface QuestionConfig {
@@ -168,24 +132,20 @@ export interface QuestionConfig {
   /** CASE_STUDY */
   context?: string;
   min_words?: number;
-  /** MULTIPLE_CHOICE */
+  /** MULTIPLE_CHOICE, SITUATIONAL_JUDGMENT */
   options?: MultipleChoiceOption[];
-}
-
-export interface CandidateAttempt {
-  id: string;
-  application_id: string;
-  template_id: string;
-  access_token: string;
-  status: AttemptStatus;
-  time_limit_minutes: number;
-  started_at: string | null;
-  expires_at: string | null;
-  submitted_at: string | null;
-  total_score: number | null;
-  max_score: number | null;
-  draft_saved_at: string | null;
-  created_at: string;
+  /** CODING only: the closed language list entry the author picked. */
+  language?: string;
+  /** CODING only: a snippet shown read-only beside the prompt. Never graded. */
+  starter_code?: string;
+  /**
+   * CASE_STUDY, VIDEO_PITCH, CODING: the marking scheme, in the author's words.
+   *
+   * Reader-only for the review desk and the grader. The candidate route rebuilds
+   * a config from the keys its runner reads rather than copying the row, so a
+   * rubric cannot reach a sitting candidate by being forgotten there.
+   */
+  rubric?: RubricCriterion[];
 }
 
 export interface CandidateResponse {
@@ -208,6 +168,15 @@ export interface QuestionEvaluation {
   rationale: string;
   strengths: string[];
   improvements: string[];
+  /**
+   * CASE_STUDY, VIDEO_PITCH: the per-criterion marks behind `score`.
+   *
+   * Kept on the response rather than read back from the question, because the
+   * recruiter who set the criteria may rewrite them after this answer was marked.
+   * Absent means the question set no rubric, which is every paper written before
+   * rubrics existed — and a rubric-less mark stays explained by its own rationale.
+   */
+  criteria?: RubricLine[];
 }
 
 export interface CommunicationLog {
@@ -277,6 +246,13 @@ export interface CvScreeningResult {
   gaps: string[];
   anonymization_applied: boolean;
   model_used: string;
+  /**
+   * What the CV showed, in the portal's own catalogue ids.
+   *
+   * Only ever a skill the `skills` master list holds, at a level on the 1..5
+   * scale — the shape `candidate_skills` stores and the applicants drawer reads.
+   */
+  demonstrated_skills?: DemonstratedSkill[];
 }
 
 export interface SentimentAnalysisResult {
@@ -436,6 +412,34 @@ export interface DashboardAnalytics {
   oldest_waiting: DashboardWaitingRow[];
   /** How many applications are still waiting, including the ones not listed. */
   waiting_total: number;
+  /** The paper trail the form and the person store leave, counted, never quoted. */
+  form_coverage: DashboardFormCoverage;
+}
+
+/**
+ * What the application form and the person spine leave behind, as counts.
+ *
+ * No demographic value is read for this card: the Dashboard is behind the same
+ * screen as the pipeline, and the gated tallies live on Analytics instead.
+ */
+export interface DashboardFormCoverage {
+  /** Every live application, whether or not it carries a snapshot. */
+  applications: number;
+  /** Applications whose `form_answers` holds a snapshot. */
+  with_form: number;
+  /** Files uploaded while filling the form, across every application. */
+  attachments: number;
+  /** People in the person store, which is not windowed. */
+  profiles: number;
+  /** People holding both a legal name and a birth date. */
+  identity_complete: number;
+  /**
+   * "Unclaimed uploads": files uploaded by a form that never reached submit
+   * (a null `application_id`). Deliberately outside `attachments`.
+   */
+  unclaimed_uploads: number;
+  /** Of `unclaimed_uploads`, those older than the orphan window — the sweep's next targets. */
+  unclaimed_past_window: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { assessmentUrl } from "@/lib/public-url";
 import { formatInZone } from "@/lib/timezone";
 import {
@@ -23,6 +23,7 @@ import {
   EMAIL_INTERVIEW_TEMPLATES,
   EMAIL_STAGE_TEMPLATES,
   EMAIL_SUBJECT_DEFAULTS,
+  EMAIL_SUBJECT_FALLBACK,
   EMAIL_TEMPLATE_DEFAULTS,
   STAGE_FALLBACK_TEMPLATE,
   TEMPLATE_DEFAULTS,
@@ -64,8 +65,8 @@ interface Candidate {
 }
 
 async function loadCandidate(applicationId: string): Promise<Candidate | null> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, email, job_openings(title)")
     .eq("id", applicationId)
@@ -93,7 +94,7 @@ async function startTestLink(accessToken: string): Promise<string> {
 
 /** Same link the WhatsApp path builds, so one template reads correctly on both. */
 async function assessmentLink(applicationId: string): Promise<string> {
-  const { data } = await getSupabaseServiceClient()
+  const { data } = await getServiceRestClient()
     .from("candidate_attempts")
     .select("access_token")
     .eq("application_id", applicationId)
@@ -115,8 +116,8 @@ async function assessmentLink(applicationId: string): Promise<string> {
 async function resolveEmailCopy(
   keys: string[]
 ): Promise<{ key: string; subject: string; body: string } | null> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("notification_templates")
     .select("key, subject, body")
     .eq("channel", "EMAIL")
@@ -130,7 +131,7 @@ async function resolveEmailCopy(
     if (row?.body?.trim()) {
       return {
         key,
-        subject: row.subject?.trim() || EMAIL_SUBJECT_DEFAULTS[key] || "An update on your application",
+        subject: row.subject?.trim() || EMAIL_SUBJECT_DEFAULTS[key] || EMAIL_SUBJECT_FALLBACK,
         body: row.body,
       };
     }
@@ -141,7 +142,7 @@ async function resolveEmailCopy(
     if (body) {
       return {
         key,
-        subject: EMAIL_SUBJECT_DEFAULTS[key] || "An update on your application",
+        subject: EMAIL_SUBJECT_DEFAULTS[key] || EMAIL_SUBJECT_FALLBACK,
         body,
       };
     }
@@ -219,7 +220,7 @@ async function record(input: {
   delivered: boolean;
   error?: string | null;
 }): Promise<void> {
-  await getSupabaseServiceClient().from("communication_logs").insert({
+  await getServiceRestClient().from("communication_logs").insert({
     application_id: input.applicationId,
     channel: input.channel,
     direction: "OUTBOUND",
@@ -229,6 +230,118 @@ async function record(input: {
     delivered: input.delivered,
     error_message: input.error ?? null,
   });
+}
+
+export interface OfferNoticeResult {
+  ok: boolean;
+  error?: string;
+  /** Echoed back so the drawer reports the address the letter actually reached. */
+  recipient?: string;
+  subject?: string;
+}
+
+/**
+ * The offer letter, plus the one thing the letter itself cannot hold: the link
+ * the candidate answers from.
+ *
+ * The PDF is built from the rendered letter unchanged, so the terms attached to
+ * the email and the terms printed on the desk's template stay the same document.
+ * The deadline and the link are appended to the email text only — a printed
+ * letter that carries a URL nobody can click, and that a forwarded copy would
+ * hand out, is a worse document than one that does not.
+ *
+ * The send happens here and is recorded in `communication_logs` before the
+ * caller writes an offer row: the row exists only for a letter that really went,
+ * which is what keeps a candidate from holding a link to an offer the database
+ * never heard of.
+ */
+export async function sendOfferNotice(input: {
+  applicationId: string;
+  link: string;
+  /** The deadline as a date the candidate reads, already in the org's time zone. */
+  expiresOn: string;
+}): Promise<OfferNoticeResult> {
+  const emailEnabled = await getBoolSetting("notifications.email_enabled", true);
+  if (!emailEnabled) {
+    return {
+      ok: false,
+      error:
+        "Email is switched off in Settings → Access & comms, so the offer link cannot be sent.",
+    };
+  }
+
+  const candidate = await loadCandidate(input.applicationId);
+  if (!candidate) return { ok: false, error: "No candidate record matches that id." };
+  if (!candidate.email?.trim()) {
+    return {
+      ok: false,
+      error: `${candidate.full_name} has no email address on the record, so there is nowhere to send the offer link.`,
+    };
+  }
+
+  const copy = await resolveEmailCopy(["offer_letter"]);
+  if (!copy) {
+    return {
+      ok: false,
+      error: "The offer letter copy is missing, so nothing was sent.",
+    };
+  }
+
+  const vars = await buildVars(candidate, humanizeStage("OFFER"));
+  const letter = renderTemplate(copy.body, vars).trim();
+  const subject = renderTemplate(copy.subject, vars).trim();
+
+  const attachment = await offerLetterAttachment({
+    candidateName: candidate.full_name,
+    jobTitle: candidate.job_title,
+    body: letter,
+  });
+
+  // A letter that promised a document only keeps that promise when one is really
+  // attached; the appended link paragraph is outside the claim either way.
+  const letterText = attachment ? letter : withoutAttachmentClaim(letter);
+  const offerText = [
+    letterText,
+    "",
+    "Open the offer to accept or decline it:",
+    input.link,
+    "",
+    `This link works until ${input.expiresOn}. After that the page will say the offer has expired.`,
+  ].join("\n");
+
+  if (!(await EmailConnector.isConfigured())) {
+    return {
+      ok: false,
+      error:
+        "Email is switched on but no SMTP relay is configured (Settings → API keys), so the offer link was not sent.",
+    };
+  }
+
+  const outcome = await EmailConnector.send({
+    to: candidate.email,
+    subject,
+    text: offerText,
+    attachments: attachment ?? undefined,
+  });
+  await record({
+    applicationId: input.applicationId,
+    channel: "EMAIL",
+    recipient: candidate.email,
+    subject,
+    body: offerText,
+    delivered: outcome.success,
+    error: outcome.error,
+  });
+
+  if (!outcome.success) {
+    return {
+      ok: false,
+      recipient: candidate.email,
+      error: outcome.error ?? "The offer email was not sent.",
+    };
+  }
+
+  return { ok: true, recipient: candidate.email, subject };
 }
 
 /** The three channels a pipeline move can take, each gated on its own switch. */
@@ -517,8 +630,8 @@ export interface FeedbackLetterResult {
 export async function sendCandidateFeedbackLetter(
   applicationId: string
 ): Promise<FeedbackLetterResult> {
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, full_name, email, stage, ai_feedback, job_openings(title)")
     .eq("id", applicationId)

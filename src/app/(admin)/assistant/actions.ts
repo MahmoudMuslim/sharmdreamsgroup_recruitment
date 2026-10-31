@@ -5,6 +5,7 @@ import { withActivityContext } from "@/modules/activity/application/record";
 import {
   runApprovedChange,
   runAssistantTurn,
+  runTool,
   type AssistantStep,
   type AssistantTurn,
 } from "@/modules/assistant/infrastructure/agent";
@@ -14,6 +15,7 @@ import {
 } from "@/modules/assistant/infrastructure/qoderAgent";
 import {
   appendApprovalOutcome,
+  appendCommandTurn,
   deleteAssistantSession,
   listAssistantSessions,
   readAssistantSession,
@@ -35,7 +37,9 @@ import {
   uploadTooLarge,
 } from "@/modules/assistant/domain/attachments";
 import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
-import { requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
+import { approvalAsReply, checkApprovalCode, requiresApproval, takeApproval } from "@/modules/assistant/domain/approvals";
+import { readVoiceAutonomy } from "@/modules/assistant/application/voiceSettings";
+import { readVoiceCommand } from "@/modules/assistant/application/jarvisCommands";
 import { resolveModelRouting } from "@/modules/settings/infrastructure/credentialResolver";
 import { getModelCatalogue } from "@/modules/settings/application/credential-actions";
 import {
@@ -126,6 +130,56 @@ const MAX_MODEL_ID_CHARS = 160;
 const MODEL_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/;
 /** An approval id is a `randomUUID`, so anything else was never issued by this server. */
 const APPROVAL_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type CommandTurnResult =
+  | { ok: false; error: string }
+  | { ok: true; title: string; reply: string; steps: AssistantStep[]; sessionId?: string; saveError?: string };
+
+export async function runJarvisCommand(input: {
+  commandId: string;
+  sessionId: string | null;
+}): Promise<CommandTurnResult> {
+  const staff = await requireStaff("/assistant");
+  if (typeof input?.commandId !== "string" || !APPROVAL_ID_SHAPE.test(input.commandId)) {
+    return { ok: false, error: "Choose a saved command to run." };
+  }
+  if (input.sessionId !== null && (typeof input.sessionId !== "string" || !input.sessionId.trim())) {
+    return { ok: false, error: "Choose a conversation or start a new one." };
+  }
+
+  let command;
+  let autonomy;
+  try {
+    const seen = await readVoiceCommand(input.commandId);
+    if (seen.read.problem) return { ok: false, error: seen.read.message ?? "The command could not be read." };
+    command = seen.command;
+    if (!command || !command.enabled || command.problem || command.action?.type !== "tool") {
+      return { ok: false, error: "That tool command is unavailable, disabled, or needs repair in Settings." };
+    }
+    autonomy = await readVoiceAutonomy(staff.profileId);
+  } catch {
+    return { ok: false, error: "The command could not be read right now. Nothing was run." };
+  }
+
+  const action = command.action;
+  const { step } = await withActivityContext({ via: "assistant voice" }, () =>
+    runTool(action.tool, action.args, false, staff.profileId, false, autonomy.level)
+  );
+  const reply = step.approval
+    ? approvalAsReply(step.approval)
+    : step.ok
+      ? `${command.title} — ${step.label}\n\n${step.detail}`
+      : `Command refused — ${step.label}\n\n${step.detail}`;
+  const steps = [step];
+  const saved = await appendCommandTurn({ sessionId: input.sessionId, title: command.title, reply, steps });
+  return {
+    ok: true,
+    title: command.title,
+    reply,
+    steps,
+    ...(saved.ok ? { sessionId: saved.sessionId } : { saveError: saved.error }),
+  };
+}
 
 /**
  * The recruiter's question, with the attached document's text underneath it.
@@ -297,6 +351,11 @@ export async function sendAssistantMessage(input: {
   try {
     let turn: AssistantTurn | null = null;
     let note: string | undefined = modelNote ?? undefined;
+    // Read once, before any tool runs. The engines pass the level to every card
+    // they mint, so a write cannot be released by a click the server did not ask
+    // for a code under. Inside the try, because a settings read that fails is a
+    // failed turn like any other — not an unhandled throw before the handler.
+    const voice = await readVoiceAutonomy(staff.profileId);
 
     if (engine !== "gateway") {
       const status = await qoderEngineStatus();
@@ -314,7 +373,7 @@ export async function sendAssistantMessage(input: {
       } else {
         try {
           turn = await withActivityContext({ via: "assistant" }, () =>
-            runQoderAssistantTurn(history, allowDestructive, allowWeb, staff.profileId)
+            runQoderAssistantTurn(history, allowDestructive, allowWeb, staff.profileId, voice.level)
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
@@ -329,7 +388,7 @@ export async function sendAssistantMessage(input: {
     if (!turn) {
       try {
         turn = await withActivityContext({ via: "assistant" }, () =>
-          runAssistantTurn(history, allowDestructive, staff.profileId, model, allowWeb)
+          runAssistantTurn(history, allowDestructive, staff.profileId, model, allowWeb, voice.level)
         );
       } catch (error) {
         // The gateway's own message already names the models it tried and why each
@@ -422,12 +481,39 @@ export async function rebuildAssistantFile(
 export async function approveAssistantChange(input: {
   approvalId: string;
   sessionId?: string | null;
+  /** Said or typed with the click when the card carries a code. */
+  spokenCode?: string;
+  /**
+   * Which surface the click arrived through. The browser asserts this and the
+   * server only accepts the two values the portal itself uses; it labels the
+   * trail row, it does not widen what the click may do.
+   */
+  via?: "assistant" | "assistant voice";
 }): Promise<AssistantReply> {
   const staff = await requireStaff("/dashboard");
 
   const id = typeof input?.approvalId === "string" ? input.approvalId.trim() : "";
   if (!APPROVAL_ID_SHAPE.test(id)) {
     return { ok: false, error: "That is not an approval this assistant issued." };
+  }
+
+  const spokenCode = typeof input?.spokenCode === "string" ? input.spokenCode : null;
+  const verdict = checkApprovalCode(id, staff.profileId, spokenCode);
+  if (verdict === "missing") {
+    return {
+      ok: false,
+      error:
+        "That approval is no longer on the server — it was already used, it expired, or this answer is " +
+        "being served by a different process than the one that wrote it. Nothing has changed. Ask me " +
+        "again and I will put the card up once more.",
+    };
+  }
+  if (verdict === "mismatch") {
+    return {
+      ok: false,
+      error:
+        "That code did not match. Nothing has changed. The card and its code stay live until they expire.",
+    };
   }
 
   const held = takeApproval(id, staff.profileId);
@@ -441,7 +527,9 @@ export async function approveAssistantChange(input: {
     };
   }
 
-  const { step } = await withActivityContext({ via: "assistant" }, () =>
+  const via = input?.via === "assistant voice" ? "assistant voice" : "assistant";
+
+  const { step } = await withActivityContext({ via }, () =>
     runApprovedChange(held.tool, held.args)
   );
 

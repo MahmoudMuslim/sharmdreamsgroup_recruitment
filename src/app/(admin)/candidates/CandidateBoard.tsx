@@ -108,7 +108,7 @@ function BoardCard({
               type="checkbox"
               checked={selected}
               onChange={onSelect}
-              aria-label={`Select ${candidate.full_name} for a bulk message`}
+              aria-label={`Select ${candidate.full_name} for a bulk action`}
               className="mt-0.5 h-4 w-4 shrink-0 rounded border-brand-line"
             />
           )}

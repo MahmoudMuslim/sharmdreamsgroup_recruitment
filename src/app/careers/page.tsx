@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { ArrowRight, BriefcaseBusiness } from "lucide-react";
 import { getPublicCompanies, getPublicJobs } from "./actions";
 import { CareersBoard } from "./CareersBoard";
@@ -145,12 +146,29 @@ function GroupStory({ group }: { group: PublicCompany }) {
  *
  * The data is public by policy (`jobs_public_read` only exposes PUBLISHED rows,
  * and the company read asks for `is_active` rows because `tenants_read` lets an
- * anonymous caller see retired ones too), so this page needs no session and no
- * `await connection()` — it is fully cacheable and every visitor sees the same
- * list. The board below narrows that list in the browser, which is what keeps it
- * that way.
+ * anonymous caller see retired ones too), so this page needs no session — every
+ * visitor sees the same list, and the board below narrows it in the browser,
+ * which is what keeps it one cached read rather than one per visitor.
+ *
+ * It is still not prerendered, and `await connection()` is what makes that
+ * happen. A `use cache` scope reachable from a prerendered route is *executed*
+ * during the build's cache-warming phase, whatever its expiry — only what gets
+ * baked depends on `cacheLife` (`cacheLife.md:266`). The image builds with no
+ * database and no secrets (`.dockerignore` excludes `.env*`), and the anon client
+ * refuses to work without `REST_BASE_URL`, so a warmed board would fail the
+ * build. Stopping prerendering here is Next's own mechanism for exactly this
+ * (`connection.md`), the same one every `(admin)` page already calls. Between
+ * revalidations the running container still serves the cached list, so request
+ * time is not one query per page view.
+ *
+ * With no `loading.tsx` under this layout, the applicant who clicks Careers waits
+ * for the board rather than seeing a skeleton — which is what declaring the
+ * segment blocking says, and is how `/careers/[id]` already behaves.
  */
+export const instant = false;
+
 export default async function CareersPage() {
+  await connection();
   const [jobs, companies] = await Promise.all([getPublicJobs(), getPublicCompanies()]);
   const group = groupProfile(companies);
   const rest = companiesWithoutOpenings(companies, jobs);

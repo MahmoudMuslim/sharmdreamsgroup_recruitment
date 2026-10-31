@@ -15,7 +15,7 @@ import type {
   ExportDocument,
   ExportSheet,
 } from "@/modules/analytics/domain/exportDocument";
-import { describeActor, TRAIL_LIST, type ActivityRow } from "./trail";
+import { areaLabel, describeActor, TRAIL_LIST, type ActivityRow } from "./trail";
 
 function stamp(iso: string, timeZone: string): string {
   const clock = formatInZone(iso, timeZone, { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -39,7 +39,7 @@ export function trailSheet(rows: ActivityRow[], timeZone: string): ExportSheet {
     describeActor(row),
     row.actor_kind === "STAFF" ? "Person" : row.actor_kind,
     row.via,
-    row.area,
+    areaLabel(row.area),
     row.summary,
     row.entity,
     row.entity_id ?? "",

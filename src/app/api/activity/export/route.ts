@@ -6,6 +6,11 @@
  * report is policed by `analytics.export`. Whoever is allowed to read who did
  * what is allowed to take it away, and nobody else is — so the check happens
  * here, on the way out, and the browser never holds a copy to render from.
+ *
+ * And the download writes one row to the trail it is exporting — the disclosure
+ * of the record of disclosures. That is the row the fail-closed write below
+ * exists for: whoever is granted this permission is granted it on the strength
+ * of an audit that says when it was used, so the file waits for the record.
  */
 
 import {
@@ -16,7 +21,8 @@ import {
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
-import { readActivityTrail } from "@/modules/activity/application/record";
+import { readActivityTrail, recordActivity } from "@/modules/activity/application/record";
+import { exportAuditDenied, exportTrailEntry } from "@/modules/activity/domain/exportTrail";
 import {
   paramsToQuery,
   resolveTrailQuery,
@@ -86,6 +92,33 @@ export async function GET(request: Request): Promise<Response> {
     baseName: `sharm-dreams-activity-${bounds.key}-${dayKeyInZone(generatedAt, timeZone)}`,
     limitations,
   });
+
+  /* A trail row names who acted and what changed; it never carries an applicant's
+   * address, so this door has nothing to say about the contact gate. */
+  const written = await recordActivity(
+    exportTrailEntry({
+      door: "trail",
+      format,
+      document,
+      scores: "absent",
+      contacts: "absent",
+      cut: [
+        { key: "window", value: applied.window },
+        { key: "area", value: applied.area },
+        { key: "actor_kind", value: applied.actorKind },
+        { key: "surface", value: applied.surface },
+        { key: "entity", value: applied.entity },
+        { key: "entity_id", value: applied.entityId },
+        /* The free-text search is deliberately offered here so the audit counts
+         * it as dropped: a name typed into the search box belongs to a person,
+         * and this record is read by more roles than the console it came from. */
+        { key: "query", value: applied.query },
+      ],
+    })
+  );
+  if (!written.ok) {
+    return json(exportAuditDenied(written.error ?? "the trail gave no reason"), 503);
+  }
 
   const file = await buildExport(document, format);
   return new Response(file.bytes as BodyInit, {

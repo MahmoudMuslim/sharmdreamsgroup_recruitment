@@ -7,7 +7,7 @@
  * start lying.
  *
  * The document is deliberately dumb: labels, columns and cells. Nothing here
- * knows about candidates, stages or Supabase, which is what lets the analytics
+ * knows about candidates, stages or the database, which is what lets the analytics
  * aggregates and the row-level reports share one set of writers.
  */
 

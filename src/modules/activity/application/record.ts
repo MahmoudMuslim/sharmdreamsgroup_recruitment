@@ -18,8 +18,8 @@ import "server-only";
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { getSessionUser } from "@/lib/auth/session";
 import { pageCount, pageOffset, parsePage } from "@/lib/paging";
 import {
@@ -114,7 +114,7 @@ export async function recordActivity(entry: ActivityEntry): Promise<TrailWriteRe
   };
 
   try {
-    const { error } = await getSupabaseServiceClient().from("activity_log").insert(row);
+    const { error } = await getServiceRestClient().from("activity_log").insert(row);
     if (error) {
       console.error(`[activity] ${entry.area}/${entry.action} trail write refused:`, error.message);
       return { ok: false, error: error.message };
@@ -212,7 +212,7 @@ export interface TrailReadResult {
  * memory to draw a screen that shows forty of them.
  */
 export async function readActivityTrail(filters: ActivityFilters): Promise<TrailReadResult> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   /**
    * The cut the reader asked for, rebuilt per read.
@@ -222,7 +222,7 @@ export async function readActivityTrail(filters: ActivityFilters): Promise<Trail
    * has to be read again at the last page, and that needs a fresh chain.
    */
   const cut = () => {
-    let query = supabase
+    let query = restClient
       .from("activity_log")
       .select("id, created_at, area, action, entity, entity_id, summary, detail, actor_kind, actor_label, via, company_id, actor_id, user_profiles(full_name)", {
         count: "exact",
@@ -260,7 +260,7 @@ export async function readActivityTrail(filters: ActivityFilters): Promise<Trail
       total: 0,
       page,
       error: missing
-        ? "The change trail has not been created yet. Apply supabase/migrations/024_activity_log.sql, then reload this page."
+        ? "The change trail has not been created yet. Apply db/migrations/024_activity_log.sql, then reload this page."
         : `The change trail could not be read: ${listed.error.message}`,
     };
   }
@@ -306,12 +306,12 @@ export async function readActivityTrail(filters: ActivityFilters): Promise<Trail
 
 /** Counts the trail split by who caused it, for the console's own honesty check. */
 export async function readActivityTally(): Promise<Record<ActorKind, number>> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const tally = { STAFF: 0, AI: 0, CANDIDATE: 0, SYSTEM: 0 } as Record<ActorKind, number>;
 
   await Promise.all(
     (Object.keys(tally) as ActorKind[]).map(async (kind) => {
-      const { count } = await supabase
+      const { count } = await restClient
         .from("activity_log")
         .select("id", { count: "exact", head: true })
         .eq("actor_kind", kind);

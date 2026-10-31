@@ -1,14 +1,15 @@
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { readPublishedOpening } from "@/infrastructure/repositories/jobOpening";
+import { getAnonRestClient } from "@/lib/data-api/anon";
 import { parseGateRows, publicGateQuestions } from "@/modules/careers/gate-questions";
 
 /**
  * Public viability questions for one open role.
  *
- * A route handler rather than part of the job page because `/careers/[id]` is
- * prerendered at build time and its job payload is cached — questions served
- * from either would sit stale for a full cache window after a recruiter edited
- * them. Fetched on the client instead, so a newly authored question appears on
- * refresh rather than after a redeploy.
+ * A route handler rather than part of the job page because `/careers/[id]` reads
+ * its job payload through a cached function — questions served from either would
+ * sit stale for a full cache window after a recruiter edited them. Fetched on the
+ * client instead, so a newly authored question appears on refresh rather than
+ * after the entry expires.
  *
  * Read with the anon key, so RLS decides what is visible: `gate_questions_public_read`
  * exposes active rows only. `is_active` is filtered here as well, because the
@@ -30,23 +31,26 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: "Unknown role." }, { status: 400 });
   }
 
-  const supabase = getSupabaseAnonClient();
+  const restClient = getAnonRestClient();
 
-  // Same re-check the CV upload makes: a draft or closed role has no form.
-  const { data: job } = await supabase
-    .from("job_openings")
-    .select("id")
-    .eq("id", jobId)
-    .eq("status", "PUBLISHED")
-    .maybeSingle();
+  // The re-check every public door makes, through the one read that asks it: a
+  // draft or closed role has no form, and a refused read is not an answer about
+  // the role, so it does not borrow one.
+  const opening = await readPublishedOpening(restClient, jobId);
 
-  if (!job) {
+  if (!opening.ok) {
+    if (opening.reason === "read_failed") {
+      return Response.json(
+        { error: "This role could not be checked right now. Try again in a moment." },
+        { status: 503 }
+      );
+    }
     return Response.json({ error: "This role is not accepting applications." }, { status: 404 });
   }
 
   // Job-scoped questions plus the ones asked for every role. The id is a
   // validated UUID, so building the OR filter cannot inject a condition.
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("application_gate_questions")
     .select("id, job_id, question, help_text, options, position, is_active")
     .eq("is_active", true)

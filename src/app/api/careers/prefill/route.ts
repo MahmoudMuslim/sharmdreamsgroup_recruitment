@@ -1,4 +1,6 @@
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { readPublishedOpening } from "@/infrastructure/repositories/jobOpening";
+import { getAnonRestClient } from "@/lib/data-api/anon";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import {
   CV_MAX_BYTES,
   CV_TYPE_ERROR,
@@ -33,6 +35,11 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(request: Request): Promise<Response> {
+  // Before the buffer, and before the model call this door pays for: an oversize
+  // CV must cost nothing at all. The message matches `cvSizeError()` below.
+  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -69,21 +76,22 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: cvSizeError() }, { status: 413 });
   }
 
-  const supabase = getSupabaseAnonClient();
+  const restClient = getAnonRestClient();
 
-  // Same guard the upload route makes: a draft or closed role has no form to
-  // fill, so this endpoint is not a way to spend model calls for nothing.
-  const { data: job } = await supabase
-    .from("job_openings")
-    .select("id")
-    .eq("id", jobId)
-    .eq("status", "PUBLISHED")
-    .maybeSingle();
+  // The guard every public door makes, through the one read that asks it: a draft
+  // or closed role has no form to fill, so this endpoint is not a way to spend
+  // model calls for nothing. A refused read says so rather than closing the role.
+  const opening = await readPublishedOpening(restClient, jobId);
 
-  if (!job) {
+  if (!opening.ok) {
     return Response.json(
-      { error: "This role is no longer accepting applications." },
-      { status: 404 }
+      {
+        error:
+          opening.reason === "read_failed"
+            ? "This role could not be checked right now. Try again in a moment."
+            : "This role is no longer accepting applications.",
+      },
+      { status: opening.reason === "read_failed" ? 503 : 404 }
     );
   }
 

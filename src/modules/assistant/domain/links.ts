@@ -1,8 +1,12 @@
 import { PIPELINE_STAGES, APPLICATION_SOURCES } from "@/modules/candidates/domain/listFilters";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
-import { PROSPECT_STAGES } from "@/app/(admin)/sourcing/pool-model";
-import { OUTBOX_BUCKETS } from "@/app/(admin)/whatsapp/outbox-model";
-import { bucketInfo, isStoredPath } from "@/app/(admin)/files/file-browser-types";
+import { rankedApplicantsHref } from "@/modules/jobs/domain/applicantOrder";
+import {
+  OUTBOX_BUCKETS,
+  PROSPECT_STAGES,
+  bucketInfo,
+} from "@/modules/assistant/application/sources";
+import { isStoredPath } from "@/lib/files/paths";
 import {
   credentialsTab,
   MODEL_CONSOLE_TABS,
@@ -14,7 +18,17 @@ import { PROVIDER_GROUPS } from "@/modules/settings/domain/providers";
 import { settingsSection } from "@/modules/settings/domain/settingSearch";
 import { trailProvider, trailScope } from "@/modules/settings/domain/credentialTrail";
 import { trailGroup, trailGroupById } from "@/modules/settings/domain/settingsTrail";
+import {
+  queryToParams,
+  type AppliedFilters,
+} from "@/modules/activity/domain/trailQuery";
 import { MASTER_LIST_WORDS, masterListEntity } from "@/modules/settings/domain/masterDataLists";
+import {
+  DEFAULT_SCOPE,
+  isTimeScope,
+  timeCutParams,
+  timeWindow,
+} from "@/modules/timelog/domain/ledger";
 import type { StaffLink } from "@/lib/auth/staffRoutes";
 import type { ToolArgs } from "./tools";
 
@@ -195,6 +209,12 @@ const SETTINGS_TRAIL_CONSOLE: AssistantLink = {
   label: "Open the change trail",
 };
 
+/** The hiring-data trail console, when the answer read no narrower cut. */
+const ACTIVITY_TRAIL: AssistantLink = {
+  href: "/activity",
+  label: "Open the activity trail",
+};
+
 /**
  * The setting keys a settings answer or write is about.
  *
@@ -331,7 +351,7 @@ function credentialTrailView(result: unknown): AssistantLink {
  * The settings section holding one controlled vocabulary.
  *
  * The read names the list it answered from its own result and the writes name the
- * list in their arguments — but only an id one of the six lists actually owns belongs
+ * list in their arguments — but only an id one of the seven lists actually owns belongs
  * in an address, so anything else opens the area's dock rather than a `?section=` the
  * page would ignore. The label says which list is behind the door, because one list is
  * what the console shows at a time.
@@ -354,9 +374,9 @@ function masterListView(value: unknown): AssistantLink {
  * `?trail=`, `?page=` and `?find=` are all applied to the page's own read, so the
  * click lands on the rows the answer counted rather than on the newest rows of every
  * group. An unscoped read, and a refused one, both go to the section itself — the
- * trail is listed by this console and nothing else, so a settings answer must never
- * point at `/activity`, which is a different table on a page that reports its trail
- * as not yet created.
+ * settings trail is a different table from the hiring-data trail at `/activity`,
+ * which `get_activity_trail` answers for, so a settings answer must never point
+ * there: the two consoles list different rows.
  */
 function settingsTrailView(result: unknown): AssistantLink {
   const record =
@@ -396,6 +416,69 @@ function settingsTrailView(result: unknown): AssistantLink {
 }
 
 /**
+ * The Activity console, opened on the cut the answer read.
+ *
+ * Every filter is a query parameter the page's own read applies and `?page=` is
+ * its pager, so the click lands on the rows the answer counted rather than on
+ * the newest rows of the whole trail. The cut comes from the server's applied
+ * filters, not from the model's arguments: `resolveTrailQuery` drops a value it
+ * does not accept, and a link carrying the dropped value would look filtered
+ * while the page held everything. The page the answer read is the one to carry,
+ * because a request past the end is answered with the last page.
+ */
+function activityTrailView(result: unknown): AssistantLink {
+  const record =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as { trail_filters?: unknown; trail_page?: unknown })
+      : {};
+  const filters = record.trail_filters as AppliedFilters | undefined;
+  if (!filters || typeof filters !== "object") return ACTIVITY_TRAIL;
+
+  const params = queryToParams(filters);
+  const page =
+    typeof record.trail_page === "number" && record.trail_page > 1 ? record.trail_page : null;
+  if (page !== null) params.set("page", String(page));
+
+  // The console's opening cut is the last 30 days, so a link that says only that
+  // lands on the page the plain URL would; carrying it would imply a filter.
+  const search = params.toString();
+  const href: StaffLink = search === "window=30d" ? "/activity" : `/activity?${search}`;
+  const subject = filters.query ? `the changes matching “${filters.query}”` : "the activity trail";
+  return {
+    href,
+    label: `Open ${subject}${page === null ? "" : `, page ${page}`}`,
+  };
+}
+
+/**
+ * The Time Tracker, opened on the cut the answer read.
+ *
+ * `?window=` and `?scope=` are the screen's own pills, and `timeCutParams` is the
+ * same helper the screen writes its URL with — so the link collapses the default
+ * cut to bare `/time` and spells out only what differs, exactly as the screen
+ * would. The cut comes from the action's result, not from the model's arguments:
+ * the action coerces an unreadable value to the default, and a link carrying what
+ * the model typed could name a window the answer never read. A refusal names no
+ * cut, so it lands on the console itself rather than showing a filter that was
+ * refused.
+ */
+function timeLedgerView(result: unknown): AssistantLink {
+  const record =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? (result as { ledger_window?: unknown; ledger_scope?: unknown; ledger_refused?: unknown })
+      : {};
+  if (record.ledger_refused) return { href: "/time", label: "Open the Time Tracker" };
+  const scope = isTimeScope(record.ledger_scope) ? record.ledger_scope : DEFAULT_SCOPE;
+  const params = timeCutParams(record.ledger_window, scope).toString();
+  return {
+    href: params ? `/time?${params}` : "/time",
+    label: `Open the Time Tracker on ${
+      scope === "team" ? "the team's hours" : "your hours"
+    } for ${timeWindow(record.ledger_window).label.toLowerCase()}`,
+  };
+}
+
+/**
  * The list a drift answer was about.
  *
  * A scoped read names its own list, so the click lands on the section that shows
@@ -410,6 +493,26 @@ function filingDriftView(args: ToolArgs, result: unknown): AssistantLink {
   const cards = (result as { cards?: { entity?: unknown }[] } | null | undefined)?.cards;
   const found = new Set((Array.isArray(cards) ? cards : []).map((card) => String(card?.entity ?? "")));
   return found.size === 1 ? masterListView([...found][0]) : masterListView(null);
+}
+
+/**
+ * The agenda, opened on the half of the calendar the panel sits in.
+ *
+ * The board shows one range at a time and no range holds both a past and a future
+ * panel, so the default view would hide the completed panel a note is usually
+ * written about. The slot comes from the action's own result, never from the
+ * model's arguments, and a refusal reports none — which opens the plain agenda
+ * rather than a range nobody touched. Neither half opens the panel itself: the
+ * page reads no `?panel=` from the address bar, and a parameter it ignores would
+ * make the link look like it opened a row it did not.
+ */
+function interviewAgendaView(scheduledAt: unknown): AssistantLink {
+  const when = typeof scheduledAt === "string" ? Date.parse(scheduledAt) : Number.NaN;
+  const range = Number.isFinite(when) ? (when < Date.now() ? "past" : "upcoming") : null;
+  return {
+    href: `/interviews${query([["range", range]])}`,
+    label: "Open the interview agenda",
+  };
 }
 
 /**
@@ -456,10 +559,20 @@ export function linkForTool(
       return id ? { href: `/jobs?job=${id}`, label: "View the opening" } : null;
     }
     case "set_job_status":
+    case "set_required_skills":
     case "get_job":
     case "get_job_applicants": {
       const id = fromArgs(args, "job_id");
       return id ? { href: `/jobs?job=${id}`, label: JOB_VIEW.label } : null;
+    }
+    case "rank_candidates": {
+      const id = fromArgs(args, "job_id");
+      // The answer above the link is an order; the drawer opens newest-first
+      // unless the address says otherwise, so the link carries the order it is
+      // promising — otherwise the click would contradict the sentence it follows.
+      return id
+        ? { href: rankedApplicantsHref(id), label: "Open the ranked shortlist" }
+        : null;
     }
     case "record_candidate": {
       // A create reports its id nested under `candidate`, where `fromResult`
@@ -480,6 +593,16 @@ export function linkForTool(
     case "read_candidate_cv":
     case "set_candidate_archive":
       return applicationId ? candidate(applicationId) : null;
+    case "move_stage_bulk":
+      // A batch touches many rows, so the click-through names where they all
+      // landed — the rail for the destination stage — rather than picking one
+      // profile out of the group. A stage the rails would ignore drops the
+      // parameter, and the link becomes the plain pipeline rather than a filtered
+      // table it is not.
+      return {
+        href: `/candidates${query([["stage", named(args.stage, PIPELINE_STAGES)]])}`,
+        label: "See them in the pipeline",
+      };
     case "assign_assessment": {
       const id = firstFromArgs(args, "application_ids");
       return id ? candidate(id) : null;
@@ -533,6 +656,11 @@ export function linkForTool(
       // three weeks out is exactly what the recruiter clicks through to check, and
       // a landing view that hides it reads as a failed move.
       return { href: "/interviews?range=upcoming", label: "Open the interview agenda" };
+    case "read_interview_notes":
+    case "save_interview_notes": {
+      const record = (result ?? {}) as { scheduled_at?: unknown; scheduledAt?: unknown };
+      return interviewAgendaView(record.scheduled_at ?? record.scheduledAt);
+    }
     case "list_onboarding_plans":
     case "generate_onboarding_plan":
     case "save_onboarding_task":
@@ -595,6 +723,10 @@ export function linkForTool(
       return filingDriftView(args, result);
     case "get_audit_log":
       return settingsTrailView(result);
+    case "get_activity_trail":
+      return activityTrailView(result);
+    case "get_time_ledger":
+      return timeLedgerView(result);
     case "message_candidates":
       return { href: "/candidates", label: "Open the candidate pipeline" };
     case "message_prospects":
@@ -659,8 +791,19 @@ export function linkForTool(
         label: "Open the assessment suites",
       };
     case "get_assessment_suite":
-      // One suite by id, and the grid opens no suite from the address bar.
+      // One suite's questions, read from the authoring drawer — and the grid
+      // opens no drawer of its own from the address bar, so this names the page.
       return { href: "/assessments", label: "Open the assessment suites" };
+    case "get_item_statistics": {
+      // The Statistics drawer opens from `?stats=`, so an answer about which
+      // question was hardest lands on the rows it counted rather than on a grid
+      // holding every suite. An id that will not survive `token()` gets the bare
+      // page: a link to a drawer that would open on nothing is worse than none.
+      const id = fromArgs(args, "template_id");
+      return id
+        ? { href: `/assessments${query([["stats", id]])}`, label: "Open the item statistics" }
+        : { href: "/assessments", label: "Open the assessment suites" };
+    }
     case "list_prospects":
       return {
         href: `/sourcing${query([
@@ -710,6 +853,48 @@ export function linkForTool(
       return settingsView(settingKeys(result), words(args.query));
     case "get_master_data":
       return masterListView((result as { entity?: unknown } | undefined | null)?.entity);
+    case "read_offer":
+    case "issue_offer":
+    case "withdraw_offer":
+    case "confirm_offer_hire":
+      // The offer panel lives on the application's desk, which is the page the
+      // stage buttons and the letter history are rendered on.
+      return applicationId ? candidateDesk(applicationId) : null;
+    case "get_retention_desk":
+    case "act_on_privacy_request":
+      return { href: "/retention", label: "Open the privacy desk" };
+    case "get_referral_board":
+    case "file_referral":
+    case "reassign_referral":
+    case "decide_referral_bonus":
+      return { href: "/referrals", label: "Open the referrals" };
+    case "start_time":
+    case "stop_time":
+    case "add_time":
+    case "edit_time":
+    case "discard_time":
+    case "delete_time":
+      // The ledger's cut is a window over the signed-in person's rows, and the
+      // default window holds the row a timer tool just wrote; naming a cut the
+      // action did not report would guess at a view the answer never read.
+      return { href: "/time", label: "Open the Time Tracker" };
+    case "copy_bank_question": {
+      // The copy lands in one of two stores, and each store is a different page:
+      // a gate copy is authored on /questions, a suite copy lives in the suite
+      // drawer on /assessments. A target the helper cannot read lands on the
+      // bank, which shows both stores' questions.
+      const target = named(args.target, ["GATE", "SUITE"]);
+      if (target === "GATE") {
+        return { href: "/questions?store=gate", label: "Open the apply-form questions" };
+      }
+      return target === "SUITE"
+        ? { href: "/assessments", label: "Open the assessment suites" }
+        : { href: "/questions", label: "Open the question bank" };
+    }
+    case "recommend_tests":
+      // A recommendation is about suites, not about the opening it read: the
+      // recruiter acts on it by saving or assigning one of the named suites.
+      return { href: "/assessments", label: "Open the assessment suites" };
     default:
       return null;
   }

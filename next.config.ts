@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
+  async redirects() {
+    return [{ source: "/assistant/voice", destination: "/assistant", permanent: true }];
+  },
   /**
    * The Qoder Agent SDK loads a ~33 MB worker runtime from its own directory on
    * disk, so bundling it would both bloat the server bundle and break the

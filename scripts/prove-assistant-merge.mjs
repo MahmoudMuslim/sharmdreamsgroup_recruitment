@@ -1,0 +1,893 @@
+import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ts from "typescript";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
+const assistant = "src/app/(admin)/assistant/";
+const voice = "src/modules/assistant/presentation/voice/";
+const jsx = (type, props, key) => ({ type, props: props ?? {}, key });
+const nodes = (node) => Array.isArray(node) ? node.flatMap(nodes)
+  : !node || typeof node !== "object" ? [] : [node, ...nodes(node.props?.children)];
+const text = (node) => Array.isArray(node) ? node.map(text).join("")
+  : node == null || typeof node === "boolean" ? ""
+    : typeof node === "object" ? text(node.props?.children) : String(node);
+const autonomy = { level: "code", stored: true, canOpen: false, problem: null };
+const saved = [{ id: "saved-1", title: "Saved pipeline", messageCount: 2, updatedAt: "2026-10-20T09:00:00Z", engine: "auto" }];
+
+function runtime({ server = false, preference = null, ambientArmed = false, blockedStorage = false, sessions = saved, query = "", commandResult = { ok: true, command: null }, presenceRead = null, runCommand = null, sendMessage = null, speaking = false, echo = false, modules = {} } = {}) {
+  const cache = new Map(), instances = new Map(), effects = [];
+  const history = [], sent = [], spoken = [], opened = [], guarded = [], reads = [], writes = [], commandRuns = [];
+  let onUtterance, stops = 0;
+  const storage = new Map(preference === null ? [] : [["sdg-assistant-speak", preference]]);
+  let current, cursor = 0, dirty = true, tree, rootNode, listReads = 0;
+  const hooks = {
+    useState(initial) {
+      const owner = current, index = cursor++;
+      if (!(index in owner)) owner[index] = typeof initial === "function" ? initial() : initial;
+      return [owner[index], (next) => {
+        owner[index] = typeof next === "function" ? next(owner[index]) : next;
+        dirty = true;
+      }];
+    },
+    useRef(initial) {
+      const index = cursor++;
+      return current[index] ??= { current: initial };
+    },
+    useEffect(effect, deps) {
+      const owner = current, index = cursor++, previous = owner[index];
+      if (!previous || !deps || deps.some((value, i) => !Object.is(value, previous.deps?.[i]))) {
+        owner[index] = { deps, cleanup: previous?.cleanup };
+        effects.push(() => {
+          owner[index].cleanup?.();
+          owner[index].cleanup = effect();
+        });
+      }
+    },
+    useMemo: (fn) => fn(),
+    useCallback: (fn) => fn,
+    useTransition: () => [false, (fn) => fn()],
+    useId: () => `merge-${cursor++}`,
+    useSyncExternalStore(subscribe, snapshot) {
+      hooks.useEffect(() => subscribe(() => { dirty = true; }), [subscribe]);
+      return snapshot();
+    },
+    Fragment: Symbol.for("merge.fragment"),
+    ViewTransition: ({ children }) => children,
+  };
+  const create = server ? React.createElement : (type, props) => jsx(type, props);
+  const window = {
+    location: { search: query },
+    history: { replaceState(_state, _unused, url) {
+      history.push(url);
+      window.location.search = url.includes("?") ? url.slice(url.indexOf("?")) : "";
+      dirty = true;
+    } },
+    localStorage: {
+      getItem: (key) => { if (blockedStorage) throw new Error("Storage blocked"); return storage.get(key) ?? null; },
+      setItem: (key, value) => storage.set(key, value),
+      removeItem: (key) => storage.delete(key),
+    },
+    sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    addEventListener() {}, removeEventListener() {},
+    setTimeout: () => 1, clearTimeout() {},
+  };
+  const actions = {
+    getAssistantSessions: async () => { listReads++; return sessions; },
+    openAssistantSession: async (id) => {
+      opened.push(id);
+      return { engine: "auto", messages: [{ id: "message-1", role: "user", content: "Earlier saved question" }] };
+    },
+    getAssistantModelChoices: async () => ({ ok: true, models: [], defaultModel: "", degraded: false }),
+    sendAssistantMessage: async (input) => {
+      sent.push(input);
+      if (sendMessage) return sendMessage(input);
+      return { ok: true, sessionId: input.sessionId ?? "new-1", reply: "The saved answer.", steps: [] };
+    },
+    runJarvisCommand: async (input) => {
+      commandRuns.push(input);
+      return runCommand ? runCommand(input) : { ok: true, title: "Server title", reply: "Command result", steps: [], sessionId: input.sessionId ?? "command-session" };
+    },
+    renameSavedSession: async () => ({ ok: true }),
+    deleteSavedSession: async () => ({ ok: true }),
+  };
+  function load(relative) {
+    const file = path.isAbsolute(relative) ? relative : path.join(root, relative);
+    const key = path.relative(root, file).replaceAll("\\", "/");
+    if (Object.hasOwn(modules, key)) return modules[key];
+    if (cache.has(file)) return cache.get(file);
+    const source = readFileSync(file, "utf8");
+    const loaded = { exports: {} };
+    cache.set(file, loaded.exports);
+    const local = (name) => {
+      if (Object.hasOwn(modules, name)) return modules[name];
+      if (name === "react") return server ? { ...React, ViewTransition: ({ children }) => children } : hooks;
+      if (name === "react/jsx-runtime") return server ? require(name) : { jsx, jsxs: jsx, Fragment: hooks.Fragment };
+      if (name === "lucide-react") return new Proxy({}, { get: () => () => null });
+      if (name === "next/link") return { __esModule: true, default: (props) => create("a", props) };
+      if (name === "next/navigation") return {
+        useRouter: () => ({ replace: (url) => history.push(url), push: (url) => history.push(url) }),
+        usePathname: () => "/settings",
+        useSearchParams: () => new URLSearchParams(window.location.search),
+      };
+      if (name.endsWith("/jarvis-command-actions")) return Object.fromEntries(
+        ["saveCommand", "duplicateCommand", "deleteCommand", "setCommandEnabled", "adoptSharedCommand"].map((action) => [action, async (...args) => {
+          writes.push({ action, args });
+          return commandResult;
+        }])
+      );
+      if (name === "next/server") return { connection: async () => {} };
+      if (name === "@/lib/auth/session") return { requireStaff: async (route) => { guarded.push(route); return { profileId: "staff-1" }; } };
+      if (name === "@/modules/assistant/application/voiceSettings") return {
+        readVoiceAutonomy: async (id) => { reads.push(id); return autonomy; },
+        saveVoiceAutonomy: async (level) => { writes.push(level); return { ok: true, level }; },
+      };
+      if (name.endsWith("/RichReply")) return { RichReply: ({ text: value }) => create("div", { children: value }) };
+      if (name.endsWith("/ReplyChart")) return { ReplyChart: () => null };
+      if (name.endsWith("/useSpeech")) return { useSpeech: () => ({ speaking, error: null, speak: (value) => spoken.push(value), speakNow: (value) => spoken.push(value), stop() {}, echoedOwnVoice: () => echo }) };
+      if (name.endsWith("/useRecorder")) return { useRecorder: () => ({ state: "idle", secondsLeft: 120, hitLimit: false, start() {}, stop() {} }) };
+      if (name.endsWith("/useWakeListening")) return {
+        useWakeListening: (options) => { onUtterance = options.onUtterance; return { listening: false, error: null, quotaHit: false }; },
+        useMicrophoneAvailable: () => true,
+      };
+      if (name.endsWith("/useJarvisVoice")) return { useJarvisVoice: () => ({ speaking, wakeAudio() {}, tone() {}, say: (value) => spoken.push(value), stop() { stops++; }, notice: null, dismissNotice() {}, heardOwnVoice: () => echo }) };
+      if (name.endsWith("/useJarvisWatcher")) return { useJarvisWatcher: () => ({ news: [], briefing: [], recent: [], error: null }) };
+      if (name.endsWith("/JarvisReactor")) return { JarvisReactor: () => null };
+      if (name === "@/app/(admin)/settings/jarvis-actions") return {
+        getJarvisPresence: async () => presenceRead ?? { ok: false, reason: "unreadable", message: "fixture" },
+        getJarvisAppearance: async () => ({ appearance: load("src/modules/assistant/domain/jarvisAppearance.ts").DEFAULT_JARVIS_APPEARANCE }),
+      };
+      if (name.endsWith("/useJarvisHandoff")) return {
+        useJarvisHandoff: () => ({ ambientArmed }),
+        useJarvisAwaitingWriter: (ref) => (value) => { ref.current = value; },
+      };
+      const base = name.startsWith("@/") ? path.join(root, "src", name.slice(2))
+        : name.startsWith(".") ? path.resolve(path.dirname(file), name) : null;
+      if (base) {
+        const target = [base, `${base}.tsx`, `${base}.ts`].find((candidate) => existsSync(candidate) && /\.[jt]sx?$/.test(candidate));
+        assert.ok(target, `resolves ${name} from ${file}`);
+        if (target === path.join(root, assistant, "actions.ts")) return actions;
+        assert.ok(!target.includes("/candidate/"), "no candidate portal dependency");
+        return load(target);
+      }
+      if (name === "server-only") throw new Error("Unexpected server dependency");
+      return require(name);
+    };
+    const code = ts.transpileModule(source, { fileName: file, compilerOptions: {
+      module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
+    } }).outputText;
+    new Function("require", "module", "exports", "window", "document", `${code}\n//# sourceURL=${key}`)(local, loaded, loaded.exports, server ? undefined : window, { addEventListener() {}, removeEventListener() {} });
+    return loaded.exports;
+  }
+  function expand(node, location = "root") {
+    if (Array.isArray(node)) return node.map((child, i) => expand(child, `${location}/${child?.key ?? i}`));
+    if (!node || typeof node !== "object") return node;
+    if (typeof node.type === "function") {
+      const id = `${location}/${node.type.name}/${node.key ?? ""}`;
+      if (!instances.has(id)) instances.set(id, []);
+      current = instances.get(id); cursor = 0;
+      return expand(node.type(node.props), `${id}/out`);
+    }
+    if (node.type === hooks.Fragment) return expand(node.props.children, location);
+    return { ...node, props: { ...node.props, children: expand(node.props.children, `${location}/child`) } };
+  }
+  function render() {
+    let count = 0;
+    while (dirty) {
+      assert.ok(count++ < 60, "render settles");
+      dirty = false;
+      tree = expand(rootNode);
+      effects.splice(0).forEach((effect) => effect());
+    }
+  }
+  const ui = {
+    load, history, sent, spoken, opened, guarded, reads, writes, storage, commandRuns,
+    get stops() { return stops; },
+    hear(value) { onUtterance(value); render(); },
+    get listReads() { return listReads; },
+    mount(Component, props) { rootNode = jsx(Component, props); dirty = true; render(); },
+    async settle() { for (let i = 0; i < 12; i++) { await Promise.resolve(); render(); } },
+    find(predicate) { render(); const node = nodes(tree).find(predicate); assert.ok(node, "rendered control exists"); return node; },
+    all(predicate) { render(); return nodes(tree).filter(predicate); },
+    button(label) { return ui.find((node) => node.type === "button" && (text(node).trim() === label || node.props["aria-label"] === label)); },
+    check(label) { const node = ui.find((node) => node.type === "label" && text(node).trim() === label); return nodes(node).find((child) => child.type === "input"); },
+    text: () => { render(); return text(tree); },
+    change(id, value) { ui.find((node) => node.props.id === id).props.onChange({ target: { value } }); render(); },
+    navigate(search) { window.location.search = search; dirty = true; render(); },
+    submit() { ui.find((node) => node.type === "form").props.onSubmit({ preventDefault() {} }); render(); },
+    click(label) { const button = ui.button(label); assert.ok(!button.props.disabled); button.props.onClick(); dirty = true; render(); },
+    async send(question) {
+      ui.find((node) => node.type === "textarea").props.onChange({ target: { value: question } });
+      render(); ui.click("Send"); await ui.settle();
+    },
+  };
+  return ui;
+}
+
+const chatProps = { sessionId: null, onSessionChange() {}, onNewConversation() {}, variant: "page", voiceMode: "console" };
+
+function dispatchCommand(action, patch = {}) {
+  return { id: "command-1", scope: "personal", ownerProfileId: "staff-1", triggerPhrase: "do work", title: "Work", category: "personal", rawCategory: null, action, notes: null, enabled: true, problem: null, ...patch };
+}
+
+function dispatchPresence(commands) {
+  return { ok: true, profileId: "staff-1", prefs: { wakePhrase: "Hey Jarvis", watching: false, briefing: false }, commands };
+}
+
+const commandId = "12345678-1234-4234-8234-123456789abc";
+function commandServer({ patch = {}, absent = false, readError = null, saveError = false, saveThrows = false, signedIn = true, sessionExists = true } = {}) {
+  const calls = [], executions = [], guards = [], autonomyReads = [];
+  const row = { id: commandId, scope: "personal", owner_profile_id: "staff-1", trigger_phrase: "private spoken phrase", title: "Stored label", category: "reports", action_type: "tool", action_payload: { tool: "list_candidates", args: { status: "APPLIED" } }, notes: null, enabled: true, ...patch };
+  const tools = [
+    { name: "list_candidates", label: "List candidates" },
+    { name: "update_candidate", label: "Update candidate" },
+    { name: "delete_candidate", label: "Delete candidate", destructive: true },
+    { name: "search_web", label: "Search web", web: true },
+  ].map(tool => ({ ...tool, description: tool.label, run: async args => { executions.push({ name: tool.name, args }); return { ok: true, count: 3 }; } }));
+  const registry = { ASSISTANT_TOOLS: tools, READ_ONLY_TOOLS: ["list_candidates", "search_web"], toolByName: name => tools.find(tool => tool.name === name) };
+  const rest = {
+    auth: { getUser: async () => ({ data: { user: signedIn ? { id: "auth-1" } : null } }) },
+    from(table) {
+      const call = { table, operations: [] };
+      calls.push(call);
+      const query = {};
+      for (const name of ["select", "eq", "limit", "insert", "update", "single", "maybeSingle"]) query[name] = (...args) => { call.operations.push([name, ...args]); return query; };
+      query.then = (resolve, reject) => Promise.resolve().then(() => {
+        if (table === "assistant_jarvis_commands") return { data: absent ? [] : [row], error: readError };
+        if (table === "user_profiles") return { data: signedIn ? { id: "staff-1" } : null, error: null };
+        if (table === "assistant_sessions") return { data: sessionExists ? { id: "session-1" } : null, error: null };
+        if (table === "assistant_messages") {
+          if (saveThrows) throw new Error("Storage transport unavailable");
+          return { data: null, error: saveError ? { message: "Storage refused" } : null };
+        }
+        throw new Error(`Unexpected fixture table ${table}`);
+      }).then(resolve, reject);
+      return query;
+    },
+  };
+  const ui = runtime({ modules: {
+    "server-only": {},
+    "@/lib/auth/session": { requireStaff: async route => { guards.push(route); if (!signedIn) throw new Error("Sign in required"); return { profileId: "staff-1" }; } },
+    "@/lib/data-api/server": { createServerRestClient: async () => rest },
+    "@/modules/activity/application/record": { withActivityContext: async (_context, fn) => fn() },
+    "@/modules/assistant/application/voiceSettings": { readVoiceAutonomy: async id => { autonomyReads.push(id); return autonomy; } },
+    "src/modules/assistant/domain/tools.ts": registry,
+    "@/modules/assistant/domain/links": { linkForTool: () => undefined },
+    "@/modules/screening/infrastructure/aiGateway": { complete: () => { throw new Error("A command must not call a model"); } },
+    "@/modules/assistant/infrastructure/qoderAgent": {},
+    "@/modules/settings/infrastructure/credentialResolver": {},
+    "@/modules/settings/application/credential-actions": {},
+    "@/modules/assistant/infrastructure/documentReader": {},
+    "@/modules/assistant/infrastructure/fileWriter": {},
+  } });
+  return { ui, calls, executions, guards, autonomyReads, actions: ui.load(`${assistant}actions.ts`) };
+}
+
+test("command server re-reads the row and saves a first command without a model", async () => {
+  const fixture = commandServer();
+  assert.equal(typeof fixture.actions.runJarvisCommand, "function");
+  const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: null, title: "Forged title", tool: "delete_candidate", args: {} });
+  assert.equal(result.ok, true);
+  assert.equal(result.title, "Stored label");
+  assert.equal(result.sessionId, "session-1");
+  assert.deepEqual(fixture.executions, [{ name: "list_candidates", args: { status: "APPLIED" } }]);
+  assert.deepEqual(fixture.guards, ["/assistant"]);
+  assert.deepEqual(fixture.autonomyReads, ["staff-1"]);
+  assert.equal(fixture.calls.filter(call => call.table === "assistant_jarvis_commands").length, 1);
+  const created = fixture.calls.find(call => call.table === "assistant_sessions" && call.operations.some(op => op[0] === "insert"));
+  assert.equal(created.operations.find(op => op[0] === "insert")[1].engine, null);
+  const rows = fixture.calls.find(call => call.table === "assistant_messages").operations.find(op => op[0] === "insert")[1];
+  assert.equal(rows.length, 2);
+  assert.deepEqual(Object.keys(rows[0]).sort(), Object.keys(rows[1]).sort());
+  assert.equal(rows[0].content, "Command: Stored label");
+  assert.equal(rows[1].content, result.reply);
+  assert.equal(rows[1].model, null);
+  assert.equal(rows[1].provider, null);
+  assert.ok(rows[0].created_at < rows[1].created_at);
+  assert.doesNotMatch(JSON.stringify(rows), /private spoken phrase|Forged title/);
+});
+
+test("command server refuses missing disabled malformed and non-tool commands", async () => {
+  for (const options of [{ absent: true }, { patch: { enabled: false } }, { patch: { action_type: "unknown" } }, { patch: { action_payload: { tool: "list_candidates", args: [] } } }, { patch: { action_type: "note", action_payload: { text: "Read me" } } }, { readError: { code: "42P01", message: "does not exist" } }]) {
+    const fixture = commandServer(options);
+    assert.equal(typeof fixture.actions.runJarvisCommand, "function");
+    const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: null });
+    assert.equal(result.ok, false);
+    assert.ok(result.error);
+    assert.equal(fixture.executions.length, 0);
+    assert.equal(fixture.calls.some(call => call.table === "assistant_messages"), false);
+  }
+});
+
+// A category outside the six is a person's own name, not a defect, so it cannot be
+// the reason a phrase stops doing what it was saved to do. The row above refuses an
+// unreadable action; this one runs, and its label reaches the transcript.
+test("a command in its own category still runs and keeps its title", async () => {
+  const fixture = commandServer({ patch: { category: "Payroll" } });
+  const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: "session-1" });
+  assert.equal(result.ok, true);
+  assert.equal(result.title, "Stored label");
+  assert.deepEqual(fixture.executions, [{ name: "list_candidates", args: { status: "APPLIED" } }]);
+});
+
+test("command server keeps destructive and web switches off and holds writes for the owner", async () => {
+  for (const tool of ["delete_candidate", "search_web", "update_candidate", "unknown_tool"]) {
+    const fixture = commandServer({ patch: { action_payload: { tool, args: { id: "record-1" } } } });
+    assert.equal(typeof fixture.actions.runJarvisCommand, "function");
+    const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: "session-1" });
+    assert.equal(result.ok, true, "a recorded refusal or pending card is still a received turn");
+    assert.equal(fixture.executions.length, 0);
+    assert.equal(result.steps[0].ok, false);
+    if (tool === "update_candidate") {
+      const card = result.steps[0].approval;
+      assert.ok(card);
+      assert.equal(card.autonomy, "code");
+      assert.match(result.reply, /waiting/i);
+      assert.doesNotMatch(result.reply, /refused|ran\./i);
+      const approvals = fixture.ui.load("src/modules/assistant/domain/approvals.ts");
+      assert.equal(approvals.checkApprovalCode(card.id, "other-staff", card.code), "missing");
+      assert.deepEqual(approvals.takeApproval(card.id, "staff-1").args, { id: "record-1" });
+    } else {
+      assert.equal(result.steps[0].approval, undefined);
+      assert.match(result.reply, /refused/i);
+    }
+    const updates = fixture.calls.filter(call => call.table === "assistant_sessions").flatMap(call => call.operations.filter(op => op[0] === "update"));
+    assert.ok(updates.length > 0);
+    assert.ok(updates.every(op => !Object.hasOwn(op[1], "engine")), "commands do not overwrite the chosen engine");
+  }
+});
+
+test("command server preserves results when storage fails and refuses invalid input before reads", async () => {
+  for (const options of [{ saveError: true }, { saveThrows: true }, { sessionExists: false }]) {
+    const fixture = commandServer(options);
+    assert.equal(typeof fixture.actions.runJarvisCommand, "function");
+    const result = await fixture.actions.runJarvisCommand({ commandId, sessionId: "session-1" });
+    assert.equal(result.ok, true);
+    assert.equal(result.steps[0].ok, true);
+    assert.ok(result.saveError);
+    assert.equal(result.sessionId, undefined);
+  }
+  const fixture = commandServer();
+  for (const input of [null, {}, { commandId: "wrong" }, { commandId, sessionId: 3 }]) {
+    assert.equal((await fixture.actions.runJarvisCommand(input)).ok, false);
+  }
+  assert.equal(fixture.calls.length, 0);
+  const signedOut = commandServer({ signedIn: false });
+  await assert.rejects(() => signedOut.actions.runJarvisCommand({ commandId, sessionId: null }), /Sign in/);
+  assert.equal(signedOut.calls.length, 0);
+});
+
+test("command dispatch store keeps one request, opens chat and never replays it", () => {
+  const store = runtime().load("src/lib/jarvis-ui.ts");
+  assert.equal(typeof store.requestJarvisCommand, "function");
+  store.requestJarvisCommand("one", "First");
+  store.requestJarvisCommand("two", "Second");
+  assert.equal(store.readJarvisUi().open, true);
+  assert.equal(store.takeJarvisCommandRequest().commandId, "one");
+  assert.equal(store.takeJarvisCommandRequest(), null);
+  assert.match(store.readJarvisUi().commandNote, /already|waiting/i);
+  store.requestJarvisQuestion("  The question  ");
+  assert.equal(store.takeJarvisCommandRequest().prompt, "The question");
+  store.requestJarvisQuestion("   ");
+  assert.equal(store.takeJarvisCommandRequest(), null);
+  let notifications = 0;
+  store.subscribeJarvisUi(() => notifications++);
+  store.setJarvisCommandNote("Notice");
+  store.setJarvisCommandNote("Notice");
+  assert.equal(notifications, 1);
+});
+
+test("command dispatch presence routes open, note, ask and tool without a model handoff", async () => {
+  for (const action of [{ type: "open", href: "/reports" }, { type: "note", text: "Check the queue" }, { type: "ask" }, { type: "ask", prompt: "Saved prompt" }, { type: "tool", tool: "list_candidates", args: {} }]) {
+    const ui = runtime({ presenceRead: dispatchPresence([dispatchCommand(action)]) });
+    ui.mount(ui.load("src/modules/assistant/presentation/JarvisPresence.tsx").JarvisPresence, { user: { profileId: "staff-1" }, timeZone: "UTC" });
+    await ui.settle();
+    ui.hear("Hey Jarvis do work follow-up Tomorrow!");
+    const store = ui.load("src/lib/jarvis-ui.ts");
+    assert.equal(store.readJarvisUi().pendingUtterance, null, action.type);
+    if (action.type === "open") assert.deepEqual(ui.history, ["/reports"]);
+    if (action.type === "note") {
+      assert.deepEqual(ui.spoken, ["Check the queue"]);
+      assert.match(ui.text(), /Check the queue/);
+      ui.click("Dismiss the assistant's note");
+      assert.equal(store.readJarvisUi().commandNote, null);
+    }
+    if (action.type === "ask") assert.equal(store.takeJarvisCommandRequest().prompt, action.prompt ?? "follow-up Tomorrow!");
+    if (action.type === "tool") assert.equal(store.takeJarvisCommandRequest().commandId, "command-1");
+  }
+});
+
+test("command dispatch presence preserves wake, echo, stop and unmatched fallback", async () => {
+  for (const options of [{}, { echo: true }, { speaking: true }]) {
+    const ui = runtime({ ...options, presenceRead: dispatchPresence([dispatchCommand({ type: "open", href: "/reports" }), dispatchCommand({ type: "open", href: "/reports" }, { triggerPhrase: "stop" })]) });
+    ui.mount(ui.load("src/modules/assistant/presentation/JarvisPresence.tsx").JarvisPresence, { user: { profileId: "staff-1" }, timeZone: "UTC" });
+    await ui.settle();
+    const store = ui.load("src/lib/jarvis-ui.ts");
+    ui.hear("do work");
+    assert.deepEqual(ui.history, []);
+    ui.hear(options.speaking ? "stop" : "Hey Jarvis unknown question");
+    if (options.echo || options.speaking) assert.equal(store.takePendingUtterance(), null);
+    else assert.equal(store.takePendingUtterance().text, "Hey Jarvis unknown question");
+    assert.equal(ui.stops, options.speaking ? 1 : 0);
+  }
+});
+
+test("command dispatch preserves a pending approval instead of matching its verdict as a command", async () => {
+  const ui = runtime({ presenceRead: dispatchPresence([dispatchCommand({ type: "open", href: "/reports" }, { triggerPhrase: "approve" })]) });
+  ui.mount(ui.load("src/modules/assistant/presentation/JarvisPresence.tsx").JarvisPresence, { user: { profileId: "staff-1" }, timeZone: "UTC" });
+  await ui.settle();
+  const store = ui.load("src/lib/jarvis-ui.ts");
+  store.setJarvisAwaiting(true);
+  store.setJarvisApproval("Change waiting");
+  await ui.settle();
+  ui.hear("approve");
+  assert.deepEqual(ui.history, []);
+  assert.equal(store.takePendingUtterance().text, "approve");
+});
+
+test("command dispatch ends the follow-up window after a matched note", async () => {
+  const ui = runtime({ presenceRead: dispatchPresence([dispatchCommand({ type: "note", text: "Check queue" })]) });
+  ui.mount(ui.load("src/modules/assistant/presentation/JarvisPresence.tsx").JarvisPresence, { user: { profileId: "staff-1" }, timeZone: "UTC" });
+  await ui.settle();
+  const store = ui.load("src/lib/jarvis-ui.ts");
+  store.setJarvisAwaiting(true);
+  await ui.settle();
+  ui.hear("do work");
+  assert.equal(store.readJarvisUi().awaiting, false);
+});
+
+test("command dispatch chat keeps an approval visible when another saved command arrives", async () => {
+  const card = { id: "approval-1", tool: "update_candidate", label: "Update candidate", summary: "Keep this card", expiresAt: "2099-01-01T00:00:00Z", destructive: false, autonomy: "confirm" };
+  const ui = runtime({ runCommand: async () => ({ ok: true, title: "Held change", reply: "Waiting", steps: [{ tool: card.tool, label: card.label, ok: false, detail: "Waiting", approval: card }] }) });
+  ui.mount(ui.load(`${assistant}AssistantChat.tsx`).AssistantChat, chatProps);
+  await ui.settle();
+  const store = ui.load("src/lib/jarvis-ui.ts");
+  store.requestJarvisCommand("one", "Held");
+  await ui.settle();
+  store.requestJarvisQuestion("Do not bury the card");
+  await ui.settle();
+  assert.equal(ui.sent.length, 0);
+  assert.match(ui.text(), /Keep this card/);
+  assert.match(store.readJarvisUi().commandNote, /approval/i);
+});
+
+test("command dispatch chat sends a saved ask directly and preserves a typed draft", async () => {
+  const ui = runtime();
+  const Chat = ui.load(`${assistant}AssistantChat.tsx`).AssistantChat;
+  ui.mount(Chat, chatProps);
+  await ui.settle();
+  const store = ui.load("src/lib/jarvis-ui.ts");
+  assert.equal(typeof store.requestJarvisQuestion, "function");
+  store.requestJarvisQuestion("Who needs review?");
+  await ui.settle();
+  assert.equal(ui.sent.length, 1);
+  assert.equal(ui.sent[0].prompt, "Who needs review?");
+  ui.find(node => node.type === "textarea").props.onChange({ target: { value: "My draft" } });
+  store.requestJarvisQuestion("Do not replace my draft");
+  await ui.settle();
+  assert.equal(ui.sent.length, 1);
+  assert.equal(ui.find(node => node.type === "textarea").props.value, "My draft");
+  assert.match(store.readJarvisUi().commandNote, /clear or send/i);
+});
+
+test("command dispatch chat waits while busy and retains the new session without reopening", async () => {
+  let finish;
+  const ui = runtime({ sendMessage: () => new Promise(resolve => { finish = resolve; }) });
+  const Chat = ui.load(`${assistant}AssistantChat.tsx`).AssistantChat;
+  let props = { ...chatProps, onSessionChange(id) { props = { ...props, sessionId: id }; ui.mount(Chat, props); } };
+  ui.mount(Chat, props);
+  await ui.settle();
+  await ui.send("First question");
+  const store = ui.load("src/lib/jarvis-ui.ts");
+  assert.equal(typeof store.requestJarvisCommand, "function");
+  store.requestJarvisCommand("command-1", "Browser title");
+  await ui.settle();
+  assert.equal(ui.commandRuns.length, 0);
+  assert.equal(store.readJarvisUi().pendingCommand.commandId, "command-1");
+  finish({ ok: true, sessionId: "saved-now", reply: "First answer", steps: [] });
+  await ui.settle();
+  assert.deepEqual(ui.commandRuns, [{ commandId: "command-1", sessionId: "saved-now" }]);
+  assert.deepEqual(ui.opened, []);
+  assert.match(ui.text(), /Command: Server title/);
+  assert.match(ui.text(), /Command result/);
+  assert.equal(store.takeJarvisCommandRequest(), null);
+});
+
+test("main page renders history, console controls and collapsed privacy/autonomy without a Voice link", async () => {
+  const ui = runtime({ server: true });
+  const page = ui.load(`${assistant}page.tsx`);
+  const html = renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({ session: "saved-1" }) }));
+  assert.match(html, /Saved conversations/);
+  assert.match(html, /Push to talk/);
+  assert.doesNotMatch(html, /href="\/assistant\/voice"/);
+  const disclosure = html.match(/<details\b([^>]*)>([\s\S]*?)<\/details>/);
+  assert.ok(disclosure, "voice settings can be expanded");
+  assert.doesNotMatch(disclosure[1], /\bopen(?:=|\s|$)/);
+  // The server escapes the apostrophe in "portal's", so the promise is read on the
+  // text as a person reads it rather than on the markup.
+  const disclosed = disclosure[2].replace(/&#x27;|&#39;|&apos;/g, "'");
+  for (const promise of ["never stored", "discarded", "this portal's own model", "only while this tab is visible", "What a spoken word may release"]) assert.ok(disclosed.includes(promise), promise);
+  assert.ok(!disclosed.includes("sends it to Google"), "the disclosure does not name a browser vendor");
+  assert.deepEqual(ui.guarded, ["/assistant"]);
+  assert.deepEqual(ui.reads, ["staff-1"]);
+  assert.equal(page.instant, false);
+});
+
+test("legacy Voice URL permanently redirects with session and all query values intact", async () => {
+  const config = runtime().load("next.config.ts").default;
+  const { unstable_getResponseFromNextConfig } = require("next/experimental/testing/server");
+  const response = await unstable_getResponseFromNextConfig({
+    nextConfig: config, url: "https://portal.invalid/assistant/voice?session=saved%2F1&from=dock&tag=a",
+  });
+  assert.equal(response.status, 308);
+  assert.equal(response.headers.get("location"), "https://portal.invalid/assistant?session=saved%2F1&from=dock&tag=a");
+  const { prepareDestination } = require("next/dist/shared/lib/router/utils/prepare-destination");
+  const { stringifyQuery } = require("next/dist/server/server-route-utils");
+  const { addRequestMeta } = require("next/dist/server/request-meta");
+  const query = { session: "saved/1", from: "dock", tag: ["a", "b"] };
+  const req = {};
+  addRequestMeta(req, "initQuery", query);
+  const redirect = (await config.redirects()).find((route) => route.source === "/assistant/voice");
+  const { parsedDestination } = prepareDestination({ destination: redirect.destination, params: {}, query, appendParamsToQuery: false });
+  assert.equal(`${parsedDestination.pathname}?${stringifyQuery(req, parsedDestination.query)}`, "/assistant?session=saved%2F1&from=dock&tag=a&tag=b");
+  for (const url of ["/assistant", "/assistant/jarvis", "/api/assistant/voice"]) {
+    assert.equal((await unstable_getResponseFromNextConfig({ nextConfig: config, url: `https://portal.invalid${url}` })).status, 200);
+  }
+});
+
+for (const mode of ["console", "dictate"]) {
+  for (const [preference, expected] of [[null, false], ["0", false], ["1", true]]) {
+    test(`${mode} honors spoken preference ${preference ?? "unset"} when answering`, async () => {
+      const ui = runtime({ preference });
+      ui.mount(ui.load(`${assistant}AssistantChat.tsx`).AssistantChat, { ...chatProps, voiceMode: mode, variant: mode === "dictate" ? "docked" : "page" });
+      await ui.settle();
+      await ui.send("Which openings are waiting?");
+      assert.equal(ui.sent.length, 1);
+      assert.deepEqual(ui.spoken, expected ? ["The saved answer."] : []);
+      assert.equal(ui.storage.get("sdg-assistant-speak") ?? null, preference);
+    });
+  }
+}
+
+test("console SSR and blocked storage start silent; hands-free remains opt-in", async () => {
+  const ssr = runtime({ server: true, preference: "1" });
+  const html = renderToStaticMarkup(React.createElement(ssr.load(`${assistant}AssistantChat.tsx`).AssistantChat, chatProps));
+  assert.doesNotMatch(html, /type="checkbox"[^>]*checked/);
+  const ui = runtime({ blockedStorage: true });
+  ui.mount(ui.load(`${assistant}AssistantChat.tsx`).AssistantChat, chatProps);
+  assert.equal(ui.check("Hands-free").props.checked, false);
+  await ui.settle(); await ui.send("Who is waiting?");
+  assert.deepEqual(ui.spoken, []);
+});
+
+test("saved sessions open in merged console; repeated answers refresh history without replacing the URL", async () => {
+  const ui = runtime();
+  ui.mount(ui.load(`${assistant}AssistantConsole.tsx`).AssistantConsole, { initialSessionId: "saved-1" });
+  await ui.settle();
+  assert.match(ui.text(), /Earlier saved question/);
+  assert.match(ui.text(), /Saved pipeline/);
+  await ui.send("First follow-up"); await ui.send("Second follow-up");
+  assert.deepEqual(ui.sent.map((input) => input.sessionId), ["saved-1", "saved-1"]);
+  assert.deepEqual(ui.opened, ["saved-1"]);
+  assert.deepEqual(ui.history, []);
+  assert.equal(ui.listReads, 3);
+  ui.click("New"); await ui.settle();
+  await ui.send("Start another conversation");
+  assert.deepEqual(ui.history, ["/assistant", "/assistant?session=new-1"]);
+  assert.equal(ui.sent.at(-1).sessionId, null);
+  ui.click("Reload"); await ui.settle();
+  assert.deepEqual(ui.opened, ["saved-1", "new-1"]);
+});
+
+test("voice autonomy action moves to the Assistant guard without changing its application policy", async () => {
+  const ui = runtime();
+  const actionPath = existsSync(path.join(root, assistant, "voice-actions.ts")) ? `${assistant}voice-actions.ts` : `${assistant}voice/actions.ts`;
+  const result = await ui.load(actionPath).setVoiceAutonomy("code");
+  assert.deepEqual(result, { ok: true, level: "code" });
+  assert.deepEqual(ui.guarded, ["/assistant"]);
+  assert.deepEqual(ui.writes, ["code"]);
+});
+
+test("voice implementation no longer lives under the retired page", () => {
+  for (const name of ["AutonomyPanel.tsx", "VoiceButton.tsx", "VoiceStrip.tsx", "transcribe.ts", "useRecorder.ts", "useSpeech.ts", "useWakeListening.ts", "useJarvisHandoff.ts"]) {
+    assert.ok(existsSync(path.join(root, voice, name)), `shared module: ${name}`);
+    assert.ok(!existsSync(path.join(root, assistant, "voice", name)), `retired route module: ${name}`);
+  }
+  assert.ok(!existsSync(path.join(root, assistant, "voice/page.tsx")));
+  assert.ok(!existsSync(path.join(root, assistant, "voice/VoiceConsole.tsx")));
+  assert.ok(!existsSync(path.join(root, assistant, "voice/actions.ts")));
+});
+
+const three = [
+  { id: "saved-1", title: "Saved pipeline", messageCount: 2, updatedAt: "2026-10-20T09:00:00Z", engine: "auto" },
+  { id: "saved-2", title: "Offer letters", messageCount: 5, updatedAt: "2026-10-21T09:00:00Z", engine: "auto" },
+  { id: "saved-3", title: "Openings in Cairo", messageCount: 1, updatedAt: "2026-10-22T09:00:00Z", engine: "auto" },
+];
+
+// The chat has its own lists, so the rail's rows are counted inside the named list.
+const railRows = (ui) => nodes(ui.find((node) => node.type === "ul" && node.props["aria-label"] === "Your saved conversations"))
+  .filter((node) => node.type === "li").length;
+
+// The rail only ever holds the 60 newest conversations, so the box narrows those
+// rows and says so — it never claims to have searched the ones it does not have.
+test("the rail's search box narrows the names it holds, without another read", async () => {
+  const ui = runtime({ sessions: three });
+  ui.mount(ui.load(`${assistant}AssistantConsole.tsx`).AssistantConsole, { initialSessionId: null, initialQuery: "" });
+  await ui.settle();
+  const listed = () => railRows(ui);
+  const type = (value) => {
+    ui.find((node) => node.type === "input" && node.props["aria-label"] === "Search saved conversations by name")
+      .props.onChange({ target: { value } });
+    return ui.text();
+  };
+  const reads = ui.listReads;
+  assert.equal(listed(), 3);
+
+  const narrowed = type("offer");
+  assert.equal(listed(), 1);
+  assert.match(narrowed, /Offer letters/);
+  assert.doesNotMatch(narrowed, /Saved pipeline|Openings in Cairo/);
+  assert.match(narrowed, /1 of 3 names match/);
+  type("OFFER");
+  assert.equal(listed(), 1, "the box ignores case");
+  type("letter");
+  assert.equal(listed(), 1, "a word inside a name reaches that name");
+  type("o");
+  assert.equal(listed(), 2, "one letter reaches two names");
+  assert.match(ui.text(), /2 of 3 names match/);
+  type("  ");
+  assert.equal(ui.text().includes("names match"), false, "spaces alone are not a search");
+  assert.equal(listed(), 3);
+
+  const none = type("zzz");
+  assert.equal(listed(), 0);
+  assert.match(none, /None of your 3 saved names hold “zzz”/);
+  assert.match(none, /Clear the box to see the whole rail again/);
+  ui.click("Clear the search");
+  assert.equal(ui.find((node) => node.type === "input" && node.props["aria-label"] === "Search saved conversations by name").props.value, "");
+  assert.equal(listed(), 3);
+  assert.match(ui.text(), /60 most recent/);
+  assert.equal(ui.listReads, reads, "narrowing the rail is a filter, not another read");
+  assert.deepEqual(ui.history, [], "the box does not rewrite the address");
+});
+
+// An answer that says "your Offer letters conversation" links to /assistant?q=…
+test("an address naming words arrives with the rail already narrowed", async () => {
+  const ui = runtime({ sessions: three });
+  ui.mount(ui.load(`${assistant}AssistantConsole.tsx`).AssistantConsole, { initialSessionId: null, initialQuery: "cairo" });
+  await ui.settle();
+  assert.equal(railRows(ui), 1);
+  assert.match(ui.text(), /Openings in Cairo/);
+  assert.doesNotMatch(ui.text(), /Offer letters/);
+  assert.match(ui.text(), /1 of 3 names match/);
+
+  const ssr = runtime({ server: true, sessions: three });
+  const page = ssr.load(`${assistant}page.tsx`);
+  const html = renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({ q: "offer letters" }) }));
+  assert.match(html, /value="offer letters"/);
+  assert.match(html, /Search saved conversations by name/);
+  const long = renderToStaticMarkup(await page.default({ searchParams: Promise.resolve({ q: "x".repeat(200) }) }));
+  assert.match(long, /value="x{80}"/);
+  assert.doesNotMatch(long, /x{81}/);
+  assert.deepEqual([...new Set(ssr.guarded)], ["/assistant"], "every render of this page guards the same route");
+  assert.equal(page.instant, false);
+});
+
+// The manual has to say what the box does, what it cannot do, and where it sits in the address.
+test("the manual describes the rail box as a filter over the names the rail holds", () => {
+  const guide = readFileSync(path.join(root, "src/modules/shell/domain/pageGuide.ts"), "utf8");
+  assert.match(guide, /Type in the box above your saved conversations/);
+  assert.match(guide, /a word inside a name reaches that name/, "the match rule is stated, not implied");
+  assert.match(guide, /\/assistant\?q=offer and the rail is already narrowed/, "the address is spelled out");
+  assert.match(guide, /never asks the server for another read/, "the box is a filter, not a search request");
+  assert.match(guide, /The rail lists your 60 most recent conversations newest first/, "the bound the box can narrow");
+  assert.match(guide, /rather than claiming it searched the older ones/, "it does not overstate its own reach");
+});
+
+// A person with nothing saved yet must not be told their zero names failed a search.
+test("an empty rail keeps saying nothing saved while the box holds words", async () => {
+  const ui = runtime({ sessions: [] });
+  ui.mount(ui.load(`${assistant}AssistantConsole.tsx`).AssistantConsole, { initialSessionId: null, initialQuery: "offer" });
+  await ui.settle();
+  assert.equal(railRows(ui), 0);
+  const body = ui.text();
+  assert.match(body, /Nothing saved yet/);
+  assert.doesNotMatch(body, /None of your 0/, "zero is not a search that found nothing");
+  assert.doesNotMatch(body, /names match/);
+});
+
+const commandRows = [
+  { id: "mine-1", scope: "personal", ownerProfileId: "staff-1", triggerPhrase: "résumé review", title: "Review applicants", category: "hiring", rawCategory: null, action: { type: "ask", prompt: "Who needs review?" }, notes: "Morning check", enabled: true, problem: null },
+  { id: "mine-2", scope: "personal", ownerProfileId: "staff-1", triggerPhrase: "open reports", title: "Reports", category: "reports", rawCategory: null, action: { type: "open", href: "/reports" }, notes: null, enabled: false, problem: null },
+  { id: "shared-1", scope: "shared", ownerProfileId: null, triggerPhrase: "team inbox", title: "Outbox", category: "communication", rawCategory: null, action: { type: "open", href: "/whatsapp" }, notes: "Team messages", enabled: true, problem: null },
+];
+const commandTools = [{ name: "list_candidates", label: "List candidates" }];
+function commandConsole(options = {}, initial = {}, canPublish = false) {
+  const ui = runtime({ query: "?area=assistant&section=commands", ...options });
+  ui.mount(ui.load("src/app/(admin)/settings/JarvisCommandsConsole.tsx").JarvisCommandsConsole, {
+    initial: { commands: commandRows, problem: null, message: null, capped: false, ...initial }, canPublish, tools: commandTools,
+  });
+  return ui;
+}
+const commandList = (ui) => text(ui.find((node) => node.props["aria-label"] === "Voice commands"));
+
+for (const problem of ["absent", "unreadable"]) {
+  test(`command manager reports ${problem} instead of inventing an empty list`, () => {
+    const ui = commandConsole({}, { commands: [], problem, message: `Exact ${problem} message` });
+    assert.match(ui.text(), new RegExp(`Exact ${problem} message`));
+    assert.doesNotMatch(ui.text(), /No commands yet/);
+    assert.equal(ui.button("Add command").props.disabled, true);
+    ui.click("Shared");
+    assert.match(ui.history.at(-1), /area=assistant&section=commands&tab=shared/);
+    assert.deepEqual(ui.writes, []);
+  });
+}
+
+test("command manager filters folded phrase or title and keeps URL filters through tab changes", () => {
+  const ui = commandConsole();
+  assert.match(commandList(ui), /résumé review/);
+  assert.doesNotMatch(commandList(ui), /team inbox/);
+  ui.change("command-search", "RÉSUMÉ-review");
+  assert.match(commandList(ui), /résumé review/);
+  assert.doesNotMatch(commandList(ui), /open reports/);
+  assert.equal(new URLSearchParams(ui.history.at(-1).split("?")[1]).get("q"), "RÉSUMÉ-review");
+  ui.click("Shared");
+  assert.match(ui.history.at(-1), /&tab=shared/);
+  assert.equal(new URLSearchParams(ui.history.at(-1).split("?")[1]).get("q"), "RÉSUMÉ-review");
+  ui.change("command-search", "outbox");
+  assert.match(commandList(ui), /team inbox/);
+  ui.navigate("?area=assistant&section=commands&tab=mine&q=reports");
+  assert.equal(ui.find((n) => n.props.id === "command-search").props.value, "reports");
+  assert.match(commandList(ui), /open reports/);
+  assert.doesNotMatch(commandList(ui), /résumé review/);
+  ui.change("command-search", "");
+  const lastUrl = ui.history.at(-1);
+  ui.click("Hiring");
+  assert.match(commandList(ui), /résumé review/);
+  assert.doesNotMatch(commandList(ui), /open reports/);
+  assert.equal(ui.history.at(-1), lastUrl, "category is local, not a URL destination");
+});
+
+test("command manager shows honest empty, filtered-empty and capped states", () => {
+  const empty = commandConsole({}, { commands: [] });
+  assert.match(empty.text(), /No commands yet/);
+  assert.equal(empty.button("Add command").props.disabled, false);
+  const capped = commandConsole({}, { capped: true });
+  assert.match(capped.text(), /first 200/);
+  capped.change("command-search", "no such phrase");
+  assert.match(capped.text(), /No commands match/);
+  assert.doesNotMatch(capped.text(), /No commands yet/);
+});
+
+test("command manager gives shared readers adoption but not editing or toggling", async () => {
+  const adopted = { ...commandRows[2], id: "adopted", scope: "personal", ownerProfileId: "staff-1" };
+  const ui = commandConsole({ query: "?area=assistant&section=commands&tab=shared", commandResult: { ok: true, command: adopted } });
+  assert.match(ui.text(), /read.only/i);
+  assert.equal(ui.button("Add command").props.disabled, true);
+  assert.equal(ui.find((n) => n.props.role === "switch").props.disabled, true);
+  ui.click("View Outbox");
+  assert.equal(ui.all((n) => n.type === "button" && ["Save command", "Duplicate", "Delete"].includes(text(n))).length, 0);
+  assert.equal(ui.find((n) => n.props.id === "command-title").props.disabled, true);
+  ui.click("Add to mine"); await ui.settle();
+  assert.deepEqual(ui.writes, [{ action: "adoptSharedCommand", args: ["shared-1"] }]);
+  ui.click("Mine");
+  assert.match(commandList(ui), /team inbox/);
+});
+
+test("command manager reports malformed stored values instead of repairing them when opened", () => {
+  for (const [problem, patch, expected] of [
+    ["action", { action: null, enabled: false }, /action cannot be read/],
+    ["phrase", { triggerPhrase: "x", enabled: false }, /stored phrase/],
+  ]) {
+    const ui = commandConsole({}, { commands: [{ ...commandRows[0], problem, ...patch }] });
+    assert.match(commandList(ui), expected);
+    ui.click("Edit Review applicants");
+    if (problem === "action") assert.equal(ui.find((n) => n.props.id === "command-action_type").props.value, "");
+    assert.deepEqual(ui.writes, []);
+  }
+});
+
+// A category the person named is not a defect: the row prints its own words, the chip
+// that narrows it is those words, and `personal` — the behaviour it answers as — never
+// becomes a badge, a chip match, or the value the editor opens on.
+test("command manager keeps a custom category when opened", async () => {
+  const payroll = { ...commandRows[0], category: "personal", rawCategory: "Payroll" };
+  const monthEnd = { ...commandRows[1], id: "mine-3", triggerPhrase: "close the month", title: "Month end", category: "personal", rawCategory: "payroll" };
+  const ui = commandConsole({}, { commands: [payroll, monthEnd] });
+  assert.match(commandList(ui), /Payroll/);
+  assert.doesNotMatch(ui.text(), /Uncategorised/, "a name of their own is not an absence of one");
+  const chips = ui.find((node) => node.props["aria-label"] === "Command categories");
+  assert.equal(text(chips).split("Payroll").length - 1, 1, "two spellings of one name are one chip");
+  ui.click("Payroll");
+  assert.match(commandList(ui), /résumé review/);
+  assert.match(commandList(ui), /close the month/, "the chip narrows on the folded name, not the spelling");
+  ui.click("Personal");
+  assert.match(ui.text(), /No commands match these filters/, "what a category answers as is not what it is called");
+  ui.click("All categories");
+  ui.click("Edit Review applicants");
+  assert.equal(ui.find((n) => n.props.id === "command-category").props.value, "Payroll");
+  const labels = ui.all((n) => n.type === "option").map((n) => n.props.value);
+  assert.ok(labels.includes("Payroll"), "the stored name is offered again");
+  assert.deepEqual(ui.writes, [], "opening the editor writes nothing");
+  // Choosing "New category…" reveals the field the words go in; the sentinel itself is
+  // never sent, and an empty name is refused by the write door, not defaulted.
+  ui.change("command-category", "__new_category__");
+  assert.ok(ui.find((n) => n.props.id === "command-new-category"));
+  ui.change("command-new-category", "Shifts");
+  ui.submit(); await ui.settle();
+  assert.equal(ui.writes.at(-1).args[0].category, "Shifts");
+});
+
+test("command manager edits each action payload and preserves entered values on a field refusal", async () => {
+  const ui = commandConsole({ commandResult: { ok: false, field: "trigger_phrase", error: "That phrase already exists." } });
+  ui.click("Add command");
+  ui.change("command-trigger_phrase", "show my people");
+  ui.change("command-title", "My people");
+  ui.change("command-category", "hiring");
+  ui.change("command-action_type", "open");
+  ui.change("command-href", "/candidates?q=waiting");
+  assert.ok(ui.all((n) => n.type === "option" && n.props.value === "/reports").length);
+  ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1), { action: "saveCommand", args: [{ trigger_phrase: "show my people", title: "My people", category: "hiring", action_type: "open", action_payload: { href: "/candidates?q=waiting" }, notes: "", enabled: true }, "personal"] });
+  assert.match(ui.text(), /That phrase already exists/);
+  assert.equal(ui.find((n) => n.props.id === "command-trigger_phrase").props["aria-invalid"], true);
+  assert.equal(ui.find((n) => n.props.id === "command-title").props.value, "My people");
+  ui.change("command-action_type", "tool");
+  ui.change("command-tool", "list_candidates");
+  ui.change("command-args", '{"stage":"APPLIED","limit":5,"active":true}');
+  ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1).args[0].action_payload, { tool: "list_candidates", args: { stage: "APPLIED", limit: 5, active: true } });
+  const count = ui.writes.length;
+  ui.change("command-args", "{bad json"); ui.submit(); await ui.settle();
+  assert.equal(ui.writes.length, count);
+  assert.match(ui.text(), /valid JSON/i);
+  ui.change("command-action_type", "ask");
+  assert.match(ui.find((n) => n.props.id === "command-prompt").props.placeholder, /Leave empty/);
+  ui.change("command-prompt", "Who is waiting?"); ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1).args[0].action_payload, { prompt: "Who is waiting?" });
+  ui.change("command-action_type", "note"); ui.change("command-text", "Ready."); ui.change("command-notes", "My note");
+  assert.match(ui.text(), /6 \/ 280/); assert.match(ui.text(), /7 \/ 500/);
+  ui.submit(); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1).args[0].action_payload, { text: "Ready." });
+  assert.equal(ui.writes.at(-1).args[0].notes, "My note");
+});
+
+test("command manager applies returned rows, toggles only after success and confirms deletion inline", async () => {
+  const updated = { ...commandRows[0], title: "Updated review" };
+  const saved = commandConsole({ commandResult: { ok: true, command: updated } });
+  saved.click("Edit Review applicants"); saved.change("command-title", "Updated review"); saved.submit(); await saved.settle();
+  assert.match(commandList(saved), /Updated review/);
+  assert.equal(saved.writes[0].args[0].id, "mine-1");
+  const copy = commandConsole({ commandResult: { ok: true, command: { ...commandRows[0], id: "copy-1", title: "Review copy", triggerPhrase: "review copy" } } });
+  copy.click("Edit Review applicants"); copy.click("Duplicate"); await copy.settle();
+  assert.match(commandList(copy), /review copy/);
+  assert.deepEqual(copy.writes[0], { action: "duplicateCommand", args: ["mine-1"] });
+  const ui = commandConsole();
+  ui.click("Disable Review applicants"); await ui.settle();
+  assert.equal(ui.button("Enable Review applicants").props["aria-checked"], false);
+  assert.deepEqual(ui.writes[0], { action: "setCommandEnabled", args: ["mine-1", false] });
+  ui.click("Edit Review applicants"); ui.click("Delete");
+  assert.equal(ui.writes.length, 1);
+  ui.click("Keep command"); assert.equal(ui.writes.length, 1);
+  ui.click("Delete"); ui.click("Delete command"); await ui.settle();
+  assert.deepEqual(ui.writes.at(-1), { action: "deleteCommand", args: ["mine-1"] });
+  assert.doesNotMatch(commandList(ui), /résumé review/);
+  const refused = commandConsole({ commandResult: { ok: false, error: "Write refused" } });
+  refused.click("Disable Review applicants"); await refused.settle();
+  assert.equal(refused.button("Disable Review applicants").props["aria-checked"], true);
+  assert.match(refused.text(), /Write refused/);
+});
+
+test("command manager lets a publisher author shared commands with explicit shared scope", async () => {
+  const ui = commandConsole({ query: "?area=assistant&section=commands&tab=shared" }, {}, true);
+  assert.equal(ui.button("Add command").props.disabled, false);
+  ui.click("Edit Outbox"); ui.submit(); await ui.settle();
+  assert.equal(ui.writes[0].args[1], "shared");
+  assert.equal(ui.writes[0].args[0].id, "shared-1");
+});

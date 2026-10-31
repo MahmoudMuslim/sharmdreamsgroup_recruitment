@@ -1,6 +1,6 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import {
   CANDIDATE_COUNT_SCAN_LIMIT,
@@ -13,7 +13,7 @@ import {
   type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
 import { INTERVIEW_SELECT, toInterviewRecord, type InterviewRecord } from "./interviews-model";
-import type { Application } from "@/types";
+import type { Application } from "@/core/entities";
 
 /** An application joined with its parent job opening (one-to-one via `job_id`). */
 export type CandidateRow = Application & {
@@ -115,11 +115,11 @@ export async function getCandidateList(
   source: string | null = null,
   company: string | null = null
 ): Promise<CandidateRow[]> {
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
-  const base = supabase.from("applications").select(candidateSelect(company));
+  const base = restClient.from("applications").select(candidateSelect(company));
   const read = archived ? base.not("archived_at", "is", null) : base.is("archived_at", null);
   if (stage) read.eq("stage", stage);
   if (source) read.eq("source", source);
@@ -150,8 +150,8 @@ export async function getCandidateList(
  * company's own number is already in `companies`.
  */
 export async function getCandidateTally(archived = false): Promise<CandidateTally> {
-  const supabase = await createSupabaseServerClient();
-  const base = supabase
+  const restClient = await createServerRestClient();
+  const base = restClient
     .from("applications")
     .select(
       "stage, source, job_openings(tenant_id, tenants_and_companies(name))"
@@ -207,11 +207,11 @@ export async function getUngradedAssessmentQueue(
   company: string | null = null,
   limit = GRADING_QUEUE_LIMIT
 ): Promise<CandidateRow[]> {
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
-  const read = supabase
+  const read = restClient
     .from("applications")
     .select(ungradedSelect(company))
     .is("archived_at", null)
@@ -250,9 +250,9 @@ export async function getCandidateByRef(input: {
     : null;
   if (!id && !code) return null;
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const masked = await scoresAreMaskedForCurrentUser();
-  const base = supabase.from("applications").select(candidateSelect(null));
+  const base = restClient.from("applications").select(candidateSelect(null));
   const { data, error } = await (id
     ? base.eq("id", id)
     : base.ilike("tracking_code", code ?? "")
@@ -290,9 +290,9 @@ export interface CvCoverage {
  * instead of claiming parsing runs on every application.
  */
 export async function getCvCoverage(): Promise<CvCoverage> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const live = () =>
-    supabase
+    restClient
       .from("applications")
       .select("id", { count: "exact", head: true })
       .is("archived_at", null);

@@ -12,7 +12,7 @@ interface QuizRunnerProps {
 export function QuizRunner({ question }: QuizRunnerProps) {
   const selected = useAssessmentStore((state) => state.choiceAnswersMap[question.id]);
   const setChoiceAnswer = useAssessmentStore((state) => state.setChoiceAnswer);
-  const syncDraft = useAssessmentStore((state) => state.syncDraftToSupabase);
+  const syncDraft = useAssessmentStore((state) => state.syncDraft);
 
   const options = question.config.options ?? [];
 

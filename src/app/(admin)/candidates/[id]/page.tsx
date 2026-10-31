@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { connection } from "next/server";
 import { notFound, redirect } from "next/navigation";
@@ -18,18 +19,21 @@ import {
 } from "lucide-react";
 import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
-import { formatInZone } from "@/lib/timezone";
+import { dayKeyInZone, formatInZone } from "@/lib/timezone";
 import { Badge, Card, CardHeader, PageHeader } from "@/modules/analytics/presentation/ui";
 import { navBack } from "@/modules/shell/domain/navTransition";
 import type { GateAnswer } from "@/modules/careers/gate-questions";
 import { getCandidateProfile } from "./profile";
+import { PersonTabs } from "./PersonTabs";
 import type {
+  PersonBundleView,
   ProfileApplication,
   ProfileAttempt,
   ProfileChange,
   ProfileFile,
   ProfileInterview,
   ProfileMessage,
+  ProfilePerson,
   ProfilePlan,
 } from "./profile";
 
@@ -54,9 +58,11 @@ export const instant = false;
  * of their row ids lands here, and the profile's address is their oldest live
  * row, so one candidate cannot accumulate two URLs.
  *
- * It reads and does not write. Stage moves, grading, test links and uploads stay
- * in the desk, which the footer says out loud rather than letting a recruiter
- * hunt for a button this page deliberately does not have.
+ * The application half reads and does not write: stage moves, grading, test links
+ * and uploads stay in the desk, which the footer says out loud rather than
+ * letting a recruiter hunt for a button that half deliberately does not have.
+ * The person half is different — `PersonTabs` writes through the registry's own
+ * doors, and the card above it reads the same spine the desk does.
  */
 export default async function CandidateProfilePage({
   params,
@@ -131,34 +137,7 @@ export default async function CandidateProfilePage({
         )}
 
         <section className="grid gap-5 lg:grid-cols-2">
-          <Card>
-            <CardHeader title="Who they are" meta="contact details and how they arrived" />
-            <div className="divide-y divide-brand-line/60">
-              <Field label="Email">{person.email}</Field>
-              <Field label="Phone">
-                {person.phone ?? "not on file"}
-                {person.other_phones.length > 0 && (
-                  <span className="ml-1 text-brand-ink/55">
-                    also filed as {person.other_phones.join(", ")}
-                  </span>
-                )}
-              </Field>
-              <Field label="Tracking codes">{person.tracking_codes.join(" · ") || "—"}</Field>
-              <Field label="Came through">{person.sources.join(", ") || "—"}</Field>
-              <Field label="First seen">{day(person.first_seen, zone)}</Field>
-              <Field label="Last activity">{day(person.last_seen, zone)}</Field>
-              <Field label="Records">
-                {person.applications} application{person.applications === 1 ? "" : "s"}
-                {person.archived > 0 && ` · ${person.archived} filed away`}
-              </Field>
-            </div>
-            {person.other_names.length > 0 && (
-              <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] leading-relaxed text-brand-ink/55">
-                This address is also filed under {person.other_names.join(" and ")}. Same person, one
-                profile — the name is whatever the candidate typed on each application.
-              </p>
-            )}
-          </Card>
+          <PersonCard person={person} bundle={profile.person_bundle} zone={zone} />
 
           <Card>
             <CardHeader title="Every application they hold" meta="one row per opening" />
@@ -186,6 +165,16 @@ export default async function CandidateProfilePage({
           </Card>
         </section>
 
+        <PersonTabs
+          applicationId={person.opened_id}
+          bundle={profile.person_bundle}
+          indicators={profile.person_indicators}
+          fields={profile.person_fields}
+          canWrite={profile.can_write}
+          hasCv={profile.applications.some((app) => app.cv.stored)}
+          zone={zone}
+        />
+
         <section className="mt-6 space-y-6">
           {profile.applications.map((app) => (
             <ApplicationCard key={app.id} app={app} zone={zone} masked={profile.scores_masked} />
@@ -210,15 +199,17 @@ export default async function CandidateProfilePage({
         <ChangesCard changes={profile.changes} zone={zone} />
 
         <p className="mt-6 text-[11px] leading-relaxed text-brand-ink/50">
-          This page reads the record; it does not change it. Stages, AI screening, grading, test
-          links and file uploads are on{" "}
+          The person half of this page writes through the same doors the desk uses: a detail typed
+          in Background, a consent answer, and a CV extraction you confirm all land at their own
+          rung of the precedence ladder, so a lower door can never overwrite a higher one. Stage
+          moves, AI screening, grading, test links and file uploads stay on{" "}
           <Link
             href={`/candidates?application=${person.opened_id}`}
             className="font-semibold text-brand-gold-dark underline"
           >
             the candidate desk
           </Link>
-          , which is where the buttons that write live.
+          .
         </p>
     </PageTransition>
   );
@@ -227,6 +218,179 @@ export default async function CandidateProfilePage({
 /* -------------------------------------------------------------------------- */
 /* Sections                                                                    */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The person behind the rows.
+ *
+ * `applications` only knows what the last form typed; the spine holds the legal
+ * name, the photo, the languages and the date of birth. Each line falls back to
+ * the application record when the spine has nothing, and the header says which
+ * half is speaking. When 043 is absent the card prints exactly what it printed
+ * before the spine existed, plus one sentence about the missing half.
+ */
+function PersonCard({
+  person,
+  bundle,
+  zone,
+}: {
+  person: ProfilePerson;
+  bundle: PersonBundleView;
+  zone: string;
+}) {
+  const details = bundle.available ? bundle.profile : null;
+  const displayName = details?.legal_name ?? person.full_name;
+  const birth = calendarDay(details?.date_of_birth ?? null);
+  const age = ageOn(details?.date_of_birth ?? null, zone);
+  const languages = bundle.languages.map((entry) =>
+    entry.proficiency && entry.proficiency !== "unspecified"
+      ? `${entry.language} (${entry.proficiency})`
+      : entry.language
+  );
+  const subtitle = [
+    details?.preferred_name && details.preferred_name !== displayName
+      ? `goes by ${details.preferred_name}`
+      : null,
+    details?.pronouns,
+    age !== null ? `${age} years old` : null,
+  ].filter(Boolean);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Who they are"
+        meta={
+          bundle.available
+            ? "the person behind every application"
+            : "what this application record knows"
+        }
+      />
+
+      {!bundle.available && (
+        <p className="mx-5 mt-4 rounded-xl border border-brand-line bg-brand-cream/60 px-3.5 py-2.5 text-[11px] leading-relaxed text-brand-ink/60 sm:mx-6">
+          {bundle.note ?? "The person store is not on this database yet."} Everything below is read
+          from the application record and is unaffected.
+        </p>
+      )}
+
+      <div className="flex items-start gap-4 px-5 pt-4 sm:px-6">
+        {details?.photo_path ? (
+          <Image
+            src={`/api/files/link?bucket=candidate-photos&path=${encodeURIComponent(
+              details.photo_path
+            )}`}
+            alt={`Photo of ${displayName}`}
+            width={76}
+            height={76}
+            unoptimized
+            className="h-[76px] w-[76px] shrink-0 rounded-2xl border border-brand-line object-cover"
+          />
+        ) : (
+          <span
+            aria-hidden
+            className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-2xl bg-brand-sand text-lg font-black text-brand-ink/40"
+          >
+            {initials(displayName)}
+          </span>
+        )}
+        <div className="min-w-0">
+          <p className="text-base font-semibold leading-tight">{displayName}</p>
+          {subtitle.length > 0 && (
+            <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/55">
+              {subtitle.join(" · ")}
+            </p>
+          )}
+          {details?.birthplace && (
+            <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/55">
+              born in {details.birthplace}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 divide-y divide-brand-line/60">
+        {details && (
+          <>
+            <Field label="Born">
+              {birth ?? "not on file"}
+              {age !== null && <span className="ml-1 text-brand-ink/55">· {age} years old</span>}
+            </Field>
+            <Field label="Nationality">{details.nationality ?? "not stated"}</Field>
+            <Field label="Based in">{details.current_city ?? "not stated"}</Field>
+            <Field label="Languages">
+              {languages.length > 0 ? languages.join(" · ") : "none on file"}
+            </Field>
+          </>
+        )}
+        <Field label="Email">
+          {bundle.emails.length > 0 ? bundle.emails.join(" · ") : person.email}
+        </Field>
+        <Field label="Phone">
+          {details?.phone ?? person.phone ?? "not on file"}
+          {person.other_phones.length > 0 && (
+            <span className="ml-1 text-brand-ink/55">
+              also filed as {person.other_phones.join(", ")}
+            </span>
+          )}
+        </Field>
+        <Field label="Tracking codes">{person.tracking_codes.join(" · ") || "—"}</Field>
+        <Field label="Came through">{person.sources.join(", ") || "—"}</Field>
+        <Field label="First seen">{day(person.first_seen, zone)}</Field>
+        <Field label="Last activity">{day(person.last_seen, zone)}</Field>
+        <Field label="Records">
+          {person.applications} application{person.applications === 1 ? "" : "s"}
+          {person.archived > 0 && ` · ${person.archived} filed away`}
+        </Field>
+      </div>
+
+      {details?.legal_name && details.legal_name !== person.full_name && (
+        <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] leading-relaxed text-brand-ink/55">
+          Their applications are filed under {person.full_name}; the name the profile holds as
+          legal is{" "}
+          {details.legal_name}.
+        </p>
+      )}
+      {person.other_names.length > 0 && (
+        <p className="border-t border-brand-line/60 px-5 py-3 text-[11px] leading-relaxed text-brand-ink/55">
+          This address is also filed under {person.other_names.join(" and ")}. Same person, one
+          profile — the name is whatever the candidate typed on each application.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/** Whole years on the organisation's calendar, from a `YYYY-MM-DD` birth date. */
+function ageOn(dateOfBirth: string | null, zone: string): number | null {
+  if (!dateOfBirth || !/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) return null;
+  const today = dayKeyInZone(new Date().toISOString(), zone);
+  if (!today) return null;
+
+  const [bornYear, bornMonth, bornDay] = dateOfBirth.split("-").map(Number);
+  const [nowYear, nowMonth, nowDay] = today.split("-").map(Number);
+  let age = nowYear - bornYear;
+  if (nowMonth < bornMonth || (nowMonth === bornMonth && nowDay < bornDay)) age -= 1;
+  return age >= 0 && age <= 120 ? age : null;
+}
+
+/** A stored calendar date printed as written, never shifted by a zone offset. */
+function calendarDay(date: string | null): string | null {
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? "?";
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
+  return `${first}${last}`.toUpperCase();
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (

@@ -3,7 +3,7 @@
 import { randomBytes } from "crypto";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { assessmentUrl } from "@/lib/public-url";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -46,8 +46,8 @@ interface LoadedAttempt {
 }
 
 async function loadAttempt(attemptId: string) {
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
+  const restClient = await createServerRestClient();
+  const { data } = await restClient
     .from("candidate_attempts")
     .select(
       "id, status, started_at, submitted_at, expires_at, created_at, application_id, applications(full_name)"
@@ -55,7 +55,7 @@ async function loadAttempt(attemptId: string) {
     .eq("id", attemptId)
     .maybeSingle();
 
-  if (!data) return { supabase, attempt: null as LoadedAttempt | null };
+  if (!data) return { restClient, attempt: null as LoadedAttempt | null };
 
   const row = data as unknown as Omit<LoadedAttempt, "full_name"> & {
     applications?: { full_name?: string } | { full_name?: string }[] | null;
@@ -64,7 +64,7 @@ async function loadAttempt(attemptId: string) {
   const name = Array.isArray(embedded) ? embedded[0]?.full_name : embedded?.full_name;
 
   return {
-    supabase,
+    restClient,
     attempt: {
       id: row.id,
       status: row.status,
@@ -90,7 +90,7 @@ export async function revokeAttempt(attemptId: string): Promise<AttemptResult> {
   const denied = await refusal();
   if (denied) return { ok: false, error: denied };
 
-  const { supabase, attempt } = await loadAttempt(attemptId);
+  const { restClient, attempt } = await loadAttempt(attemptId);
   if (!attempt) return { ok: false, error: "That attempt no longer exists." };
   if (!OPEN.has(attempt.status)) {
     return {
@@ -99,7 +99,7 @@ export async function revokeAttempt(attemptId: string): Promise<AttemptResult> {
     };
   }
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("candidate_attempts")
     .update({ status: "EXPIRED", expires_at: new Date().toISOString() })
     .eq("id", attemptId);
@@ -146,7 +146,7 @@ export async function extendAttemptLink(
     return { ok: false, error: "Extend by between 1 and 336 hours." };
   }
 
-  const { supabase, attempt } = await loadAttempt(attemptId);
+  const { restClient, attempt } = await loadAttempt(attemptId);
   if (!attempt) return { ok: false, error: "That attempt no longer exists." };
   if (!OPEN.has(attempt.status)) {
     return { ok: false, error: "Only an open attempt can be extended." };
@@ -162,7 +162,7 @@ export async function extendAttemptLink(
 
   const base = Math.max(Date.now(), new Date(currentDeadline).getTime());
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("candidate_attempts")
     .update({ expires_at: new Date(base + amount * 3_600_000).toISOString() })
     .eq("id", attemptId);
@@ -200,7 +200,7 @@ export async function reissueAttemptLink(attemptId: string): Promise<AttemptResu
   const denied = await refusal();
   if (denied) return { ok: false, error: denied };
 
-  const { supabase, attempt } = await loadAttempt(attemptId);
+  const { restClient, attempt } = await loadAttempt(attemptId);
   if (!attempt) return { ok: false, error: "That attempt no longer exists." };
   if (attempt.started_at || attempt.submitted_at) {
     return {
@@ -216,7 +216,7 @@ export async function reissueAttemptLink(attemptId: string): Promise<AttemptResu
     DEFAULT_LINK_VALIDITY_HOURS
   );
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("candidate_attempts")
     .update({
       access_token: accessToken,
@@ -267,10 +267,10 @@ export async function deleteAttempt(attemptId: string): Promise<AttemptResult> {
   const denied = await refusal();
   if (denied) return { ok: false, error: denied };
 
-  const { supabase, attempt } = await loadAttempt(attemptId);
+  const { restClient, attempt } = await loadAttempt(attemptId);
   if (!attempt) return { ok: false, error: "That attempt no longer exists." };
 
-  const { data: responses } = await supabase
+  const { data: responses } = await restClient
     .from("candidate_responses")
     .select("id")
     .eq("attempt_id", attemptId)
@@ -284,7 +284,7 @@ export async function deleteAttempt(attemptId: string): Promise<AttemptResult> {
     };
   }
 
-  const { error } = await supabase.from("candidate_attempts").delete().eq("id", attemptId);
+  const { error } = await restClient.from("candidate_attempts").delete().eq("id", attemptId);
 
   if (error) return { ok: false, error: error.message };
 

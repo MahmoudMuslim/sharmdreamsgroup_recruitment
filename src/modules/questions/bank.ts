@@ -1,5 +1,6 @@
 import type { QuestionConfig, QuestionType } from "@/types";
 import { gateEffect, type GateEffect, type GateQuestion } from "@/modules/careers/gate-questions";
+import { readJudgmentScore } from "@/modules/assessment/domain/situational";
 
 /**
  * The question bank — every question a recruiter has written, wherever it is asked.
@@ -19,14 +20,25 @@ import { gateEffect, type GateEffect, type GateQuestion } from "@/modules/career
 
 export type BankStore = "gate" | "suite";
 
-/** The four things a question can ask for, across both stores. */
-export type BankKind = "choice" | "written" | "spreadsheet" | "video";
+/** The five things a question can ask for, across both stores. */
+export type BankKind = "choice" | "judgment" | "written" | "spreadsheet" | "video";
 
 export interface BankAnswer {
   /** What the candidate sees as the choice to make. */
   text: string;
-  /** On the apply form: this answer keeps the application in the running. In a quiz: this is the right one. */
+  /**
+   * On the apply form: this answer keeps the application in the running. In a quiz:
+   * this is the right one. A judgment scene has no right answer, so every response
+   * is false here and `score` is what ranks them.
+   */
   accepted: boolean;
+  /**
+   * A judgment response's effectiveness, 0–100, or null everywhere else.
+   *
+   * Carried so a bank row can print the ranking without re-reading `config`. A
+   * quiz and a form question leave it null: their answer set is a key, not a scale.
+   */
+  score: number | null;
 }
 
 export interface BankQuestion {
@@ -66,6 +78,7 @@ export const SHARED_LABEL = "Every published role";
 
 export const KIND_LABELS: Record<BankKind, string> = {
   choice: "Choice",
+  judgment: "Situational judgment",
   written: "Written answer",
   spreadsheet: "Spreadsheet model",
   video: "Video pitch",
@@ -73,9 +86,11 @@ export const KIND_LABELS: Record<BankKind, string> = {
 
 const SUITE_KINDS: Record<QuestionType, BankKind> = {
   MULTIPLE_CHOICE: "choice",
+  SITUATIONAL_JUDGMENT: "judgment",
   CASE_STUDY: "written",
   EXCEL_MODEL: "spreadsheet",
   VIDEO_PITCH: "video",
+  CODING: "written",
 };
 
 /* -------------------------------------------------------------------------- */
@@ -115,7 +130,11 @@ export function bankGateQuestions(
       scopeKey: question.jobId ?? SHARED_SCOPE,
       kind: "choice",
       effect: gateEffect(question.options),
-      answers: question.options.map((option) => ({ text: option.label, accepted: option.passes })),
+      answers: question.options.map((option) => ({
+        text: option.label,
+        accepted: option.passes,
+        score: null,
+      })),
       acceptedCount: question.options.reduce((n, option) => n + (option.passes ? 1 : 0), 0),
       points: null,
       isLive: question.isActive && (place?.isOpen ?? false),
@@ -147,10 +166,13 @@ export interface SuiteQuestionRow {
 }
 
 /**
- * Quiz options live in `config.options` as `{ label, text, is_correct }`.
+ * Quiz options live in `config.options` as `{ label, text, is_correct }`; a
+ * judgment scene's options carry a 0–100 `score` and no correct one.
  *
  * jsonb is whatever a hand edit left in it, so an entry with no readable text is dropped
- * rather than printed — the same rule the apply-form parser follows.
+ * rather than printed — the same rule the apply-form parser follows. A percentage that
+ * is not a number in range is left null for the same reason: the row is shown without
+ * pretending to know its ranking.
  */
 function parseChoiceOptions(value: unknown): BankAnswer[] {
   if (!Array.isArray(value)) return [];
@@ -160,7 +182,11 @@ function parseChoiceOptions(value: unknown): BankAnswer[] {
     const row = entry as Record<string, unknown>;
     const text = typeof row.text === "string" ? row.text.trim() : "";
     if (!text) continue;
-    answers.push({ text, accepted: row.is_correct === true });
+    answers.push({
+      text,
+      accepted: row.is_correct === true,
+      score: readJudgmentScore(row.score),
+    });
   }
   return answers;
 }
@@ -186,7 +212,8 @@ export function bankSuiteQuestions(
     if (!prompt) continue;
 
     const kind = SUITE_KINDS[row.question_type] ?? "written";
-    const answers = kind === "choice" ? parseChoiceOptions(row.config?.options) : [];
+    const answers =
+      kind === "choice" || kind === "judgment" ? parseChoiceOptions(row.config?.options) : [];
 
     banked.push({
       key: `suite:${row.id}`,
@@ -276,7 +303,9 @@ const QUIZ_TO_FORM =
  *    at least one accepted) are already satisfied.
  *
  * A question's own place is never a target, so the picker cannot offer to duplicate a question
- * onto the form or suite it is already asked on.
+ * onto the form or suite it is already asked on. A judgment scene is copied suite to suite
+ * verbatim, scores and all, but never onto a form: the form's answer set is a pass/fail key
+ * and a scene's is a scale, so there is no single accepted answer to carry across.
  */
 export function bankTargetsFor(
   question: BankQuestion,
@@ -349,6 +378,9 @@ export function bankCrossStoreReason(
   }
 
   if (question.store === "gate") return null;
+  if (question.kind === "judgment") {
+    return "This is a judgment scene: each response earns a percentage of the marks rather than being right or wrong. The apply form gates an application by which answers rule someone out, so there is no pass/fail key here to copy.";
+  }
   if (question.kind !== "choice") {
     return "This asks for a written answer, a spreadsheet or a video. The apply form gates an application by which option was picked, so there is no answer here to mark as ruling someone out.";
   }
@@ -377,6 +409,7 @@ export const BANK_STORE_RAILS = [
 export const BANK_KIND_RAILS = [
   { key: "", label: "Any kind" },
   { key: "choice", label: KIND_LABELS.choice },
+  { key: "judgment", label: KIND_LABELS.judgment },
   { key: "written", label: KIND_LABELS.written },
   { key: "spreadsheet", label: KIND_LABELS.spreadsheet },
   { key: "video", label: KIND_LABELS.video },

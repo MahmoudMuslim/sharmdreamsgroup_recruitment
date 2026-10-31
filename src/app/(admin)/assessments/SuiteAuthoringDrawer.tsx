@@ -298,20 +298,23 @@ export function SuiteAuthoringDrawer({
         <fieldset className="rounded-xl border border-brand-line bg-brand-cream p-4">
           <legend className="px-1 text-xs font-bold">Question types to draft</legend>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {(Object.keys(TYPE_LABELS) as QuestionType[]).map((type) => (
-              <label key={type} className="flex items-start gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={types.includes(type)}
-                  onChange={() => toggleType(type)}
-                  className="mt-0.5 h-4 w-4 rounded border-brand-line"
-                />
-                <span>
-                  <span className="font-semibold">{TYPE_LABELS[type]}</span>
-                  <span className="block text-brand-ink/50">{TYPE_HINTS[type]}</span>
-                </span>
-              </label>
-            ))}
+            {(Object.keys(TYPE_LABELS) as QuestionType[])
+              // CODING has no drafting rules yet; the suite door would drop it.
+              .filter((type) => type !== "CODING")
+              .map((type) => (
+                <label key={type} className="flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={types.includes(type)}
+                    onChange={() => toggleType(type)}
+                    className="mt-0.5 h-4 w-4 rounded border-brand-line"
+                  />
+                  <span>
+                    <span className="font-semibold">{TYPE_LABELS[type]}</span>
+                    <span className="block text-brand-ink/50">{TYPE_HINTS[type]}</span>
+                  </span>
+                </label>
+              ))}
           </div>
         </fieldset>
 

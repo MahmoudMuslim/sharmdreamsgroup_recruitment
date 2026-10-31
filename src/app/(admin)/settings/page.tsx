@@ -6,6 +6,17 @@ import { FilingDriftPanel } from "./FilingDriftPanel";
 import { PermissionMatrixCard } from "./PermissionMatrixCard";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { TemplatesConsole } from "./TemplatesConsole";
+import { LanguagesConsole } from "./LanguagesConsole";
+import { AppearanceConsole } from "./JarvisAppearanceConsole";
+import { PresenceConsole } from "./JarvisPresenceConsole";
+import { JarvisCommandsConsole } from "./JarvisCommandsConsole";
+import { readVoiceCommands } from "@/modules/assistant/application/jarvisCommands";
+import { ASSISTANT_TOOLS } from "@/modules/assistant/domain/tools";
+import { readJarvisPrefs } from "@/modules/assistant/application/jarvisSettings";
+import { readJarvisAppearance } from "@/modules/assistant/application/jarvisAppearanceSettings";
+import { REACTOR_STATES, type ReactorState } from "@/modules/assistant/domain/jarvisAppearance";
+import { loadStoredTranslations } from "@/modules/i18n/application/translationOverrides";
+import { translationRows } from "@/modules/i18n/domain/translations";
 import { loadSettings } from "./actions";
 import { listSettingsTrail } from "@/modules/settings/application/settings-trail-actions";
 import { getMasterData } from "@/modules/settings/application/master-data-actions";
@@ -14,7 +25,11 @@ import { requireStaff } from "@/lib/auth/session";
 import { PageTransition } from "@/modules/shell/presentation/PageTransition";
 import { connection } from "next/server";
 import { PageHeader } from "@/modules/analytics/presentation/ui";
-import { canManageStaffUsers, hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import {
+  canCreateStaffUsers,
+  canManageStaffUsers,
+  hasPermissionForUser,
+} from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
 import { DEFAULT_PASSWORD_MIN_LENGTH, SETTINGS_SCHEMA } from "@/modules/settings/domain/schema";
 import { TeamSection } from "./TeamSection";
@@ -37,6 +52,7 @@ const MASTER_KEYS = [
   "departments",
   "locations",
   "role_families",
+  "positions",
   "skills",
   "currencies",
 ] as const;
@@ -44,7 +60,12 @@ const MASTER_KEYS = [
 function masterCounts(master: MasterData): Record<string, number> {
   const source = master as unknown as Record<string, unknown[] | undefined>;
   const out: Record<string, number> = {};
-  for (const key of MASTER_KEYS) out[`organisation:${key}`] = source[key]?.length ?? 0;
+  for (const key of MASTER_KEYS) {
+    // A table that was never created is not a list of zero: the dock would print a
+    // count beside a section that says it cannot be read at all.
+    if (key === "positions" && !master.positionsAvailable) continue;
+    out[`organisation:${key}`] = source[key]?.length ?? 0;
+  }
   return out;
 }
 
@@ -78,6 +99,48 @@ async function TrailPanel({
   );
 }
 
+/**
+ * The Languages section, with its own read.
+ *
+ * The console lists every dictionary key, so the rows are built here — on the
+ * server, where the dictionaries live — and handed to the panel as plain data. The
+ * read runs only on this section, the way the change trail reads only on its own:
+ * the other sixteen addresses the dock offers should not pay for a translation
+ * round trip they never show.
+ */
+async function LanguagesPanel({ editable }: { editable: boolean }) {
+  const rows = translationRows(await loadStoredTranslations());
+  return <LanguagesConsole rows={rows} editable={editable} />;
+}
+
+/** Each section reads only its own data; appearance alone consumes the state query. */
+async function AssistantPanel({
+  profileId,
+  section,
+  state,
+}: {
+  profileId: string;
+  section: string;
+  state: string | null;
+}) {
+  if (section === "commands") {
+    const [initial, canPublish] = await Promise.all([
+      readVoiceCommands(),
+      hasPermissionForUser("assistant.commands"),
+    ]);
+    const tools = ASSISTANT_TOOLS
+      .filter((tool) => tool.destructive !== true && tool.web !== true)
+      .map(({ name, label }) => ({ name, label }));
+    return <JarvisCommandsConsole initial={initial} canPublish={canPublish} tools={tools} />;
+  }
+  if (section !== "appearance") return <PresenceConsole initial={await readJarvisPrefs(profileId)} />;
+
+  const openOn: ReactorState | null =
+    REACTOR_STATES.find((entry) => entry === state) ?? null;
+
+  return <AppearanceConsole initialState={openOn} initial={await readJarvisAppearance(profileId)} />;
+}
+
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -88,6 +151,7 @@ export default async function SettingsPage({
     trail?: string | string[];
     page?: string | string[];
     find?: string | string[];
+    state?: string | string[];
   }>;
 }) {
   // Admin content is per-session; stop the static shell before any rendering so
@@ -126,13 +190,28 @@ export default async function SettingsPage({
   const pageNumber = trailPage(typeof params.page === "string" ? params.page : undefined);
   const searchWords = trailFind(typeof params.find === "string" ? params.find : undefined);
 
-  const [bundle, master, staffConsole, editable, canManageStaff, organisationTimezone] =
-    await Promise.all([
+  // The permission matrix gates on `settings.manage_roles`, the key the
+  // `role_permissions_write` policy checks — not the `manage_platform` that drives
+  // every other console here, so a role granted `manage_platform` alone sees locked
+  // toggles rather than clicks the database will refuse. Reads the same cached grants
+  // as `editable`, so it costs no extra query.
+  const [
+    bundle,
+    master,
+    staffConsole,
+    editable,
+    canManageRoles,
+    canManageStaff,
+    canCreateStaff,
+    organisationTimezone,
+  ] = await Promise.all([
       loadSettings(),
       getMasterData(),
       loadStaffConsole(),
       hasPermissionForUser("settings.manage_platform"),
+      hasPermissionForUser("settings.manage_roles"),
       canManageStaffUsers(),
+      canCreateStaffUsers(),
       getOrganisationTimeZone(),
     ]);
 
@@ -194,7 +273,7 @@ export default async function SettingsPage({
               roles={bundle.roles}
               permissions={bundle.permissions}
               grants={bundle.grants}
-              editable={editable}
+              editable={canManageRoles}
             />
           )}
 
@@ -206,8 +285,14 @@ export default async function SettingsPage({
               accessError={staffConsole.accessError}
               invitesError={staffConsole.invitesError}
               companies={bundle.companies}
+              permissions={bundle.permissions}
+              grants={bundle.grants}
+              overrides={staffConsole.overrides}
+              overridesSource={staffConsole.overridesSource}
+              canManageRoles={canManageRoles}
               passwordMinLength={passwordMinLength}
               canManage={canManageStaff}
+              canCreate={canCreateStaff}
               viewerAuthUserId={user.authUserId}
               timeZone={organisationTimezone}
             />
@@ -216,6 +301,8 @@ export default async function SettingsPage({
           {section.id === "templates" && (
             <TemplatesConsole templates={bundle.templates} editable={editable} />
           )}
+
+          {section.id === "languages" && <LanguagesPanel editable={editable} />}
         </div>
       )}
 
@@ -226,6 +313,14 @@ export default async function SettingsPage({
           scope={credentialScope}
           page={pageNumber}
           find={searchWords}
+        />
+      )}
+
+      {area.id === "assistant" && (
+        <AssistantPanel
+          profileId={user.profileId}
+          section={section.id}
+          state={typeof params.state === "string" ? params.state : null}
         />
       )}
     </SettingsShell>

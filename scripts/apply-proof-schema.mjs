@@ -4,7 +4,7 @@
  * itself to prove the result is re-runnable.
  *
  * This catches what a catalog comparison cannot: statements in the wrong order.
- * Four of those were in supabase/schema.sql — foreign keys added before the
+ * Four of those were in db/schema.sql — foreign keys added before the
  * table they pointed at existed, uniqueness added after the foreign key that
  * needed it, indexes that call a function defined later, and index definitions
  * emitted without a semicolon.
@@ -12,10 +12,10 @@
  * Local Docker only — it never connects to the Supabase project.
  *
  *   docker run -d --name schema-proof -e POSTGRES_PASSWORD=zzproof \
- *     -e POSTGRES_DB=postgres -p 55432:5432 postgres:17-alpine \
+ *     -e POSTGRES_DB=postgres -p 55432:5432 postgres:18.6-alpine3.24 \
  *     -c shared_preload_libraries=pg_stat_statements
  *
- *   node scripts/apply-proof-schema.mjs [file]      # default supabase/schema.sql
+ *   node scripts/apply-proof-schema.mjs [file]      # default db/schema.sql
  */
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
@@ -23,7 +23,7 @@ import { fileURLToPath } from "url";
 import { Client } from "pg";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const file = process.argv[2] ?? join(root, "supabase", "schema.sql");
+const file = process.argv[2] ?? join(root, "db", "schema.sql");
 const URL = "postgresql://postgres:zzproof@localhost:55432/postgres";
 
 /* Supabase ships this extension; a vanilla image cannot create it, so the local
@@ -129,8 +129,8 @@ await c.query(`drop schema if exists public, auth, storage, extensions, vault ca
                drop role if exists service_role, authenticated, anon;
                drop publication if exists supabase_realtime;
                create schema public;`);
-await c.query(readFileSync(join(root, "scripts", "local-supabase-stub.sql"), "utf8"));
-console.log("Supabase stand-in created (auth.users, storage, roles, helpers)");
+await c.query(readFileSync(join(root, "scripts", "local-auth-schema-stub.sql"), "utf8"));
+console.log("Supabase stand-in created (auth.users, roles, helpers)");
 
 const raw = readFileSync(file, "utf8");
 const skipped = SUPABASE_ONLY.exec(raw)?.[0];
@@ -166,11 +166,11 @@ const counts = await c.query(
        where n.nspname='public') functions,
      (select count(*) from pg_policy p join pg_class c on c.oid=p.polrelid
        join pg_namespace n on n.oid=c.relnamespace
-       where n.nspname in ('public','storage')) policies,
+       where n.nspname='public') policies,
      (select count(*) from pg_trigger t join pg_class c on c.oid=t.tgrelid
        join pg_namespace n on n.oid=c.relnamespace
        where n.nspname='public' and not t.tgisinternal) triggers,
-     (select count(*) from storage.buckets) buckets,
+     (select count(*) from public.files) file_rows,
      (select count(*) from permissions) permissions,
      (select count(*) from role_permissions) role_permissions,
      (select count(*) from notification_templates) templates,

@@ -8,8 +8,11 @@ import {
   History,
   GraduationCap,
   KeyRound,
+  Languages,
   MapPin,
+  Mic,
   Network,
+  Palette,
   Shield,
   SlidersHorizontal,
   Sparkles,
@@ -35,13 +38,16 @@ const ICONS: Record<string, LucideIcon> = {
   sliders: SlidersHorizontal,
   network: Network,
   pin: MapPin,
+  palette: Palette,
   briefcase: BriefcaseBusiness,
   cap: GraduationCap,
   coins: CircleDollarSign,
   users: Users,
   key: KeyRound,
   cpu: Cpu,
+  languages: Languages,
   history: History,
+  mic: Mic,
 };
 
 function IconFor({ name, className }: { name: string; className?: string }) {
@@ -69,7 +75,7 @@ function CountPill({ value, muted }: { value: number; muted?: boolean }) {
 }
 
 /**
- * Settings navigation: a vertical dock on the left with the four areas and,
+ * Settings navigation: a vertical dock on the left with the five areas and,
  * expanded under the active one, its sections.
  *
  * It used to be a horizontal strip of four buttons sitting above a second
@@ -185,7 +191,7 @@ export function SettingsShell({
         <div
           role="tablist"
           aria-label="Settings areas"
-          className="flex min-w-max gap-1.5 overflow-x-auto pb-1"
+          className="flex gap-1.5 overflow-x-auto pb-1"
         >
           {SETTINGS_NAV.map((item) => {
             const selected = item.id === activeArea.id;
@@ -196,7 +202,7 @@ export function SettingsShell({
                 role="tab"
                 aria-selected={selected}
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
+                  "inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-3.5 py-2 text-sm font-semibold transition",
                   selected
                     ? "border-brand-gold bg-brand-gold/15 text-brand-gold-dark"
                     : "border-brand-line bg-white text-brand-ink/60"
@@ -212,7 +218,7 @@ export function SettingsShell({
         <div
           role="tablist"
           aria-label="Settings sections"
-          className="flex min-w-max gap-1.5 overflow-x-auto pb-1"
+          className="flex gap-1.5 overflow-x-auto pb-1"
         >
           {activeArea.sections.map((s) => {
             const selected = s.id === activeSection.id;
@@ -223,7 +229,7 @@ export function SettingsShell({
                 role="tab"
                 aria-selected={selected}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
+                  "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
                   selected
                     ? "border-brand-ink bg-brand-ink text-brand-cream"
                     : "border-brand-line bg-white text-brand-ink/60"

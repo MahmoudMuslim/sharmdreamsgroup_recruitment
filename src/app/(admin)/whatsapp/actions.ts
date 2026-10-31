@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getBoolSetting, getOrganisationTimeZone, getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
@@ -131,17 +131,17 @@ export async function getOutbox(input: {
   failedLogTotal: number;
 }> {
   await requireStaff("/whatsapp");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
   const now = new Date().toISOString();
   const status = input.bucket ? QUEUE_STATUS_BY_BUCKET[input.bucket] : null;
 
-  const queueBase = supabase.from("scheduled_whatsapp_jobs").select(QUEUE_SELECT);
-  const logBase = supabase
+  const queueBase = restClient.from("scheduled_whatsapp_jobs").select(QUEUE_SELECT);
+  const logBase = restClient
     .from("communication_logs")
     .select("id, recipient, body, delivered, error_message, created_at, applications(full_name)")
     .eq("channel", "WHATSAPP")
     .eq("direction", "OUTBOUND");
-  const parkedBase = supabase
+  const parkedBase = restClient
     .from("communication_logs")
     .select("id", { count: "exact", head: true })
     .eq("channel", "WHATSAPP")
@@ -160,7 +160,7 @@ export async function getOutbox(input: {
   // `DUE` and `WAITING` are one `PENDING` status split by whether the send time
   // has arrived, which is the same line `bucketOf()` draws in the view.
   const countBucket = (bucket: OutboxBucket) => {
-    const base = supabase
+    const base = restClient
       .from("scheduled_whatsapp_jobs")
       .select("id", { count: "exact", head: true });
     if (bucket === "ALL") return base;
@@ -175,7 +175,7 @@ export async function getOutbox(input: {
       (input.failed ? logBase.eq("delivered", false) : logBase)
         .order("created_at", { ascending: false })
         .limit(LOG_PAGE_LIMIT),
-      supabase
+      restClient
         .from("applications")
         .select("id, full_name, phone, job_openings(title)")
         .not("phone", "is", null)
@@ -280,8 +280,8 @@ export async function queueWhatsAppMessage(input: {
   const when = normalizeSchedule(input.scheduledFor);
   if (when.error) return { ok: false, error: when.error };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("applications")
     .select("id, phone, full_name")
     .eq("id", input.applicationId)
@@ -295,7 +295,7 @@ export async function queueWhatsAppMessage(input: {
 
   const scheduledFor = when.iso ?? new Date().toISOString();
 
-  const { data: queued, error: insertError } = await supabase
+  const { data: queued, error: insertError } = await restClient
     .from("scheduled_whatsapp_jobs")
     .insert({
       application_id: input.applicationId,
@@ -341,8 +341,8 @@ export async function retryWhatsAppJob(id: string): Promise<OutboxResult> {
   if (denied) return denied;
   if (!id) return { ok: false, error: "No message selected." };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("scheduled_whatsapp_jobs")
     .select("id, status, application_id, payload, scheduled_for, applications(full_name)")
     .eq("id", id)
@@ -357,7 +357,7 @@ export async function retryWhatsAppJob(id: string): Promise<OutboxResult> {
     };
   }
 
-  const { error } = await supabase
+  const { error } = await restClient
     .from("scheduled_whatsapp_jobs")
     .update({
       status: "PENDING",
@@ -402,8 +402,8 @@ export async function updateWhatsAppJob(
   const when = normalizeSchedule(input.scheduledFor);
   if (when.error) return { ok: false, error: when.error };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("scheduled_whatsapp_jobs")
     .select("id, status, application_id, payload, scheduled_for, applications(full_name)")
     .eq("id", id)
@@ -418,7 +418,7 @@ export async function updateWhatsAppJob(
   const nextWhen = when.iso ?? row.scheduled_for ?? new Date().toISOString();
   const previousText = row.payload?.text ?? "";
 
-  const { error: updateError } = await supabase
+  const { error: updateError } = await restClient
     .from("scheduled_whatsapp_jobs")
     .update({
       payload: { ...row.payload, text },
@@ -473,8 +473,8 @@ export async function cancelWhatsAppJob(id: string): Promise<OutboxResult> {
   if (denied) return denied;
   if (!id) return { ok: false, error: "No message selected." };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("scheduled_whatsapp_jobs")
     .select("id, status, application_id, scheduled_for, payload, applications(full_name)")
     .eq("id", id)
@@ -489,7 +489,7 @@ export async function cancelWhatsAppJob(id: string): Promise<OutboxResult> {
     };
   }
 
-  const { error } = await supabase.from("scheduled_whatsapp_jobs").delete().eq("id", id);
+  const { error } = await restClient.from("scheduled_whatsapp_jobs").delete().eq("id", id);
   if (error) {
     console.error("[outbox] cancel failed:", error.message);
     return { ok: false, error: "The message could not be removed from the queue." };
@@ -573,27 +573,27 @@ export async function getEmailOutbox(input: { failed?: boolean } = {}): Promise<
   totals: { emailsDelivered: number; emailsFailed: number; noticesUnread: number; noticesRead: number };
 }> {
   await requireStaff("/whatsapp");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const emailBase = supabase
+  const emailBase = restClient
     .from("communication_logs")
     .select(MESSAGE_SELECT)
     .eq("channel", "EMAIL")
     .eq("direction", "OUTBOUND");
-  const noticeBase = supabase
+  const noticeBase = restClient
     .from("communication_logs")
     .select(MESSAGE_SELECT)
     .eq("channel", "IN_APP")
     .eq("direction", "OUTBOUND");
   const countEmails = (delivered: boolean) =>
-    supabase
+    restClient
       .from("communication_logs")
       .select("id", { count: "exact", head: true })
       .eq("channel", "EMAIL")
       .eq("direction", "OUTBOUND")
       .eq("delivered", delivered);
   const countNotices = (read: boolean) => {
-    const base = supabase
+    const base = restClient
       .from("communication_logs")
       .select("id", { count: "exact", head: true })
       .eq("channel", "IN_APP")
@@ -661,7 +661,7 @@ async function retryVars(row: {
   let accessToken: string | undefined;
 
   if (row.application_id) {
-    const { data } = await getSupabaseServiceClient()
+    const { data } = await getServiceRestClient()
       .from("applications")
       .select("full_name, stage, job_openings(title), candidate_attempts(access_token)")
       .eq("id", row.application_id)
@@ -707,8 +707,8 @@ export async function resendEmailMessage(id: string): Promise<OutboxResult> {
   if (denied) return denied;
   if (!id) return { ok: false, error: "No message selected." };
 
-  const supabase = getSupabaseServiceClient();
-  const { data } = await supabase
+  const restClient = getServiceRestClient();
+  const { data } = await restClient
     .from("communication_logs")
     .select(
       "id, channel, recipient, subject, body, delivered, application_id, applications(full_name)"
@@ -770,7 +770,7 @@ export async function resendEmailMessage(id: string): Promise<OutboxResult> {
   // The row is rewritten with what actually went out, so a legacy campaign row
   // that stored the template stops showing placeholders in the outbox after one
   // retry — and the next re-send has the real copy to work from.
-  const { error } = await supabase
+  const { error } = await restClient
     .from("communication_logs")
     .update({ subject, body: text, delivered: outcome.success, error_message: outcome.error ?? null })
     .eq("id", id);

@@ -152,7 +152,8 @@ export type CostTier = "free" | "low" | "medium" | "high" | "premium" | "unprice
 export const PROVIDER_GROUPS: ProviderGroupConfig[] = [
   { id: "ai", label: "AI Providers", blurb: "Language model APIs for generation, embedding, and reasoning." },
   { id: "communication", label: "Communication", blurb: "Messaging channels that send candidate notifications." },
-  { id: "other", label: "Other", blurb: "Miscellaneous integrations." },
+  // No `other` tab: the console hides an empty group, and a group named in the
+  // assistant's own prompt that opens nothing is a worse answer than no group.
 ];
 
 /** Built-in provider definitions. */
@@ -361,10 +362,11 @@ export const AI_CAPABILITIES: AiCapability[] = [
   { id: "case_reasoning", label: "Case & reasoning", description: "Deep-reasoning work: case studies, scoring rubrics and complex analysis." },
   { id: "feedback", label: "Feedback drafting", description: "Write candidate feedback and advance/rejection summaries." },
   { id: "interview_questions", label: "Interview questions", description: "Generate interview guides, scorecards and follow-up questions." },
-  { id: "transcription", label: "Transcription", description: "Turn video pitches and interview audio into text." },
+  { id: "transcription", label: "Transcription", description: "Turn video pitches and interview audio into text using the Google Gemini audio path." },
   { id: "assistant", label: "Admin assistant", description: "Run the in-app assistant chat that reads and changes records across the portal." },
   { id: "chatbot", label: "Careers assistant", description: "Answer visitor questions on the public careers pages from the role and company facts that page publishes." },
   { id: "translation", label: "Interface translation", description: "Draft the Arabic wording for the interface keys in Settings → Languages. Nothing is stored until a person saves it." },
+  { id: "form_authoring", label: "Application forms", description: "Draft the questions an application form asks from a recruiter's brief. Every draft is reviewed before it is stored, and nothing is published or assigned automatically." },
 ];
 
 // ============================================================================

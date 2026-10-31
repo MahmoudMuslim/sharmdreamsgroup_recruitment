@@ -13,6 +13,10 @@
  * Security decides what is in the download exactly as it decides what is on the
  * page, and the window and scope are resolved by the same `ledgerCut()` both
  * halves call.
+ *
+ * Before the bytes go, the download writes one row to the change trail — hours
+ * name the person who worked them, so a ledger taken out of the portal is a
+ * disclosure worth recording. A trail that refuses the row refuses the file.
  */
 
 import {
@@ -24,6 +28,8 @@ import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { dayKeyInZone } from "@/lib/timezone";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
+import { recordActivity } from "@/modules/activity/application/record";
+import { exportAuditDenied, exportTrailEntry } from "@/modules/activity/domain/exportTrail";
 import { ledgerCut, readLedger, LEDGER_ROW_LIMIT } from "@/modules/timelog/application/ledger";
 import { ledgerDocument } from "@/modules/timelog/domain/document";
 import { TRACK_DENIED, timeWindow } from "@/modules/timelog/domain/ledger";
@@ -73,10 +79,20 @@ export async function GET(request: Request): Promise<Response> {
   // receives it, when the real answer is usually that the table does not exist.
   if (read.error) return json(read.error, 503);
 
+  /* The file carries exactly what the read carried, and says so with the
+   * database's own count rather than a guess made from the row ceiling. The
+   * running timer may be one of these rows while sitting outside the cut; that
+   * is why the note counts the cut and not the file's line count. */
   const limitations: string[] = [];
-  if (read.entries.length >= LEDGER_ROW_LIMIT) {
+  const cutTotal = read.total;
+  if (cutTotal !== null && cutTotal > read.carried) {
+    const leftOut = cutTotal - read.carried;
     limitations.push(
-      `A cut of the ledger is read newest-first up to ${LEDGER_ROW_LIMIT.toLocaleString()} spans, so a longer window may be trimmed. Narrow it to take the rest.`
+      `This cut holds ${cutTotal.toLocaleString()} spans and a file carries the newest ${read.carried.toLocaleString()}, so ${leftOut.toLocaleString()} are not in it. Narrow the window to take the rest.`
+    );
+  } else if (cutTotal === null && read.carried >= LEDGER_ROW_LIMIT) {
+    limitations.push(
+      `A file carries the newest ${read.carried.toLocaleString()} spans of the cut, and the database did not say how many the cut holds, so a longer window may be trimmed. Narrow it to take the rest.`
     );
   }
 
@@ -93,6 +109,25 @@ export async function GET(request: Request): Promise<Response> {
     )}`,
     limitations,
   });
+
+  /* Hours are not scores, so the audit says nothing about them; nor does a
+   * timesheet hold an applicant's address, so it says nothing about those either.
+   * The cut is the window and whether this is the caller's own ledger or the
+   * team's, because that is the difference between taking a timesheet and taking
+   * everyone's. */
+  const written = await recordActivity(
+    exportTrailEntry({
+      door: "time",
+      format,
+      document,
+      scores: "absent",
+      contacts: "absent",
+      cut: [{ key: "window", value: cut.window }, { key: "scope", value: cut.scope }],
+    })
+  );
+  if (!written.ok) {
+    return json(exportAuditDenied(written.error ?? "the trail gave no reason"), 503);
+  }
 
   const file = await buildExport(document, format);
   return new Response(file.bytes as BodyInit, {

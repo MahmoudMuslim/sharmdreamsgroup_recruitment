@@ -177,12 +177,86 @@ export function timeWindow(key: unknown): (typeof TIME_WINDOWS)[number] {
   return TIME_WINDOWS.find((option) => option.key === key) ?? TIME_WINDOWS[1];
 }
 
+/**
+ * The cut `/time` opens on when the address bar names none.
+ *
+ * The same window `timeWindow` falls back to, so a bare `/time`, an unreadable
+ * `?window=` and the screen's own default cannot describe three different cuts.
+ */
+export const DEFAULT_WINDOW: TimeWindowKey = "7d";
+
 /** Whose hours: the caller's own, or everyone in their company. */
 export const TIME_SCOPES = ["mine", "team"] as const;
 export type TimeScope = (typeof TIME_SCOPES)[number];
 
+/** What `/time` shows before anyone chooses: the caller's own hours. */
+export const DEFAULT_SCOPE: TimeScope = "mine";
+
 export function isTimeScope(value: unknown): value is TimeScope {
   return typeof value === "string" && (TIME_SCOPES as readonly string[]).includes(value);
+}
+
+/**
+ * The address-bar parameters of a cut.
+ *
+ * The default cut is the bare route, so `/time` always means "my last seven
+ * days" and a link spells out only the window or scope that differs from it. The
+ * screen and the chat's click-through share this, so a link cannot describe a cut
+ * the screen would then write back differently. A value neither reader accepts
+ * is dropped rather than sent: the page coerces it to the default, and a
+ * parameter carrying the coerced value would look like a filter.
+ */
+export function timeCutParams(window: unknown, scope: unknown): URLSearchParams {
+  const params = new URLSearchParams();
+  const key = timeWindow(window).key;
+  if (key !== DEFAULT_WINDOW) params.set("window", key);
+  if (isTimeScope(scope) && scope !== DEFAULT_SCOPE) params.set("scope", scope);
+  return params;
+}
+
+/**
+ * The sentence the assistant's ledger answer opens with.
+ *
+ * Three numbers, never one: the cut's count, the rows the capped read loaded,
+ * and the rows the answer lists. A chat answer carries a handful of spans, the
+ * screen behind it carries up to a thousand, and the cut can hold more than
+ * that — so a reader who took either smaller figure for the week would be
+ * reading less than the ledger holds. `total: null` is the transport losing the
+ * count, not a cut of zero: the loaded rows are then a floor.
+ */
+export function ledgerReachNote(input: {
+  total: number | null;
+  carried: number;
+  loaded: number;
+  listed: number;
+  limit: number;
+  running: number;
+  scopeNote: string;
+}): string {
+  const { total, carried, loaded, listed, limit, running, scopeNote } = input;
+  const cut =
+    total === null
+      ? `The database did not return a count for this cut, so the ${carried.toLocaleString()} spans that loaded from it (the read stops at ${limit.toLocaleString()}) are a floor.`
+      : total === 0
+        ? "The cut holds no spans."
+        : total > carried
+          ? `The cut holds ${total.toLocaleString()} spans and this read loaded the newest ${carried.toLocaleString()} of them (its ceiling is ${limit.toLocaleString()}), so the older ones are reachable only by narrowing the window.`
+          : `The cut holds ${total.toLocaleString()} span${total === 1 ? "" : "s"}, all loaded.`;
+  const rows =
+    listed === 0
+      ? "Nothing is listed below."
+      : listed >= loaded
+        ? `All ${listed.toLocaleString()} loaded span${listed === 1 ? " is" : "s are"} listed below.`
+        : `The ${listed.toLocaleString()} newest spans are listed below; the screen shows the rest of the ${loaded.toLocaleString()} loaded.`;
+  const live =
+    running === 0
+      ? ""
+      : ` ${running === 1 ? "One span is a timer still running" : `${running} spans are timers still running`} — counted to now and included whatever the window.`;
+  const partial =
+    total !== null && total <= carried
+      ? ""
+      : " The time total and the category split cover only the loaded spans.";
+  return `${scopeNote} ${cut} ${rows}${live}${partial} This ledger records what people logged by hand or with a timer — a stage move or a grade adds nothing to it.`;
 }
 
 /**

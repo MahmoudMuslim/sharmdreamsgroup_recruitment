@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { RestClient } from "@/lib/rest/client";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getFileStore } from "@/lib/files/store";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -12,6 +13,7 @@ import {
   extractCvText,
 } from "@/modules/screening/infrastructure/cvParser";
 import { cvContentError } from "@/modules/careers/cv-rules";
+import { readApplicationCvPath } from "@/infrastructure/repositories/application";
 
 export interface CvReadResult {
   ok: boolean;
@@ -98,11 +100,11 @@ export async function readAttachmentAsCv(input: {
     return { ok: false, error: "Reading a CV into a record needs the Edit candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // Both halves are read through RLS first: the file has to belong to this
   // record, and the record has to be in this recruiter's pipeline.
-  const { data: file } = await supabase
+  const { data: file } = await restClient
     .from("application_attachments")
     .select("id, application_id, bucket, storage_path, file_name, mime_type")
     .eq("id", input.attachmentId)
@@ -112,7 +114,7 @@ export async function readAttachmentAsCv(input: {
     return { ok: false, error: "That file is no longer attached to this candidate." };
   }
 
-  return storeCvText(supabase, {
+  return storeCvText(restClient, {
     applicationId: input.applicationId,
     replace: input.replace,
     source: {
@@ -145,24 +147,20 @@ export async function readRecordCv(input: {
     return { ok: false, error: "Reading a CV into a record needs the Edit candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: application } = await supabase
-    .from("applications")
-    .select("cv_file_path")
-    .eq("id", input.applicationId)
-    .maybeSingle();
+  const found = await readApplicationCvPath(restClient, input.applicationId);
 
-  if (!application) {
+  if (!found.ok || !found.application) {
     return { ok: false, error: "This candidate record is no longer in your pipeline." };
   }
 
-  const path = (application.cv_file_path as string | null) ?? "";
+  const path = found.application.cv_file_path ?? "";
   if (!path) {
     return { ok: false, error: "No CV file is stored on this record — attach one first." };
   }
 
-  return storeCvText(supabase, {
+  return storeCvText(restClient, {
     applicationId: input.applicationId,
     replace: input.replace,
     source: {
@@ -189,14 +187,14 @@ interface CvReadSource {
  * download, parse, write, trail and revalidation. Two ways in, one set of rules.
  */
 async function storeCvText(
-  supabase: SupabaseClient,
+  restClient: RestClient,
   input: {
     applicationId: string;
     replace?: boolean;
     source: CvReadSource;
   }
 ): Promise<CvReadResult> {
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("id, full_name, cv_text")
     .eq("id", input.applicationId)
@@ -220,21 +218,23 @@ async function storeCvText(
     };
   }
 
-  const { data: object, error: downloadError } = await supabase.storage
-    .from(input.source.bucket)
-    .download(input.source.path);
+  const files = await getFileStore();
+  const { bytes, error: downloadError } = await files.download({
+    bucket: input.source.bucket,
+    path: input.source.path,
+  });
 
-  if (downloadError || !object) {
+  if (downloadError || !bytes) {
     return {
       ok: false,
       error: `The stored file could not be read${
-        /not found/i.test(downloadError?.message ?? "") ? " — it is no longer in storage" : ""
+        /not found/i.test(downloadError ?? "") ? " — it is no longer in storage" : ""
       }.`,
     };
   }
 
   let text: string;
-  const buffer = Buffer.from(await object.arrayBuffer());
+  const buffer = Buffer.from(bytes);
   const mislabelled = mislabelledFile(buffer, mime);
   if (mislabelled) {
     return { ok: false, error: mislabelled };
@@ -258,7 +258,7 @@ async function storeCvText(
     };
   }
 
-  const { data: written, error: updateError } = await supabase
+  const { data: written, error: updateError } = await restClient
     .from("applications")
     .update({ cv_text: text, updated_at: new Date().toISOString() })
     .eq("id", input.applicationId)

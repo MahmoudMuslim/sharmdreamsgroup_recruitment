@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { requireStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, scalarEdits } from "@/modules/activity/domain/trail";
@@ -17,6 +18,7 @@ import {
   resolveConfig,
 } from "@/modules/settings/infrastructure/credentialResolver";
 import { EmailConnector } from "@/modules/omnichannel/infrastructure/emailConnector";
+import { appConfig } from "@/lib/config";
 import { aiConfig } from "@/lib/config.server";
 import {
   AI_CAPABILITIES,
@@ -28,6 +30,11 @@ import {
   type ModelOption,
   type ProviderGroup,
 } from "@/modules/settings/domain/providers";
+import {
+  TRANSCRIPTION_CAPABILITY,
+  qualifiedId,
+  transcriptionRefusal,
+} from "@/modules/settings/domain/modelRouting";
 import {
   TRAIL_LIMIT,
   TRAIL_SEARCH_SCAN,
@@ -95,7 +102,7 @@ export interface AiModelRow {
  */
 export async function listCredentials(): Promise<CredentialKeyView[]> {
   await requireStaff("/settings");
-  const admin = getSupabaseServiceClient();
+  const admin = getServiceRestClient();
 
   const { data } = await admin
     .from("provider_credentials")
@@ -247,19 +254,16 @@ export async function saveCredential(input: {
     }
   }
 
-  const admin = getSupabaseServiceClient();
-  const session = await createSupabaseServerClient();
+  const admin = getServiceRestClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
 
-  const { data: profile } = sessionData.user
-    ? await session
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle()
-    : { data: null as { id: string } | null };
-
-  const actorId = profile?.id ?? null;
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] credential save actor lookup:", found.error);
+  }
   const trimmed = input.secret?.trim() ?? "";
   const hasNewSecret = trimmed.length > 0;
 
@@ -383,13 +387,16 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
   const definition = providerById(provider);
   if (!definition) return { ok: false, error: "Unknown provider." };
 
-  const admin = getSupabaseServiceClient();
-  const session = await createSupabaseServerClient();
+  const admin = getServiceRestClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
 
-  const { data: profile } = sessionData.user
-    ? await session.from("user_profiles").select("id").eq("auth_user_id", sessionData.user.id).maybeSingle()
-    : { data: null };
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] credential delete actor lookup:", found.error);
+  }
 
   // Read the rows first: a delete is the last moment their shape can be named,
   // and removing nothing must not be reported as a change. The console hides the
@@ -416,7 +423,7 @@ export async function deleteCredential(provider: string): Promise<SaveCredential
   await admin.from("credential_audit_log").insert({
     provider: definition.id,
     action: "DELETED",
-    actor_id: profile?.id ?? null,
+    actor_id: actorId,
     detail: "Reverted to environment variable",
   });
 
@@ -457,16 +464,15 @@ async function recordVerificationOutcome(
   status: "working" | "failed",
   message: string
 ): Promise<void> {
-  const admin = getSupabaseServiceClient();
-  const session = await createSupabaseServerClient();
+  const admin = getServiceRestClient();
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
-  const { data: profile } = sessionData.user
-    ? await session
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle()
-    : { data: null as { id: string } | null };
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] credential test actor lookup:", found.error);
+  }
 
   await admin
     .from("provider_credentials")
@@ -480,7 +486,7 @@ async function recordVerificationOutcome(
   await admin.from("credential_audit_log").insert({
     provider,
     action: "VERIFIED",
-    actor_id: profile?.id ?? null,
+    actor_id: actorId,
     detail: message,
   });
 
@@ -496,7 +502,7 @@ async function recordVerificationOutcome(
       provider,
       status,
       outcome: message,
-      ...(profile?.id ? {} : { note: "No profile row was found for the signed-in account." }),
+      ...(actorId ? {} : { note: "No profile row was found for the signed-in account." }),
     },
   });
 
@@ -566,7 +572,10 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
   }
 
   if (definition.id === "openrouter") {
-    headers["HTTP-Referer"] = process.env.APP_URL ?? "http://localhost:3001";
+    // `appConfig.url` already resolves APP_URL and falls back to the origin the
+    // stack publishes (3000), so an unset or empty APP_URL cannot send a
+    // provider a referer pointing at the dev server on 3001.
+    headers["HTTP-Referer"] = appConfig.url;
     headers["X-Title"] = "Sharm Dreams Talent Cloud";
   }
 
@@ -601,11 +610,13 @@ export async function verifyCredential(provider: string): Promise<VerifyResult> 
 export async function listModelRouting(): Promise<AiModelRow[]> {
   await requireStaff("/settings");
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("ai_model_config")
     .select("capability, primary_model, fallback_model, temperature, max_tokens, is_enabled, updated_at")
     .order("capability");
+
+  if (error) throw new Error("Could not load model routing.");
 
   return ((data ?? []) as unknown[]).map((row) => {
     const r = row as {
@@ -653,15 +664,19 @@ export async function saveModelRouting(input: {
     return { ok: false, error: "Max tokens must be between 64 and 32000." };
   }
 
-  const session = await createSupabaseServerClient();
+  if (input.capability === TRANSCRIPTION_CAPABILITY) {
+    const unusable = transcriptionRefusal(input.primaryModel, input.fallbackModel);
+    if (unusable) return { ok: false, error: unusable };
+  }
+
+  const session = await createServerRestClient();
   const { data: sessionData } = await session.auth.getUser();
-  const { data: profile } = sessionData.user
-    ? await session
-        .from("user_profiles")
-        .select("id")
-        .eq("auth_user_id", sessionData.user.id)
-        .maybeSingle()
-    : { data: null as { id: string } | null };
+  let actorId: string | null = null;
+  if (sessionData.user) {
+    const found = await readStaffProfileIdByAuthUserId(session, sessionData.user.id);
+    if (found.ok) actorId = found.profileId;
+    else console.error("[settings] routing save actor lookup:", found.error);
+  }
 
   const routed = {
     primary_model: input.primaryModel.trim(),
@@ -681,7 +696,7 @@ export async function saveModelRouting(input: {
 
   const { error } = await session
     .from("ai_model_config")
-    .upsert({ capability: input.capability, ...routed, updated_by: profile?.id ?? null });
+    .upsert({ capability: input.capability, ...routed, updated_by: actorId });
 
   if (error) return { ok: false, error: error.message };
 
@@ -972,11 +987,11 @@ async function fetchOpenCodeModels(): Promise<SourceResult> {
 
     const payload = (await response.json()) as { data?: { id: string; created?: number }[] };
     const models: ModelOption[] = (payload.data ?? []).map((model) => ({
-      // Qualified with its provider: OpenCode's ids are flat (`claude-haiku-4-5`),
-      // which is the shape the gateway reads as "Google's own endpoint", so an
-      // unqualified id would be stored in the routing table and then sent to the
-      // wrong provider.
-      id: `opencode:${model.id}`,
+      // Qualified with its provider: OpenCode's ids are flat
+      // (`claude-haiku-4-5`), the shape the gateway reads as Google's own
+      // endpoint, so an unqualified id would be stored and then billed to the
+      // wrong provider. `qualifiedId` is the one place that pairing is written.
+      id: qualifiedId("opencode", model.id),
       name: model.id,
       promptPrice: null,
       completionPrice: null,
@@ -1041,7 +1056,7 @@ async function fetchQoderModels(): Promise<SourceResult> {
       // Qualified like OpenCode's ids: `auto` and `qfmodel` carry no namespace,
       // and the routing table has no provider column, so the prefix is the only
       // thing that tells the gateway these are not a Google model.
-      id: `qoder:${model.id}`,
+      id: qualifiedId("qoder", model.id),
       name: model.display_name ?? model.id,
       promptPrice: null,
       completionPrice: null,
@@ -1117,7 +1132,7 @@ async function fetchNvidiaModels(): Promise<SourceResult> {
     const models: ModelOption[] = (payload.data ?? [])
       .filter((model) => !/embed|rerank|retriever|diffusion|deplot|cosmos/i.test(model.id))
       .map((model) => ({
-        id: `nvidia:${model.id}`,
+        id: qualifiedId("nvidia_nim", model.id),
         name: model.id,
         promptPrice: null,
         completionPrice: null,
@@ -1225,7 +1240,7 @@ async function fetchCloudflareModels(): Promise<SourceResult> {
           // Qualified for the routing table, which has no provider column:
           // `@cf/…` is namespaced the way an OpenRouter id is, so an unqualified
           // one would quietly be billed to OpenRouter.
-          id: `cloudflare:${modelId}`,
+          id: qualifiedId("cloudflare_workers_ai", modelId),
           name: modelId,
           promptPrice: null,
           completionPrice: null,
@@ -1365,7 +1380,7 @@ export async function listCredentialAudit(
 
   const provider = trailScope(scope.provider);
   const words = trailWords(scope.find);
-  const admin = getSupabaseServiceClient();
+  const admin = getServiceRestClient();
 
   /**
    * The scope predicate is repeated in each builder on purpose: every one of these

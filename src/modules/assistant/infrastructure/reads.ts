@@ -1,10 +1,18 @@
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
+import { readCompanyNameById } from "@/infrastructure/repositories/company";
 import {
   HIREABLE_STATUSES,
   OPENING_READ_LIMIT,
   type JobStatus,
 } from "@/modules/jobs/domain/hireable";
+import { HIRED_STAGE, IN_PIPELINE_STAGES } from "@/modules/jobs/domain/hiringDemand";
+import { getOpeningTermsByIds } from "@/modules/jobs/application/openingTermsRead";
+import {
+  getOpeningsRequiredSkills,
+  getSkillsCatalogue,
+} from "@/modules/jobs/application/openingSkillsRead";
+import type { RequiredSkill } from "@/modules/jobs/domain/openingSkills";
 
 /**
  * Read queries the assistant needs that no screen action already exposes.
@@ -34,6 +42,12 @@ export interface AssistantJobRow {
   sector: string;
   location: string;
   employment_type: string;
+  /**
+   * JUNIOR, MID, SENIOR or LEAD — or null when none was recorded, which also
+   * covers every opening on a database where 033 has not been applied. The
+   * accompanying `termsNote` says which of the two it is.
+   */
+  experience_level: string | null;
   status: string;
   description: string | null;
   requirements: string[];
@@ -42,11 +56,28 @@ export interface AssistantJobRow {
   salary_currency: string | null;
   posted_at: string | null;
   closing_at: string | null;
+  /** Live applicants total — everyone not archived, whatever their stage. */
   applicants: number;
+  /**
+   * Who sits in the funnel being worked, and who is hired.
+   *
+   * The same two stage-grouped counts the openings grid prints beside each
+   * card, so a chat answer cannot report a tally the table splits three ways.
+   * These are populations at an instant — who holds a stage now — never a
+   * movement, a conversion or a rate. The headcount target is deliberately not
+   * here: that column is not applied yet, and the grid reads it in its own
+   * degradable query rather than coupling every opening read to it.
+   */
+  in_pipeline: number;
+  hired: number;
 }
 
+// No `experience_level` in the projection: db/migrations/033_opening_terms.sql is
+// what adds the column, and naming it here would fail every openings read — the
+// list, the count and `update_job`'s pre-read — on a database that has not run it.
+// The level is read by id in `getOpeningTermsByIds` and merged below.
 const JOB_SELECT =
-  "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applications(count)";
+  "id, title, tenant_id, tenants_and_companies(name), department, sector, location, employment_type, status, description, requirements, min_salary_usd, max_salary_usd, salary_currency, posted_at, closing_at, applicants:applications(count), pipeline:applications(count), hired:applications(count)";
 
 interface RawJobRow {
   id: string;
@@ -65,7 +96,9 @@ interface RawJobRow {
   salary_currency: string | null;
   posted_at: string | null;
   closing_at: string | null;
-  applications?: { count: number }[] | null;
+  applicants?: { count: number }[] | null;
+  pipeline?: { count: number }[] | null;
+  hired?: { count: number }[] | null;
 }
 
 function companyNameOf(row: RawJobRow): string | null {
@@ -74,7 +107,7 @@ function companyNameOf(row: RawJobRow): string | null {
   return typeof name === "string" && name !== "" ? name : null;
 }
 
-function toJob(row: RawJobRow): AssistantJobRow {
+function toJob(row: RawJobRow, experienceLevel: string | null = null): AssistantJobRow {
   return {
     id: row.id,
     title: row.title,
@@ -84,6 +117,7 @@ function toJob(row: RawJobRow): AssistantJobRow {
     sector: row.sector ?? "",
     location: row.location ?? "",
     employment_type: row.employment_type ?? "",
+    experience_level: experienceLevel,
     status: row.status ?? "DRAFT",
     description: row.description,
     requirements: Array.isArray(row.requirements) ? row.requirements : [],
@@ -92,7 +126,9 @@ function toJob(row: RawJobRow): AssistantJobRow {
     salary_currency: row.salary_currency,
     posted_at: row.posted_at,
     closing_at: row.closing_at,
-    applicants: row.applications?.[0]?.count ?? 0,
+    applicants: row.applicants?.[0]?.count ?? 0,
+    in_pipeline: row.pipeline?.[0]?.count ?? 0,
+    hired: row.hired?.[0]?.count ?? 0,
   };
 }
 
@@ -119,6 +155,40 @@ export interface AssistantJobRead {
   companyName: string | null;
   /** True when a company id was passed and no company carries it. */
   unknownCompany: boolean;
+  /**
+   * Why no level could be read — the database has no seniority column to read —
+   * or null when the column was readable. Without this every
+   * `experience_level: null` reads as "none was recorded", which is a different
+   * fact from "there is nowhere to record one".
+   */
+  termsNote: string | null;
+}
+
+/**
+ * One requirement row with the catalogue's word for it.
+ *
+ * The id travels because a chat edit sends the list back, and the name because a
+ * uuid in a spoken answer is not a skill anyone can read. `name` is null only
+ * when the catalogue itself could not be read — a stored row's foreign key means
+ * the skills table has the row, retired or not.
+ */
+export type AssistantRequiredSkill = RequiredSkill & { name: string | null };
+
+/** One opening with the same schema honesty the list carries. */
+export interface AssistantJobDetail {
+  job: AssistantJobRow;
+  termsNote: string | null;
+  /** The requisition's skill list, or empty when it asks for nothing. */
+  requiredSkills: AssistantRequiredSkill[];
+  /**
+   * Why the list is empty when it is empty for a reason other than the opening.
+   *
+   * `job_opening_skills` ships ahead of its ALTER (037 is authored, not applied),
+   * so on this database an empty list and a table that cannot be read look alike
+   * to everything above. The note says which of the two the recruiter is being
+   * told about; null when the read worked.
+   */
+  skillsNote: string | null;
 }
 
 /**
@@ -127,19 +197,18 @@ export interface AssistantJobRead {
  * Both rails that light by company id, the openings grid and the candidates
  * table, have to tell "this company has nobody in it" apart from "no company
  * carries that id", and a read of the child rows cannot: an empty set looks the
- * same either way. So the id is looked up on its own before anything is counted,
+ * same either way. So the id is named on its own before anything is counted,
  * and a caller turns `null` into a refusal rather than an empty list.
+ *
+ * The read itself belongs to the repositories layer, with the two other doors
+ * that ask it. Here a refused read is a thrown one, because the chat's answer is
+ * built further up and has nowhere to put a half-read scope.
  */
 export async function companyNameById(id: string): Promise<string | null> {
-  const supabase = await createSupabaseServerClient();
-  const one = await supabase
-    .from("tenants_and_companies")
-    .select("name")
-    .eq("id", id)
-    .maybeSingle();
-  if (one.error) throw new Error(`That company could not be read: ${one.error.message}`);
-  const name = (one.data as { name?: string } | null)?.name;
-  return typeof name === "string" && name !== "" ? name : null;
+  const restClient = await createServerRestClient();
+  const found = await readCompanyNameById(restClient, id);
+  if (!found.ok) throw new Error(found.error);
+  return found.name;
 }
 
 /** Openings newest first, with their live applicant count and the set's size. */
@@ -148,18 +217,18 @@ export async function listJobOpenings(
   companyId: string | null = null
 ): Promise<AssistantJobRead> {
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The company is named before its openings are counted, and an id no company
   // carries is reported rather than answered with an empty list a caller could
   // mistake for "that company has nothing".
   const companyName = companyId ? await companyNameById(companyId) : null;
   if (companyId && !companyName) {
-    return { jobs: [], total: 0, companyName: null, unknownCompany: true };
+    return { jobs: [], total: 0, companyName: null, unknownCompany: true, termsNote: null };
   }
 
-  const rowsQuery = supabase.from("job_openings").select(JOB_SELECT);
-  const countQuery = supabase.from("job_openings").select("id", { count: "exact", head: true });
+  const rowsQuery = restClient.from("job_openings").select(JOB_SELECT);
+  const countQuery = restClient.from("job_openings").select("id", { count: "exact", head: true });
   // `null` adds no status predicate at all. `.eq("status", null)` would send
   // `status=eq.null`, and Postgres rejects that for the enum with
   // `invalid input value for enum job_status: "null"` — probed on the live pool.
@@ -181,13 +250,22 @@ export async function listJobOpenings(
 
   const [rows, count] = await Promise.all([
     scoped.rows
-      .is("applications.archived_at", null)
+      // The three count embeds each carry their own filter on the dotted alias
+      // key — the form PostgREST accepts; the inline `applications(count,stage.eq…)`
+      // is rejected. `applicants` is every live candidate, `pipeline` the stages
+      // still being worked, `hired` the HIRED rows. The head count below selects
+      // only `id`, so it carries none of these and stays the set's full size.
+      .is("applicants.archived_at", null)
+      .is("pipeline.archived_at", null)
+      .in("pipeline.stage", IN_PIPELINE_STAGES)
+      .is("hired.archived_at", null)
+      .eq("hired.stage", HIRED_STAGE)
       .order("created_at", { ascending: false })
       .limit(OPENING_READ_LIMIT),
-    // The same parent predicate, counted. A head count cannot carry the nested
-    // filter above: probed on the live pool, `applications.archived_at` on a
-    // `count()` embed returns no number at all. That embed only trims each row's
-    // applicant tally, so it moves no opening in or out of the set.
+    // A head count cannot carry the nested filter above: probed on the live pool,
+    // `applications.archived_at` on a `count()` embed returns no number at all.
+    // The embeds only trim each row's tallies, so they move no opening in or out
+    // of the set `total` describes.
     scoped.count,
   ]);
 
@@ -196,27 +274,68 @@ export async function listJobOpenings(
     console.error("[assistant] opening head count failed:", count.error.message);
   }
 
+  const rowData = (rows.data ?? []) as unknown as RawJobRow[];
+  // Asked for by the ids this read actually holds, so a company- or status-
+  // scoped list gets its own rows' levels rather than whichever openings happen
+  // to be newest. A missing column leaves every level null and says why.
+  const terms = await getOpeningTermsByIds(
+    restClient,
+    rowData.map((row) => row.id)
+  );
+
   return {
-    jobs: ((rows.data ?? []) as unknown as RawJobRow[]).map(toJob),
+    jobs: rowData.map((row) => toJob(row, terms.experienceById.get(row.id) ?? null)),
     // A failed head count leaves nothing truer than the rows in hand.
-    total: count.count ?? (rows.data ?? []).length,
+    total: count.count ?? rowData.length,
     companyName,
     unknownCompany: false,
+    termsNote: terms.note,
   };
 }
 
 /** One opening in full — what `update_job` needs before it changes a field. */
-export async function getJobOpening(jobId: string): Promise<AssistantJobRow | null> {
+export async function getJobOpening(jobId: string): Promise<AssistantJobDetail | null> {
   await requireStaff("/jobs");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select(JOB_SELECT)
-    .is("applications.archived_at", null)
+    // The same three aliased embeds as the grid read, so `get_job` and
+    // `update_job` see one opening's funnel the way the list does. JOB_SELECT
+    // no longer carries a plain `applications` alias, so a filter on that key
+    // would be rejected here too.
+    .is("applicants.archived_at", null)
+    .is("pipeline.archived_at", null)
+    .in("pipeline.stage", IN_PIPELINE_STAGES)
+    .is("hired.archived_at", null)
+    .eq("hired.stage", HIRED_STAGE)
     .eq("id", jobId)
     .maybeSingle();
 
   if (error) throw new Error(`That opening could not be read: ${error.message}`);
-  return data ? toJob(data as unknown as RawJobRow) : null;
+  if (!data) return null;
+
+  const terms = await getOpeningTermsByIds(restClient, [jobId]);
+  // The skill list is a third degradable read, for the third unapplied file. It
+  // is asked for by this opening's id, the same way the level is, so nothing here
+  // can describe a different window of openings.
+  const skills = await getOpeningsRequiredSkills(restClient, [jobId]);
+  const rows = skills.requiredById.get(jobId) ?? [];
+  // The catalogue is only worth a query when there is something to name: an
+  // opening that asks for nothing has no ids to translate.
+  const catalogue = rows.length > 0 ? await getSkillsCatalogue(restClient) : null;
+  const names = new Map((catalogue?.all ?? []).map((skill) => [skill.id, skill.name]));
+
+  return {
+    job: toJob(data as unknown as RawJobRow, terms.experienceById.get(jobId) ?? null),
+    termsNote: terms.note,
+    requiredSkills: rows.map((row) => ({
+      skill_id: row.skill_id,
+      name: names.get(row.skill_id) ?? null,
+      required_level: row.required_level,
+      source: row.source,
+    })),
+    skillsNote: skills.note ?? catalogue?.note ?? null,
+  };
 }

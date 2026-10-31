@@ -1,0 +1,64 @@
+"use server";
+
+import { requireStaff } from "@/lib/auth/session";
+import {
+  jarvisPresenceForViewer,
+  saveJarvisPrefs,
+  type JarvisUnarmed,
+  type SavedJarvisPrefs,
+} from "@/modules/assistant/application/jarvisSettings";
+import type { JarvisPrefs } from "@/modules/assistant/domain/jarvis";
+import type { VoiceCommand } from "@/modules/assistant/domain/commands";
+import { readVoiceCommands } from "@/modules/assistant/application/jarvisCommands";
+import {
+  readJarvisAppearance,
+  saveJarvisAppearance,
+  type JarvisAppearanceRead,
+  type SavedJarvisAppearance,
+} from "@/modules/assistant/application/jarvisAppearanceSettings";
+
+export async function getJarvisAppearance(): Promise<JarvisAppearanceRead> {
+  const user = await requireStaff("/assistant");
+  return readJarvisAppearance(user.profileId);
+}
+
+export async function setJarvisAppearance(draft: unknown): Promise<SavedJarvisAppearance> {
+  await requireStaff("/settings?area=assistant&section=appearance");
+  return saveJarvisAppearance(draft);
+}
+
+/**
+ * What the presence may do, as the browser is allowed to see it.
+ *
+ * The row's owner is the only person who reads it this way, and the profile id
+ * travels with it so a briefing's "already given today" is keyed to the person,
+ * not to whichever browser they happen to be using.
+ */
+export type PresenceRead =
+  | { ok: true; profileId: string; prefs: JarvisPrefs; commands: VoiceCommand[] }
+  | { ok: false; profileId?: string; reason: JarvisUnarmed["reason"]; message: string };
+
+export async function getJarvisPresence(): Promise<PresenceRead> {
+  const user = await requireStaff("/assistant");
+  const [seen, commands] = await Promise.all([
+    jarvisPresenceForViewer(),
+    readVoiceCommands(),
+  ]);
+  if ("reason" in seen) return { ok: false, profileId: user.profileId, ...seen };
+  return { ok: true, profileId: user.profileId, prefs: seen, commands: commands.commands };
+}
+
+/**
+ * Saving one's own presence.
+ *
+ * `consentGiven` is the browser's claim that the audio explanation was heard; the
+ * application layer stamps the moment and refuses to arm the microphone without
+ * one, so a claim made here cannot reach the row on its own.
+ */
+export async function setJarvisPresence(
+  draft: Record<string, unknown>,
+  consentGiven: boolean
+): Promise<SavedJarvisPrefs> {
+  await requireStaff("/settings?area=assistant&section=presence");
+  return saveJarvisPrefs(draft, { consentGiven: consentGiven === true });
+}

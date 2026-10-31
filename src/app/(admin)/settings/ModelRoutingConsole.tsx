@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   Activity,
@@ -10,274 +10,50 @@ import {
   Loader2,
   Maximize,
   RefreshCw,
-  Route,
   Sparkles,
-  Tag,
   TriangleAlert,
   XCircle,
-  Zap,
-  type LucideIcon,
+  Zap
 } from "lucide-react";
 import {
   getModelCatalogue,
   listModelRouting,
-  saveModelRouting,
-  type AiModelRow,
+  saveModelRouting
 } from "@/modules/settings/application/credential-actions";
 import {
   testAllProviders,
   testCapability,
-  type ChainTestResult,
-  type ProviderTestResult,
+  type ProviderTestResult
 } from "@/modules/settings/application/credential-actions-ai";
 import {
   AI_CAPABILITIES,
   groupModelsByProviderAndCost,
-  type CostTier,
   type ModelCatalogue,
   type ProviderModel,
   getModelById,
   costTierLabel,
-  getCostTier,
+  getCostTier
 } from "@/modules/settings/domain/providers";
 import { modelSearchWords, searchModels } from "@/modules/settings/domain/modelSearch";
+import {
+  ROUTING_FALLBACK,
+  ROUTING_PROVIDER_NAMES,
+  TRANSCRIPTION_CAPABILITY,
+  acceptsAudio,
+  routeFor,
+} from "@/modules/settings/domain/modelRouting";
 import {
   MODEL_CONSOLE_TAB_IDS,
   MODEL_CONSOLE_TABS,
   modelConsoleTab,
-  type ModelConsoleTabId,
+  type ModelConsoleTabId
 } from "@/modules/settings/domain/settingsNav";
 import { Button } from "@/modules/analytics/presentation/ui";
 import { Field, FormMessage, Select, TextInput } from "@/modules/analytics/presentation/Form";
 import { cn } from "@/lib/utils";
-
-interface ModelRow extends AiModelRow {
-  status: "idle" | "saving" | "saved" | "error";
-  message?: string;
-  /** Result of the most recent live probe for this capability. */
-  probe?: ChainTestResult;
-  probing?: boolean;
-}
-
-/** Typed by the shared tab ids, so a tab added to the table has to be given an icon here. */
-const TAB_ICONS: Record<ModelConsoleTabId, LucideIcon> = {
-  routing: Route,
-  catalogue: Sparkles,
-  providers: Activity,
-};
-
-function ProbeBadge({ result }: { result: ChainTestResult }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold",
-        result.ok ? "bg-emerald-500/12 text-emerald-700" : "bg-rose-500/12 text-rose-700"
-      )}
-      title={result.detail}
-    >
-      {result.ok ? (
-        <CheckCircle2 className="h-3 w-3" aria-hidden />
-      ) : (
-        <XCircle className="h-3 w-3" aria-hidden />
-      )}
-      {result.ok ? `${result.servedBy} · ${result.latencyMs}ms` : result.status}
-    </span>
-  );
-}
-
-function priceLabel(value: number | null): string {
-  if (value === null) return "—";
-  if (value === 0) return "free";
-  return `$${value < 1 ? value.toFixed(2) : value.toFixed(0)}/M`;
-}
-
-function contextLengthLabel(length: number | null): string {
-  if (length === null || length === 0) return "—";
-  if (length >= 1_000_000) return `${(length / 1_000_000).toFixed(1)}M`;
-  if (length >= 1000) return `${(length / 1000).toFixed(0)}K`;
-  return length.toString();
-}
-
-const COST_TIERS: CostTier[] = ["free", "low", "medium", "high", "premium", "unpriced"];
-
-function costTierBadge(tier: CostTier) {
-  const colors: Record<CostTier, string> = {
-    free: "bg-emerald-500/10 text-emerald-700 border-emerald-200",
-    low: "bg-teal-500/10 text-teal-700 border-teal-200",
-    medium: "bg-amber-500/10 text-amber-700 border-amber-200",
-    high: "bg-rose-500/10 text-rose-700 border-rose-200",
-    premium: "bg-purple-500/10 text-purple-700 border-purple-200",
-    unpriced: "bg-brand-sand text-brand-ink/55 border-brand-line",
-  };
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-        colors[tier]
-      )}
-    >
-      <Tag className="h-2.5 w-2.5" aria-hidden />
-      {costTierLabel(tier)}
-    </span>
-  );
-}
-
-/** The subset of fields that constitute a row's saved state. */
-function snapshot(row: ModelRow) {
-  return JSON.stringify({
-    p: row.primaryModel,
-    f: row.fallbackModel,
-    t: row.temperature,
-    m: row.maxTokens,
-    e: row.isEnabled,
-  });
-}
-
-function DetailStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-brand-cream/50 p-3.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
-        <Icon className="h-3 w-3" aria-hidden />
-        {label}
-      </div>
-      <p className="truncate text-base font-display font-bold text-brand-ink">{value}</p>
-    </div>
-  );
-}
-
-/**
- * One catalogue tile — enough to choose from at a glance, and it opens the
- * detail modal, which is where the routing decision is actually made.
- *
- * Memoised because one state owner renders both tabs: without it, typing a
- * temperature re-created every visible tile.
- */
-const CatalogueCard = memo(function CatalogueCard({
-  model,
-  onOpen,
-}: {
-  model: ProviderModel;
-  onOpen: (model: ProviderModel) => void;
-}) {
-  return (
-    <button
-      onClick={() => onOpen(model)}
-      className="flex items-start gap-3 rounded-xl border border-brand-line bg-white p-3.5 text-left transition hover:border-brand-gold/50 hover:shadow-soft"
-    >
-      <div className="mt-0.5 shrink-0">
-        {model.isFree ? (
-          <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden />
-        ) : (
-          <DollarSign className="h-4 w-4 text-amber-600" aria-hidden />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <p className="truncate text-sm font-bold text-brand-ink">{model.name}</p>
-          {model.isFree && (
-            <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700">
-              Free
-            </span>
-          )}
-          {!model.routable && (
-            <span className="shrink-0 rounded bg-brand-sand px-1.5 py-0.5 text-[9px] font-bold uppercase text-brand-ink/55">
-              Not routable
-            </span>
-          )}
-          {model.enabled === false && (
-            <span className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-rose-700">
-              Off for this account
-            </span>
-          )}
-        </div>
-        <p className="truncate text-xs font-mono text-brand-ink/50">{model.modelId}</p>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {costTierBadge(getCostTier(model.promptPrice, model.isFree))}
-          {model.promptPrice !== null && (
-            <span className="text-[10px] font-semibold text-brand-ink/55">
-              {priceLabel(model.promptPrice)} in
-            </span>
-          )}
-        </div>
-        {model.detail && (
-          <p className="mt-1.5 truncate text-[11px] text-brand-ink/50" title={model.detail}>
-            {model.detail}
-          </p>
-        )}
-      </div>
-    </button>
-  );
-});
-
-/**
- * Routes the catalogue model open in the detail modal to a capability.
- * Assignments save immediately — this is the quick path, not a draft.
- */
-function QuickAssign({
-  model,
-  rows,
-  editable,
-  onAssign,
-}: {
-  model: ProviderModel;
-  rows: ModelRow[];
-  editable: boolean;
-  onAssign: (capability: string, field: "primary" | "fallback") => void;
-}) {
-  const [capability, setCapability] = useState(rows[0]?.capability ?? "");
-
-  if (rows.length === 0) {
-    return (
-      <p className="text-sm text-brand-ink/55">
-        No routable capabilities yet — they appear once the routing table loads.
-      </p>
-    );
-  }
-
-  const row = rows.find((r) => r.capability === capability);
-  const isPrimary = row?.primaryModel === model.modelId;
-  const isFallback = row?.fallbackModel === model.modelId;
-
-  return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-      <Field label="Capability" htmlFor="quick-assign-capability" className="sm:max-w-xs sm:flex-1">
-        <Select
-          id="quick-assign-capability"
-          value={capability}
-          disabled={!editable}
-          onChange={(e) => setCapability(e.target.value)}
-        >
-          {AI_CAPABILITIES.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-        </Select>
-      </Field>
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!editable || isPrimary}
-          onClick={() => onAssign(capability, "primary")}
-        >
-          {isPrimary && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden />}
-          {isPrimary ? "Is primary" : "Set as primary"}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!editable || isFallback}
-          onClick={() => onAssign(capability, "fallback")}
-        >
-          {isFallback && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden />}
-          {isFallback ? "Is fallback" : "Set as fallback"}
-        </Button>
-      </div>
-      <p className="text-[11px] text-brand-ink/45 sm:pb-2.5">Saves immediately.</p>
-    </div>
-  );
-}
+import { CatalogueCard } from "./ModelCatalogueCard";
+import { QuickAssign } from "./ModelQuickAssign";
+import { COST_TIERS, DetailStat, type ModelRow, ProbeBadge, TAB_ICONS, contextLengthLabel, costTierBadge, priceLabel, snapshot } from "./ModelRoutingBits";
 
 /**
  * Per-capability model routing.
@@ -566,7 +342,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
    * gating the whole console on them held an empty spinner for twenty seconds.
    * The cards paint from the table, then the model list fills in behind them.
    * Routing rows are keyed off AI_CAPABILITIES so a capability that has never
-   * been saved still gets an editable card.
+   * been saved still gets an editable card showing the resolver's defaults.
    */
   useEffect(() => {
     let active = true;
@@ -581,11 +357,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             ? { ...stored, status: "idle" as const }
             : {
                 capability: capability.id,
-                primaryModel: "",
-                fallbackModel: null,
-                temperature: 0.3,
-                maxTokens: 1200,
-                isEnabled: true,
+                primaryModel: ROUTING_FALLBACK.primaryModel,
+                fallbackModel: ROUTING_FALLBACK.fallbackModel,
+                temperature: ROUTING_FALLBACK.temperature,
+                maxTokens: ROUTING_FALLBACK.maxTokens,
+                isEnabled: ROUTING_FALLBACK.enabled,
+                inferred: true,
                 updatedAt: new Date().toISOString(),
                 status: "idle" as const,
               };
@@ -676,7 +453,9 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       if (result.ok) {
         setSaved((s) => ({ ...s, [row.capability]: snapshot(row) }));
         setRows((rs) =>
-          rs.map((r) => (r.capability === row.capability ? { ...r, status: "saved" } : r))
+          rs.map((r) =>
+            r.capability === row.capability ? { ...r, status: "saved", inferred: false } : r
+          )
         );
         setTimeout(
           () =>
@@ -1290,9 +1069,10 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
       >
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand-line bg-white px-4 py-3">
           <p className="text-sm text-brand-ink/60">
-            One card per AI task: the <strong>primary</strong> model answers every request and the{" "}
-            <strong>fallback</strong> takes it over when the primary fails. Temperature and the token
-            cap are stored with the row, and the gateway reads them on the next call.
+            Saved models are tried first when enabled, followed by built-in fallbacks. Turning off
+            saved models does not turn off AI. A task with no saved row shows the resolver defaults.
+            Temperature and token limits apply to text calls unless the caller overrides them;
+            Qoder manages its own sampling. Test uses saved values, not unsaved edits.
           </p>
           {unsavedCount > 0 ? (
             <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-800">
@@ -1300,7 +1080,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
             </span>
           ) : (
             <span className="shrink-0 rounded-full bg-brand-sand px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand-ink/55">
-              Everything saved
+              No unsaved changes
             </span>
           )}
         </div>
@@ -1325,6 +1105,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
           const definition = AI_CAPABILITIES.find((c) => c.id === row.capability);
           const dirty = saved[row.capability] !== snapshot(row);
           const model = getModelById(row.primaryModel, catalogue?.models);
+          const isTranscription = row.capability === TRANSCRIPTION_CAPABILITY;
+          const audioUnusable = isTranscription
+            ? [row.primaryModel, row.fallbackModel]
+                .filter((id): id is string => !!id && !acceptsAudio(id))
+                .map((id) => `${id} (${ROUTING_PROVIDER_NAMES[routeFor(id).provider]})`)
+            : [];
 
           return (
             <div
@@ -1345,7 +1131,15 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     </h3>
                     {!row.isEnabled && (
                       <span className="rounded bg-rose-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-rose-700">
-                        Disabled
+                        Built-in models
+                      </span>
+                    )}
+                    {row.inferred && (
+                      <span
+                        className="rounded bg-brand-sand px-2 py-0.5 text-[10px] font-bold uppercase text-brand-ink/55"
+                        title="No row is saved for this task. These are the values the gateway falls back to."
+                      >
+                        Nothing saved
                       </span>
                     )}
                   </div>
@@ -1366,10 +1160,26 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                         )}
                       </>
                     ) : (
-                      <span className="italic">No primary model yet — choose one below and save.</span>
+                      <span className="font-mono">{row.primaryModel || "No primary model selected."}</span>
                     )}
                     {row.probe && <ProbeBadge result={row.probe} />}
                   </div>
+
+                  {isTranscription && (
+                    <p className="mt-3 rounded-xl bg-brand-sand px-3 py-2 text-xs leading-relaxed text-brand-ink/70">
+                      Recordings use the Google Gemini audio path. When enabled, compatible saved
+                      picks lead, followed by the built-in Gemini list. Audio uses temperature 0 and
+                      a 2,000-token limit; the fields below affect only the text probe for this task.
+                      Test sends text, not a recording, so it does not verify transcription.
+                    </p>
+                  )}
+                  {audioUnusable.length > 0 && (
+                    <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                      <TriangleAlert className="mr-1.5 inline h-3.5 w-3.5" aria-hidden />
+                      Skipped by the audio path: {audioUnusable.join("; ")}. Choose native Google
+                      Gemini models, or clear the fallback. Built-in Gemini models remain available.
+                    </p>
+                  )}
                 </div>
 
                 <label className="flex shrink-0 items-center gap-2 rounded-lg border border-brand-line bg-white px-3 py-2 text-xs font-semibold">
@@ -1380,12 +1190,12 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                     onChange={(e) => patch(row.capability, { isEnabled: e.target.checked })}
                     className="h-4 w-4 rounded border-brand-line"
                   />
-                  Enabled
+                  Use saved models
                 </label>
               </div>
 
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                <Field label="Primary model" htmlFor={`model-${row.capability}`} hint="Model used for every request.">
+                <Field label="Primary model" htmlFor={`model-${row.capability}`} hint="The model the gateway asks first.">
                   <div className="relative">
                     <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
                     <Select
@@ -1409,7 +1219,7 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                 <Field
                   label="Fallback model"
                   htmlFor={`fallback-${row.capability}`}
-                  hint="Used automatically when the primary fails."
+                  hint="The model it asks when the primary fails."
                 >
                   <div className="relative">
                     <Sparkles className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-ink/40" aria-hidden />
@@ -1464,8 +1274,11 @@ export function ModelRoutingConsole({ editable }: { editable: boolean }) {
                 </Field>
               </div>
 
-              {row.probe && !row.probe.ok && (
-                <p className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] leading-relaxed text-rose-800">
+              {row.probe && (!row.probe.ok || isTranscription) && (
+                <p className={cn(
+                  "mt-2 rounded-lg border px-3 py-2 text-[11px] leading-relaxed",
+                  row.probe.ok ? "border-brand-line bg-brand-sand text-brand-ink/70" : "border-rose-200 bg-rose-50 text-rose-800"
+                )}>
                   {row.probe.detail}
                 </p>
               )}

@@ -14,9 +14,10 @@ import "server-only";
  * an empty result is reported as the failure it is.
  */
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { dayKeyInZone, formatInZone, fromZoneInputValue } from "@/lib/timezone";
 import {
+  DEFAULT_SCOPE,
   isTimeScope,
   timeWindow,
   isTimeCategory,
@@ -48,7 +49,7 @@ export function ledgerCut(
   scopeNote: string;
 } {
   const window = timeWindow(raw.window).key;
-  const scope: TimeScope = isTimeScope(raw.scope) ? raw.scope : "mine";
+  const scope: TimeScope = isTimeScope(raw.scope) ? raw.scope : DEFAULT_SCOPE;
   const days = timeWindow(window).days;
 
   const firstDay = dayKeyInZone(
@@ -74,7 +75,7 @@ const EMBEDDED =
   "started_at, ended_at, user_profiles(full_name), job_openings(title), applications(full_name)";
 
 export const LEDGER_NOT_PROVISIONED =
-  "The time ledger has not been created yet. Apply supabase/migrations/025_time_entries.sql, then reload this page.";
+  "The time ledger has not been created yet. Apply db/migrations/025_time_entries.sql, then reload this page.";
 
 /** A joined one-to-one comes back as an object, an array or null depending on the driver. */
 type Embed = Record<string, unknown> | Record<string, unknown>[] | null | undefined;
@@ -153,6 +154,16 @@ function explain(error: { message?: string } | null, fallback: string): string |
 
 export interface LedgerRead {
   entries: TimeEntry[];
+  /**
+   * Every span the window and scope hold, counted by the database.
+   *
+   * Separate from `entries` because the read is capped: a screen that listed
+   * only what it loaded would call 1,000 spans "the week" when the week holds
+   * three times that. `null` only if the transport lost the count header.
+   */
+  total: number | null;
+  /** How many of those spans this read actually carries, newest first. */
+  carried: number;
   error: string | null;
 }
 
@@ -172,17 +183,20 @@ export async function readLedger(options: {
   /** The caller's own profile, whose running row is never filtered away. */
   callerStaffId: string;
 }): Promise<LedgerRead> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  let listed = supabase
+  let listed = restClient
     .from("time_entries")
-    .select(EMBEDDED)
+    // `count: "exact"` is what lets the screen and a download say how much of
+    // the cut the 1,000-row ceiling left behind, instead of calling the loaded
+    // rows the whole window.
+    .select(EMBEDDED, { count: "exact" })
     .order("started_at", { ascending: false })
     .limit(MAX_ROWS);
   if (options.since) listed = listed.gte("started_at", options.since);
   if (options.staffId) listed = listed.eq("staff_id", options.staffId);
 
-  const running = supabase
+  const running = restClient
     .from("time_entries")
     .select(EMBEDDED)
     .is("ended_at", null)
@@ -195,23 +209,31 @@ export async function readLedger(options: {
   const failure =
     explain(listResult.error, "The ledger could not be read") ??
     explain(runningResult.error, "The running timer could not be read");
-  if (failure) return { entries: [], error: failure };
+  if (failure) return { entries: [], total: null, carried: 0, error: failure };
 
+  const listedRows = asRows(listResult.data);
   const byId = new Map<string, TimeEntry>();
   for (const row of asRows(runningResult.data)) byId.set(row.id, toEntry(row));
-  for (const row of asRows(listResult.data)) byId.set(row.id, toEntry(row));
+  for (const row of listedRows) byId.set(row.id, toEntry(row));
 
   const entries = [...byId.values()].sort((a, b) =>
     a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0
   );
 
-  return { entries, error: null };
+  return {
+    entries,
+    // The transport reads the total from Content-Range; when it is absent the
+    // count is unknown rather than equal to what was loaded.
+    total: listResult.count,
+    carried: listedRows.length,
+    error: null,
+  };
 }
 
 /** One entry, for a write that has to describe what it changed. */
 export async function readEntry(id: string): Promise<TimeEntry | null> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("time_entries")
     .select(EMBEDDED)
     .eq("id", id)
@@ -247,7 +269,7 @@ export interface NewEntry {
  * so the start is the database's instant, like the end is.
  */
 export async function insertEntry(entry: NewEntry): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const row = {
     staff_id: entry.staffId,
@@ -261,7 +283,7 @@ export async function insertEntry(entry: NewEntry): Promise<LedgerWrite> {
     ...(entry.startedAt ? { started_at: entry.startedAt } : {}),
   };
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("time_entries")
     .insert(row)
     .select(EMBEDDED);
@@ -281,7 +303,7 @@ export async function updateEntry(
   id: string,
   patch: Partial<Omit<NewEntry, "staffId" | "companyId">>
 ): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const body: Record<string, unknown> = {};
   if (patch.category !== undefined) body.category = patch.category;
@@ -294,7 +316,7 @@ export async function updateEntry(
 
   if (Object.keys(body).length === 0) return { ok: true };
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("time_entries")
     .update(body)
     .eq("id", id)
@@ -319,8 +341,8 @@ export async function updateEntry(
  * applies.
  */
 export async function stopEntry(id: string): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase.rpc("stop_time_entry", { entry_id: id });
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient.rpc("stop_time_entry", { entry_id: id });
 
   const refusal = explain(error, "That timer could not be stopped");
   if (refusal) return { ok: false, error: refusal };
@@ -339,8 +361,8 @@ export async function stopEntry(id: string): Promise<LedgerWrite> {
  * outlives them.
  */
 export async function deleteEntry(id: string): Promise<LedgerWrite> {
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("time_entries")
     .delete()
     .eq("id", id)

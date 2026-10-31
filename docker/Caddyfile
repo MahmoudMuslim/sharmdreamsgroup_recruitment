@@ -1,0 +1,21 @@
+# Local gateway. On KVM2 the site address gains a real hostname and Caddy's
+# automatic TLS; the routing below does not change.
+:8080 {
+	encode gzip
+
+	# handle_path strips the matched prefix, so /rest/v1/users arrives at
+	# PostgREST as /users — which is what a Supabase-shaped base URL implies.
+	handle_path /rest/v1/* {
+		reverse_proxy rest:3000
+	}
+
+	# A bare `respond /healthz` sorts AFTER the catch-all `handle` below and
+	# could never be reached (measured: 404). It needs its own handle block.
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "sharm-dreams gateway - REST API is under /rest/v1/" 404
+	}
+}

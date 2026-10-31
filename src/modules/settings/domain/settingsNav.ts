@@ -14,7 +14,7 @@ import type { NotificationChannel } from "./types";
  * state, so the panels stay server-rendered and a deep link to
  * `/settings?area=providers&section=models` opens exactly what it says.
  */
-export type SettingsAreaId = "platform" | "organisation" | "access" | "providers";
+export type SettingsAreaId = "platform" | "organisation" | "access" | "providers" | "assistant";
 
 export interface SettingsNavSection {
   id: string;
@@ -58,6 +58,12 @@ const ORGANISATION_SECTIONS: SettingsNavSection[] = [
     icon: "briefcase",
   },
   {
+    id: "positions",
+    label: "Positions",
+    hint: "The posts the group hires for, and the vacancy copy a new opening starts from.",
+    icon: "clipboard",
+  },
+  {
     id: "skills",
     label: "Skills",
     hint: "Shared skill vocabulary. Feeds AI screening, skill-gap analysis and reporting.",
@@ -90,6 +96,12 @@ const ACCESS_SECTIONS: SettingsNavSection[] = [
     hint: "The wording candidates receive at each pipeline stage.",
     icon: "bell",
   },
+  {
+    id: "languages",
+    label: "Languages",
+    hint: "The interface wording in each language, and the overrides that replace what the build ships.",
+    icon: "languages",
+  },
 ];
 
 const PROVIDER_SECTIONS: SettingsNavSection[] = [
@@ -104,6 +116,28 @@ const PROVIDER_SECTIONS: SettingsNavSection[] = [
     label: "AI models",
     hint: "Which model answers each AI task, with a fallback per task.",
     icon: "cpu",
+  },
+];
+
+/** Personal orb preferences and commands have their own access rules, outside app_settings. */
+const ASSISTANT_SECTIONS: SettingsNavSection[] = [
+  {
+    id: "presence",
+    label: "JARVIS presence",
+    hint: "What the orb may hear on any admin screen, when it may speak first, and the hours it stays quiet.",
+    icon: "sparkles",
+  },
+  {
+    id: "appearance",
+    label: "JARVIS appearance",
+    hint: "The orb's five colours, eight motions, quality and breath, previewed before they are saved.",
+    icon: "palette",
+  },
+  {
+    id: "commands",
+    label: "Voice commands",
+    hint: "Phrases you save to open a page, ask a question, run a tool or say a line.",
+    icon: "mic",
   },
 ];
 
@@ -160,6 +194,13 @@ export const SETTINGS_NAV: readonly SettingsNavArea[] = [
     blurb: "Credentials and per-task model routing for the AI providers and channels in use.",
     sections: PROVIDER_SECTIONS,
   },
+  {
+    id: "assistant",
+    label: "Assistant",
+    icon: "sparkles",
+    blurb: "Your own orb: when it may listen or speak, and what it looks like while it does.",
+    sections: ASSISTANT_SECTIONS,
+  },
 ];
 
 export const DEFAULT_AREA: SettingsAreaId = "platform";
@@ -168,6 +209,7 @@ export const DEFAULT_SECTION: Record<SettingsAreaId, string> = {
   organisation: "departments",
   access: "permissions",
   providers: "credentials",
+  assistant: "presence",
 };
 
 export function areaById(id: string | undefined | null): SettingsNavArea {
@@ -281,4 +323,20 @@ export function templatesTab(id: string | undefined | null): TemplatesTabId {
  */
 export function credentialsTab(id: string | undefined | null): ProviderGroup | null {
   return PROVIDER_GROUPS.find((group) => group.id === id)?.id ?? null;
+}
+
+/**
+ * The two Assistant sections the old JARVIS page's tabs map onto, and the address it means.
+ *
+ * `/assistant/jarvis?tab=appearance` was one page with two tabs; the same two
+ * halves are now sections of this dock, so the tab name has to be translated to a
+ * section rather than appended as a parameter nobody reads. The `state` a deep link
+ * carried travels only with Appearance — Presence has no colours to open on — and
+ * is passed through unvalidated, because the settings page is where the six states
+ * are checked and a second copy of that rule here could disagree with it.
+ */
+export function jarvisSettingsHref(tab: string | undefined | null, state?: string | undefined | null): string {
+  const section = tab === "appearance" ? "appearance" : "presence";
+  const colour = section === "appearance" && typeof state === "string" && state !== "" ? state : null;
+  return settingsHref("assistant", section) + (colour === null ? "" : `&state=${encodeURIComponent(colour)}`);
 }

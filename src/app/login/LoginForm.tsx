@@ -1,46 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useSearchParams } from "next/navigation";
 import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { SdgMark } from "@/modules/analytics/presentation/BrandLogo";
-import { getSupabaseBrowserClient } from "@/lib/supabase/client";
-
-/** Only same-origin relative paths are followed after sign-in. */
-function safeRedirectTarget(raw: string | null): string {
-  if (!raw) return "/dashboard";
-  if (!raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/dashboard";
-  return raw;
-}
+import { signInAction, type SignInState } from "./actions";
 
 export function LoginForm() {
   const searchParams = useSearchParams();
-  const next = safeRedirectTarget(searchParams.get("next"));
+  const next = searchParams.get("next") ?? "/dashboard";
   const idleSignOut = searchParams.get("reason") === "idle";
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [pending, startTransition] = useTransition();
 
-  async function handleEmailPassword(event: React.FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
-    setBusy(true);
-
-    const supabase = getSupabaseBrowserClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
+    const data = new FormData(event.currentTarget);
+    data.set("next", next);
+    startTransition(async () => {
+      const result: SignInState = await signInAction(data);
+      if (result.ok) {
+        window.location.assign(result.next ?? "/dashboard");
+        return;
+      }
+      setError(result.error ?? "Sign-in failed.");
     });
-
-    if (signInError) {
-      setError(signInError.message);
-      setBusy(false);
-      return;
-    }
-
-    window.location.assign(next);
   }
 
   const fieldClass =
@@ -82,7 +68,7 @@ export function LoginForm() {
             </p>
           )}
 
-          <form onSubmit={handleEmailPassword} className="space-y-4">
+          <form onSubmit={onSubmit} className="space-y-4">
             <div>
               <label
                 htmlFor="email"
@@ -96,8 +82,6 @@ export function LoginForm() {
                 type="email"
                 autoComplete="email"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 className={fieldClass}
                 placeholder="you@sharmdreams.com"
               />
@@ -116,8 +100,6 @@ export function LoginForm() {
                 type="password"
                 autoComplete="current-password"
                 required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 className={fieldClass}
                 placeholder="••••••••••"
               />
@@ -125,10 +107,10 @@ export function LoginForm() {
 
             <button
               type="submit"
-              disabled={busy}
+              disabled={pending}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-ink px-5 py-3 text-sm font-bold text-brand-cream shadow-soft transition hover:bg-brand-ink/90 disabled:opacity-60"
             >
-              {busy ? (
+              {pending ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               ) : (
                 <KeyRound className="h-4 w-4" aria-hidden />

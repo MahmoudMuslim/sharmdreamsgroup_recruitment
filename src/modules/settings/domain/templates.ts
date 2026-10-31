@@ -105,11 +105,11 @@ export const ASSESSMENT_INVITE_TEMPLATE = "assessment_invite";
 /**
  * Template key for each pipeline-stage email.
  *
- * Deliberately not a copy of the WhatsApp map: three of these rows already
- * exist in `notification_templates` with letter-style copy and a subject line
- * (`application_received`, `interview_scheduled`, `offer_letter`), so the email
- * channel reads the copy the platform shipped rather than a shortened chat
- * message. Keys with no row fall back to `EMAIL_TEMPLATE_DEFAULTS`.
+ * Deliberately not a copy of the WhatsApp map: three rows the email channel
+ * reads already exist in `notification_templates` with letter-style copy and a
+ * subject line (`application_received`, `interview_scheduled`, `offer_letter`),
+ * so the email channel reads the copy the platform ships rather than a shortened
+ * chat message. Keys with no row fall back to `EMAIL_TEMPLATE_DEFAULTS`.
  */
 export const EMAIL_STAGE_TEMPLATES: Record<string, string> = {
   NEW: "application_received",
@@ -146,6 +146,15 @@ export const EMAIL_SUBJECT_DEFAULTS: Record<string, string> = {
   interview_cancelled: "Interview cancelled — {{job_title}}",
   assessment_invite: "Your assessment for {{job_title}}",
 };
+
+/**
+ * The line an email gets when neither the row nor the table above names one.
+ *
+ * `resolveEmailCopy` has always filled this in, but the shipped-copy lookup used
+ * to answer with an empty string, so a reset could store a blank subject on a
+ * letter that would arrive with a line on it. One constant, both paths.
+ */
+export const EMAIL_SUBJECT_FALLBACK = "An update on your application";
 
 /** Letter-style bodies used when no EMAIL row exists for the key. */
 export const EMAIL_TEMPLATE_DEFAULTS: Record<string, string> = {
@@ -296,26 +305,43 @@ Object.assign(TEMPLATE_PURPOSE, {
     "First-touch WhatsApp message to a LinkedIn-sourced prospect, from the Sourcing board",
 });
 
-/** Every key some channel reads, across all three wired channels. */
-const WIRED_KEYS = new Set<string>([
-  ...Object.values(WHATSAPP_STAGE_TEMPLATES),
-  ...Object.values(WHATSAPP_INTERVIEW_TEMPLATES),
-  ...Object.values(EMAIL_STAGE_TEMPLATES),
-  ...Object.values(PROSPECT_OUTREACH_TEMPLATES),
-  ASSESSMENT_INVITE_TEMPLATE,
-  STAGE_FALLBACK_TEMPLATE,
-]);
+/**
+ * The keys each channel's dispatch asks for, by the channel it filters on.
+ *
+ * `resolveTemplate` reads WhatsApp's list with `.eq("channel", "WHATSAPP")` and
+ * `resolveEmailCopy` reads email's with `.eq("channel", "EMAIL")`, so a key is
+ * only live copy on the channel whose reader names it. An `application_received`
+ * row filed under WhatsApp would sit in a tab and never be looked up.
+ */
+const CHANNEL_TEMPLATE_KEYS: Record<"WHATSAPP" | "EMAIL", readonly string[]> = {
+  WHATSAPP: [
+    ...Object.values(WHATSAPP_STAGE_TEMPLATES),
+    ...Object.values(WHATSAPP_INTERVIEW_TEMPLATES),
+    ASSESSMENT_INVITE_TEMPLATE,
+    STAGE_FALLBACK_TEMPLATE,
+  ],
+  EMAIL: [
+    ...Object.values(EMAIL_STAGE_TEMPLATES),
+    ...Object.values(EMAIL_INTERVIEW_TEMPLATES),
+    ASSESSMENT_INVITE_TEMPLATE,
+    STAGE_FALLBACK_TEMPLATE,
+  ],
+};
 
 /**
  * True when a row actually shapes something the platform sends.
  *
- * WhatsApp and email each have their own key map; an IN_APP row shares the
- * email copy, since the portal shows the letter the candidate was emailed.
- * A key outside those maps is copy no flow asks for.
+ * A key is only live copy on the channel whose dispatch consults it, so this is
+ * a question about the pair, not about the key. The Sourcing board is the one
+ * reader that ignores the channel column — it looks its two prospect rows up by
+ * key alone, so those are read whichever tab they sit on. An `IN_APP` row is read
+ * by nobody: a portal notice is rendered from the email copy, never from a row of
+ * its own, which is what the templates tab's own comment says.
  */
 export function templateIsWired(template: { key: string; channel: string }): boolean {
-  if (!WIRED_KEYS.has(template.key)) return false;
-  return template.channel === "WHATSAPP" || template.channel === "EMAIL" || template.channel === "IN_APP";
+  if (Object.values(PROSPECT_OUTREACH_TEMPLATES).includes(template.key)) return true;
+  const keys = CHANNEL_TEMPLATE_KEYS[template.channel as "WHATSAPP" | "EMAIL"];
+  return Boolean(keys?.includes(template.key));
 }
 
 /**
@@ -349,6 +375,6 @@ export function shippedTemplate(
   // Email and the portal notice share a body; only email has a subject line.
   const body = EMAIL_TEMPLATE_DEFAULTS[key] ?? TEMPLATE_DEFAULTS[key];
   if (!body) return null;
-  return { subject: EMAIL_SUBJECT_DEFAULTS[key] ?? "", body };
+  return { subject: EMAIL_SUBJECT_DEFAULTS[key] ?? EMAIL_SUBJECT_FALLBACK, body };
 }
 

@@ -1,7 +1,7 @@
-import type { createSupabaseServerClient } from "@/lib/supabase/server";
+import type { createServerRestClient } from "@/lib/data-api/server";
 import { closedOpeningRefusal, isHireable } from "@/modules/jobs/domain/hireable";
 
-type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /**
  * The opening a write is about to file someone under — or the sentence that
@@ -15,10 +15,10 @@ type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
  * key inside the insert.
  */
 export async function requireHireableOpening(
-  supabase: StaffClient,
+  restClient: StaffClient,
   jobId: string
 ): Promise<{ ok: true; title: string } | { ok: false; error: string }> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select("title, status")
     .eq("id", jobId)

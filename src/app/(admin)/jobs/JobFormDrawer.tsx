@@ -13,10 +13,23 @@ import {
   TextInput,
 } from "@/modules/analytics/presentation/Form";
 import { createJobOpening, updateJobOpening, type JobDraft } from "./job-actions";
+import { saveOpeningSkills } from "./opening-skills-actions";
+import { JobSkillsField } from "./JobSkillsField";
+import {
+  EMPLOYMENT_TYPES,
+  EXPERIENCE_LEVELS,
+  OPENING_TERMS_MIGRATION,
+} from "@/modules/jobs/domain/openingTerms";
+import {
+  sameRequiredSkills,
+  type CatalogueSkill,
+  type RequiredSkill,
+} from "@/modules/jobs/domain/openingSkills";
 import {
   filingGhostLabel,
   type FilingVocabularies,
 } from "@/modules/settings/domain/masterDataFiling";
+import type { PositionChoice } from "@/modules/settings/domain/types";
 
 export interface JobFormOptions {
   companies: { id: string; name: string; sector: string }[];
@@ -25,6 +38,26 @@ export interface JobFormOptions {
   currencies: { id: string; code: string; symbol: string; label: string }[];
   /** The same four lists with their retired rows, for labelling a legacy value. */
   filing: FilingVocabularies;
+  /** The posts a new opening may start from. Empty while 026 is unapplied. */
+  positions: PositionChoice[];
+  /** False when `positions` could not be read at all — the table does not exist yet. */
+  positionsAvailable: boolean;
+  /**
+   * False where 033 has never run: `experience_level` is not a column and the
+   * employment check still holds four values. The form then offers the four it
+   * can store and no level at all, rather than a picker whose choice the
+   * database would refuse.
+   */
+  termsAvailable: boolean;
+  /**
+   * The skills a requisition may be pointed at — the live catalogue rows, in the
+   * master-data console's own order. Empty when the catalogue could not be read.
+   */
+  skills: CatalogueSkill[];
+  /** The same list with its retired rows, so a skill required before it was struck off is still named. */
+  skillLabels: CatalogueSkill[];
+  /** Non-null when `job_opening_skills` is not on this database: the picker is replaced by this sentence. */
+  skillsNote: string | null;
 }
 
 /** The stored row an edit starts from — only the fields this form can write. */
@@ -36,20 +69,22 @@ export interface JobForEdit {
   sector: string;
   location: string;
   employment_type: string;
+  /** Null on a database without the column, and for an opening nobody gave a level. */
+  experience_level: string | null;
   description: string;
   requirements: string[] | null;
   min_salary_usd: number | null;
   max_salary_usd: number | null;
   salary_currency: string;
   status: string;
+  /**
+   * The rows `job_opening_skills` already holds for this opening, read by the page
+   * beside the row. Empty when the list is empty *and* when 037 is unapplied — the
+   * picker's `note` is what tells the two apart, so an unapplied migration never
+   * reads as a recruiter who chose nothing.
+   */
+  required_skills: RequiredSkill[];
 }
-
-const EMPLOYMENT_TYPES = [
-  { value: "FULL_TIME", label: "Full time" },
-  { value: "PART_TIME", label: "Part time" },
-  { value: "CONTRACT", label: "Contract" },
-  { value: "INTERNSHIP", label: "Internship" },
-];
 
 const STATUSES = [
   { value: "DRAFT", label: "Draft" },
@@ -60,12 +95,19 @@ const STATUSES = [
 
 /** Every field is a string because the salary pair and requirements are edited as text. */
 interface JobFormState {
+  /**
+   * The position a create starts from. Never prefilled on edit: the column may not
+   * exist yet, and an edit does not move an opening's position link.
+   */
+  position_id: string;
   title: string;
   tenant_id: string;
   department: string;
   sector: string;
   location: string;
   employment_type: string;
+  /** Blank means "not recorded", which is what the column stores as null. */
+  experience_level: string;
   description: string;
   requirements: string;
   min_salary_usd: string;
@@ -75,12 +117,14 @@ interface JobFormState {
 }
 
 const EMPTY: JobFormState = {
+  position_id: "",
   title: "",
   tenant_id: "",
   department: "",
   sector: "HOSPITALITY",
   location: "",
   employment_type: "FULL_TIME",
+  experience_level: "",
   description: "",
   requirements: "",
   min_salary_usd: "",
@@ -104,12 +148,15 @@ function createDraft(options: JobFormOptions): JobFormState {
 
 function editDraft(job: JobForEdit): JobFormState {
   return {
+    // An edit keeps the link the opening already has; nothing here reads or moves it.
+    position_id: "",
     title: job.title,
     tenant_id: job.tenant_id,
     department: job.department,
     sector: job.sector,
     location: job.location,
     employment_type: job.employment_type,
+    experience_level: job.experience_level ?? "",
     description: job.description,
     requirements: (job.requirements ?? []).join("\n"),
     min_salary_usd: job.min_salary_usd === null ? "" : String(job.min_salary_usd),
@@ -147,6 +194,15 @@ export function JobFormDrawer({
   const [draft, setDraft] = useState<JobFormState>(() =>
     job ? editDraft(job) : createDraft(options)
   );
+  /**
+   * The skill list, held apart from `draft`.
+   *
+   * It is not a column of `job_openings` and cannot join the payload that writes
+   * one; it goes to its own action, against the id that payload returned. Keeping
+   * it out of `draft` is also what lets the save ask the honest question "did this
+   * list move?" instead of comparing a serialised form state.
+   */
+  const [skills, setSkills] = useState<RequiredSkill[]>(() => job?.required_skills ?? []);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, setPending] = useState(false);
@@ -192,6 +248,38 @@ export function JobFormDrawer({
     }),
   };
 
+  /**
+   * Fills the draft from a position.
+   *
+   * Every inheritable field is replaced — this is the "start from" action, and a
+   * second pick has to replace the first one's copy or the drawer would hold a mix
+   * of two positions. After that the fields are ordinary editable text, and the
+   * server keeps whatever the recruiter leaves in them.
+   */
+  function pickPosition(id: string) {
+    const position = options.positions.find((p) => p.id === id);
+    if (!position) {
+      setDraft((d) => ({ ...d, position_id: "" }));
+      return;
+    }
+    const company = options.companies.find((c) => c.id === position.tenant_id);
+    setDraft((d) => ({
+      ...d,
+      position_id: position.id,
+      title: position.title,
+      tenant_id: position.tenant_id ?? d.tenant_id,
+      department: position.department,
+      description: position.responsibilities ?? "",
+      requirements: (position.requirements ?? []).join("\n"),
+      min_salary_usd: position.min_salary_usd === null ? "" : String(position.min_salary_usd),
+      max_salary_usd: position.max_salary_usd === null ? "" : String(position.max_salary_usd),
+      salary_currency: position.salary_currency || "USD",
+      sector: company?.sector ?? d.sector,
+    }));
+    if (error) setError(null);
+    if (saved) setSaved(false);
+  }
+
   async function submit() {
     if (!draft.title.trim()) {
       setError("A job title is required.");
@@ -204,6 +292,14 @@ export function JobFormDrawer({
 
     const payload: JobDraft = {
       ...draft,
+      // The link belongs to a create alone. An edit leaves the opening's position
+      // where it is — and while 026 is unapplied, sending the column at all would
+      // fail the save.
+      position_id: job ? undefined : draft.position_id || undefined,
+      // Undefined, not null, when the form has no level to offer: a literal null
+      // would name a column the database does not have, and the level is not the
+      // recruiter's to lose because a migration has not run.
+      experience_level: options.termsAvailable ? draft.experience_level || null : undefined,
       requirements: draft.requirements
         .split("\n")
         .map((line) => line.trim())
@@ -215,19 +311,38 @@ export function JobFormDrawer({
       const result = job
         ? await updateJobOpening(job.id, payload)
         : await createJobOpening(payload);
-      if (result.ok) {
-        setSaved(true);
-        // The action already revalidated /jobs; refresh pulls the row back in.
-        // Done here rather than via a callback prop, because this component is
-        // rendered from a Server Component and functions cannot cross that
-        // boundary.
-        setTimeout(() => {
-          close();
-          router.refresh();
-        }, 600);
-      } else {
+      if (!result.ok) {
         setError(result.error ?? (job ? "Could not save the opening." : "Could not create the opening."));
+        return;
       }
+
+      // The skill list rides on its own write, against the id the opening write
+      // just returned — that is the only id a create has. Untouched means nothing
+      // goes on the wire: a recruiter who edited the description must not send a
+      // list, and must not be refused for a table they never touched.
+      const id = result.id ?? job?.id;
+      const untouched = sameRequiredSkills(job?.required_skills ?? [], skills);
+      if (!untouched && id) {
+        const saved = await saveOpeningSkills(id, skills);
+        if (!saved.ok) {
+          // The opening *is* saved. Saying only "could not save" would send the
+          // recruiter back over the whole form, and a drawer that closed would
+          // hide the half of the write that failed, so it stays open on both facts.
+          setError(`The opening itself saved. Its skill list did not: ${saved.error ?? "the required skills could not be written."}`);
+          return;
+        }
+        if (saved.skills) setSkills(saved.skills);
+      }
+
+      setSaved(true);
+      // The action already revalidated /jobs; refresh pulls the row back in.
+      // Done here rather than via a callback prop, because this component is
+      // rendered from a Server Component and functions cannot cross that
+      // boundary.
+      setTimeout(() => {
+        close();
+        router.refresh();
+      }, 600);
     } catch {
       setError("Something went wrong saving the opening.");
     } finally {
@@ -257,6 +372,51 @@ export function JobFormDrawer({
       }
     >
       <div className="space-y-4">
+        {/* A create may start from a position — the same inheritance createJobOpening
+            performs on the server, so the form shows exactly what the write will do.
+            An edit keeps the link it already has and is never offered this. */}
+        {!job &&
+          (options.positionsAvailable === false ? (
+            <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-4">
+              <p className="text-sm font-semibold text-amber-900">
+                Positions have not been created on this database yet.
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-amber-900/80">
+                <code className="rounded bg-amber-100 px-1 py-0.5 text-[12px]">
+                  db/migrations/026_positions.sql
+                </code>{" "}
+                is authored but not applied, so there is no vacancy copy to start from. You
+                can still create an opening from scratch.
+              </p>
+            </div>
+          ) : options.positions.length === 0 ? (
+            <div className="rounded-xl border border-brand-line bg-brand-cream p-4 text-sm leading-relaxed text-brand-ink/70">
+              No positions are on the list yet. Add one in Settings → Organisation →
+              Positions, and a new opening can start from its copy.
+            </div>
+          ) : (
+            <div className="rounded-xl border border-brand-line bg-brand-cream p-4">
+              <Field
+                label="Start from a position"
+                htmlFor="job-position"
+                hint="Fills the title, company, department, description, requirements and salary band below. Everything stays editable."
+              >
+                <Select
+                  id="job-position"
+                  value={draft.position_id}
+                  onChange={(e) => pickPosition(e.target.value)}
+                >
+                  <option value="">No position — start from a blank opening</option>
+                  {options.positions.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title} — {p.department}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+          ))}
+
         <Field label="Job title" htmlFor="job-title" required>
           <TextInput
             id="job-title"
@@ -330,20 +490,61 @@ export function JobFormDrawer({
           </Field>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div
+          className={`grid grid-cols-1 gap-4 ${
+            options.termsAvailable ? "sm:grid-cols-3" : "sm:grid-cols-2"
+          }`}
+        >
           <Field label="Employment type" htmlFor="job-employment">
             <Select
               id="job-employment"
               value={draft.employment_type}
               onChange={(e) => set("employment_type")(e.target.value)}
             >
-              {EMPLOYMENT_TYPES.map((t) => (
+              {/* Where 033 has never run the widened check does not exist, so the
+                  two types it adds are not offered — a picker whose choice the
+                  database would refuse is worse than one that says why. */}
+              {(options.termsAvailable
+                ? EMPLOYMENT_TYPES
+                : EMPLOYMENT_TYPES.filter(
+                    (type) => type.value !== "REMOTE" && type.value !== "HYBRID"
+                  )
+              ).map((t) => (
                 <option key={t.value} value={t.value}>
                   {t.label}
                 </option>
               ))}
+              {/* A row stored before the read failed still gets its own option, so
+                  the select cannot show a value the opening does not hold. */}
+              {!EMPLOYMENT_TYPES.some((t) => t.value === draft.employment_type) &&
+                draft.employment_type && (
+                  <option value={draft.employment_type}>
+                    {draft.employment_type.replace(/_/g, " ")}
+                  </option>
+                )}
             </Select>
           </Field>
+
+          {options.termsAvailable && (
+            <Field
+              label="Experience level"
+              htmlFor="job-experience"
+              hint="Optional. Blank means none was recorded."
+            >
+              <Select
+                id="job-experience"
+                value={draft.experience_level}
+                onChange={(e) => set("experience_level")(e.target.value)}
+              >
+                <option value="">Not recorded</option>
+                {EXPERIENCE_LEVELS.map((level) => (
+                  <option key={level.value} value={level.value}>
+                    {level.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
 
           <Field label="Status" htmlFor="job-status">
             <Select id="job-status" value={draft.status} onChange={(e) => set("status")(e.target.value)}>
@@ -355,6 +556,17 @@ export function JobFormDrawer({
             </Select>
           </Field>
         </div>
+
+        {!options.termsAvailable && (
+          <p className="text-[11px] leading-relaxed text-brand-ink/50">
+            Seniority levels and Remote/Hybrid job types arrive with{" "}
+            <code className="rounded bg-brand-sand px-1 py-0.5 text-[11px]">
+              {OPENING_TERMS_MIGRATION}
+            </code>
+            , which is authored but not applied. Until it is, this form offers the four
+            employment types the database already stores.
+          </p>
+        )}
 
         <Field label="Description" htmlFor="job-description" required>
           <TextArea
@@ -375,6 +587,26 @@ export function JobFormDrawer({
             placeholder={"5+ years FP&A experience\nIFRS reporting\nAdvanced Excel"}
           />
         </Field>
+
+        {/* Named skills, beside the lines they came from. The picker reads the
+            requirement text above it as it is typed, so a line that spells out a
+            catalogue skill can be accepted into the list the applicant is scored
+            against — and a list the recruiter edits is what the save writes. */}
+        <JobSkillsField
+          skills={options.skills}
+          labels={options.skillLabels}
+          required={skills}
+          requirements={draft.requirements
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)}
+          note={options.skillsNote}
+          onChange={(next) => {
+            setSkills(next);
+            if (error) setError(null);
+            if (saved) setSaved(false);
+          }}
+        />
 
         {/* Salary is a three-part value: an amount pair plus the currency they
             are denominated in. Labelling the inputs with the selected code

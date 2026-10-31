@@ -1,9 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Maximize2, Minimize2, Sparkles, X } from "lucide-react";
+import { Expand, Maximize2, Minimize2, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { STAGE_ROUTE } from "@/modules/assistant/domain/stage";
+import {
+  jarvisUiOnServer,
+  readJarvisUi,
+  setJarvisOpen,
+  subscribeJarvisUi,
+} from "@/lib/jarvis-ui";
 import { AssistantChat } from "./AssistantChat";
 
 /**
@@ -18,6 +26,10 @@ import { AssistantChat } from "./AssistantChat";
  * Turns are stored as they are written, so closing the panel or refreshing the
  * page is not the end of a conversation: this reopens the last one, and all of
  * them are listed on the Assistant page.
+ *
+ * Whether the panel is open lives in `jarvis-ui.ts`, not here: the presence orb
+ * has to be able to pull this panel up over the page you are looking at when it
+ * hears something, and it is mounted by the shell several components above.
  */
 
 /**
@@ -86,7 +98,11 @@ function readSession(): string | null {
 
 export function AssistantDock() {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
+  const open = useSyncExternalStore(
+    subscribeJarvisUi,
+    () => readJarvisUi().open,
+    () => jarvisUiOnServer().open
+  );
   const [sessionId, setSessionId] = useState<string | null>(readSession);
 
   const [mode, setMode] = useState<"docked" | "full">(() =>
@@ -99,7 +115,7 @@ export function AssistantDock() {
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") setJarvisOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -154,21 +170,6 @@ export function AssistantDock() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-label={open ? "Close the assistant" : "Open the assistant"}
-        className={cn(
-          "fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full px-4 py-3 font-display text-sm font-bold text-brand-cream shadow-lift transition",
-          "bg-gradient-to-r from-brand-ink to-brand-ink/85 hover:from-brand-ink/90 hover:to-brand-ink/75",
-          open && "opacity-0 pointer-events-none"
-        )}
-      >
-        <Sparkles className="h-4 w-4 text-brand-gold-light" aria-hidden />
-        <span className="hidden sm:inline">Assistant</span>
-      </button>
-
       {open && (
         <section
           aria-label="Operations assistant"
@@ -222,9 +223,18 @@ export function AssistantDock() {
                   <Maximize2 className="h-3.5 w-3.5" aria-hidden />
                 )}
               </button>
+              <Link
+                href={STAGE_ROUTE}
+                onClick={() => setJarvisOpen(false)}
+                aria-label="Open the stage"
+                title="Open the stage — the whole screen, just the orb (Ctrl+Shift+Space)"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand-line bg-white text-brand-ink/60 transition hover:bg-brand-sand"
+              >
+                <Expand className="h-3.5 w-3.5" aria-hidden />
+              </Link>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => setJarvisOpen(false)}
                 aria-label="Close the assistant"
                 className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-brand-line bg-white text-brand-ink/60 transition hover:bg-brand-sand"
               >

@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { recordActivity } from "@/modules/activity/application/record";
 import { APPLICATION_EMBED, attemptContext, runnerActor } from "@/modules/assessment/application/runner-trail";
 import { NextResponse } from "next/server";
@@ -47,9 +47,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Too many events in one batch" }, { status: 413 });
   }
 
-  const supabase = getSupabaseServiceClient();
+  const restClient = getServiceRestClient();
 
-  const { data: attempt } = await supabase
+  const { data: attempt } = await restClient
     .from("candidate_attempts")
     .select(`id, status, ${APPLICATION_EMBED}`)
     .eq("access_token", body.attemptToken)
@@ -79,13 +79,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, recorded: 0 });
   }
 
-  const { error } = await supabase.from("integrity_events").insert(rows);
+  const { error } = await restClient.from("integrity_events").insert(rows);
 
   if (error) {
     return NextResponse.json({ error: "Failed to record integrity events" }, { status: 500 });
   }
 
-  await supabase.rpc("refresh_attempt_integrity", { target_attempt: attempt.id });
+  await restClient.rpc("refresh_attempt_integrity", { target_attempt: attempt.id });
 
   // Only the flags a recruiter would act on leave a trail row. A batch per
   // focus-loss would fill the change log with the noise of an honest candidate

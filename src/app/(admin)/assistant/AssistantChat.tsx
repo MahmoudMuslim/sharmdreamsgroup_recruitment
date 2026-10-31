@@ -1,35 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  AlertTriangle,
-  Check,
-  Clock,
   CornerUpLeft,
-  Download,
-  ExternalLink,
   FileText,
   History,
-  Info,
   ListTree,
   Loader2,
   Paperclip,
   Plus,
-  RotateCcw,
   Send,
-  ShieldCheck,
   Sparkles,
-  Wrench,
-  X,
+  X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RichReply } from "@/modules/assistant/presentation/RichReply";
 import { ReplyChart } from "@/modules/assistant/presentation/ReplyChart";
 import { cardsOfTurn } from "@/modules/assistant/presentation/turnCards";
-import { whenLabel } from "@/modules/assistant/presentation/whenLabel";
-import type { AssistantChart } from "@/modules/assistant/domain/charts";
-import type { AssistantLink } from "@/modules/assistant/domain/links";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import type { AssistantApproval } from "@/modules/assistant/domain/approvals";
 import {
@@ -42,31 +29,59 @@ import {
   READABLE_FORMAT_LABEL,
   clipMaterial,
   materialFence,
-  uploadTooLarge,
+  uploadTooLarge
 } from "@/modules/assistant/domain/attachments";
 import {
-  formatBytes,
-  isGeneratedFile,
-  GENERATED_FORMAT_LABEL,
-  type GeneratedFileManifest,
+  GENERATED_FORMAT_LABEL
 } from "@/modules/assistant/domain/generatedFiles";
 import type { AssistantStep } from "@/modules/assistant/infrastructure/agent";
-import type { AssistantQuestion } from "@/modules/assistant/domain/tools";
 import {
   approveAssistantChange,
   extractAssistantAttachmentText,
-  getAssistantCapabilities,
   getAssistantModelChoices,
-  getAssistantSessions,
   openAssistantSession,
-  rebuildAssistantFile,
+  runJarvisCommand,
   sendAssistantMessage,
   type AssistantAttachment,
-  type AssistantCapability,
-  type AssistantModelChoice,
-  type AssistantSessionSummary,
+  type AssistantModelChoice
 } from "./actions";
 import { AssistantSettings } from "./AssistantSettings";
+import { ApprovalCard } from "./AssistantApprovalCard";
+import { Capabilities } from "./AssistantCapabilities";
+import { GeneratedFileCard, chartOf, filesOf } from "./AssistantFiles";
+import { ENGINES, STARTERS, nextId, readDraft, readStoredEngine, readStoredModel, readStoredSpeechRate, readStoredSpeak, readStoredVoiceId, readStoredWeb, subscribeVoicePrefs, writeDraft, writeStoredEngine, writeStoredModel, writeStoredSpeak, writeStoredWeb } from "./AssistantPrefs";
+import { QuestionChoices, TypedAnswerNote, askBubble } from "./AssistantQuestions";
+import { SessionList } from "./AssistantSessions";
+import { FailureNote, StepChips } from "./AssistantSteps";
+import { VoiceButton } from "@/modules/assistant/presentation/voice/VoiceButton";
+import { transcribeClip } from "@/modules/assistant/presentation/voice/transcribe";
+import { useRecorder } from "@/modules/assistant/presentation/voice/useRecorder";
+import { useSpeech } from "@/modules/assistant/presentation/voice/useSpeech";
+import { useWakeListening, useMicrophoneAvailable } from "@/modules/assistant/presentation/voice/useWakeListening";
+import { useJarvisMeter } from "@/modules/assistant/presentation/useJarvisMeter";
+import { useJarvisAwaitingWriter, useJarvisHandoff } from "@/modules/assistant/presentation/voice/useJarvisHandoff";
+import { VoiceStrip } from "@/modules/assistant/presentation/voice/VoiceStrip";
+import {
+  DEFAULT_SPEECH_RATE,
+  matchWakePhrase,
+  spokenApproval,
+  spokenCodeIn,
+  spokenSummary,
+  wakeRemainder,
+} from "@/modules/assistant/domain/voice";
+import { DEFAULT_WAKE_PHRASE_TEXT } from "@/modules/assistant/domain/jarvis";
+import {
+  getJarvisPresence,
+  type PresenceRead,
+} from "@/app/(admin)/settings/jarvis-actions";
+import {
+  jarvisUiOnServer,
+  readJarvisUi,
+  setJarvisCommandNote,
+  setJarvisStageTurns,
+  takeJarvisCommandRequest,
+  subscribeJarvisUi,
+} from "@/lib/jarvis-ui";
 
 /**
  * The assistant's conversation: transcript, tool-step chips, cards awaiting a
@@ -78,6 +93,14 @@ import { AssistantSettings } from "./AssistantSettings";
  * the same in each, so an answer cannot read differently depending on where it
  * was asked. Only the dock adds the saved-conversations panel, since the page
  * already carries that list beside the box.
+ *
+ * The presence orb is a third door, and it is deliberately not a third
+ * conversation: it owns the microphone while ambient listening is armed and owns
+ * no interpretation at all. What it hears arrives here through
+ * `useJarvisHandoff`, into the same `hearUtterance` the console's own listener
+ * calls, so "Hey Jarvis" means the same thing whoever carried it. What the orb
+ * shows — amber for a turn in flight, green for an answer being read, violet for a
+ * card owed a click — is this component's state, mirrored there and nowhere else.
  *
  * The transcript is stored as it is written (`sessionId` names the saved
  * conversation), which is what lets a question asked in the dock be picked up
@@ -101,872 +124,16 @@ export interface ChatMessage {
   attachmentText?: string;
 }
 
-const STARTERS = [
-  "How is the pipeline looking this fortnight?",
-  "Which openings have no applicants?",
-  "Screen the newest applicant on my busiest role",
-  "Show the interview-stage candidates as a table",
-  "What model is resume screening using?",
-] as const;
-
-const ENGINES: readonly { id: AssistantEngine; label: string; hint: string }[] = [
-  { id: "auto", label: "Auto", hint: "Qoder when this host can run it, the model gateway otherwise." },
-  {
-    id: "qoder",
-    label: "Qoder",
-    hint: "Always the Qoder agent. Needs a stored token and the Qoder agent runtime installed on the server.",
-  },
-  {
-    id: "gateway",
-    label: "Gateway",
-    hint: "Always the model gateway — either the one routed in Settings → AI models, or the one picked below.",
-  },
-];
-
-const ENGINE_KEY = "sdg-assistant-engine";
-
-/*
- * The file box, its size line and the clip an old turn's attachment is replayed at
- * all come from `domain/attachments` — the same table the server reads the file
- * through. They used to be three numbers written again here, and they had already
- * drifted: the box offered `.doc`, which the reader refuses.
- */
-
-function nextId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Read lazily rather than in an effect: a stored engine can be applied on the
- * first render instead of flashing the default.
- */
-function readStoredEngine(): AssistantEngine {
-  try {
-    const raw = window.localStorage.getItem(ENGINE_KEY);
-    return raw === "qoder" || raw === "gateway" || raw === "auto" ? raw : "auto";
-  } catch {
-    return "auto";
-  }
-}
-
-function writeStoredEngine(value: AssistantEngine): void {
-  try {
-    window.localStorage.setItem(ENGINE_KEY, value);
-  } catch {
-    // Storage blocked (private mode) — the choice simply applies to this panel.
-  }
-}
-
-/* ------------------------------- Web search ------------------------------- */
-
-const WEB_KEY = "sdg-assistant-web";
-
-/**
- * Whether this browser's assistant may leave the portal to look something up.
- *
- * A preference, like the engine, so it lives in `localStorage` and survives a new
- * conversation: switching it on to ask about pay bands should not have to be
- * re-clicked tomorrow. It is still never applied to a write — the switch only
- * opens the two read-only lookups, and the deletion switch is separate.
- */
-function readStoredWeb(): boolean {
-  try {
-    return window.localStorage.getItem(WEB_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeStoredWeb(value: boolean): void {
-  try {
-    window.localStorage.setItem(WEB_KEY, value ? "1" : "0");
-  } catch {
-    // Storage blocked — the choice applies to this panel only.
-  }
-}
-
-/* ----------------------------- Model override ----------------------------- */
-
-const MODEL_KEY = "sdg-assistant-model";
-
-/**
- * The model chosen for this conversation.
- *
- * `sessionStorage`, not `localStorage`, and nothing written to Settings: a model
- * picked to try an answer is a decision about this sitting-down, and closing the
- * tab hands the routing table back its authority. The engine the recruiter chose
- * is a preference and does live in `localStorage` — this is not.
- */
-function readStoredModel(): string {
-  try {
-    return window.sessionStorage.getItem(MODEL_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeStoredModel(value: string): void {
-  try {
-    if (value) window.sessionStorage.setItem(MODEL_KEY, value);
-    else window.sessionStorage.removeItem(MODEL_KEY);
-  } catch {
-    // Storage blocked — the choice simply applies to this panel.
-  }
-}
-
-/* ------------------------------ Draft notes ------------------------------ */
-
-const DRAFT_KEY = "sdg-assistant-draft";
-/** Past a month the browser stops carrying it; it is a note, not a record. */
-const DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-/** Exactly the longest question the server will accept, so nothing kept here is unsendable. */
-const MAX_DRAFT_CHARS = 4_000;
-
-function readDraft(): string {
-  try {
-    const raw = window.localStorage.getItem(DRAFT_KEY);
-    if (!raw) return "";
-    const parsed = JSON.parse(raw) as { text?: unknown; at?: unknown };
-    if (typeof parsed?.text !== "string" || typeof parsed.at !== "number") return "";
-    if (Date.now() - parsed.at > DRAFT_TTL_MS || parsed.text.length > MAX_DRAFT_CHARS) {
-      window.localStorage.removeItem(DRAFT_KEY);
-      return "";
-    }
-    return parsed.text;
-  } catch {
-    return "";
-  }
-}
-
-/** An empty or over-long box stores nothing: the first is sent, the second refused. */
-function writeDraft(text: string): void {
-  try {
-    if (text.trim().length === 0 || text.length > MAX_DRAFT_CHARS) {
-      window.localStorage.removeItem(DRAFT_KEY);
-    } else {
-      window.localStorage.setItem(DRAFT_KEY, JSON.stringify({ text, at: Date.now() }));
-    }
-  } catch {
-    // Storage blocked or full — the draft simply lives only in this panel.
-  }
-}
-
-/** The headline of a failure, kept to one readable line. */
-const MAX_HEADLINE_CHARS = 180;
-
-/**
- * What to do next, read off what the server actually reported.
- *
- * A guessed instruction sends a recruiter hunting for a settings switch that is
- * not the problem, so anything unrecognised falls back to the one sentence that
- * is always true here: a failed turn changed nothing.
- */
-function nextStepFor(message: string): string {
-  const text = message.toLowerCase();
-  if (text.includes("429") || text.includes("rate") || text.includes("quota")) {
-    return "That provider has spent its allowance for the moment. Pick another model below, or wait a minute and send it again.";
-  }
-  if (
-    text.includes("502") ||
-    text.includes("503") ||
-    text.includes("overload") ||
-    text.includes("unavailable") ||
-    text.includes("timeout")
-  ) {
-    return "That provider is not answering right now. Send it again, or choose a different model below.";
-  }
-  if (text.includes("key") || text.includes("credential") || text.includes("token")) {
-    return "Settings → API keys holds the credential this answer needed — check it is there and verified.";
-  }
-  if (text.includes("model")) {
-    return "Choose another model below, or leave it on default routing, which uses the one named in Settings → AI models.";
-  }
-  if (text.includes("approval")) {
-    return "Nothing has changed. Ask for the same change again and the card goes back up.";
-  }
-  if (text.includes("conversation")) {
-    return "The conversation itself is still stored — try opening it again, or start a new one.";
-  }
-  if (text.includes("ask me something")) {
-    return "Type the question in the box below, then send it.";
-  }
-  return "Nothing was changed by this. Send the question again, or ask for a smaller piece of it.";
-}
-
-/**
- * A failure the operator can read and act on.
- *
- * The gateway reports every provider hop it tried, which is the right thing for
- * diagnosing an outage and far too much to read in a chat bubble — so the first
- * hop is the headline, the rest sits behind a disclosure, and the line under it
- * names the next move rather than leaving the panel looking broken.
- */
-function FailureNote({
-  tone = "hard",
-  message,
-  hint,
-  action,
-}: {
-  tone?: "hard" | "soft";
-  message: string;
-  /** Overrides the read-off next step when the caller knows better. */
-  hint?: string;
-  action?: { label: string; run: () => void } | null;
-}) {
-  const hops = message.split(" | ");
-  const headline =
-    hops[0].length <= MAX_HEADLINE_CHARS ? hops[0] : `${hops[0].slice(0, MAX_HEADLINE_CHARS)}…`;
-  const raw = hops.slice(1).join(" | ").trim();
-
-  return (
-    <div
-      role="alert"
-      className={cn(
-        "mb-2 rounded-xl border p-2.5",
-        tone === "hard" ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"
-      )}
-    >
-      <p
-        className={cn(
-          "flex items-start gap-1.5 text-xs font-bold leading-snug",
-          tone === "hard" ? "text-rose-700" : "text-amber-700"
-        )}
-      >
-        {tone === "hard" ? (
-          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
-        ) : (
-          <Info className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden />
-        )}
-        <span className="min-w-0">{headline}</span>
-      </p>
-      <p className="mt-1 pl-5 text-[11px] leading-relaxed text-brand-ink/65">{hint ?? nextStepFor(message)}</p>
-
-      {raw && (
-        <details className="mt-1 pl-5">
-          <summary className="cursor-pointer text-[10px] font-semibold text-brand-ink/45">
-            What the server reported
-          </summary>
-          <pre className="rail-scroll mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap rounded-lg bg-white/70 p-2 text-[10px] font-medium leading-relaxed text-brand-ink/60">
-            {message}
-          </pre>
-        </details>
-      )}
-
-      {action && (
-        <button
-          type="button"
-          onClick={action.run}
-          className="mt-1.5 ml-5 inline-flex items-center gap-1 rounded-lg border border-brand-line bg-white px-2 py-1 text-[10px] font-bold text-brand-ink/65 transition hover:bg-brand-sand"
-        >
-          <CornerUpLeft className="h-3 w-3" aria-hidden />
-          {action.label}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function StepChip({ step }: { step: AssistantStep }) {
-  const router = useRouter();
-  const link: AssistantLink | null = step.link ?? null;
-  // A held write is not a failed one. Rendering it in rose would tell the
-  // recruiter the action went wrong, when the truth is that it has not run yet.
-  const tone = step.approval ? "waiting" : step.ok ? "done" : "failed";
-
-  return (
-    <li className="flex items-center gap-1">
-      <span
-        title={step.detail}
-        className={cn(
-          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-          tone === "done" && "border-brand-line bg-white text-brand-ink/60",
-          tone === "waiting" && "border-amber-200 bg-amber-50 text-amber-700",
-          tone === "failed" && "border-rose-200 bg-rose-50 text-rose-700"
-        )}
-      >
-        {tone === "done" ? (
-          <Check className="h-3 w-3" aria-hidden />
-        ) : tone === "waiting" ? (
-          <Clock className="h-3 w-3" aria-hidden />
-        ) : (
-          <AlertTriangle className="h-3 w-3" aria-hidden />
-        )}
-        {step.label}
-      </span>
-      {link && (
-        <button
-          type="button"
-          onClick={() => router.push(link.href)}
-          title={link.href}
-          className="inline-flex items-center gap-1 rounded-full border border-brand-gold bg-brand-gold/15 px-2 py-0.5 text-[11px] font-bold text-brand-gold-dark transition hover:bg-brand-gold/30"
-        >
-          <ExternalLink className="h-3 w-3" aria-hidden />
-          {link.label}
-        </button>
-      )}
-    </li>
-  );
-}
-
-function StepChips({ steps }: { steps: AssistantStep[] }) {
-  if (steps.length === 0) return null;
-
-  return (
-    <ul className="mb-1.5 flex flex-wrap gap-1.5">
-      {steps.map((step, index) => (
-        <StepChip key={`${step.tool}-${index}`} step={step} />
-      ))}
-    </ul>
-  );
-}
-
-/**
- * The answer buttons for a question the assistant asked.
- *
- * Choosing sends that option as the next message, so the reply the model reads
- * is exactly what the recruiter picked — no id or index for it to reinterpret.
- * A question the conversation has moved past stays on screen, greyed and marked
- * with what was actually answered, so an old thread reads as a Q&A and not as a
- * list of open tasks.
- *
- * `showQuestion` prints the question above the buttons. The bubble normally
- * carries it, but a turn that asked twice or answered in prose before asking
- * has no copy of the second question outside this card — and a row of nameless
- * buttons is the thing that used to look broken.
- */
-function QuestionChoices({
-  ask,
-  showQuestion,
-  live,
-  answered,
-  pending,
-  onChoose,
-}: {
-  ask: AssistantQuestion;
-  showQuestion: boolean;
-  live: boolean;
-  answered: string | null;
-  pending: boolean;
-  onChoose: (option: string) => void;
-}) {
-  return (
-    <div className="mt-1.5">
-      {showQuestion && (
-        <p className="mb-1 text-[11px] font-bold leading-snug text-brand-ink">{ask.question}</p>
-      )}
-      <div className="flex flex-wrap gap-1.5">
-        {ask.options.map((option, index) => {
-          const chosen = answered === option;
-          return (
-            <button
-              key={`${option}-${index}`}
-              type="button"
-              disabled={!live || pending}
-              onClick={() => onChoose(option)}
-              title={
-                live
-                  ? `Answer: ${option}`
-                  : answered
-                    ? `Already answered: ${answered}`
-                    : "Answered by a later message — click through the composer instead"
-              }
-              aria-disabled={!live || pending}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-left text-[11px] font-semibold transition",
-                chosen
-                  ? "border-brand-gold bg-brand-gold/20 text-brand-ink"
-                  : live
-                    ? "border-brand-line bg-white text-brand-ink/75 hover:border-brand-gold hover:bg-brand-gold/10"
-                    : "border-brand-line/60 bg-brand-cream text-brand-ink/40"
-              )}
-            >
-              <span
-                aria-hidden
-                className={cn(
-                  "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold",
-                  chosen ? "bg-brand-gold-dark text-brand-cream" : "bg-brand-sand text-brand-ink/60"
-                )}
-              >
-                {chosen ? <Check className="h-2.5 w-2.5" aria-hidden /> : index + 1}
-              </span>
-              <span className="min-w-0">{option}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** The question as a bubble: its text, not the numbered list the model was fed. */
-function askBubble(ask: AssistantQuestion): string {
-  return ask.context ? `${ask.context}\n\n${ask.question}` : ask.question;
-}
-
-/**
- * The notice for a live question that has no buttons.
- *
- * It happens for two reasons the recruiter cannot see: `ask_question` refused
- * the choices it was given, or the model wrote the question into its prose
- * instead of calling the tool. Either way the panel has nothing to click, and
- * saying so is the difference between a broken-looking chat and a question to
- * answer by typing.
- */
-function TypedAnswerNote() {
-  return (
-    <p className="mt-1.5 rounded-xl border border-amber-200 bg-amber-50/70 px-2.5 py-1.5 text-[11px] leading-relaxed text-brand-ink/70">
-      <Info className="mr-1 inline h-3 w-3 text-amber-700" aria-hidden />
-      This question has no buttons — the choices the assistant tried to offer were not usable.
-      Answer it in the box below.
-    </p>
-  );
-}
-
-/**
- * The chart this turn earned, walked backwards: a turn can read the metrics more
- * than once, and the last read is the one the answer below it is built on.
- */
-function chartOf(steps: AssistantStep[] | undefined): AssistantChart | null {
-  if (!steps) return null;
-  for (let index = steps.length - 1; index >= 0; index -= 1) {
-    const chart = steps[index].chart;
-    if (chart) return chart;
-  }
-  return null;
-}
-
-/** Every file this turn built, in the order they were made — a turn can build two. */
-function filesOf(steps: AssistantStep[] | undefined): GeneratedFileManifest[] {
-  if (!steps) return [];
-  return steps.map((step) => step.file).filter(isGeneratedFile);
-}
-
-/**
- * Hand the bytes to the browser.
- *
- * The file exists only as base64 carried inside this answer, so the download is
- * made here: decode, wrap in a Blob under the content type the server named, and
- * click an anchor on the user's behalf. The object URL is revoked after a delay
- * rather than at once — Safari cancels a download whose URL is gone before it
- * starts — and nothing here is a link anybody could open later.
- */
-function saveGeneratedFile(manifest: GeneratedFileManifest) {
-  const binary = atob(manifest.data ?? "");
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  const url = URL.createObjectURL(new Blob([bytes], { type: manifest.contentType }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = manifest.fileName;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
-/**
- * The card for a file the assistant built.
- *
- * It says what is inside (`contents`), names every ceiling the writer applied
- * (`notes`), and offers exactly one of two honest buttons: Download while the
- * bytes are still on the page, Build again once a reload has dropped them. A
- * rebuilt file is handed over in the same click — it is not stored anywhere
- * either, so a card that said "built, find it in the file manager" would be
- * describing a row that does not exist.
- */
-function GeneratedFileCard({ file }: { file: GeneratedFileManifest }) {
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
-
-  async function buildAgain() {
-    setBusy(true);
-    setStatus(null);
-    try {
-      const result = await rebuildAssistantFile(file.spec);
-      if (result.ok) {
-        saveGeneratedFile(result.file);
-        setStatus(`Built again just now as ${result.file.fileName}.`);
-      } else {
-        setStatus(result.error);
-      }
-    } catch {
-      setStatus("That file could not be built again. Ask for it in a new message.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const held = file.contents.length;
-  const unit = file.spec.format.shape === "table" ? "sheet" : "section";
-
-  return (
-    <div className="mt-1.5 rounded-xl border border-brand-gold bg-brand-gold/10 px-3 py-2.5">
-      <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs font-bold text-brand-ink">
-        <FileText className="h-3.5 w-3.5 shrink-0 self-center text-brand-gold-dark" aria-hidden />
-        <span className="min-w-0 break-all">{file.fileName}</span>
-        <span className="font-semibold text-brand-ink/55">
-          {file.label} · {formatBytes(file.bytes)} · {held} {held === 1 ? unit : `${unit}s`}
-        </span>
-      </p>
-
-      <ul className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-brand-ink/65">
-        {file.contents.map((line, index) => (
-          <li key={`${line}-${index}`}>· {line}</li>
-        ))}
-      </ul>
-
-      {file.notes.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5 text-[11px] leading-snug text-amber-700">
-          {file.notes.map((note, index) => (
-            <li key={`${note}-${index}`}>· {note}</li>
-          ))}
-        </ul>
-      )}
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {file.data ? (
-          <button
-            type="button"
-            onClick={() => saveGeneratedFile(file)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-brand-ink px-2.5 py-1.5 text-[11px] font-bold text-brand-cream transition hover:bg-brand-ink/85"
-          >
-            <Download className="h-3.5 w-3.5" aria-hidden />
-            Download {file.fileName}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void buildAgain()}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-ink/25 bg-white px-2.5 py-1.5 text-[11px] font-bold text-brand-ink transition hover:bg-brand-sand disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-            )}
-            Build again
-          </button>
-        )}
-        <p className="text-[10px] leading-snug text-brand-ink/45">
-          {file.data
-            ? "This file is not stored anywhere — the download is the whole of it."
-            : "Its bytes were not kept when this conversation was saved, so this rebuilds it from the same rows."}
-        </p>
-      </div>
-
-      {status && (
-        <p className="mt-1.5 text-[11px] leading-snug text-brand-ink/65">{status}</p>
-      )}
-    </div>
-  );
-}
-
-/**
- * The change the assistant wants to make, held until a person agrees to it.
- *
- * Nothing runs on the model's say-so: this card is the only way a chat write
- * reaches the database. The values on it are the ones the server holds for this
- * id, so what is described is exactly what the click applies — and ignoring it
- * is a real option, which is why the card says what ignoring does.
- */
-function ApprovalCard({
-  approval,
-  live,
-  busy,
-  onApprove,
-}: {
-  approval: AssistantApproval;
-  live: boolean;
-  busy: boolean;
-  onApprove: (approval: AssistantApproval) => void;
-}) {
-  return (
-    <div
-      className={cn(
-        "mt-1.5 rounded-xl border p-2.5",
-        approval.destructive ? "border-rose-200 bg-rose-50/70" : "border-brand-gold bg-brand-gold/10"
-      )}
-    >
-      <p
-        className={cn(
-          "text-[10px] font-bold uppercase tracking-wide",
-          approval.destructive ? "text-rose-700" : "text-brand-gold-dark"
-        )}
-      >
-        {approval.destructive ? "Delete waiting for you" : "Change waiting for you"}
-      </p>
-      <p className="mt-1 text-sm font-semibold leading-snug text-brand-ink">{approval.label}</p>
-      <p className="mt-0.5 break-words text-[11px] leading-relaxed text-brand-ink/65">
-        {approval.summary}
-      </p>
-      {live ? (
-        <>
-          <button
-            type="button"
-            onClick={() => onApprove(approval)}
-            disabled={busy}
-            className={cn(
-              "mt-2 inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[11px] font-bold transition",
-              "disabled:cursor-not-allowed disabled:opacity-50",
-              approval.destructive
-                ? "bg-rose-600 text-brand-on-accent hover:bg-rose-700"
-                : "bg-brand-gold text-brand-ink hover:bg-brand-gold/70"
-            )}
-          >
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <ShieldCheck className="h-3.5 w-3.5" aria-hidden />}
-            {busy ? "Applying…" : approval.destructive ? "Approve the delete" : "Approve & run"}
-          </button>
-          <p className="mt-1.5 text-[10px] leading-relaxed text-brand-ink/45">
-            {`Ignoring this leaves the record exactly as it is. The offer expires at ${new Date(
-              approval.expiresAt
-            ).toLocaleString("en-GB")}.`}
-          </p>
-        </>
-      ) : (
-        <p className="mt-1.5 text-[10px] font-semibold leading-relaxed text-brand-ink/40">
-          {
-            "No longer clickable — either you answered it below, or the conversation has moved past it."
-          }
-        </p>
-      )}
-    </div>
-  );
-}
-
-function Capabilities({ onClose }: { onClose: () => void }) {
-  const [tools, setTools] = useState<AssistantCapability[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const result = await getAssistantCapabilities();
-        if (!active) return;
-        setTools(result);
-      } catch {
-        if (active) setError("The capability list could not be loaded.");
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return (
-    <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-display text-sm font-bold">What I can do</h3>
-          <p className="mt-0.5 text-xs text-brand-ink/55">
-            Every entry runs the same server action as the button on its screen, so your role
-            permissions apply unchanged. Reads answer straight away; anything that changes a record
-            is held here as a card and runs only if you approve it.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Back to the conversation"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-brand-line text-brand-ink/60 transition hover:bg-brand-sand"
-        >
-          <X className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      </div>
-
-      {error && <FailureNote message={error} />}
-
-      {!error && tools === null && (
-        <p className="mt-4 flex items-center gap-2 text-xs text-brand-ink/50">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          Loading…
-        </p>
-      )}
-
-      {tools && (
-        <ul className="mt-4 space-y-2">
-          {tools.map((tool) => (
-            <li
-              key={tool.name}
-              className="rounded-xl border border-brand-line bg-white p-3 shadow-soft"
-            >
-              <p className="flex items-center gap-1.5 font-display text-xs font-bold">
-                <Wrench className="h-3 w-3 text-brand-gold-dark" aria-hidden />
-                {tool.label}
-                {tool.needsApproval && (
-                  <span
-                    className={cn(
-                      "ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
-                      tool.destructive ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"
-                    )}
-                  >
-                    {tool.destructive
-                      ? "needs “Allow deletions”, then your approval"
-                      : "waits for your approval"}
-                  </span>
-                )}
-              </p>
-              <p className="mt-1 text-[11px] leading-relaxed text-brand-ink/60">
-                {tool.description}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/**
- * The saved conversations, inside the docked panel.
- *
- * The Assistant page has a rail beside the chat; the panel floats over whatever
- * screen the recruiter is on and had no way back into a past conversation
- * except by walking to that page. This is that way: every one of yours, newest
- * first, with the counts and the engine that answered it.
- *
- * Renaming and deleting stay on the page, which has room for those buttons —
- * the list says so rather than looking like a panel that forgot to offer them.
- */
-function SessionList({
-  current,
-  onSelect,
-  onClose,
-}: {
-  current: string | null;
-  onSelect: (sessionId: string) => void;
-  onClose: () => void;
-}) {
-  const router = useRouter();
-  const [sessions, setSessions] = useState<AssistantSessionSummary[] | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const rows = await getAssistantSessions();
-        if (active) setSessions(rows);
-      } catch {
-        if (active) {
-          setSessions([]);
-          setListError("Your saved conversations could not be loaded.");
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return (
-    <div className="rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-display text-sm font-bold">Your conversations</h3>
-          <p className="mt-0.5 text-xs text-brand-ink/55">
-            Pick one to carry it on here, in the panel floating over the screen you are on. Only
-            you see these.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Back to the conversation"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-brand-line text-brand-ink/60 transition hover:bg-brand-sand"
-        >
-          <X className="h-3.5 w-3.5" aria-hidden />
-        </button>
-      </div>
-
-      {listError && (
-        <div className="mt-3">
-          <FailureNote
-            message={listError}
-            hint="Nothing was lost — the list simply did not arrive. Close this and open it again."
-          />
-        </div>
-      )}
-      {!listError && sessions === null && (
-        <p className="mt-4 flex items-center gap-2 text-xs text-brand-ink/50">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          Loading…
-        </p>
-      )}
-      {sessions && sessions.length === 0 && !listError && (
-        <p className="mt-4 text-xs leading-relaxed text-brand-ink/55">
-          Nothing saved yet. Ask the assistant something and the conversation appears in this list
-          as soon as it has an answer.
-        </p>
-      )}
-
-      <ul className="mt-4 space-y-1.5">
-        {(sessions ?? []).map((session) => {
-          const isActive = session.id === current;
-          return (
-            <li key={session.id}>
-              <button
-                type="button"
-                onClick={() => onSelect(session.id)}
-                aria-current={isActive ? "true" : undefined}
-                className={cn(
-                  "w-full rounded-xl border px-3 py-2 text-left transition",
-                  isActive
-                    ? "border-brand-gold bg-brand-gold/10"
-                    : "border-brand-line bg-white hover:bg-brand-cream"
-                )}
-              >
-                <p className="flex items-center gap-1.5 text-xs font-bold text-brand-ink">
-                  <span className="min-w-0 truncate">{session.title}</span>
-                  {isActive && (
-                    <Check
-                      className="ml-auto h-3.5 w-3.5 shrink-0 text-brand-gold-dark"
-                      aria-hidden
-                    />
-                  )}
-                </p>
-                <p className="mt-0.5 text-[11px] text-brand-ink/50">
-                  {session.messageCount} message{session.messageCount === 1 ? "" : "s"} ·{" "}
-                  {whenLabel(session.updatedAt)}
-                  {session.engine ? ` · ${session.engine}` : ""}
-                </p>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-
-      {sessions && sessions.length > 0 && (
-        <p className="mt-3 text-[10px] leading-relaxed text-brand-ink/45">
-          Renaming or deleting a conversation happens on the{" "}
-          <button
-            type="button"
-            onClick={() =>
-              router.push(
-                current ? `/assistant?session=${encodeURIComponent(current)}` : "/assistant"
-              )
-            }
-            className="font-bold text-brand-gold-dark underline underline-offset-2"
-          >
-            Assistant page
-          </button>
-          , which has room for those two buttons.
-        </p>
-      )}
-    </div>
-  );
-}
-
 export interface AssistantChatProps {
   /** The saved conversation the transcript is written to, or null for a new one. */
   sessionId: string | null;
   /** Called with the id of a conversation the first turn just created. */
   onSessionChange: (sessionId: string) => void;
   onNewConversation: () => void;
-  variant: "docked" | "page";
+  /** `stage` is the full-viewport surface: the same body, kept clear of the orb. */
+  variant: "docked" | "page" | "stage";
+  /** `dictate` adds a microphone; `console` also offers opt-in hands-free controls. */
+  voiceMode?: "dictate" | "console";
 }
 
 export function AssistantChat({
@@ -974,6 +141,7 @@ export function AssistantChat({
   onSessionChange,
   onNewConversation,
   variant,
+  voiceMode = "dictate",
 }: AssistantChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraftState] = useState(() => readDraft());
@@ -1006,6 +174,80 @@ export function AssistantChat({
   const [extracting, setExtracting] = useState(false);
   const [opening, setOpening] = useState(sessionId !== null);
 
+  /** Console-only: what the strip shows and whether the listener is armed. */
+  const [caption, setCaption] = useState("");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [handsFree, setHandsFree] = useState(false);
+  /*
+   * The remaining voice preferences live in the browser, so they are read through the
+   * external store the strip writes to: the server render shows the defaults and
+   * the saved values apply once hydrated. Restoring them with `setState` in an
+   * effect is what the React lint rules refuse, and reading `localStorage` in a
+   * `useState` initialiser would make the first client render disagree with the
+   * markup the server sent.
+   */
+  const speakReplies = useSyncExternalStore(
+    subscribeVoicePrefs,
+    () => readStoredSpeak() ?? false,
+    () => false
+  );
+  // Which of this machine's voices reads an answer, and how fast. Same browser
+  // preference the presence orb speaks with, so one person hears one assistant.
+  const voiceId = useSyncExternalStore(subscribeVoicePrefs, readStoredVoiceId, () => "");
+  const speechRate = useSyncExternalStore(
+    subscribeVoicePrefs,
+    readStoredSpeechRate,
+    () => DEFAULT_SPEECH_RATE
+  );
+  /**
+   * The wake phrase lives on the account now, so the console reads the row the orb
+   * reads rather than this browser's `localStorage`. `prefsEpoch` is what the Settings
+   * console bumps after a save, so a phrase edited there reaches an open conversation
+   * without a reload.
+   */
+  const jarvisUi = useSyncExternalStore(subscribeJarvisUi, readJarvisUi, jarvisUiOnServer);
+  const [presence, setPresence] = useState<PresenceRead | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void getJarvisPresence().then((read) => {
+      if (alive) setPresence(read);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [jarvisUi.prefsEpoch]);
+
+  /**
+   * The orb steps aside when this surface has something to read, and goes back to the
+   * middle when it has nothing. Unmounting resets it: leaving the stage must not leave
+   * a corner orb standing over the portal.
+   */
+  useEffect(() => {
+    if (variant !== "stage") return;
+    setJarvisStageTurns(messages.length);
+    return () => setJarvisStageTurns(0);
+  }, [variant, messages.length]);
+  const wakePhrase = presence?.ok
+    ? presence.prefs.wakePhrase?.trim() || DEFAULT_WAKE_PHRASE_TEXT
+    : DEFAULT_WAKE_PHRASE_TEXT;
+
+  const speech = useSpeech({ voiceId, rate: speechRate });
+  const recorder = useRecorder({
+    onClip: async (clip) => {
+      setVoiceError(null);
+      setCaption("Transcribing…");
+      const result = await transcribeClip(clip);
+      if ("error" in result) {
+        setVoiceError(result.error);
+        setCaption("");
+        return;
+      }
+      setCaption(result.text);
+      insertTranscript(result.text);
+    },
+    onError: (message) => setVoiceError(message),
+  });
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1030,6 +272,47 @@ export function AssistantChat({
    * land in, and a first turn renames the thread while the box is still empty.
    */
   const draftRef = useRef(draft);
+
+  /**
+   * Whether a turn or a released approval is in flight, seen from outside React.
+   *
+   * A hands-free listener can deliver two utterances back to back in the same
+   * synchronous pass, before any state those calls set is visible. `pending` alone
+   * cannot stop the second one, and two turns at once means double quota and an
+   * interleaved transcript.
+   * This is the same fact as `pending`, written where synchronous code can read
+   * it: set before the first await, cleared when the run ends.
+   */
+  const inFlightRef = useRef(false);
+
+  /**
+   * Whether the console is waiting for the utterance after the wake phrase.
+   *
+   * The same synchronous pass that makes `pending` unusable for a second turn
+   * makes it unusable here: a batch carrying "Hey Jarvis" and then the question
+   * would arm the wait on the first final and read the state as it was on the
+   * second, so the question would be dropped. Nothing on screen renders this, so
+   * it is only ever a ref — written where it is decided, read where the finals
+   * land. Write it through `markAwaiting`, which mirrors it to the orb.
+   */
+  const awaitingRef = useRef(false);
+  const markAwaiting = useJarvisAwaitingWriter(awaitingRef);
+
+  /**
+   * Whether this composer is on screen.
+   *
+   * A dictation already in flight when the dock closes resolves after this
+   * component unmounts; its words must not reach the saved draft the person
+   * never saw. Set in the effect rather than the initialiser so a StrictMode
+   * remount (cleanup then setup) leaves it true.
+   */
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   function setDraft(text: string) {
     draftRef.current = text;
@@ -1203,6 +486,28 @@ export function AssistantChat({
   }
 
   /**
+   * A transcript lands where typing would: at the cursor, with the existing text
+   * kept. Dictation never replaces a draft that is already being written.
+   */
+  function insertTranscript(text: string) {
+    if (!mountedRef.current) return;
+    const box = inputRef.current;
+    const current = draftRef.current;
+    if (!box) {
+      setDraft(current ? `${current} ${text}` : text);
+      return;
+    }
+    const start = box.selectionStart ?? current.length;
+    const end = box.selectionEnd ?? current.length;
+    setDraft(`${current.slice(0, start)}${text}${current.slice(end)}`);
+    requestAnimationFrame(() => {
+      box.focus();
+      const at = start + text.length;
+      box.setSelectionRange(at, at);
+    });
+  }
+
+  /**
    * Put a question that was already sent back into the composer — after a failed
    * answer, or to ask the same thing of a different candidate. Only the click
    * does this: a turn that failed leaves the question where it is and nothing is
@@ -1228,7 +533,7 @@ export function AssistantChat({
 
   async function send(promptRaw?: string) {
     const prompt = (promptRaw ?? draft).trim();
-    if (!prompt || pending || extracting) return;
+    if (!prompt || pending || extracting || inFlightRef.current) return;
 
     // Snapshot before appending: the question being asked is sent separately.
     const history = messages.map((message) => ({
@@ -1255,6 +560,7 @@ export function AssistantChat({
     setPending(true);
     setShowCapabilities(false);
     setShowSessions(false);
+    inFlightRef.current = true;
 
     try {
       const result = await sendAssistantMessage({
@@ -1276,21 +582,26 @@ export function AssistantChat({
         onSessionChange(result.sessionId);
       }
       setSaveError(result.saveError ?? null);
+      const answer = result.reply ?? "";
       setMessages((current) => [
         ...current,
         {
           id: nextId(),
           role: "assistant",
-          text: result.reply ?? "",
+          text: answer,
           steps: result.steps,
           model: result.model,
           provider: result.provider,
           note: result.note,
         },
       ]);
+      if (speakReplies && answer) {
+        speech.speak(spokenSummary(answer));
+      }
     } catch {
       setError("The assistant could not be reached. Check the AI keys in Settings and try again.");
     } finally {
+      inFlightRef.current = false;
       setPending(false);
       inputRef.current?.focus();
     }
@@ -1303,15 +614,22 @@ export function AssistantChat({
    * so this click cannot be steered at another record, and the outcome is
    * appended as its own turn — which is what makes the card stop being clickable.
    */
-  async function approve(approval: AssistantApproval) {
-    if (approving || pending) return;
+  async function approve(
+    approval: AssistantApproval,
+    code = "",
+    via: "assistant" | "assistant voice" = "assistant"
+  ) {
+    if (approving || pending || inFlightRef.current) return;
     setApproving(approval.id);
+    inFlightRef.current = true;
     setError(null);
 
     try {
       const result = await approveAssistantChange({
         approvalId: approval.id,
         sessionId: sessionId ?? null,
+        spokenCode: code.trim() || undefined,
+        via,
       });
       if (!result.reply) {
         setError(result.error ?? "The approval could not be applied. Nothing has changed.");
@@ -1331,11 +649,233 @@ export function AssistantChat({
     } catch {
       setError("The approval could not be applied. Nothing has changed.");
     } finally {
+      inFlightRef.current = false;
       setApproving(null);
     }
   }
 
-  const wide = variant === "page";
+  const wide = variant !== "docked";
+
+  /**
+   * The change this transcript is waiting for a click on, or null.
+   *
+   * Only the newest assistant turn carries a live card: releasing one appends its
+   * outcome, so a card from an older turn has already been answered or expired. Both
+   * the spoken verdict in `hearUtterance` and the orb's amber state read this one
+   * value, so a person looking at the reactor and a person speaking at it are talking
+   * about the same card.
+   */
+  const newest = messages[messages.length - 1];
+  const liveApproval =
+    newest?.role === "assistant"
+      ? newest.steps?.find((step) => step.approval)?.approval ?? null
+      : null;
+
+  /**
+   * Why a spoken turn cannot be sent right now, or null when nothing is at risk.
+   *
+   * `send` empties the composer and detaches the file, so a spoken question
+   * would silently throw away anything typed or attached. It would also be
+   * dropped by the in-flight guard without a word. Both cases are refused here
+   * with the reason, before a caption can make the turn look sent.
+   */
+  function spokenTurnBlocked(): string | null {
+    if (draftRef.current.trim() || attachment) {
+      return "Not sent — clear or send what you typed first.";
+    }
+    if (pending || extracting || inFlightRef.current) {
+      return "Not sent — the assistant is still answering.";
+    }
+    return null;
+  }
+
+  useEffect(() => {
+    const consume = async () => {
+      if (opening || pending || extracting || approving || inFlightRef.current) return;
+      const request = takeJarvisCommandRequest();
+      if (!request) return;
+      if (liveApproval) {
+        setJarvisCommandNote("Not sent — answer the pending approval before running another command.");
+        return;
+      }
+      const blocked = spokenTurnBlocked();
+      if (blocked) {
+        setJarvisCommandNote(blocked);
+        return;
+      }
+      markAwaiting(false);
+      if (request.type === "ask") {
+        await send(request.prompt);
+        return;
+      }
+      inFlightRef.current = true;
+      setPending(true);
+      setError(null);
+      setSaveError(null);
+      setShowCapabilities(false);
+      setShowSessions(false);
+      try {
+        const result = await runJarvisCommand({ commandId: request.commandId, sessionId });
+        if (!result.ok) {
+          setJarvisCommandNote(result.error);
+          setError(result.error);
+          return;
+        }
+        if (result.sessionId) {
+          shownSession.current = result.sessionId;
+          onSessionChange(result.sessionId);
+        }
+        setSaveError(result.saveError ?? null);
+        setMessages(current => [...current,
+          { id: nextId(), role: "user", text: `Command: ${result.title}` },
+          { id: nextId(), role: "assistant", text: result.reply, steps: result.steps },
+        ]);
+        if (speakReplies) speech.speak(spokenSummary(result.reply));
+      } catch {
+        setError("The command result could not be received. Check the conversation before retrying.");
+      } finally {
+        inFlightRef.current = false;
+        setPending(false);
+      }
+    };
+    void consume();
+  });
+
+  /**
+   * One final utterance from the hands-free listener.
+   *
+   * The wake phrase may carry the question ("Hey Jarvis, who is waiting?") or
+   * stand alone, in which case the next utterance is the question. While a card
+   * is live, an approve/cancel phrase is a verdict instead — but only for a card
+   * minted under `code` or `open`. A `confirm` card is released by a click, so a
+   * spoken "approve" is acknowledged and nothing else.
+   */
+  function hearUtterance(text: string) {
+    // The account's phrase already carries the default when the row has none, so
+    // what is matched here is the same sentence the strip shows.
+    const phrase = wakePhrase;
+    const wake = matchWakePhrase(text, phrase);
+    if (wake.matched) {
+      markAwaiting(false);
+      if (wake.remainder) {
+        // The folded remainder is the phrase-level match; the turn that is
+        // sent and stored is the person's own words after the phrase.
+        const question = wakeRemainder(text, phrase) || wake.remainder;
+        const blocked = spokenTurnBlocked();
+        if (blocked) {
+          setCaption(blocked);
+          speech.speakNow(blocked, "en");
+          return;
+        }
+        setCaption(question);
+        void send(question);
+      } else {
+        markAwaiting(true);
+        setCaption("Listening…");
+        speech.speakNow("Listening", "en");
+      }
+      return;
+    }
+    if (!awaitingRef.current) return;
+    // The console speaks while the listener is armed, so a final can be the
+    // assistant hearing itself: the cue it said, a refusal it read out, or the
+    // answer it just summarised aloud. `speaking` only covers the utterance
+    // still in flight; an echo that lands after it ended is caught by comparing
+    // the heard words to the strings spoken recently. `awaitingRef` stays true so
+    // the person's own next utterance is still heard.
+    if (speech.speaking || speech.echoedOwnVoice(text)) return;
+    markAwaiting(false);
+
+    const live = liveApproval;
+    if (live) {
+      const verdict = spokenApproval(text, live.code ?? null);
+      if (verdict === "cancel") {
+        setCaption("Cancelled — the card stays live until it expires or you click it.");
+        speech.speakNow("Cancelled. The card has not been released.", "en");
+        return;
+      }
+      if (verdict === "approve") {
+        // A card minted under `confirm` is released by a click and never by a
+        // word, so saying "approve" only asks whether the card was heard. The
+        // card rehydrated from an older transcript carries no level, and an
+        // unknown level behaves like the safe one.
+        if ((live.autonomy ?? "confirm") === "confirm") {
+          setCaption(`Waiting for your click: ${live.summary}`);
+          speech.speakNow("That change is waiting for your click.", "en");
+          return;
+        }
+        // `code` reaches here only with the code said in the same utterance
+        // (`spokenApproval` refused it otherwise); `open` carries no code. The
+        // server compares one token, not a sentence, so the code is extracted
+        // from "approve K7Q2" rather than the whole phrase being sent as it was.
+        const saidCode = live.code ? spokenCodeIn(text, live.code) : null;
+        if (live.code && !saidCode) {
+          setCaption("Approval not sent — the code was not heard.");
+          speech.speakNow("Approval not sent. The code was not heard.", "en");
+          return;
+        }
+        // One release at a time: the listener can hand two verdicts in a
+        // single batch, and the second must not caption itself as though the
+        // change it names had run.
+        if (inFlightRef.current) {
+          setCaption("Not released — the first approval is still running.");
+          speech.speakNow("Not released. The first approval is still running.", "en");
+          return;
+        }
+        setCaption(`Approved: ${live.summary}`);
+        void approve(live, saidCode ?? "", "assistant voice");
+        return;
+      }
+    }
+
+    // "Send" spoken after dictating submits the composer rather than asking the
+    // assistant about the word "send".
+    if (/^(send|send it|أرسل|ارسال|إرسال)$/i.test(text.trim()) && draftRef.current.trim()) {
+      void send();
+      return;
+    }
+
+    const blocked = spokenTurnBlocked();
+    if (blocked) {
+      setCaption(blocked);
+      speech.speakNow(blocked, "en");
+      return;
+    }
+    setCaption(text);
+    void send(text);
+  }
+
+  /**
+   * The conversation the orb is having, mirrored outward and handed inward.
+   *
+   * The reactor is mounted by the shell, several components above this one, and the
+   * dock may be closed while a turn runs — so it cannot read any of this from here.
+   * These three values are the only things it can honestly show: a question in
+   * flight, an answer being read aloud, and a card owed a click.
+   */
+  const { ambientArmed } = useJarvisHandoff({
+    onUtterance: hearUtterance,
+    thinking: pending || approving !== null,
+    speaking: speech.speaking,
+    approvalSummary: liveApproval?.summary ?? null,
+  });
+
+  const meter = useJarvisMeter({
+    enabled: voiceMode === "console" && handsFree && !ambientArmed,
+  });
+
+  const wake = useWakeListening({
+    // One microphone per tab. While the orb's ambient listening is running it owns the
+    // capture and delivers every utterance through the handoff above; a second
+    // recorder here would hear the same person twice and ask twice.
+    enabled: voiceMode === "console" && handsFree && !ambientArmed,
+    meter,
+    // Quiet hours govern the orb that speaks on its own, not a conversation the
+    // person opened on this page.
+    quiet: false,
+    onUtterance: hearUtterance,
+  });
+  const microphoneAvailable = useMicrophoneAvailable();
 
   /** The question a failure can put back in the box, newest first. */
   const lastQuestion = [...messages].reverse().find((message) => message.role === "user") ?? null;
@@ -1344,7 +884,7 @@ export function AssistantChat({
     <>
       <div
         className={cn(
-          "flex shrink-0 items-center gap-2 border-b border-brand-line bg-white px-3 py-2",
+          "flex shrink-0 flex-wrap items-center gap-2 border-b border-brand-line bg-white px-3 py-2",
           variant === "page" && "px-4"
         )}
       >
@@ -1432,7 +972,7 @@ export function AssistantChat({
       ) : (
         <div
           ref={scrollRef}
-          className={cn("rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain", variant === "page" ? "px-6 py-5" : "p-4")}
+          className={cn("rail-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain", variant !== "docked" ? "px-6 py-5" : "p-4")}
         >
           <div className={cn("space-y-3", wide && "mx-auto max-w-3xl")}>
             {messages.length === 0 && !pending && !opening && (
@@ -1440,11 +980,11 @@ export function AssistantChat({
                 <p className="text-xs leading-relaxed text-brand-ink/55">
                   I read and change the same data the screens do — openings, candidates, screening,
                   assessments, interviews, onboarding, the apply questions, sourcing, stored files,
-                  the message outbox, the analytics report, the row-level reports, and the settings,
-                  team, model-routing, API-keys and change-trail consoles — by calling the very
-                  actions those pages call, so the permissions on your role apply here unchanged.
-                  Time Tracker and the hiring-data activity trail are the two screens I cannot read:
-                  neither table is on the database yet. The “What can the assistant do?” button
+                  the message outbox, the analytics report, the row-level reports, the settings,
+                  team, model-routing, API-keys and change-trail consoles, the hiring-data
+                  activity trail and the hours people logged in the Time Tracker — by calling the
+                  very actions those pages call, so the permissions on your role apply here
+                  unchanged. The “What can the assistant do?” button
                   above lists every one.
                 </p>
                 <p className="mt-2 text-xs leading-relaxed text-brand-ink/55">
@@ -1572,7 +1112,7 @@ export function AssistantChat({
                         approval={step.approval}
                         live={live}
                         busy={approving === step.approval.id}
-                        onApprove={(entry) => void approve(entry)}
+                        onApprove={(entry, entered) => void approve(entry, entered)}
                       />
                     ) : null
                   )}
@@ -1602,7 +1142,7 @@ export function AssistantChat({
       )}
 
       {!showCapabilities && !showSessions && (
-        <footer className={cn("shrink-0 border-t border-brand-line bg-white", variant === "page" ? "px-6 py-4" : "p-3")}>
+        <footer className={cn("shrink-0 border-t border-brand-line bg-white", variant !== "docked" ? "px-6 py-4" : "p-3")}>
           <div className={cn(wide && "mx-auto max-w-3xl")}>
             {error && (
               <FailureNote
@@ -1623,6 +1163,40 @@ export function AssistantChat({
               />
             )}
 
+            {voiceMode === "console" && (
+              <VoiceStrip
+                pushToTalk={() => {
+                  setVoiceError(null);
+                  if (recorder.state === "recording") recorder.stop();
+                  else void recorder.start();
+                }}
+                recording={recorder.state === "recording"}
+                transcribing={recorder.state === "transcribing" || recorder.state === "requesting"}
+                secondsLeft={recorder.secondsLeft}
+                hitLimit={recorder.hitLimit}
+                supported={microphoneAvailable}
+                handsFree={handsFree}
+                onHandsFree={(next) => {
+                  setHandsFree(next);
+                  markAwaiting(false);
+                  setCaption("");
+                  if (!next) speech.stop();
+                }}
+                listening={wake.listening}
+                ambientArmed={ambientArmed}
+                wakePhrase={wakePhrase}
+                speakReplies={speakReplies}
+                onSpeakReplies={(next) => {
+                  writeStoredSpeak(next);
+                  if (!next) speech.stop();
+                }}
+                speaking={speech.speaking}
+                onStopSpeaking={speech.stop}
+                caption={caption}
+                error={voiceError ?? wake.error ?? meter.error ?? speech.error}
+              />
+            )}
+
             {attachment && (
               <p className="mb-2 flex items-center gap-2 rounded-xl border border-brand-gold bg-brand-gold/15 px-2.5 py-1.5 text-[11px] font-semibold text-brand-ink">
                 <FileText className="h-3.5 w-3.5 shrink-0 text-brand-gold-dark" aria-hidden />
@@ -1635,7 +1209,7 @@ export function AssistantChat({
                   type="button"
                   onClick={() => setAttachment(null)}
                   aria-label={`Remove ${attachment.name}`}
-                  className="rounded-md p-1 text-brand-ink/55 transition hover:bg-white"
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-brand-ink/55 transition hover:bg-white"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden />
                 </button>
@@ -1659,7 +1233,22 @@ export function AssistantChat({
               }}
               allowDestructive={allowDestructive}
               onAllowDestructive={setAllowDestructive}
+              speak={voiceMode === "console" ? null : {
+                on: speakReplies,
+                speaking: speech.speaking,
+                set: (next) => {
+                  writeStoredSpeak(next);
+                  if (!next) speech.stop();
+                },
+                stop: speech.stop,
+              }}
             />
+
+            {voiceMode !== "console" && speakReplies && speech.error && (
+              <p role="status" className="mb-2 text-[10px] leading-relaxed text-brand-ink/45">
+                {speech.error}
+              </p>
+            )}
 
             {modelListError && (
               <FailureNote
@@ -1694,6 +1283,12 @@ export function AssistantChat({
                   <Paperclip className="h-4 w-4" aria-hidden />
                 )}
               </button>
+              {voiceMode === "dictate" && (
+                <VoiceButton
+                  onTranscript={insertTranscript}
+                  disabled={pending || extracting}
+                />
+              )}
               <textarea
                 ref={inputRef}
                 rows={wide ? 3 : 2}

@@ -1,8 +1,6 @@
 "use server";
 
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
-import { supabaseConfig } from "@/lib/config";
-import { createClient } from "@supabase/supabase-js";
+import { getServiceRestClient } from "@/lib/data-api/service";
 
 export interface TrackedApplication {
   id: string;
@@ -53,12 +51,12 @@ export interface TrackResult {
  * tracking code resolves to. A candidate can only ever list their own inbox.
  */
 async function loadNotices(
-  supabase: ReturnType<typeof getSupabaseServiceClient>,
+  restClient: ReturnType<typeof getServiceRestClient>,
   applicationIds: string[]
 ): Promise<PortalNotice[]> {
   if (applicationIds.length === 0) return [];
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("communication_logs")
     .select("id, application_id, subject, body, created_at, read_at")
     .eq("channel", "IN_APP")
@@ -96,17 +94,9 @@ export async function trackApplication(trackingCode: string): Promise<TrackResul
     return { ok: false, applications: [], notices: [], error: "Enter the tracking code you were given when you applied." };
   }
 
-  let supabase: ReturnType<typeof getSupabaseServiceClient>;
-  try {
-    supabase = getSupabaseServiceClient();
-  } catch {
-    // Service role not configured — fall back to the anon key.
-    supabase = createClient(supabaseConfig.url, supabaseConfig.anonKey, {
-      auth: { persistSession: false },
-    }) as unknown as ReturnType<typeof getSupabaseServiceClient>;
-  }
+  const restClient = getServiceRestClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("applications")
     .select(
       // No `!inner` on candidate_attempts: candidates without an assigned
@@ -163,7 +153,7 @@ export async function trackApplication(trackingCode: string): Promise<TrackResul
     };
   });
 
-  const notices = await loadNotices(supabase, data.map((row) => row.id));
+  const notices = await loadNotices(restClient, data.map((row) => row.id));
 
   return { ok: true, applications, notices };
 }
@@ -180,14 +170,14 @@ export async function markPortalNoticesRead(
   const code = trackingCode.trim().toUpperCase();
   if (code.length < 4) return { ok: false, unread: 0 };
 
-  let supabase: ReturnType<typeof getSupabaseServiceClient>;
+  let restClient: ReturnType<typeof getServiceRestClient>;
   try {
-    supabase = getSupabaseServiceClient();
+    restClient = getServiceRestClient();
   } catch {
     return { ok: false, unread: 0 };
   }
 
-  const { data } = await supabase
+  const { data } = await restClient
     .from("applications")
     .select("id")
     .eq("tracking_code", code);
@@ -195,7 +185,7 @@ export async function markPortalNoticesRead(
   const ids = (data ?? []).map((row) => row.id);
   if (ids.length === 0) return { ok: false, unread: 0 };
 
-  const { data: unread } = await supabase
+  const { data: unread } = await restClient
     .from("communication_logs")
     .select("id")
     .eq("channel", "IN_APP")
@@ -203,7 +193,7 @@ export async function markPortalNoticesRead(
     .is("read_at", null);
 
   if (unread && unread.length > 0) {
-    await supabase
+    await restClient
       .from("communication_logs")
       .update({ read_at: new Date().toISOString() })
       .in("id", unread.map((row) => row.id));

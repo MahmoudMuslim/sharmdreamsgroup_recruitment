@@ -10,6 +10,7 @@
  * - Assessment suite drafting from a job opening
  */
 import { complete, parseJsonResponse, type CompletionRequest } from "@/modules/screening/infrastructure/aiGateway";
+import { fencedCode } from "@/modules/assessment/domain/coding";
 import {
   DIFFICULTY_LABELS,
   GENERATED_JSON_SHAPE,
@@ -21,7 +22,15 @@ import {
   type AuthoringBrief,
   type SuiteSeedingContext,
 } from "@/modules/assessment/domain/aiAuthoring";
-import type { CvScreeningResult, SentimentAnalysisResult, FeedbackReport, GeneratedInterviewQuestions } from "@/types";
+import { readDemonstratedSkills, type CatalogueSkill } from "@/modules/jobs/domain/openingSkills";
+import type {
+  CvScreeningResult,
+  RubricCriterion,
+  SentimentAnalysisResult,
+  FeedbackReport,
+  GeneratedInterviewQuestions,
+} from "@/types";
+import type { RubricBand } from "@/modules/assessment/domain/rubric";
 
 /**
  * Bias reduction: strips demographic markers from CV text before sending to LLM.
@@ -58,12 +67,18 @@ function anonymizeCvText(text: string): { text: string; anonymized: boolean } {
  * `anonymize` carries the `ai.bias_reduction` setting. When it is off the model
  * receives the CV exactly as the candidate submitted it, and the prompt labels
  * the block accordingly rather than still calling it anonymized.
+ *
+ * `skills` is the live catalogue, and it is the only vocabulary the answer is
+ * read in. The model is shown the names and answers with names, because it has
+ * no business inventing a uuid; the domain turns each answer back into its row
+ * and drops what the catalogue does not hold. With an empty list nothing is asked
+ * and nothing is returned — a screener with no vocabulary must not improvise one.
  */
 export async function screenCandidateCv(
   jobTitle: string,
   jobRequirements: string[],
   cvText: string,
-  { anonymize }: { anonymize: boolean }
+  { anonymize, skills = [] }: { anonymize: boolean; skills?: readonly CatalogueSkill[] }
 ): Promise<CvScreeningResult> {
   const { text: cvSection, anonymized } = anonymize
     ? anonymizeCvText(cvText)
@@ -73,12 +88,24 @@ export async function screenCandidateCv(
 Return ONLY valid JSON matching the CvScreeningResult schema. No markdown, no commentary.
 Be objective, focus on skills and experience. Ignore demographic information.`;
 
+  const skillsBlock =
+    skills.length > 0
+      ? `
+
+SKILLS THE PORTAL KEEPS (this is the whole list — quote a name from it exactly, and never invent one):
+${skills.map((skill) => `- ${skill.name}`).join("\n")}
+
+For each skill the CV actually evidences, add "demonstrated_skills": [{"skill": "<name from the list>", "level": number}].
+Level is 1 (novice) to 5 (expert). Leave a skill out when the CV says nothing about it — absence is not a low level.`
+      : "";
+
   const userPrompt = `JOB TITLE: ${jobTitle}
 REQUIREMENTS:
 ${jobRequirements.map((r) => `- ${r}`).join("\n")}
 
 CANDIDATE CV${anonymize ? " (ANONYMIZED)" : ""}:
 ${cvSection}
+${skillsBlock}
 
 Evaluate and return:
 {
@@ -88,7 +115,7 @@ Evaluate and return:
   "key_competencies": string[],
   "strengths": string[],
   "gaps": string[],
-  "anonymization_applied": boolean,
+${skills.length > 0 ? '  "demonstrated_skills": [{"skill": "string", "level": number}],\n' : ""}  "anonymization_applied": boolean,
   "model_used": string
 }`;
 
@@ -105,7 +132,12 @@ Evaluate and return:
 
   const result = await complete(request);
   const parsed = parseJsonResponse<CvScreeningResult>(result.content, { truncated: result.truncated });
-  return { ...parsed, anonymization_applied: anonymized, model_used: result.model };
+  return {
+    ...parsed,
+    demonstrated_skills: readDemonstratedSkills(parsed.demonstrated_skills, skills),
+    anonymization_applied: anonymized,
+    model_used: result.model,
+  };
 }
 
 /**
@@ -398,6 +430,68 @@ Evaluate and return:
 }
 
 /**
+ * A coding answer read as source text, with no compiler and no runner.
+ *
+ * The platform has no place to carry out a candidate's code, so this prompt asks
+ * the model for the only judgement it can honestly make: read the submission as
+ * written and assess correctness, edge cases and clarity from the source alone.
+ * It is told, in as many words, that the answer has not been compiled, run or
+ * tested, so a verdict cannot claim a result nobody observed. The improvements
+ * it names are the things a person would need to exercise, not a run it implies
+ * it performed.
+ *
+ * The context is the question's own scenario, the same one the rubric path is
+ * given: a case study converted to a coding question keeps its brief, and two
+ * coding questions with the same source must not be marked on different input.
+ * It is optional, and the prompt is unchanged when there is none.
+ */
+export async function evaluateCodeSubmission(
+  questionPrompt: string,
+  language: string | null,
+  candidateAnswer: string,
+  context = ""
+): Promise<{ score: number; rationale: string; strengths: string[]; improvements: string[] }> {
+  const systemPrompt = `You are a senior engineer marking a candidate's coding answer for a hospitality / finance leadership role.
+You are given source text a person wrote. It has not been compiled, run or tested. Never claim it works or fails, and never imply you observed an outcome.
+Assess correctness, edge cases and clarity from the source alone, and name what a person would need to exercise.
+Return ONLY valid JSON. No markdown.
+Score 0-100 for the answer as written.`;
+
+  const contextBlock = context.trim() ? `\nCONTEXT:\n${context}\n` : "";
+
+  const userPrompt = `CODE QUESTION:
+${questionPrompt}
+
+LANGUAGE:
+${language ?? "Not named"}
+${contextBlock}
+CANDIDATE CODE:
+${fencedCode(language, candidateAnswer)}
+
+Evaluate and return:
+{
+  "score": number,
+  "rationale": "string (3-4 sentences explaining the score)",
+  "strengths": string[],
+  "improvements": string[]
+}`;
+
+  const request: CompletionRequest = {
+    capability: "case_reasoning",
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.2,
+    maxTokens: 2000,
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  return parseJsonResponse<{ score: number; rationale: string; strengths: string[]; improvements: string[] }>(result.content, { truncated: result.truncated });
+}
+
+/**
  * Excel Model Evaluation: AI-examines the candidate's submitted cells against
  * the question's required outputs (cell, description, formula hint).
  * The pipeline may store formulas or computed values (Handsontable can
@@ -569,6 +663,121 @@ Evaluate and return:
     strengths: string[];
     improvements: string[];
   }>(result.content, { truncated: result.truncated });
+}
+
+/**
+ * Marking against the criteria the recruiter wrote for this question.
+ *
+ * The question's own criteria are named and weighted in the prompt and the model
+ * is asked for one judgement each: how well the answer showed it, and the quote
+ * from the answer that justifies the number. No total is asked for. `scoreRubric`
+ * multiplies each band by the marks that criterion is worth on this question and
+ * adds the parts up — a mark the model both proposes and explains cannot be
+ * checked against a weighting a person set by hand.
+ *
+ * A pitch's material is its transcript, and the prompt says so: what the model
+ * cannot perceive must not be quietly scored, and presence, dress and delivery
+ * stay with the reviewer who can play the recording.
+ *
+ * A coding answer's material is fenced source tagged with its language, and the
+ * prompt says it has not been compiled, run or tested: the code is judged as
+ * written, never as a result.
+ */
+export async function gradeAgainstRubric(
+  brief: string,
+  rawMaterial: string,
+  criteria: readonly RubricCriterion[],
+  options: {
+    capability: CompletionRequest["capability"];
+    transcriptOnly?: boolean;
+    context?: string;
+    limits?: { minDurationSeconds?: number; maxDurationSeconds?: number };
+    /** The material is source text; it must be fenced and judged as written. */
+    code?: boolean;
+    /** The language the fence is tagged with. */
+    language?: string;
+  }
+): Promise<RubricBand[]> {
+  const systemPrompt = options.transcriptOnly
+    ? `You are assessing a recorded candidate pitch for a hospitality / finance leadership role.
+You are given a verbatim transcript, NOT the video. Judge only what was said and how it was organised.
+Never score presence, dress, voice quality or camera delivery — you cannot perceive them, and a reviewer who can plays the recording.
+The pitch may be in any language; assess the argument, not the language choice.
+Return ONLY valid JSON. No markdown.`
+    : options.code
+      ? `You are a senior engineer marking a candidate's coding answer for a hospitality / finance leadership role.
+The material is source text a person wrote. It has not been compiled, run or tested. Do not claim it works or fails; judge it as written and name what a person would need to exercise.
+Return ONLY valid JSON. No markdown.`
+      : `You are a domain expert evaluating a candidate's written case-study response for a hospitality / finance leadership role.
+Judge the answer for what it says, not for its length or fluency.
+Return ONLY valid JSON. No markdown.`;
+
+  const scheme = criteria
+    .map(
+      (criterion) =>
+        `• “${criterion.label}” — ${criterion.weight}% of the question's marks${
+          criterion.description ? `: ${criterion.description}` : ""
+        }`
+    )
+    .join("\n");
+
+  const durations = options.limits ?? {};
+  const limits =
+    durations.minDurationSeconds || durations.maxDurationSeconds
+      ? `TIME ALLOWED: ${durations.minDurationSeconds ?? 0}-${durations.maxDurationSeconds ?? 120} seconds.`
+      : "";
+
+  const material = options.code
+    ? `The candidate's submitted code:\n\n${fencedCode(options.language, rawMaterial)}`
+    : rawMaterial;
+
+  const materialLabel = options.transcriptOnly
+    ? `TRANSCRIPT (${rawMaterial.split(/\s+/).filter(Boolean).length} words)`
+    : options.code
+      ? "CANDIDATE CODE"
+      : "CANDIDATE ANSWER";
+
+  const userPrompt = `BRIEF GIVEN TO THE CANDIDATE:
+${brief}
+${options.context ? `\nCONTEXT PROVIDED TO THE CANDIDATE:\n${options.context}` : ""}
+${limits ? `\n${limits}` : ""}
+
+${materialLabel}:
+${material}
+
+MARKING SCHEME — judge each criterion on its own:
+${scheme}
+${options.code ? "\nThe material is source text a person wrote. It has not been compiled, run or tested: judge it as written and do not claim it works or fails.\n" : ""}
+Return:
+{
+  "bands": [
+    {
+      "criterion": "string — the criterion's name exactly as written above",
+      "percent": number (0-100, how well this answer shows this criterion),
+      "evidence": "string (the few words of the answer that justify the number, under 20 words)"
+    }
+  ]
+}
+One band for every criterion, named exactly as written above. Do not add a total: the marks are added up from these bands.`;
+
+  const request: CompletionRequest = {
+    capability: options.capability,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature: 0.2,
+    // Each band carries a quote, so the room grows with the criteria. A capped
+    // chain truncates the verdict and the answer is parked instead of marked.
+    maxTokens: Math.min(2400, 400 + 300 * criteria.length),
+    jsonMode: true,
+  };
+
+  const result = await complete(request);
+  const parsed = parseJsonResponse<{ bands?: RubricBand[] }>(result.content, {
+    truncated: result.truncated,
+  });
+  return Array.isArray(parsed?.bands) ? parsed.bands : [];
 }
 
 /**

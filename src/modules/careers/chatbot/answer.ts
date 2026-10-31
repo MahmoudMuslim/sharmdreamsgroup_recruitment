@@ -9,7 +9,7 @@
  */
 
 import { complete, AiGatewayError } from "@/modules/screening/infrastructure/aiGateway";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 import { MAX_REPLY_CHARS, modelWindow, type ChatTurn } from "./conversation";
 
 const LANGUAGE_NAMES: Record<Locale, string> = {

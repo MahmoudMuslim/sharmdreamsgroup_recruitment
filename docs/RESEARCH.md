@@ -136,7 +136,7 @@ Status: ✅ shipped · 🟡 partial · 🔴 not built
 | Excel job simulation | ✅ | `SpreadsheetRunner.tsx` (Handsontable + HyperFormula) |
 | Written response / case study | ✅ | `CaseStudyRunner.tsx` |
 | Multiple-choice + auto-grading | ✅ | `QuizRunner.tsx`, submit route |
-| One-way video response | ✅ | `VideoPitchRecorder.tsx` (MediaRecorder → Supabase Storage) |
+| One-way video response | ✅ | `VideoPitchRecorder.tsx` (MediaRecorder → `POST /api/attempt/[token]/video` → the `candidate-videos` bucket on the uploads volume) |
 | Question randomization | 🔴 | not built |
 | Per-question timing | 🔴 | whole-suite timer only |
 | Bulk send assessments | 🔴 | not built |

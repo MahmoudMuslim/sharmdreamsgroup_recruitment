@@ -1,28 +1,32 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import type { Company } from "@/core/entities";
 import type {
-  Company,
   Currency,
   Department,
   Location,
   MasterEntity,
   MasterPayload,
+  Position,
+  PositionChoice,
   RoleFamily,
   Skill,
 } from "@/modules/settings/domain/types";
 import { isSector, SECTORS } from "@/modules/settings/domain/vocabularies";
 import {
   MASTER_LIST_WORDS,
+  UNAPPLIED_MASTER_LIST,
   findListTwin,
   foldRowKey,
   masterRowName,
   twinRefusal,
   type MasterRowLike,
 } from "@/modules/settings/domain/masterDataLists";
+import { resolveFiling, type FilingRow } from "@/modules/settings/domain/masterDataFiling";
 import { HIREABLE_STATUSES } from "@/modules/jobs/domain/hireable";
 import { recordActivity } from "@/modules/activity/application/record";
 import {
@@ -41,6 +45,7 @@ const MASTER_TABLE: Record<MasterEntity, string> = {
   departments: "departments",
   locations: "locations",
   role_families: "role_families",
+  positions: "positions",
   skills: "skills",
   currencies: "currencies",
 };
@@ -51,6 +56,7 @@ const TRAIL_ENTITY: Record<MasterEntity, ActivityEntity> = {
   departments: "department",
   locations: "location",
   role_families: "role family",
+  positions: "position",
   skills: "skill",
   currencies: "currency",
 };
@@ -78,6 +84,8 @@ const READ_COLUMNS: Record<MasterEntity, string> = {
   departments: "name, slug, description, is_active",
   locations: "name, city, governorate, country, timezone, is_active",
   role_families: "key, label, description, is_active",
+  positions:
+    "title, tenant_id, department, grade, min_salary_usd, max_salary_usd, salary_currency, is_active",
   skills: "name, category, description, is_active",
   currencies: "code, symbol, label, is_active",
 };
@@ -96,6 +104,11 @@ const DIFF_COLUMNS: Partial<Record<MasterEntity, string>> = {
     `${READ_COLUMNS.companies}, website, contact_phone, address, sort_order,` +
     " tagline, description, history, careers_pitch, founded_year, ownership_type," +
     " employee_range, headquarters, milestones, benefits, is_group_profile",
+  // A position's prose is the half a recruiter edits most, and the edit form always
+  // posts it. Read the short list and the diff never sees those keys, so
+  // `scalarEdits` reports a column the person did not touch as "set to …" on every
+  // save — and the trail says four fields moved when two did.
+  positions: `${READ_COLUMNS.positions}, responsibilities, requirements`,
 };
 
 /**
@@ -107,6 +120,7 @@ const DIFF_COLUMNS: Partial<Record<MasterEntity, string>> = {
  */
 const DOCUMENT_COLUMNS: Partial<Record<MasterEntity, readonly string[]>> = {
   companies: ["milestones", "benefits"],
+  positions: ["requirements"],
 };
 
 /** The row as a person would name it in a sentence. */
@@ -123,6 +137,7 @@ const REQUIRED_COLUMNS: Record<MasterEntity, readonly string[]> = {
   departments: ["name", "slug"],
   locations: ["name", "country", "timezone"],
   role_families: ["key", "label"],
+  positions: ["title", "department"],
   skills: ["name"],
   currencies: ["code", "symbol", "label"],
 };
@@ -138,6 +153,8 @@ const REQUIRED_LABELS: Record<string, string> = {
   timezone: "time zone",
   code: "currency code",
   symbol: "symbol",
+  title: "title",
+  department: "department",
 };
 
 /** Turns a label into a stable, URL-safe slug. */
@@ -344,6 +361,192 @@ function shapeCompanyProfile(payload: MasterPayload): { row: Record<string, unkn
 }
 
 /* -------------------------------------------------------------------------- */
+/* A position's copy, as the opening inherits it                              */
+/* -------------------------------------------------------------------------- */
+
+/** The most requirement lines a position may carry, matching the database check. */
+const POSITION_REQUIREMENTS_MAX = 30;
+
+/** The one positions check that needs both salary fields to decide. */
+const SALARY_BAND_REFUSAL =
+  "The salary band runs backwards — the maximum must be at least the minimum.";
+
+/**
+ * One salary figure, or the reason it cannot be stored.
+ *
+ * The form posts text, the chat may post a number, and both must land as a
+ * numeric or NULL — never as `NaN`, which Postgres reports as an invalid number
+ * rather than as the field the person filled in wrongly.
+ */
+function salaryAmount(value: unknown, label: string): { value: number | null } | { error: string } {
+  if (value === null || value === undefined || value === "") return { value: null };
+  const amount = typeof value === "number" ? value : Number(String(value).trim());
+  if (!Number.isFinite(amount) || amount < 0) {
+    return { error: `The ${label} must be a number of zero or more.` };
+  }
+  return { value: amount };
+}
+
+/**
+ * The requirement lines from either door.
+ *
+ * The console edits them as one line per entry in a textarea; `save_master_record`
+ * may send the array it read back. Both are accepted, and a blank line is not a
+ * requirement — it is the space between two.
+ */
+function requirementLines(value: unknown): { lines: string[] } | { error: string } {
+  const raw =
+    typeof value === "string"
+      ? value.split(/\r?\n/)
+      : Array.isArray(value)
+        ? value
+        : value === null || value === undefined
+          ? []
+          : null;
+  if (raw === null) {
+    return { error: "Requirements must be an array of lines, or one line per entry in the editor." };
+  }
+
+  const lines = raw
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (lines.length > POSITION_REQUIREMENTS_MAX) {
+    return {
+      error: `That is ${lines.length} requirement lines — a position files at most ${POSITION_REQUIREMENTS_MAX}.`,
+    };
+  }
+  return { lines };
+}
+
+/**
+ * The columns a position write owns, in their stored shapes.
+ *
+ * Only keys the caller supplied are shaped, so a partial edit never blanks a
+ * field nobody sent. Both write doors come through here: the console posts every
+ * field on every save, and the assistant posts only the keys it names.
+ */
+function shapePosition(payload: MasterPayload): { row: Record<string, unknown> } | { error: string } {
+  const row: Record<string, unknown> = {};
+
+  if ("tenant_id" in payload) row.tenant_id = clean(payload.tenant_id);
+
+  if ("title" in payload) {
+    const checked = checkedText(payload.title, "title", 160);
+    if ("error" in checked) return checked;
+    if (!checked.text) return { error: "A position needs a title." };
+    row.title = checked.text;
+  }
+
+  if ("department" in payload) {
+    const checked = checkedText(payload.department, "department", 120);
+    if ("error" in checked) return checked;
+    if (!checked.text) return { error: "A position needs a department." };
+    row.department = checked.text;
+  }
+
+  if ("grade" in payload) {
+    const checked = checkedText(payload.grade, "grade", 40);
+    if ("error" in checked) return checked;
+    row.grade = checked.text;
+  }
+
+  if ("responsibilities" in payload) {
+    const checked = checkedText(payload.responsibilities, "responsibilities", 4000);
+    if ("error" in checked) return checked;
+    row.responsibilities = checked.text;
+  }
+
+  if ("requirements" in payload) {
+    const parsed = requirementLines(payload.requirements);
+    if ("error" in parsed) return parsed;
+    row.requirements = parsed.lines;
+  }
+
+  let min: number | null | undefined;
+  let max: number | null | undefined;
+
+  if ("min_salary_usd" in payload) {
+    const parsed = salaryAmount(payload.min_salary_usd, "minimum salary");
+    if ("error" in parsed) return parsed;
+    min = parsed.value;
+    row.min_salary_usd = parsed.value;
+  }
+  if ("max_salary_usd" in payload) {
+    const parsed = salaryAmount(payload.max_salary_usd, "maximum salary");
+    if ("error" in parsed) return parsed;
+    max = parsed.value;
+    row.max_salary_usd = parsed.value;
+  }
+  if (min !== undefined && max !== undefined && min !== null && max !== null && max < min) {
+    return { error: SALARY_BAND_REFUSAL };
+  }
+
+  if ("salary_currency" in payload) {
+    const code = (clean(payload.salary_currency) ?? "USD").toUpperCase();
+    if (!/^[A-Z]{3}$/.test(code)) {
+      return { error: "The salary currency must be a three-letter ISO code, e.g. EGP." };
+    }
+    row.salary_currency = code;
+  }
+
+  return { row };
+}
+
+/**
+ * A position's department and currency, in the vocabularies' own spelling.
+ *
+ * An opening files itself by department name and currency code, and a position is
+ * the template it copies them from — so a value the lists do not hold here would
+ * author openings the filing door can never accept. Both are resolved against the
+ * live lists through the same rule a job filing uses, and written back in the
+ * list's own spelling, so "finance & investment" is stored as the row the console
+ * and the drift desk name.
+ *
+ * `stored` is the row as an edit finds it. Passing it lets a recruiter change the
+ * title on a position seeded before the lists were populated without being blocked
+ * by a department they did not write.
+ */
+async function resolvePositionCopy(
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
+  row: Record<string, unknown>,
+  stored?: Record<string, unknown> | null
+): Promise<{ row: Record<string, unknown> } | { error: string }> {
+  const fields = [
+    { entity: "departments" as const, column: "department", by: "name" as const },
+    { entity: "currencies" as const, column: "salary_currency", by: "code" as const },
+  ].filter(({ column }) => column in row);
+
+  if (fields.length === 0) return { row };
+
+  const lists = await Promise.all(fields.map(({ entity }) => readListRows(restClient, entity)));
+  const resolved = { ...row };
+  const refusal: string[] = [];
+
+  fields.forEach(({ entity, column, by }, index) => {
+    const list = lists[index];
+    if (!list.rows) {
+      refusal.push(
+        `The ${MASTER_LIST_WORDS[entity]} list could not be read, so the position was not saved. Try again.`
+      );
+      return;
+    }
+    const result = resolveFiling({
+      entity,
+      rows: list.rows as FilingRow[],
+      submitted: String(row[column] ?? ""),
+      by,
+      stored: stored ? String(stored[column] ?? "") : undefined,
+    });
+    if (result.ok) resolved[column] = result.name;
+    else refusal.push(result.error);
+  });
+
+  if (refusal.length > 0) return { error: refusal.join(" ") };
+  return { row: resolved };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Read                                                                       */
 /* -------------------------------------------------------------------------- */
 
@@ -358,39 +561,51 @@ export async function getMasterData(): Promise<{
   departments: Department[];
   locations: Location[];
   roleFamilies: RoleFamily[];
+  positions: Position[];
+  positionsAvailable: boolean;
   skills: Skill[];
   currencies: Currency[];
 }> {
   await requireStaff("/settings");
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const [companies, departments, locations, roleFamilies, skills, currencies] =
+  // Positions are read beside the six lists rather than through the same assertion:
+  // their table arrives with a migration the owner has not applied yet, and a missing
+  // relation must cost only that one list. `positionsAvailable` tells the console and
+  // the jobs form which state they are in — empty, or not created.
+  const [companies, departments, locations, roleFamilies, positions, skills, currencies] =
     await Promise.all([
-      supabase
+      restClient
         .from("tenants_and_companies")
         .select(
           `id, name, legal_name, slug, sector, country, website, contact_email, contact_phone, address, city, logo_url, is_active, sort_order, tagline, description, history, careers_pitch, founded_year, ownership_type, employee_range, headquarters, milestones, benefits, cover_url, is_group_profile`
         )
         .order("sort_order"),
-      supabase
+      restClient
         .from("departments")
         .select("id, tenant_id, name, slug, description, head_profile_id, is_active, sort_order")
         .order("sort_order"),
-      supabase
+      restClient
         .from("locations")
         .select(
           "id, tenant_id, name, city, governorate, country, timezone, address, is_active, sort_order"
         )
         .order("sort_order"),
-      supabase
+      restClient
         .from("role_families")
         .select("id, key, label, description, department_id, is_active, sort_order")
         .order("sort_order"),
-      supabase
+      restClient
+        .from("positions")
+        .select(
+          "id, tenant_id, title, department, grade, responsibilities, requirements, min_salary_usd, max_salary_usd, salary_currency, is_active, sort_order"
+        )
+        .order("sort_order"),
+      restClient
         .from("skills")
         .select("id, name, category, description, is_active, sort_order")
         .order("sort_order"),
-      supabase
+      restClient
         .from("currencies")
         .select("id, code, symbol, label, is_active, sort_order")
         .order("sort_order"),
@@ -401,6 +616,8 @@ export async function getMasterData(): Promise<{
     departments: (departments.data ?? []) as Department[],
     locations: (locations.data ?? []) as Location[],
     roleFamilies: (roleFamilies.data ?? []) as RoleFamily[],
+    positions: (positions.data ?? []) as Position[],
+    positionsAvailable: !positions.error,
     skills: (skills.data ?? []) as Skill[],
     currencies: (currencies.data ?? []) as Currency[],
   };
@@ -428,7 +645,7 @@ export async function createMasterRecord(
     return { ok: false, error: "You need the Manage platform settings permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   const name = clean(payload.name);
   const label = clean(payload.label);
@@ -436,9 +653,10 @@ export async function createMasterRecord(
   if (entity === "role_families" && !label) {
     return { ok: false, error: "A role family needs a label." };
   }
-  // Currencies are keyed by ISO code rather than a name, and department/location
-  // still use `name`.
-  if (entity !== "role_families" && entity !== "currencies" && !name) {
+  // Currencies are keyed by ISO code and a position by its title rather than a
+  // name, and department/location still use `name`.
+  const namedByTitle = entity === "positions";
+  if (entity !== "role_families" && entity !== "currencies" && !namedByTitle && !name) {
     return { ok: false, error: "A name is required." };
   }
   if (entity === "currencies" && !label) {
@@ -528,6 +746,26 @@ export async function createMasterRecord(
       break;
     }
 
+    case "positions": {
+      const shaped = shapePosition(payload);
+      if ("error" in shaped) return { ok: false, error: shaped.error };
+      // `shapePosition` only checks a field the caller sent, because the same shaper
+      // serves partial edits. A create sends nothing else, so an absent title or
+      // department would land as a raw NOT NULL violation instead of a sentence.
+      if (!shaped.row.title) return { ok: false, error: "A position needs a title." };
+      if (!shaped.row.department) return { ok: false, error: "A position needs a department." };
+      row = {
+        ...shaped.row,
+        tenant_id: shaped.row.tenant_id ?? null,
+        // The column is NOT NULL default '{}': an absent list is no lines, not NULL.
+        requirements: shaped.row.requirements ?? [],
+        salary_currency: shaped.row.salary_currency ?? "USD",
+        is_active: payload.is_active !== false,
+        sort_order: Number(payload.sort_order ?? 100),
+      };
+      break;
+    }
+
     case "skills": {
       row = {
         name,
@@ -571,12 +809,23 @@ export async function createMasterRecord(
   // a filing resolves to, which one the console names, and the "in use" figure each
   // row prints, since a department or location is counted by its name.
   const added = masterName(entity, row);
-  const list = await readListRows(supabase, entity);
-  if (!list) return { ok: false, error: LIST_UNREADABLE };
-  const twin = findListTwin(entity, list, added);
+  const list = await readListRows(restClient, entity);
+  if (!list.rows) return { ok: false, error: listRefusal(entity, list.error) };
+  const twin = findListTwin(entity, list.rows, added);
   if (twin) return { ok: false, error: twinRefusal(entity, added, masterName(entity, twin)) };
 
-  const { data, error } = await supabase.from(MASTER_TABLE[entity]).insert(row).select("id").single();
+  // A position's department and currency are the vocabulary's words, not free text:
+  // the openings that inherit them file under the same two lists, so an off-list
+  // value here would make every opening copied from this position unfilable. The
+  // read of the position list above happens first, so an unapplied migration is
+  // reported as that rather than as a fault in a field.
+  if (entity === "positions") {
+    const resolved = await resolvePositionCopy(restClient, row);
+    if ("error" in resolved) return { ok: false, error: resolved.error };
+    row = resolved.row;
+  }
+
+  const { data, error } = await restClient.from(MASTER_TABLE[entity]).insert(row).select("id").single();
 
   if (error) {
     // Unique-constraint collisions are the common case and deserve a clear message.
@@ -585,6 +834,14 @@ export async function createMasterRecord(
     }
     if (error.code === "22P02") {
       return { ok: false, error: "One of the values supplied was not valid." };
+    }
+    // Everything a position's checks guard is validated above, so a 23514 here is
+    // almost always the salary band, which is the one rule that needs both fields.
+    if (error.code === "23514" && entity === "positions") {
+      return { ok: false, error: SALARY_BAND_REFUSAL };
+    }
+    if (error.code === "23503" && entity === "positions") {
+      return { ok: false, error: "That company no longer exists — pick another." };
     }
     return { ok: false, error: error.message };
   }
@@ -611,11 +868,11 @@ export async function createMasterRecord(
  * own cast. One helper, one cast, and the shape is whatever the table holds.
  */
 async function readMasterRow(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   entity: MasterEntity,
   id: string
 ): Promise<Record<string, unknown> | null> {
-  const { data } = await supabase
+  const { data } = await restClient
     .from(MASTER_TABLE[entity])
     .select(DIFF_COLUMNS[entity] ?? READ_COLUMNS[entity])
     .eq("id", id)
@@ -630,25 +887,53 @@ async function readMasterRow(
  * name it was given: the match is case-insensitive, because that is how `findMasterRow`
  * resolves a filing, so `lower(name)` in a query would not be the same rule.
  *
- * `null` means the list could not be read, which is not the same as an empty list:
- * writing on top of an unread list would add the second copy this door exists to
- * refuse, silently.
+ * A failed read is returned with its reason, which is not the same as an empty
+ * list: writing on top of an unread list would add the second copy this door
+ * exists to refuse, silently. The reason lets the refusal name a missing table
+ * rather than invite a retry that would fail the same way.
  */
 async function readListRows(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   entity: MasterEntity
-): Promise<MasterRowLike[] | null> {
-  const { data, error } = await supabase
+): Promise<
+  | { rows: MasterRowLike[]; error?: never }
+  | { rows: null; error: { code?: string; message: string } }
+> {
+  const { data, error } = await restClient
     .from(MASTER_TABLE[entity])
     .select(`id, ${READ_COLUMNS[entity]}`)
     .order("sort_order");
-  if (error) return null;
-  return (data ?? []) as unknown as MasterRowLike[];
+  if (error) return { rows: null, error: { code: error.code, message: error.message } };
+  return { rows: (data ?? []) as unknown as MasterRowLike[] };
 }
 
 /** Sent instead of a twin verdict when the list could not be read at all. */
 const LIST_UNREADABLE =
   "The list could not be read, so this save cannot be checked against it. Try again.";
+
+/**
+ * Why a save could not read the list it was checked against.
+ *
+ * A missing relation is not a transient failure: positions are written against a
+ * migration that may not have been applied, so the answer names the file rather
+ * than inviting a retry that would fail identically.
+ */
+function listRefusal(
+  entity: MasterEntity,
+  error: { code?: string; message: string }
+): string {
+  const migration = UNAPPLIED_MASTER_LIST[entity];
+  if (
+    migration &&
+    (error.code === "42P01" ||
+      error.code === "PGRST205" ||
+      error.code === "PGRST204" ||
+      /does not exist|schema cache/i.test(error.message))
+  ) {
+    return `The ${MASTER_LIST_WORDS[entity]} list has not been created on this database yet — ${migration} is authored but not applied. Nothing can be saved there until the owner applies that file. Every other list still works.`;
+  }
+  return LIST_UNREADABLE;
+}
 
 export async function updateMasterRecord(
   entity: MasterEntity,
@@ -660,7 +945,7 @@ export async function updateMasterRecord(
     return { ok: false, error: "You need the Manage platform settings permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The flag names which row the careers page reads as the whole group's, and the
   // database lets exactly one row carry it. Moving it is a two-row change — unflag
@@ -707,6 +992,15 @@ export async function updateMasterRecord(
     Object.assign(row, profile.row);
   }
 
+  // Positions need the same shaping as a create: the form posts salary fields as
+  // text, and the requirement list as one line per entry, which the column stores
+  // as an array.
+  if (entity === "positions") {
+    const shaped = shapePosition(payload);
+    if ("error" in shaped) return { ok: false, error: shaped.error };
+    Object.assign(row, shaped.row);
+  }
+
   if (Object.keys(row).length === 0) {
     return { ok: false, error: "Nothing to save." };
   }
@@ -718,10 +1012,20 @@ export async function updateMasterRecord(
     row.slug = next;
   }
 
-  const before = await readMasterRow(supabase, entity, id);
+  const before = await readMasterRow(restClient, entity, id);
 
   if (!before) {
     return { ok: false, error: "That record is no longer in the list." };
+  }
+
+  // Resolved against the lists as an edit, with the row's own values passed as
+  // `stored`: a position seeded under a department the list has since renamed can
+  // still have its title corrected, while any value the edit *changes* has to name
+  // a live row.
+  if (entity === "positions") {
+    const resolved = await resolvePositionCopy(restClient, row, before);
+    if ("error" in resolved) return { ok: false, error: resolved.error };
+    Object.assign(row, resolved.row);
   }
 
   // The row as this edit would leave it, which the trail below also prints.
@@ -731,13 +1035,13 @@ export async function updateMasterRecord(
   // read alike — or reactivating one, which is how a recruiter gets out of that state —
   // is not adding a second copy, so refusing it would block the fix.
   if (foldRowKey(label) !== foldRowKey(masterName(entity, before))) {
-    const list = await readListRows(supabase, entity);
-    if (!list) return { ok: false, error: LIST_UNREADABLE };
-    const twin = findListTwin(entity, list, label, id);
+    const list = await readListRows(restClient, entity);
+    if (!list.rows) return { ok: false, error: listRefusal(entity, list.error) };
+    const twin = findListTwin(entity, list.rows, label, id);
     if (twin) return { ok: false, error: twinRefusal(entity, label, masterName(entity, twin)) };
   }
 
-  const { error } = await supabase.from(MASTER_TABLE[entity]).update(row).eq("id", id);
+  const { error } = await restClient.from(MASTER_TABLE[entity]).update(row).eq("id", id);
 
   if (error) {
     if (error.code === "23505") {
@@ -749,6 +1053,12 @@ export async function updateMasterRecord(
     }
     if (error.code === "23502") {
       return { ok: false, error: "A required field was left empty." };
+    }
+    if (error.code === "23514" && entity === "positions") {
+      return { ok: false, error: SALARY_BAND_REFUSAL };
+    }
+    if (error.code === "23503" && entity === "positions") {
+      return { ok: false, error: "That company no longer exists — pick another." };
     }
     return { ok: false, error: error.message };
   }
@@ -820,6 +1130,9 @@ function listWords(value: unknown): string {
   const named = value
     .slice(0, 3)
     .map((item) => {
+      // A requirements list is plain strings, and "an entry" says nothing about
+      // which one a person just reworded.
+      if (typeof item === "string") return item;
       const row = (item ?? {}) as Record<string, unknown>;
       return `${row.year ? `${row.year} ` : ""}${String(row.title ?? "")}`.trim() || "an entry";
     })
@@ -855,16 +1168,16 @@ export async function deleteMasterRecord(
     return { ok: false, error: "You need the Manage platform settings permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const before = await readMasterRow(supabase, entity, id);
+  const before = await readMasterRow(restClient, entity, id);
 
   if (!before) return { ok: false, error: "That record is no longer in the list." };
 
   // Nothing is hard-deleted: companies are referenced by every other
   // tenant-scoped table, and a retired department or location keeps existing
   // jobs and attempts resolvable.
-  const { error } = await supabase
+  const { error } = await restClient
     .from(MASTER_TABLE[entity])
     .update({ is_active: false })
     .eq("id", id);
@@ -875,8 +1188,8 @@ export async function deleteMasterRecord(
   const wasActive = before.is_active !== false;
   let usage: string | null = null;
   if (wasActive) {
-    const count = await masterUsage(supabase, entity, id, before);
-    usage = usageWords(count);
+    const count = await masterUsage(restClient, entity, id, before);
+    usage = usageWords(count, entity);
     await recordActivity({
       area: "master data",
       action: "master_retire",
@@ -915,16 +1228,28 @@ export async function deleteMasterRecord(
  *
  * Skills, currencies and role families are not named on an opening at all, so they
  * report `null` — no count — rather than a zero that reads like a clean answer.
+ *
+ * A position is the exception in the other direction: an opening that starts from
+ * one carries its id in `position_id`, so that count is exact, not a floor.
  */
 async function masterUsage(
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   entity: MasterEntity,
   id: string,
   row: Record<string, unknown>
 ): Promise<number | null> {
   if (entity === "skills" || entity === "currencies" || entity === "role_families") return null;
 
-  let query = supabase.from("job_openings").select("id");
+  if (entity === "positions") {
+    const { data, error } = await restClient
+      .from("job_openings")
+      .select("id")
+      .eq("position_id", id)
+      .in("status", [...HIREABLE_STATUSES]);
+    return error ? null : (data ?? []).length;
+  }
+
+  let query = restClient.from("job_openings").select("id");
   if (entity === "companies") {
     query = query.eq("tenant_id", id);
   } else {
@@ -939,7 +1264,14 @@ async function masterUsage(
 }
 
 /** The count above, in the words a trail row and a chat answer both print. */
-function usageWords(count: number | null): string {
+function usageWords(count: number | null, entity: MasterEntity): string {
+  if (entity === "positions") {
+    if (count === null) return "The openings that start from it were not counted.";
+    if (count === 0) return "No hireable opening starts from this position.";
+    return `${count.toLocaleString()} hireable ${
+      count === 1 ? "opening starts" : "openings start"
+    } from it. Retiring it leaves those openings and the copy they inherited untouched.`;
+  }
   if (count === null) {
     return "Openings do not name this kind of record, so nothing was counted.";
   }
@@ -964,27 +1296,40 @@ export async function getMasterOptions(): Promise<{
   departments: { id: string; name: string }[];
   locations: { id: string; name: string; city: string | null }[];
   roleFamilies: { id: string; key: string; label: string }[];
+  positions: PositionChoice[];
+  /** False on a database where `db/migrations/026_positions.sql` has never run; the picker says so. */
+  positionsAvailable: boolean;
   skills: { id: string; name: string; category: string | null }[];
   currencies: { id: string; code: string; symbol: string; label: string }[];
 }> {
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const [companies, departments, locations, roleFamilies, skills, currencies] = await Promise.all([
+  const [companies, departments, locations, roleFamilies, positions, skills, currencies] =
+    await Promise.all([
     // `sector` is included so job creation can pre-fill it from the company.
     // The group's own row is left out: it exists to carry the careers profile the
     // public header prints, and a role filed under it would claim to sit inside
     // every company at once.
-    supabase
+    restClient
       .from("tenants_and_companies")
       .select("id, name, sector")
       .eq("is_active", true)
       .eq("is_group_profile", false)
       .order("sort_order"),
-    supabase.from("departments").select("id, name").eq("is_active", true).order("sort_order"),
-    supabase.from("locations").select("id, name, city").eq("is_active", true).order("sort_order"),
-    supabase.from("role_families").select("id, key, label").eq("is_active", true).order("sort_order"),
-    supabase.from("skills").select("id, name, category").eq("is_active", true).order("sort_order"),
-    supabase
+    restClient.from("departments").select("id, name").eq("is_active", true).order("sort_order"),
+    restClient.from("locations").select("id, name, city").eq("is_active", true).order("sort_order"),
+    restClient.from("role_families").select("id, key, label").eq("is_active", true).order("sort_order"),
+    // Read beside the six lists: a missing table costs only the create-from-position
+    // door, and `positionsAvailable` is how the form knows to say why it has none.
+    restClient
+      .from("positions")
+      .select(
+        "id, tenant_id, title, department, grade, responsibilities, requirements, min_salary_usd, max_salary_usd, salary_currency"
+      )
+      .eq("is_active", true)
+      .order("sort_order"),
+    restClient.from("skills").select("id, name, category").eq("is_active", true).order("sort_order"),
+    restClient
       .from("currencies")
       .select("id, code, symbol, label")
       .eq("is_active", true)
@@ -996,6 +1341,8 @@ export async function getMasterOptions(): Promise<{
     departments: (departments.data ?? []) as { id: string; name: string }[],
     locations: (locations.data ?? []) as { id: string; name: string; city: string | null }[],
     roleFamilies: (roleFamilies.data ?? []) as { id: string; key: string; label: string }[],
+    positions: (positions.data ?? []) as PositionChoice[],
+    positionsAvailable: !positions.error,
     skills: (skills.data ?? []) as { id: string; name: string; category: string | null }[],
     currencies: (currencies.data ?? []) as {
       id: string;

@@ -30,12 +30,19 @@ export function PageHeader({
           </p>
         )}
       </div>
-      {actions && <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap gap-2 sm:shrink-0">{actions}</div>}
     </header>
   );
 }
 
-/** Elevated card with the group's warm, low-contrast surface treatment. */
+/**
+ * Elevated card with the group's warm, low-contrast surface treatment.
+ *
+ * `min-w-0` is load-bearing: a card is usually a grid or flex item, and an item's
+ * automatic minimum size is its content's minimum, so one figure that cannot
+ * break (a table, a long permission name) would widen the track past the screen
+ * and send the whole page scrolling sideways.
+ */
 export function Card({
   className,
   children,
@@ -44,7 +51,7 @@ export function Card({
   return (
     <div
       className={cn(
-        "rounded-2xl border border-brand-line bg-white shadow-soft transition",
+        "min-w-0 rounded-2xl border border-brand-line bg-white shadow-soft transition",
         className
       )}
       {...rest}

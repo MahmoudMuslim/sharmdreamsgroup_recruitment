@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { readOpeningPickerWindow } from "@/infrastructure/repositories/jobOpening";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
@@ -200,17 +202,17 @@ export async function getProspectPool(input: {
 }> {
   await requireStaff("/sourcing");
 
-  const supabase = await createSupabaseServerClient();
-  const rowsQuery = supabase
+  const restClient = await createServerRestClient();
+  const rowsQuery = restClient
     .from("sourced_prospects")
     .select(PROSPECT_SELECT)
     .order("created_at", { ascending: false })
     .limit(POOL_LIMIT);
   const [rows, total, ...stageCounts] = await Promise.all([
     input.stage ? rowsQuery.eq("stage", input.stage) : rowsQuery,
-    supabase.from("sourced_prospects").select("id", { count: "exact", head: true }),
+    restClient.from("sourced_prospects").select("id", { count: "exact", head: true }),
     ...PROSPECT_STAGES.map((stage) =>
-      supabase
+      restClient
         .from("sourced_prospects")
         .select("id", { count: "exact", head: true })
         .eq("stage", stage)
@@ -248,35 +250,25 @@ export async function getProspectPool(input: {
 export async function getProspectJobs(): Promise<JobPicker> {
   await requireStaff("/sourcing");
 
-  const supabase = await createSupabaseServerClient();
-  const [rows, count] = await Promise.all([
-    supabase
-      .from("job_openings")
-      .select("id, title, status")
-      .in("status", [...HIREABLE_STATUSES])
-      .order("created_at", { ascending: false })
-      .limit(PICKER_LIMIT),
-    supabase
-      .from("job_openings")
-      .select("id", { count: "exact", head: true })
-      .in("status", [...HIREABLE_STATUSES]),
-  ]);
+  const restClient = await createServerRestClient();
+  const picker = await readOpeningPickerWindow(restClient, {
+    statuses: HIREABLE_STATUSES,
+    limit: PICKER_LIMIT,
+  });
 
-  if (rows.error || count.error) {
-    console.error(
-      "[sourcing] opening picker failed:",
-      (rows.error ?? count.error)?.message,
-    );
+  if (!picker.ok) {
+    console.error("[sourcing] opening picker failed:", picker.error);
+    return { jobs: [], total: 0 };
   }
 
-  return { jobs: (rows.data ?? []) as JobOption[], total: count.count ?? 0 };
+  return { jobs: picker.rows as JobOption[], total: picker.total ?? 0 };
 }
 
 export async function getProspectHistory(id: string): Promise<ProspectHistoryRow[]> {
   await requireStaff("/sourcing");
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
+  const restClient = await createServerRestClient();
+  const { data } = await restClient
     .from("communication_logs")
     .select("id, channel, subject, body, recipient, delivered, error_message, created_at")
     .eq("prospect_id", id)
@@ -298,8 +290,8 @@ export async function getOutreachCopy(): Promise<
 > {
   await requireStaff("/sourcing");
 
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase
+  const restClient = await createServerRestClient();
+  const { data } = await restClient
     .from("notification_templates")
     .select("key, subject, body")
     .in("key", Object.values(PROSPECT_OUTREACH_TEMPLATES))
@@ -358,12 +350,12 @@ export async function importProspects(input: {
     return { ok: false, error: "That paste is too large. Import it in batches of a few hundred." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The chosen opening is quoted in every row's outreach copy, so a role nobody
   // is hiring for is refused before any row exists to advertise it.
   if (input.job_id) {
-    const opening = await requireHireableOpening(supabase, input.job_id);
+    const opening = await requireHireableOpening(restClient, input.job_id);
     if (!opening.ok) return { ok: false, error: opening.error };
   }
 
@@ -380,7 +372,7 @@ export async function importProspects(input: {
 
   // Newest first, because a list re-imported days after the first paste is a
   // duplicate of rows near the top of the table, not of an arbitrary slice of it.
-  const { data: current } = await supabase
+  const { data: current } = await restClient
     .from("sourced_prospects")
     .select("linkedin_url, email")
     .order("created_at", { ascending: false })
@@ -409,9 +401,9 @@ export async function importProspects(input: {
     };
   }
 
-  const createdBy = await staffProfileId(supabase, user.authUserId);
+  const createdBy = await staffProfileId(restClient, user.authUserId);
 
-  const { error } = await supabase.from("sourced_prospects").insert(
+  const { error } = await restClient.from("sourced_prospects").insert(
     fresh.map((draft) => ({
       full_name: draft.full_name,
       headline: draft.headline,
@@ -522,10 +514,10 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
   const cleaned = cleanFields(input);
   if (!cleaned.fields) return { ok: false, error: cleaned.error };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   if (input.id) {
-    const { data: found, error: readError } = await supabase
+    const { data: found, error: readError } = await restClient
       .from("sourced_prospects")
       .select("id, full_name, headline, company, location, email, phone, linkedin_url, notes, job_id, stage")
       .eq("id", input.id)
@@ -544,11 +536,11 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
     const wanted = cleaned.fields.job_id ?? null;
     const current = (before.job_id as string | null) ?? null;
     if (wanted && wanted !== current) {
-      const opening = await requireHireableOpening(supabase, wanted);
+      const opening = await requireHireableOpening(restClient, wanted);
       if (!opening.ok) return { ok: false, error: opening.error };
     }
 
-    const { error } = await supabase.from("sourced_prospects").update(patch).eq("id", input.id);
+    const { error } = await restClient.from("sourced_prospects").update(patch).eq("id", input.id);
     if (error) return { ok: false, error: error.message };
 
     // The drawer always sends the whole row back, so the diff is what makes this
@@ -570,13 +562,13 @@ export async function saveProspect(input: ProspectDraftInput): Promise<ProspectW
   // A hand-recorded prospect is a filing decision made now, so its role is
   // checked before the row exists rather than left to the picker's list.
   if (cleaned.fields.job_id) {
-    const opening = await requireHireableOpening(supabase, cleaned.fields.job_id);
+    const opening = await requireHireableOpening(restClient, cleaned.fields.job_id);
     if (!opening.ok) return { ok: false, error: opening.error };
   }
 
-  const createdBy = await staffProfileId(supabase, user.authUserId);
+  const createdBy = await staffProfileId(restClient, user.authUserId);
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("sourced_prospects")
     .insert({
       ...prospectPayload(cleaned.fields),
@@ -625,9 +617,9 @@ export async function setProspectStage(id: string, stage: string): Promise<Prosp
     return { ok: false, error: "You need the Manage candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found, error: readError } = await supabase
+  const { data: found, error: readError } = await restClient
     .from("sourced_prospects")
     .select("id, full_name, stage")
     .eq("id", id)
@@ -638,7 +630,7 @@ export async function setProspectStage(id: string, stage: string): Promise<Prosp
   const current = found as unknown as { id: string; full_name: string; stage: string };
   if (current.stage === stage) return { ok: true };
 
-  const { error } = await supabase.from("sourced_prospects").update({ stage }).eq("id", id);
+  const { error } = await restClient.from("sourced_prospects").update({ stage }).eq("id", id);
   if (error) return { ok: false, error: error.message };
 
   await recordActivity({
@@ -660,11 +652,11 @@ export async function deleteProspect(id: string): Promise<ProspectWriteResult> {
     return { ok: false, error: "You need the Delete candidates permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   // The name is read first: after the row is gone the trail would otherwise
   // record only a uuid, and "who deleted a prospect" could not be answered.
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("sourced_prospects")
     .select("id, full_name, company, stage, application_id")
     .eq("id", id)
@@ -678,7 +670,7 @@ export async function deleteProspect(id: string): Promise<ProspectWriteResult> {
     application_id: string | null;
   };
 
-  const { error } = await supabase.from("sourced_prospects").delete().eq("id", id);
+  const { error } = await restClient.from("sourced_prospects").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
 
   await recordActivity({
@@ -730,24 +722,24 @@ async function outreachVars(
   };
 }
 
-type StaffClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /**
  * `sourced_prospects.created_by` references user_profiles(id), not auth.users(id),
  * so the signed-in user has to be resolved to their profile row first. Passing
  * the auth id straight would break the foreign key.
  */
-async function staffProfileId(supabase: StaffClient, authUserId: string): Promise<string | null> {
-  const { data } = await supabase
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+async function staffProfileId(restClient: StaffClient, authUserId: string): Promise<string | null> {
+  const found = await readStaffProfileIdByAuthUserId(restClient, authUserId);
+  if (!found.ok) {
+    console.error("[sourcing] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 async function logOutbound(
-  supabase: StaffClient,
+  restClient: StaffClient,
   input: {
     prospectId: string;
     channel: OutreachChannel;
@@ -758,7 +750,7 @@ async function logOutbound(
     error?: string | null;
   }
 ) {
-  await supabase.from("communication_logs").insert({
+  await restClient.from("communication_logs").insert({
     prospect_id: input.prospectId,
     channel: input.channel,
     direction: "OUTBOUND",
@@ -796,8 +788,8 @@ export async function sendProspectOutreach(input: {
   const body = input.body?.trim();
   if (!body) return { ok: false, error: "The message cannot be empty." };
 
-  const supabase = await createSupabaseServerClient();
-  const { data, error } = await supabase
+  const restClient = await createServerRestClient();
+  const { data, error } = await restClient
     .from("sourced_prospects")
     .select("id, full_name, email, phone, stage, job_openings ( title, status )")
     .in("id", ids);
@@ -850,7 +842,7 @@ export async function sendProspectOutreach(input: {
       firstError ??= outcome.error;
     }
 
-    await logOutbound(supabase, {
+    await logOutbound(restClient, {
       prospectId: prospect.id,
       channel: input.channel,
       recipient,
@@ -867,11 +859,11 @@ export async function sendProspectOutreach(input: {
     const now = new Date().toISOString();
     // Every send stamps the date; only an untouched prospect moves to
     // CONTACTED, so a reply already on the board is never walked backwards.
-    await supabase
+    await restClient
       .from("sourced_prospects")
       .update({ last_contacted_at: now })
       .in("id", contactedIds);
-    await supabase
+    await restClient
       .from("sourced_prospects")
       .update({ stage: "CONTACTED" })
       .in("id", contactedIds)
@@ -948,9 +940,9 @@ export async function convertProspect(input: {
   }
   if (!input.job_id) return { ok: false, error: "Choose the opening to convert this prospect into." };
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const { data: found } = await supabase
+  const { data: found } = await restClient
     .from("sourced_prospects")
     .select("id, full_name, email, phone, stage, application_id, profile")
     .eq("id", input.id)
@@ -983,10 +975,10 @@ export async function convertProspect(input: {
   const profile = prospect.profile ? normalizeProspectProfile(prospect.profile) : null;
   const cvText = profile && !profileIsEmpty(profile) ? renderProfileText(profile) : null;
 
-  const opening = await requireHireableOpening(supabase, input.job_id);
+  const opening = await requireHireableOpening(restClient, input.job_id);
   if (!opening.ok) return { ok: false, error: opening.error };
 
-  const { data: created, error } = await supabase
+  const { data: created, error } = await restClient
     .from("applications")
     .insert({
       job_id: input.job_id,
@@ -1011,7 +1003,7 @@ export async function convertProspect(input: {
   }
 
   const applicationId = String(created?.id ?? "");
-  const { error: linkError } = await supabase
+  const { error: linkError } = await restClient
     .from("sourced_prospects")
     .update({ application_id: applicationId, job_id: input.job_id, stage: "CONVERTED" })
     .eq("id", prospect.id);
@@ -1019,7 +1011,7 @@ export async function convertProspect(input: {
   if (linkError) return { ok: false, error: linkError.message };
 
   let skills = 0;
-  if (profile && profile.skills.length > 0) skills = await recordSkills(supabase, applicationId, profile);
+  if (profile && profile.skills.length > 0) skills = await recordSkills(restClient, applicationId, profile);
 
   // Filed against the application, not the prospect: the converted person now
   // lives on the Candidates board, and that is where their history is read from.
@@ -1059,16 +1051,16 @@ export async function convertProspect(input: {
  * board reports it and the skills are simply missing.
  */
 async function recordSkills(
-  supabase: StaffClient,
+  restClient: StaffClient,
   applicationId: string,
   profile: ProspectProfile
 ): Promise<number> {
-  const { data: catalogue } = await supabase.from("skills").select("id, name").eq("is_active", true);
+  const { data: catalogue } = await restClient.from("skills").select("id, name").eq("is_active", true);
 
   const rows = matchCatalogueSkills(profile, (catalogue ?? []) as { id: string; name: string }[]);
   if (rows.length === 0) return 0;
 
-  await supabase.from("candidate_skills").insert(
+  await restClient.from("candidate_skills").insert(
     rows.map((row) => ({
       application_id: applicationId,
       skill_id: row.id,

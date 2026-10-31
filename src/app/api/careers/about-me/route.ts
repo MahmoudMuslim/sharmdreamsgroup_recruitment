@@ -1,4 +1,6 @@
-import { getSupabaseAnonClient } from "@/lib/supabase/anon";
+import { readPublishedOpening } from "@/infrastructure/repositories/jobOpening";
+import { getAnonRestClient } from "@/lib/data-api/anon";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { describeAboutFailure, writeAboutMe } from "@/modules/careers/about-me";
 import {
   CV_MAX_BYTES,
@@ -52,6 +54,11 @@ function refused(error: string, hint?: string, status = 422): Response {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  // A file here is optional — the link leg never carries bytes — so this bounds
+  // only the CV leg, with the ceiling `refused(cvSizeError(), …, 413)` below uses.
+  const oversize = oversizeUploadResponse(request, CV_MAX_BYTES);
+  if (oversize) return oversize;
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -86,20 +93,18 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const { data: job } = await getSupabaseAnonClient()
-    .from("job_openings")
-    .select("id")
-    .eq("id", jobId)
-    .eq("status", "PUBLISHED")
-    .maybeSingle();
+  const opening = await readPublishedOpening(getAnonRestClient(), jobId);
 
-  // Same guard the upload and prefill routes make: a draft or closed role has no
-  // form to fill, so this endpoint is not a way to spend model calls for nothing.
-  if (!job) {
+  // The guard every public door makes, through the one read that asks it: a draft
+  // or closed role has no form to fill, so this endpoint is not a way to spend
+  // model calls for nothing. A refused read says so rather than closing the role.
+  if (!opening.ok) {
     return refused(
-      "This role is no longer accepting applications.",
+      opening.reason === "read_failed"
+        ? "This role could not be checked right now. Try again in a moment."
+        : "This role is no longer accepting applications.",
       undefined,
-      404
+      opening.reason === "read_failed" ? 503 : 404
     );
   }
 

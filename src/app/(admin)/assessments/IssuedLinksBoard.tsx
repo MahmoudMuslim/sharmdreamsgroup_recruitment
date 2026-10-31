@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
   Check,
   CircleDot,
   Clock,
+  FileCode2,
   FileText,
   Loader2,
   Play,
   RefreshCw,
+  Scale,
   Search,
   Send,
   Table2,
@@ -42,12 +44,22 @@ import {
   type AttemptAnswer,
   type AttemptAnswers,
 } from "@/modules/assessment/domain/attemptAnswers";
+import { blindMarkingNote } from "@/modules/assessment/domain/blindMarking";
+import { comparisonSelectionIssue } from "@/modules/assessment/domain/comparison";
+import {
+  rollUpSkillEvidence,
+  skillEvidenceCoverage,
+  type SkillEvidencePaper,
+} from "@/modules/assessment/domain/skillEvidence";
+import { ComparisonDrawer } from "./ComparisonDrawer";
 
 const TYPE_META: Record<string, { word: string; icon: LucideIcon }> = {
   MULTIPLE_CHOICE: { word: "Quiz", icon: Check },
   CASE_STUDY: { word: "Case study", icon: FileText },
   EXCEL_MODEL: { word: "Spreadsheet model", icon: Table2 },
   VIDEO_PITCH: { word: "Video pitch", icon: Video },
+  SITUATIONAL_JUDGMENT: { word: "Judgment scene", icon: Scale },
+  CODING: { word: "Coding", icon: FileCode2 },
 };
 
 function statusTone(status: string): "neutral" | "gold" | "success" | "danger" | "info" {
@@ -98,6 +110,14 @@ export function IssuedLinksBoard({
   const [rail, setRail] = useState<LinkRail>("ALL");
   const [query, setQuery] = useState("");
   const [reading, setReading] = useState<IssuedLink | null>(null);
+  const compareButton = useRef<HTMLButtonElement>(null);
+  const [selection, setSelection] = useState<{ source: IssuedLinksRead; links: IssuedLink[]; open: boolean }>({ source: read, links: [], open: false });
+  if (selection.source !== read) {
+    setSelection({ source: read, links: [], open: false });
+  }
+  const selected = selection.source === read ? selection.links : [];
+  const attemptIds = useMemo(() => selection.links.map((link) => link.id), [selection.links]);
+  const clearSelection = () => setSelection({ source: read, links: [], open: false });
 
   const counts = useMemo(() => {
     const map = new Map<string, number>([["ALL", read.rows.length]]);
@@ -134,6 +154,7 @@ export function IssuedLinksBoard({
                     read.total === 1 ? "" : "s"
                   } on file · ${answered.toLocaleString()} with answers to read`}
               {read.scores_masked && " · marks are hidden for your role"}
+              {read.blind_marking && " · blind marking is on, so an ungraded paper carries its tracking code"}
             </p>
           </div>
           <div className="relative w-full sm:max-w-xs">
@@ -143,7 +164,7 @@ export function IssuedLinksBoard({
             />
             <TextInput
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => { setQuery(event.target.value); clearSelection(); }}
               placeholder={`Search by ${linkSearchWords()}…`}
               aria-label="Search issued links"
               className="pl-9"
@@ -158,9 +179,29 @@ export function IssuedLinksBoard({
               label={entry.label}
               count={counts.get(entry.key) ?? 0}
               active={rail === entry.key}
-              onClick={() => setRail(entry.key)}
+              onClick={() => { setRail(entry.key); clearSelection(); }}
             />
           ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            ref={compareButton}
+            type="button"
+            disabled={selected.length < 2}
+            onClick={() => { setReading(null); setSelection({ ...selection, open: true }); }}
+            className="min-h-11 rounded-xl border border-brand-line bg-brand-cream px-3 text-xs font-semibold transition hover:bg-brand-sand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Compare selected ({selected.length})
+          </button>
+          {selected.length > 0 && (
+            <button type="button" onClick={clearSelection} className="min-h-11 rounded-lg px-2 text-xs font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-brand-ink">
+              Clear selection
+            </button>
+          )}
+          <p id="comparison-selection-help" className="text-xs text-brand-ink/70">
+            Choose 2–4 candidates for the same job and suite, one attempt each.
+          </p>
+          <span className="sr-only" role="status">{selected.length} candidates selected for comparison.</span>
         </div>
       </div>
 
@@ -197,12 +238,29 @@ export function IssuedLinksBoard({
                   className="grid grid-cols-12 items-center gap-x-4 px-5 py-3 text-sm transition hover:bg-brand-cream sm:px-6"
                 >
                   <div className="col-span-3 min-w-0">
-                    <Link
-                      href={`/candidates/${link.application_id}`}
-                      className="truncate font-semibold text-brand-ink underline-offset-2 hover:underline"
-                    >
-                      {link.candidate_name}
-                    </Link>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <label className="flex h-11 w-11 shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`Compare ${link.candidate_name}`}
+                          aria-describedby="comparison-selection-help"
+                          checked={selected.some((row) => row.id === link.id)}
+                          disabled={!selected.some((row) => row.id === link.id) && comparisonSelectionIssue([...selected, link]) !== null}
+                          onChange={(event) => {
+                            const links = event.target.checked ? [...selected, link] : selected.filter((row) => row.id !== link.id);
+                            if (!comparisonSelectionIssue(links)) setSelection({ source: read, links, open: false });
+                          }}
+                          className="h-4 w-4 accent-brand-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ink disabled:cursor-not-allowed"
+                        />
+                      </label>
+                      <Link
+                        href={`/candidates/${link.application_id}`}
+                        className="truncate font-semibold text-brand-ink underline-offset-2 hover:underline"
+                      >
+                        {link.candidate_name}
+                      </Link>
+                      {link.identity_blind && <Badge tone="neutral">Blind</Badge>}
+                    </span>
                     <p className="truncate text-[11px] text-brand-ink/50">
                       {link.job_title ?? "No role named"} · sent{" "}
                       {formatInZone(link.issued_at, timeZone, DAY_ONLY)}
@@ -274,6 +332,12 @@ export function IssuedLinksBoard({
       {reading && (
         <AnswersDrawer link={reading} timeZone={timeZone} onClose={() => setReading(null)} />
       )}
+      {selection.open && selection.source === read && (
+        <ComparisonDrawer
+          attemptIds={attemptIds}
+          onClose={() => { setSelection({ ...selection, open: false }); compareButton.current?.focus(); }}
+        />
+      )}
     </Card>
   );
 }
@@ -326,6 +390,21 @@ export function AnswersDrawer({
   // Bumped by Re-read: the answers live in a table the live channel does not
   // watch, so a second read is the only way to see work done after the open.
   const [reloadKey, setReloadKey] = useState(0);
+
+  // The paper already carries every criterion it was marked on, so the skill
+  // total costs no query. A masked paper's figures arrive null and stay hidden;
+  // the skill names and the contributed-question count are not scores.
+  const skillPapers = useMemo<SkillEvidencePaper[]>(
+    () =>
+      (paper?.answers ?? []).map((answer) => ({
+        key: answer.question_id,
+        title: answer.title,
+        criteria: answer.criteria,
+      })),
+    [paper]
+  );
+  const skillEvidence = useMemo(() => rollUpSkillEvidence(skillPapers), [skillPapers]);
+  const skillCoverage = useMemo(() => skillEvidenceCoverage(skillPapers), [skillPapers]);
 
   useEffect(() => {
     let active = true;
@@ -402,6 +481,15 @@ export function AnswersDrawer({
 
       {paper && (
         <div className="space-y-4">
+          {/* The withheld name is stated, not left as a code-shaped gap: a
+              recruiter must be able to tell a rule being applied from data that
+              went missing. */}
+          {paper.identity_blind && (
+            <p className="rounded-xl border border-brand-line px-4 py-3 text-xs leading-relaxed text-brand-ink/65">
+              {blindMarkingNote()}
+            </p>
+          )}
+
           <dl className="grid grid-cols-2 gap-3 rounded-xl bg-brand-cream px-4 py-3 sm:grid-cols-4">
             <div>
               <dt className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
@@ -443,7 +531,65 @@ export function AnswersDrawer({
             </div>
           </dl>
 
+          {/* The rank and the count it came from, always together — the note is
+              written from the three figures, so a small population prints the
+              number found and no percentile rather than an em dash. */}
+          {paper.benchmark && (
+            <p className="rounded-xl bg-brand-cream px-4 py-3 text-xs leading-relaxed text-brand-ink/65">
+              {paper.benchmark.note}
+            </p>
+          )}
+
           <p className="text-[11px] leading-relaxed text-brand-ink/60">{answersScopeNote(paper)}</p>
+
+          {skillEvidence.length > 0 && (
+            <section className="rounded-xl border border-brand-line px-4 py-3">
+              <h3 className="text-[11px] font-bold uppercase tracking-wider text-brand-gold-dark">
+                Skill evidence
+              </h3>
+              <ul className="mt-2 space-y-2">
+                {skillEvidence.map((line) => (
+                  <li key={line.skill_id} className="text-xs leading-relaxed">
+                    <p className="font-semibold">
+                      {line.skill_name}
+                      {" · "}
+                      {paper.scores_masked
+                        ? "Hidden"
+                        : line.percent === null
+                          ? "No mark on file"
+                          : `${line.percent}%`}
+                      {line.awarded !== null && line.allowance !== null
+                        ? ` (${line.awarded} of ${line.allowance} marks)`
+                        : ""}
+                    </p>
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-[11px] text-brand-ink/60">
+                        {line.questionCount} contributing{" "}
+                        {line.questionCount === 1 ? "question" : "questions"}
+                      </summary>
+                      <ul className="mt-1 space-y-1">
+                        {line.contributions.map((contribution, index) => (
+                          <li
+                            key={`${contribution.question_title}:${contribution.criterion_label}:${index}`}
+                            className="text-[11px] leading-relaxed text-brand-ink/65"
+                          >
+                            {contribution.question_title} — {contribution.criterion_label}
+                            {contribution.awarded !== null && contribution.allowance !== null
+                              ? ` · ${contribution.awarded} of ${contribution.allowance}`
+                              : ""}
+                            {contribution.evidence ? ` — “${contribution.evidence}”` : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[11px] leading-relaxed text-brand-ink/55">
+                {skillCoverage}
+              </p>
+            </section>
+          )}
 
           {paper.answers.length === 0 ? (
             <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-900">
@@ -490,6 +636,16 @@ function AnswerCard({
 }) {
   const meta = TYPE_META[answer.question_type];
   const Icon = meta?.icon ?? FileText;
+
+  // A judgment scene is ranked by effectiveness, not decided by one key, so the
+  // desk marks its strongest response rather than a "correct" one.
+  const bestJudgment =
+    answer.question_type === "SITUATIONAL_JUDGMENT"
+      ? answer.options.reduce<number | null>(
+          (top, option) => (option.score === null ? top : Math.max(top ?? 0, option.score)),
+          null
+        )
+      : null;
 
   return (
     <li
@@ -604,11 +760,101 @@ function AnswerCard({
           </p>
         )}
 
+        {answer.question_type === "SITUATIONAL_JUDGMENT" && answer.options.length > 0 && (
+          <div className="mt-2 space-y-2">
+            <ul className="space-y-1.5">
+              {answer.options.map((option) => {
+                const isBest = bestJudgment !== null && option.score === bestJudgment;
+                return (
+                  <li
+                    key={option.label}
+                    className={cn(
+                      "flex items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+                      option.chosen && isBest && "border-emerald-300 bg-emerald-50",
+                      option.chosen && !isBest && "border-amber-300 bg-amber-50",
+                      !option.chosen && isBest && "border-brand-line bg-brand-cream",
+                      !option.chosen && !isBest && "border-brand-line bg-white"
+                    )}
+                  >
+                    <span className="mt-0.5 shrink-0">
+                      {option.chosen ? (
+                        <CircleDot
+                          className={cn(
+                            "h-4 w-4",
+                            isBest ? "text-emerald-700" : "text-amber-700"
+                          )}
+                          aria-hidden
+                        />
+                      ) : isBest ? (
+                        <Check className="h-4 w-4 text-emerald-700" aria-hidden />
+                      ) : (
+                        <span className="block h-4 w-4" aria-hidden />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-start justify-between gap-2">
+                        <span className="block leading-snug">{option.text}</span>
+                        <span
+                          className={cn(
+                            "shrink-0 tabular-nums text-[11px] font-semibold",
+                            isBest ? "text-emerald-700" : "text-brand-ink/45"
+                          )}
+                        >
+                          {option.score === null ? "not scored" : `${option.score}%`}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+                        {option.chosen && isBest
+                          ? "Their pick — the strongest response"
+                          : option.chosen
+                            ? "Their pick"
+                            : isBest
+                              ? "Most effective response, unpicked"
+                              : "Not chosen"}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-[11px] leading-relaxed text-brand-ink/45">
+              No response is simply right or wrong: each earns its percentage of the marks, and
+              the strongest response is marked.
+            </p>
+          </div>
+        )}
+
+        {answer.question_type === "SITUATIONAL_JUDGMENT" && answer.options.length === 0 && (
+          <p className="mt-2 text-xs text-brand-ink/55">
+            This judgment scene holds no responses, so there was nothing for the candidate to
+            pick.
+          </p>
+        )}
+
         {answer.answer_text && (
           <div className="mt-2 rounded-lg border border-brand-line bg-white p-3">
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-brand-ink/80">
-              {answer.answer_text}
-            </p>
+            {answer.question_type === "CODING" ? (
+              <>
+                {/* A code answer is read, never run: it is printed as the text
+                    the candidate wrote, in a block that keeps its own line
+                    breaks, and never as markup. The label is the language the
+                    author picked, read as a person reads it — the same word the
+                    comparison drawer prints — and it is left off entirely when
+                    the question named no language. */}
+                {answer.language ? (
+                  <p className="text-[11px] font-medium text-brand-ink/45">
+                    {answer.language}
+                  </p>
+                ) : null}
+                <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-brand-ink/80">
+                  {answer.answer_text}
+                </pre>
+              </>
+            ) : (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-brand-ink/80">
+                {answer.answer_text}
+              </p>
+            )}
             {answer.words !== null && (
               <p className="mt-2 text-[11px] text-brand-ink/45">
                 {answer.words} word{answer.words === 1 ? "" : "s"}
@@ -697,7 +943,10 @@ function AnswerCard({
         )}
       </div>
 
-      {(answer.rationale || answer.strengths.length > 0 || answer.improvements.length > 0) && (
+      {(answer.rationale ||
+        answer.strengths.length > 0 ||
+        answer.improvements.length > 0 ||
+        answer.criteria.length > 0) && (
         <div className="mt-3 border-t border-brand-line pt-3">
           <p className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
             {answer.awarded_by === "STAFF"
@@ -708,6 +957,39 @@ function AnswerCard({
           </p>
           {answer.rationale && (
             <p className="mt-1.5 text-sm leading-relaxed text-brand-ink/70">{answer.rationale}</p>
+          )}
+          {answer.criteria.length > 0 && (
+            <div className="mt-2">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/45">
+                Criterion marks
+              </p>
+              <ul className="mt-1.5 space-y-2">
+                {answer.criteria.map((criterion, index) => (
+                  <li key={`${criterion.label}-${index}`} className="text-xs leading-relaxed">
+                    <p className="font-semibold text-brand-ink/80">
+                      {criterion.label} —{" "}
+                      {masked
+                        ? "Hidden"
+                        : criterion.marks === null
+                          ? "No mark on file"
+                          : `${criterion.marks} of ${criterion.allowance}${
+                              criterion.percent === null ? "" : ` (${criterion.percent}%)`
+                            }`}
+                    </p>
+                    {criterion.description && (
+                      <p className="mt-0.5 text-brand-ink/55">
+                        What a strong answer shows: {criterion.description}
+                      </p>
+                    )}
+                    {criterion.evidence && (
+                      <p className="mt-0.5 italic text-brand-ink/60">
+                        Quoted from the answer: {criterion.evidence}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {answer.strengths.length > 0 && (
             <ul className="mt-2 space-y-1">

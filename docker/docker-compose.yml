@@ -1,0 +1,275 @@
+# Sharm Dreams Talent Cloud — the self-hosted stack.
+#
+# `docker compose up` now runs the whole thing: Postgres, PostgREST, the built
+# Next.js app and nginx in front of it on http://localhost:3000, plus the cron
+# poller. See
+# docs/superpowers/specs/2026-10-20-docker-self-host-migration-design.md §4.
+# On KVM2 this same file becomes the production stack; the only differences are
+# TLS at nginx and secrets that never enter the repo.
+#
+# Caddy stays up beside nginx on 127.0.0.1:54321 for one reason: the host's
+# `.env.local` points `REST_BASE_URL` at that address, so a `next dev`
+# running outside this file still has a REST gateway. nginx serves the same
+# `/rest/v1/` path, and Caddy goes away when that .env.local line does.
+#
+# Image policy: every base is patch-pinned to the newest STABLE release and built
+# on `alpine3.24`, verified against the registry tag lists on 2026-10-21. Never
+# bump one from memory, and never use a `latest`/major-only alias in this file —
+# a floating tag is what makes a working production stack rebuild into a broken
+# one overnight. Postgres 19 is not stable yet (only `19rc1`), and Node's `lts`
+# alias still resolves to 24 while 26 is `current`, so the app image stays on 24.
+name: sharm-dreams-local
+
+services:
+  db:
+    image: postgres:18.6-alpine3.24
+    restart: unless-stopped
+    shm_size: 128mb
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD}
+      POSTGRES_DB: sharm_dreams
+      PGDATA: /var/lib/postgresql/data/pgdata
+      # Read by db/initdb/05-set-pgrst-password.sh, which resets the
+      # `authenticator` role's password to this value on every fresh volume, so
+      # rotating it in docker/.env is enough - no committed literal has to be
+      # edited. Unset or empty leaves 00-roles.sql's first-boot default alone.
+      LOCAL_PGRST_PASSWORD: ${LOCAL_PGRST_PASSWORD}
+      # Read by db/initdb/04-seed-staff.sh, which creates the three first-boot
+      # sign-ins on a fresh volume so a new stack has someone who can log in
+      # without a second command. Empty skips the seed - it never defaults to a
+      # guessable password, because "blank means 12345678" is how a public host
+      # gets its first unauthorised admin.
+      LOCAL_STAFF_PASSWORD: ${LOCAL_STAFF_PASSWORD:-}
+      # Optional: the SUPER_ADMIN address the seed creates. Defaults to the
+      # `.test` fixture the proofs sign in as, so dev volumes stay predictable;
+      # KVM2 sets a real address in docker/.env.
+      STAFF_OWNER_EMAIL: ${STAFF_OWNER_EMAIL:-}
+      STAFF_OWNER_NAME: ${STAFF_OWNER_NAME:-}
+    # PG17 or newer is forced by db/schema.sql: every grant it carries uses
+    # the `maintain` privilege, which does not exist before PG17. Nothing here
+    # needs PG18 specifically, and nothing here breaks on it — pgcrypto's bcrypt
+    # `crypt()`/`gen_salt('bf')` pair that src/lib/auth/db.ts verifies passwords
+    # with is unchanged in 18, which added a separate core `hash_bcrypt()`
+    # instead of touching pgcrypto.
+    #
+    # This is a major-version change, so an existing `db-data` volume written by
+    # 17 cannot be opened: the 18 server aborts on the control-file version check
+    # and the container restart-loops. Rebuild the volume with `npm run
+    # docker:wipe` plus `db:apply-local` and `db:seed-local`; every row in it is
+    # reproducible from those scripts.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=top
+    ports:
+      # 127.0.0.1 only: `rest` reaches `db` by service name on the compose network, so this published port exists purely for host probes and must never be LAN-routable with the repo-known dev password.
+      - "127.0.0.1:${LOCAL_DB_PORT:-54320}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+      # The schema of record, applied by db/initdb/03-apply-schema.sh on a fresh
+      # volume: 03-* sorts after 00-roles/01-extensions/02-auth-users (which
+      # create the roles and the `auth` stand-in it grants to) and before
+      # 04-seed-staff.sh, so a first `up` ends with 46 tables, 99 policies and
+      # the 235 reference rows already in place. Mounted as a directory, not as
+      # a single file into the initdb dir: Docker cannot create a mountpoint
+      # inside a read-only bind mount. `npm run db:apply-local` still exists and
+      # is still idempotent - it is the way to re-apply a changed schema.sql to
+      # a volume that already exists.
+      - ../db:/db:ro
+    healthcheck:
+      # -h 127.0.0.1 is load-bearing, not decoration. The entrypoint brings up a
+      # TEMPORARY server with `listen_addresses=''` while it runs
+      # /docker-entrypoint-initdb.d/*, and that server answers on the unix socket
+      # only. A socket-based check (`pg_isready -U postgres -d sharm_dreams`)
+      # therefore reports healthy DURING initialisation, so `rest` — which waits
+      # on `condition: service_healthy` — would start against a database with no
+      # tables, cache an empty schema description, and go on answering 404
+      # "relation not found" for every table schema.sql had just created. A TCP
+      # probe cannot succeed until the real server starts, which happens only
+      # after the last init file finishes.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d sharm_dreams"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: postgrest/postgrest:v16.5   # newest stable release; confirmed 2026-10-21 against the registry tag list, and it is the tag proven in Task 1 Step 1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${LOCAL_PGRST_PASSWORD}@db:5432/sharm_dreams
+      PGRST_DB_SCHEMAS: public
+      # Correction #1 vs spec §5: a tokenless request must get the LEAST
+      # privileged role, so is_staff() is false without a JWT.
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${AUTH_JWT_SECRET}
+      # ONE value for both consumers: this is the same AUTH_TOKEN_AUDIENCE
+      # src/lib/auth/token.ts mints and verifies with, threaded through the `app`
+      # service below, so a token this app accepts is a token PostgREST accepts
+      # and neither side can be rotated alone. The `:-` guard is what keeps an
+      # older docker/.env (written before the variable existed) working: empty
+      # here means `sdg_local`, and an empty variable is what token.ts falls back
+      # to for the same literal. Changing it signs out every session.
+      PGRST_JWT_AUD: ${AUTH_TOKEN_AUDIENCE:-sdg_local}
+      PGRST_SERVER_PORT: 3000
+      # No `pgrst` schema config here; PostgREST reads env only.
+      PGRST_DB_CONFIG: false
+      # Brief wrote `PGRST_OPENAPI_SERVER_PROXY_URL`; the v16.5 binary contains
+      # only `openapi-server-proxy-uri` (measured by grep of /bin/postgrest) and
+      # silently ignores the _URL spelling, so this is the registry-confirmed name.
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:54321/rest/v1
+    # Deliberately no `ports:` - nothing may bypass the gateway.
+
+  gateway:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    depends_on:
+      - rest
+    # Brief said `caddyfile_adapt`; caddy v2.11.7 rejects that name
+    # ("unrecognized config adapter"), and `caddy validate --adapter caddyfile`
+    # reports "Valid configuration" — measured against the registry image.
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      # Loopback, like `db`: this port fronts a REST API whose only credential is
+      # a repo-known dev password, and on KVM2 the public front is Caddy's TLS
+      # listener on 80/443, never this host mapping.
+      - "127.0.0.1:${LOCAL_GATEWAY_PORT:-54321}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+  # The scheduler `/api/cron/whatsapp` and `/api/cron/grading never had: nothing
+  # on Vercel ever called them (no vercel.json) and nothing in db/ does
+  # (no pg_cron). A supervised busybox loop as PID 1, not crond.
+  cron:
+    build: ./cron
+    environment:
+      CRON_SECRET: ${CRON_SECRET}
+      # The app is a container in this file now, so the poller reaches it by
+      # service name and never leaves the compose network. Override APP_URL in
+      # docker/.env to point it at a host-side `next dev` instead; `extra_hosts`
+      # is what makes `host.docker.internal` resolve on a Linux production host.
+      APP_URL: ${APP_URL:-http://app:3000}
+      WHATSAPP_EVERY: ${WHATSAPP_EVERY:-60}
+      GRADING_EVERY: ${GRADING_EVERY:-300}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Deliberately NO `depends_on`. A poller whose whole job is to keep a queue
+    # moving while the app restarts must not be gated on the app being up: Compose
+    # would refuse to start cron at all if `app` failed to build, and the queue
+    # would sit undrained with nothing logging why. `hit()` already survives a
+    # down app — it logs [FAIL] rc=4, sleeps, and retries, which Step 5 proved.
+    restart: unless-stopped
+
+  # The application, built from source in the image. No bind-mount and no
+  # `npm run start` against the host tree: this repo's `.next/` belongs to the
+  # owner's dev server on 3001, and a container that wrote into it would serve
+  # them stale modules.
+  app:
+    build:
+      # Relative to THIS file's directory, so `..` is the repo root. `../..`
+      # would be `D:/Nextjs Projects` — the parent of the repo — and the old
+      # placeholder service's `volumes: [../../:/app]` had exactly that bug,
+      # which nobody hit because that service was profile-gated and never ran.
+      context: ..
+      dockerfile: docker/app/Dockerfile
+    restart: unless-stopped
+    # Every runtime secret the app reads, without any of them passing through
+    # this file or an image layer. `environment:` below wins over anything the
+    # same name sets here — which is how the container gets the in-network forms
+    # of `REST_BASE_URL` and `AUTH_DB_URL` while `.env.local` keeps the loopback
+    # forms a host-side `next dev` needs.
+    env_file: ../.env.local
+    environment:
+      NODE_ENV: production
+      # Inside the compose network a container talks to PostgREST directly, so
+      # there is NO /rest/v1 prefix — that prefix belongs to nginx and Caddy, and
+      # only the host's `http://localhost:54321/rest/v1` form carries it.
+      REST_BASE_URL: http://rest:3000
+      # The host form points at 127.0.0.1:54320; inside the network the service
+      # name is `db` and the port is the container's own 5432.
+      AUTH_DB_URL: postgres://postgres:${LOCAL_DB_PASSWORD}@db:5432/sharm_dreams
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      # The token's environment names, from the same docker/.env values that
+      # decide `PGRST_JWT_AUD` above. Without these two lines a docker/.env
+      # audience would reach PostgREST but not the app, and the app would go on
+      # minting the default — the drift this exists to make impossible. Empty
+      # means "use token.ts's own default", which is the same literal the
+      # `PGRST_JWT_AUD` guard falls back to.
+      AUTH_TOKEN_ISSUER: ${AUTH_TOKEN_ISSUER:-}
+      AUTH_TOKEN_AUDIENCE: ${AUTH_TOKEN_AUDIENCE:-}
+      CRON_SECRET: ${CRON_SECRET}
+      # Assessment links are built from this (src/lib/config.ts:88, whose
+      # `http://localhost:3000` fallback is this stack's own published port).
+      # A candidate opening a link on a phone needs the LAN address instead, so
+      # this is the one value worth overriding in docker/.env.
+      APP_URL: ${APP_URL_PUBLIC:-http://localhost:${NGINX_PORT:-3000}}
+      # Optional `Secure`-flag override (src/lib/auth/cookies.ts). Empty is the
+      # documented "decide from APP_URL" state, and the code treats anything but
+      # a literal true/false the same way, so this line only has to reach the
+      # container for an operator who sets it in docker/.env to have any effect.
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # Read by the APP (src/lib/config.server.ts `cronConfig`), never by the
+      # cron container. `:-` is load-bearing: an empty value left in docker/.env
+      # would otherwise reach `Number(process.env.WHATSAPP_CRON_BATCH_SIZE ?? 50)`
+      # as an empty string — `??` does not fire on "" and the batch size becomes 0.
+      WHATSAPP_CRON_BATCH_SIZE: ${WHATSAPP_CRON_BATCH_SIZE:-50}
+      GRADING_CRON_BATCH_SIZE: ${GRADING_CRON_BATCH_SIZE:-10}
+      # Where `src/lib/files/paths.ts` hangs the tree of stored bytes. The image
+      # creates /data/uploads owned by `node`, and Docker copies those ownership
+      # bits into a fresh named volume, so the app can write without running as
+      # root. A host-side `next dev` uses the `.data/uploads` twin instead and
+      # sets this in .env.local.
+      UPLOADS_ROOT: ${UPLOADS_ROOT:-/data/uploads}
+    # The only writable mount in this stack. The bytes are candidate PII, so they
+    # live in a named volume, never in the repo tree — the same rule `db-data`
+    # follows (spec §10).
+    volumes:
+      - uploads:/data/uploads
+    # Deliberately no `ports:`. nginx is the only way in, so an app that is not
+    # proxied is an app that is not reachable — the same rule `rest` follows.
+    expose: ["3000"]
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+
+  # The front door: one published origin for the app and for `/rest/v1/`.
+  nginx:
+    # 1.30 is nginx's stable branch (even minor numbers); 1.31 is the newer
+    # mainline release and deliberately not taken here — the front door wants
+    # bugfix-only releases. Same `alpine3.24` base as every other image in this
+    # file so one CVE sweep covers them all.
+    image: nginx:1.30.6-alpine3.24
+    restart: unless-stopped
+    depends_on:
+      - app
+      - rest
+    ports:
+      # Loopback, like every other published port here: an un-prefixed mapping
+      # also binds 0.0.0.0 and ::, which would put a staff sign-in form on the
+      # LAN. On KVM2 this mapping is replaced by 80/443 behind TLS.
+      - "127.0.0.1:${NGINX_PORT:-3000}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  # A named volume, NOT a bind-mount into the repo: a restored live dump lives in
+  # here and must never be picked up by `git add .` (spec §10).
+  db-data:
+  # Stored bytes: every CV, resume and pitch recording the app holds. Same
+  # reasoning as `db-data` — this is the other half of the production data, and
+  # `docker compose down` leaves both alone. Only `down -v` destroys them, which
+  # is why `npm run docker:wipe` is a last resort and not part of any workflow.
+  uploads:

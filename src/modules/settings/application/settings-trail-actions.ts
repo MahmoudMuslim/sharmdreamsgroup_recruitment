@@ -1,7 +1,7 @@
 "use server";
 
 import { requireStaff } from "@/lib/auth/session";
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import {
   SETTINGS_TRAIL_LIMIT,
@@ -137,7 +137,7 @@ export async function listSettingsTrail(
 
   const group = trailGroupById(trailGroup(scope.group));
   const words = trailFind(scope.find);
-  const admin = getSupabaseServiceClient();
+  const admin = getServiceRestClient();
 
   /**
    * The scope predicate is repeated in each builder on purpose: a helper that took

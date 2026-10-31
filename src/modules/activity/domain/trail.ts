@@ -35,6 +35,7 @@ export const ACTOR_KIND_LABELS: Record<ActorKind, string> = {
 export const ACTIVITY_SURFACES = [
   "console",
   "assistant",
+  "assistant voice",
   "career site",
   "assessment runner",
   "cron",
@@ -43,16 +44,23 @@ export const ACTIVITY_SURFACES = [
 ] as const;
 export type ActivitySurface = (typeof ACTIVITY_SURFACES)[number];
 
-/** Which part of the portal a change touched. Every writer picks one of these. */
+/**
+ * Which part of the portal a change touched. Every writer picks one of these.
+ *
+ * `exports` is the one area that records a disclosure rather than a change: a
+ * report handed to a person moved no row, and that is precisely why it needs one.
+ */
 export const ACTIVITY_AREAS = [
   "candidates",
   "jobs",
+  "forms",
   "assessments",
   "interviews",
   "onboarding",
   "sourcing",
   "gate questions",
   "files",
+  "exports",
   "messaging",
   "time",
   "settings",
@@ -60,13 +68,50 @@ export const ACTIVITY_AREAS = [
   "access",
   "master data",
   "career site",
+  "referrals",
+  "privacy",
   "system",
 ] as const;
 export type ActivityArea = (typeof ACTIVITY_AREAS)[number];
 
+/**
+ * The area keys as the screens print them.
+ *
+ * The key is what a row stores and what a filter accepts; the label is what a
+ * reader sees. `exports` is the one that cannot go without a word of its own:
+ * a download is the only row in that area, and "exports" beside a file's row
+ * reads like the file's format rather than the door it left through.
+ *
+ * A total `Record` rather than a partial one, so adding an area without its
+ * words fails the typecheck instead of shipping a raw key to the screen.
+ */
+export const ACTIVITY_AREA_LABELS: Record<ActivityArea, string> = {
+  candidates: "Candidates",
+  jobs: "Jobs",
+  forms: "Forms",
+  assessments: "Assessments",
+  interviews: "Interviews",
+  onboarding: "Onboarding",
+  sourcing: "Sourcing",
+  "gate questions": "Gate questions",
+  files: "Files",
+  exports: "Downloads",
+  messaging: "Messaging",
+  time: "Time ledger",
+  settings: "Settings",
+  team: "Team",
+  access: "Access",
+  "master data": "Master data",
+  "career site": "Career site",
+  referrals: "Referrals",
+  privacy: "Privacy",
+  system: "System",
+};
+
 /** The record a row points at, used to pull one candidate's or job's history. */
 export const ACTIVITY_ENTITIES = [
   "application",
+  "application form",
   "assistant session",
   "attempt",
   "attachment",
@@ -76,6 +121,7 @@ export const ACTIVITY_ENTITIES = [
   "credential",
   "currency",
   "department",
+  "export",
   "gate question",
   "interview",
   "job opening",
@@ -84,7 +130,10 @@ export const ACTIVITY_ENTITIES = [
   "model routing",
   "onboarding plan",
   "onboarding task",
+  "person health data",
+  "position",
   "prospect",
+  "referral",
   "role",
   "role family",
   "setting",
@@ -405,14 +454,29 @@ export const TRAIL_LIST = {
     "The trail begins on the day its table was created. Changes made before it are not here, and history cannot be rebuilt from the rows that exist.",
     "Values that must not be kept — CV text, message bodies, transcripts, credentials — are recorded as [withheld]. That a field changed is the record; its content is not.",
     "Only the writers that were wired to the trail leave a row. A change made through a screen that has not been wired yet appears nowhere, so an empty stretch can mean a change nobody recorded rather than one that did not happen.",
-    "This table is written by the portal, not by the database. A change made directly in Supabase — by hand or by a migration — is not recorded.",
+    "This table is written by the portal, not by the database. A change made directly in the database — by hand or by a migration — is not recorded.",
     "Nothing is deleted from the trail, and nothing expires. A row outlives the record it describes: an archived candidate's changes stay countable.",
   ],
 };
 
 /** The verb phrase shown beside the actor, derived from the stored action key. */
 export function prettyAction(action: string): string {
-  return action.replace(/[_.]/g, " ").replace(/^\w/, (c) => c.toUpperCase()).toLowerCase();
+  return action
+    .replace(/[_.]/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/**
+ * The words for an area a row carries, whatever era wrote it.
+ *
+ * Rows are read back from the table, so the value is a plain string: an area
+ * this build has never heard of still has to read as words rather than as an
+ * underscored key, and must never print empty.
+ */
+export function areaLabel(area: string): string {
+  const known = (ACTIVITY_AREA_LABELS as Record<string, string | undefined>)[area];
+  return known ?? (prettyAction(area) || "Unnamed area");
 }
 
 /**
@@ -445,6 +509,7 @@ export function recordHref(
     "onboarding plan": { href: "/onboarding", label: "Onboarding" },
     "onboarding task": { href: "/onboarding", label: "Onboarding" },
     prospect: { href: "/sourcing", label: "Sourcing pool" },
+    referral: { href: "/referrals", label: "Referral book" },
     "gate question": { href: "/questions?store=gate", label: "Question bank — apply form" },
     attachment: { href: "/files", label: "File manager" },
     message: { href: "/whatsapp", label: "Outbox" },
@@ -466,6 +531,7 @@ export function recordHref(
     currency: { href: "/settings?area=organisation&section=currencies", label: "Currencies" },
     "role family": { href: "/settings?area=organisation&section=role_families", label: "Role families" },
     skill: { href: "/settings?area=organisation&section=skills", label: "Skills" },
+    position: { href: "/settings?area=organisation&section=positions", label: "Positions" },
   };
 
   return CONSOLES[entity as ActivityEntity] ?? null;

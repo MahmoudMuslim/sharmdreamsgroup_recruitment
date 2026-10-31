@@ -1,123 +1,8 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import type { StaffRoute } from "@/lib/auth/staffRoutes";
-
-/**
- * One table the portal reads, described by what a write to it does.
- *
- * `stamp` is the column every write moves — a table with an `updated_at`
- * trigger, or one that is only ever inserted into. `columns` is used instead
- * when the table has no such column: the watched values of its newest rows are
- * hashed, so an edit that moves no timestamp still moves the fingerprint.
- */
-export interface LiveWatch {
-  /** Shown back to the browser, so the badge can name what moved. */
-  area: string;
-  table: string;
-  stamp?: string;
-  columns?: string[];
-  /**
-   * Portal pages that have to re-read when this area moves.
-   *
-   * A page name typed wrong here is not a broken link someone can click — it is
-   * a page that silently never refreshes, on a watch list nobody reads twice.
-   * Hence `StaffRoute`, and hence bare prefixes: the browser matches these the
-   * same way the edge guard matches a pathname.
-   */
-  paths: readonly StaffRoute[];
-}
-
-/**
- * The hiring data an open admin page shows, and the pages it shows on.
- *
- * Deliberately not "every table": settings, AI providers and the assistant are
- * read through their own screens and already re-read the moment you save, so a
- * poll on them would only cost queries.
- */
-export const LIVE_WATCH: readonly LiveWatch[] = [
-  {
-    area: "pipeline",
-    table: "applications",
-    stamp: "updated_at",
-    paths: ["/candidates", "/dashboard", "/analytics", "/reports", "/jobs", "/files", "/whatsapp"],
-  },
-  {
-    area: "sourcing",
-    table: "sourced_prospects",
-    stamp: "updated_at",
-    paths: ["/sourcing", "/dashboard"],
-  },
-  {
-    // Watched by outcome, not by `draft_saved_at`: an applicant autosaving an
-    // answer every 30 seconds would otherwise reload the recruiter's screen all
-    // day. A submission moves `status`, so it still arrives live.
-    area: "assessments",
-    table: "candidate_attempts",
-    columns: ["id", "status", "submitted_at", "total_score"],
-    paths: ["/assessments", "/candidates", "/dashboard"],
-  },
-  {
-    area: "interviews",
-    table: "interview_schedules",
-    columns: ["id", "application_id", "scheduled_at", "status", "meeting_link"],
-    paths: ["/interviews", "/candidates", "/dashboard"],
-  },
-  {
-    area: "openings",
-    table: "job_openings",
-    columns: ["id", "title", "status", "closing_at", "department"],
-    paths: ["/jobs", "/dashboard", "/candidates"],
-  },
-  {
-    area: "onboarding",
-    table: "onboarding_plans",
-    columns: ["id", "progress", "checklist"],
-    paths: ["/onboarding", "/dashboard"],
-  },
-  {
-    area: "outreach",
-    table: "communication_logs",
-    columns: ["id", "delivered", "error_message", "read_at"],
-    paths: ["/whatsapp", "/candidates", "/files"],
-  },
-  {
-    // The other half of /whatsapp. A queued alert is not a delivery until the
-    // dispatcher writes its log row, so without this the queue itself — a
-    // colleague's retry, a cancel, a job flipping to parked — sits still while
-    // the page claims it is live. `error_log` is left out: it grows on every
-    // failed attempt and would reload the page for noise the list already shows.
-    area: "queue",
-    table: "scheduled_whatsapp_jobs",
-    columns: ["id", "status", "scheduled_for", "attempts", "sent_at"],
-    paths: ["/whatsapp"],
-  },
-  {
-    area: "gate questions",
-    table: "application_gate_questions",
-    stamp: "updated_at",
-    // The bank lists these too. A suite's questions are not watched at all —
-    // `assessment_questions` carries no created or updated stamp to watch — so
-    // the bank's Live badge only ever refreshes on its apply-form half.
-    paths: ["/questions"],
-  },
-  {
-    area: "files",
-    table: "application_attachments",
-    stamp: "created_at",
-    paths: ["/files", "/candidates"],
-  },
-  {
-    // `updated_at` rather than `started_at`: stopping a timer moves the end and
-    // the trigger's stamp, not the start, and a colleague's stop is exactly the
-    // change a shared ledger has to show without a refresh.
-    area: "time",
-    table: "time_entries",
-    stamp: "updated_at",
-    paths: ["/time"],
-  },
-] as const;
+import type { RestClient } from "@/lib/rest/client";
+import type { LiveWatch } from "@/modules/live/domain/watch";
 
 /**
  * How far a hashed watch looks into its table.
@@ -171,13 +56,21 @@ function toMark(code: string | undefined): LiveAreaMark {
   return REFUSALS.has(code ?? "") ? { state: "refused" } : { state: "unknown" };
 }
 
+/**
+ * Fingerprints one connection's slice of the watch list.
+ *
+ * The list itself lives in the domain, because the browser needs the same
+ * page-prefix rule the server uses to scope a poll. This function only turns
+ * the chosen slice into marks.
+ */
 export async function readLiveFingerprints(
-  supabase: SupabaseClient
+  restClient: RestClient,
+  watches: readonly LiveWatch[]
 ): Promise<LiveFingerprints> {
   const entries = await Promise.all(
-    LIVE_WATCH.map(async (watch): Promise<[string, LiveAreaMark]> => {
+    watches.map(async (watch): Promise<[string, LiveAreaMark]> => {
       try {
-        return [watch.area, await fingerprint(supabase, watch)];
+        return [watch.area, await fingerprint(restClient, watch)];
       } catch {
         // A request that never completed is not an answer about the table.
         return [watch.area, { state: "unknown" }];
@@ -205,13 +98,14 @@ export function carryLastRead(
   return merged;
 }
 
-/** The areas whose fingerprint moved since `before`. */
+/** The areas whose fingerprint moved since `before`, within the caller's scope. */
 export function diffLiveFingerprints(
   before: LiveFingerprints,
-  after: LiveFingerprints
+  after: LiveFingerprints,
+  watches: readonly LiveWatch[]
 ): string[] {
   const moved: string[] = [];
-  for (const watch of LIVE_WATCH) {
+  for (const watch of watches) {
     const was = before[watch.area];
     const now = after[watch.area];
     // Either side not a read is not a change — that would flap on permissions.
@@ -221,9 +115,9 @@ export function diffLiveFingerprints(
   return moved;
 }
 
-async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<LiveAreaMark> {
+async function fingerprint(restClient: RestClient, watch: LiveWatch): Promise<LiveAreaMark> {
   if (watch.stamp) {
-    const { data, count, error } = await supabase
+    const { data, count, error } = await restClient
       .from(watch.table)
       // Newest first plus the total, in one request: a delete moves `count`, an
       // insert moves the newest stamp, so either one changes the fingerprint.
@@ -239,7 +133,7 @@ async function fingerprint(supabase: SupabaseClient, watch: LiveWatch): Promise<
   }
 
   const columns = watch.columns ?? [];
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from(watch.table)
     .select(columns.join(","))
     .order(NEWEST_COLUMN, { ascending: false })

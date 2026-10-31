@@ -1,9 +1,10 @@
 import "server-only";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getFileStore, type FileStoreEntry } from "@/lib/files/store";
 import type { BucketKey } from "./file-browser-types";
 
-type Supabase = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+type ServerClient = Awaited<ReturnType<typeof createServerRestClient>>;
 
 /**
  * A single folder read. Storage caps one listing at 1000 objects; the default
@@ -15,20 +16,24 @@ export const WALK_LIST_LIMIT = 500;
 
 export type ListOutcome =
   | { ok: false; error: string }
-  | { ok: true; entries: unknown[] };
+  | { ok: true; entries: FileStoreEntry[] };
 
 export async function listObjects(
-  supabase: Supabase,
+  restClient: ServerClient,
   bucket: BucketKey,
   prefix: string,
   limit = LIST_LIMIT
 ): Promise<ListOutcome> {
-  const { data, error } = await supabase.storage
-    .from(bucket)
-    .list(prefix, { limit, sortBy: { column: "name", order: "asc" } });
+  const files = await getFileStore();
+  const { entries, error } = await files.list({
+    bucket,
+    prefix,
+    limit,
+    sortBy: { column: "name", order: "asc" },
+  });
 
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, entries: (data ?? []) as unknown[] };
+  if (error) return { ok: false, error };
+  return { ok: true, entries };
 }
 
 export interface ObjectMetadata {
@@ -50,23 +55,13 @@ export async function objectMetadata(bucket: BucketKey, path: string): Promise<O
   const prefix = marker === -1 ? "" : path.slice(0, marker + 1);
   const leaf = marker === -1 ? path : path.slice(marker + 1);
 
-  const supabase = await createSupabaseServerClient();
-  const listed = await listObjects(supabase, bucket, prefix, WALK_LIST_LIMIT);
+  const restClient = await createServerRestClient();
+  const listed = await listObjects(restClient, bucket, prefix, WALK_LIST_LIMIT);
   if (!listed.ok) return empty;
 
   for (const entry of listed.entries) {
-    if (!entry || typeof entry !== "object") continue;
-    const row = entry as Record<string, unknown>;
-    if (row.name !== leaf) continue;
-
-    const metadata = (row.metadata && typeof row.metadata === "object"
-      ? row.metadata
-      : {}) as Record<string, unknown>;
-
-    return {
-      bytes: typeof metadata.size === "number" && Number.isFinite(metadata.size) ? metadata.size : null,
-      mimeType: typeof metadata.mimetype === "string" && metadata.mimetype ? metadata.mimetype : null,
-    };
+    if (entry.name !== leaf) continue;
+    return { bytes: entry.bytes, mimeType: entry.mimeType };
   }
 
   return empty;

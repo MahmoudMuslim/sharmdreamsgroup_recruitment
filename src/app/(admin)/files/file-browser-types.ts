@@ -1,24 +1,55 @@
 /**
  * The private buckets this portal stores candidate files in, and what the
- * storage policies actually permit.
+ * `public.files` policies actually permit.
  *
  * This is one module because the truth is scattered across SQL policies: staff
  * may list and read every bucket, and `staff delete candidate cvs` plus
- * `staff delete candidate media` together authorise a delete in all four — so
- * the File Manager offers the control everywhere it can actually be honoured.
- * A button the database would refuse is a false promise, and a policy added
- * here without the SQL behind it is the same lie in the other direction.
+ * `staff delete candidate media` together cover a delete in the first four, so the
+ * File Manager describes each bucket by what its policies actually permit. What a
+ * descriptor asserts is two things at once — what the storage layer would permit,
+ * and what this portal undertakes to do — so each half says which of the two it
+ * means, because a card that blurs them promises a refusal the code never makes.
+ *
+ * `candidate-photos` is the fifth, and its delete policy is stricter: 043's
+ * `staff delete candidate photos` wants `candidates.delete` on top of `is_staff()`,
+ * where the sibling policies ask for staff alone. The page offers Delete on
+ * `settings.manage_platform` — a permission the seed gives SUPER_ADMIN, and the
+ * seed also gives that role `candidates.delete`, so both doors open for it.
+ *
+ * Say plainly what the policies are worth here: no door in this app deletes a
+ * `files` row through the session client. `disk-store.ts` unlinks the byte and then
+ * deletes the row on the direct database pool, so the File Manager, the record's
+ * attachment door and the erasure engine all step around RLS on the way out — the
+ * button's real gate is the page's own permission check. The browse is the one
+ * `files` query that does travel through REST, so the read and list policies are
+ * live. `deletable` and `deleteRequires` describe the SQL, never this portal's
+ * enforcement, and they are the answer the storage layer gives the day a delete
+ * does go through a session.
  */
 
-export type BucketKey = "candidate-cvs" | "candidate-videos" | "candidate-audio" | "resumes";
+export type BucketKey =
+  | "candidate-cvs"
+  | "candidate-videos"
+  | "candidate-audio"
+  | "resumes"
+  | "candidate-photos";
 
 export interface BucketInfo {
   key: BucketKey;
   label: string;
   /** Which code path writes here — including "nothing", when that is the answer. */
   writtenBy: string;
-  /** Whether storage.objects RLS lets a staff session delete an object. */
+  /** Whether the `files` RLS policies let a staff session delete an object. */
   deletable: boolean;
+  /**
+   * What the delete policy asks for beyond `is_staff()`, when it asks for more.
+   *
+   * Purely a reading of the SQL. Every delete this app offers removes the row on
+   * the direct pool, so this never decides what a staff session sees or is refused
+   * today; it is the condition that would refuse one if its delete went through
+   * the session client, which is the door the browse already uses.
+   */
+  deleteRequires: string | null;
 }
 
 export const BUCKETS: readonly BucketInfo[] = [
@@ -28,6 +59,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The career-site apply form (POST /api/careers/upload), stored as applications/<job id>/<random id>-<filename>.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "candidate-videos",
@@ -35,6 +67,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The assessment runner (POST /api/attempt/[token]/video), stored as <attempt token>/<question id>-<timestamp>.<ext>.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "resumes",
@@ -42,6 +75,7 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The candidate record (POST /api/files/upload, from Files added by staff), stored as applications/<application id>/<random id>-<filename> and owned by an application_attachments row.",
     deletable: true,
+    deleteRequires: null,
   },
   {
     key: "candidate-audio",
@@ -49,6 +83,15 @@ export const BUCKETS: readonly BucketInfo[] = [
     writtenBy:
       "The same door on the candidate record (POST /api/files/upload). WebM, MP3 or M4A up to 20 MB, owned by an application_attachments row.",
     deletable: true,
+    deleteRequires: null,
+  },
+  {
+    key: "candidate-photos",
+    label: "Candidate photos",
+    writtenBy:
+      "The hand-record door (createCandidate, from the Record-a-candidate drawer), stored as persons/<person id>/<random id>.<ext> and named by person_profiles.photo_path.",
+    deletable: true,
+    deleteRequires: "the Delete candidates permission",
   },
 ] as const;
 
@@ -107,20 +150,7 @@ export type DeleteResult =
   | { ok: true; name: string; note?: string }
   | { ok: false; error: string };
 
-/**
- * Upload paths prefix the leaf with a random uuid; what follows it is the
- * filename the candidate chose.
- */
-export function displayName(path: string): string {
-  const leaf = path.split("/").pop() || path;
-  return leaf.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, "") || leaf;
-}
-
-/** Storage keys are plain object names, never paths that escape a bucket. */
-export function isStoredPath(value: string): boolean {
-  if (!value || value.length > 1024) return false;
-  if (value.startsWith("/") || value !== value.trim()) return false;
-  if (value.includes("\\")) return false;
-  if (/[\u0000-\u001f]/.test(value)) return false;
-  return !value.split("/").includes("..");
-}
+// `displayName` and `isStoredPath` used to live at the bottom of this file.
+// Plan 2 moved them to `src/lib/files/paths.ts`, where the disk store resolves
+// a byte with them — a lib cannot import a page module's type file, and one
+// copy of the rule is the point. Importers now point straight at `@/lib/files/paths`.

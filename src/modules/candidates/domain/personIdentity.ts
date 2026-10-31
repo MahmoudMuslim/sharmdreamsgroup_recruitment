@@ -40,6 +40,23 @@ export function personKey(email: string): string {
 }
 
 /**
+ * The shape a write into `person_emails` must find before it is accepted.
+ *
+ * `personKey` spells an address; this decides whether a string is an address at
+ * all. A CV extraction hands back whatever the model read off the page, and a
+ * half-typed or fabricated address written into the spine would mis-file the
+ * person — so a door that writes an email into the spine runs it through here
+ * first and drops the row when this returns null, rather than storing a guess.
+ */
+export const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/;
+
+export function normalizePersonEmail(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().toLowerCase();
+  return EMAIL_SHAPE.test(trimmed) ? trimmed : null;
+}
+
+/**
  * The values a stored email can arrive in, for a read that must not miss a row.
  *
  * `applications.email` is plain text with no normalisation, so rows written

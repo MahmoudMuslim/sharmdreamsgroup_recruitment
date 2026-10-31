@@ -2,10 +2,10 @@
 
 Two server-side surfaces exist in this app:
 
-1. **Route handlers** under `src/app/api/**/route.ts` — HTTP endpoints for things a Server Action cannot do (multipart uploads, streaming, `GET` downloads, cron callbacks, the realtime probe).
+1. **Route handlers** under `src/app/api/**/route.ts` — HTTP endpoints for things a Server Action cannot do (multipart uploads, streaming, `GET` downloads, cron callbacks, the live SSE channel).
 2. **Server Actions** — `"use server"` functions exported from `*/actions.ts` files, invoked directly from client components. These carry the bulk of the read/write traffic.
 
-There is no separately deployed REST API: both run inside the Next.js runtime and talk to Supabase through the server clients in `src/lib/supabase`.
+There is no separately deployed REST API *for the app*: both run inside the Next.js runtime and talk to **our own PostgREST** (`rest` in `docker/docker-compose.yml`) through `src/lib/data-api/*`, which is a thin seam over `src/lib/rest/*`. PostgREST is the database's HTTP face, not a second application tier — it exposes the `public` schema and applies RLS as the caller's role. The app also has two doors that bypass HTTP entirely: the `pg` pool (`src/lib/auth/db.ts`, for the `auth` schema and pgcrypto) and the disk (`UPLOADS_ROOT`, for file bytes).
 
 Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATION.md) · [DATABASE.md](DATABASE.md)
 
@@ -15,9 +15,9 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 
 | Caller | How they authenticate | Enforcement |
 |--------|----------------------|-------------|
-| **Staff** | Supabase auth JWT in cookies → `requireStaff(route)` / `getSessionUser()` + `isStaff(role)` | Role gate + per-permission `hasPermissionForUser(key)`; RLS on every query |
-| **Candidate (test taker)** | Unguessable per-attempt `access_token` in the URL path | Token validated in the route; RLS scoped to that attempt |
-| **Public (careers)** | None — anon client | Public RLS (insert applications/attachments/leads, read published jobs) |
+| **Staff** | Our own HS256 bearer in the httpOnly `sdg_session` cookie → `guardRequest` in `src/proxy.ts`, then `requireStaff(route)` / `getSessionUser()` + `isStaff(role)` | Role gate + per-permission `hasPermissionForUser(key)`; RLS on every query |
+| **Candidate (test taker)** | Unguessable per-attempt `access_token` in the URL path | Token validated **in the route**, which then writes through the service client. The `attempt_token` RLS policies exist as a backstop but no production caller presents that bearer. |
+| **Public (careers)** | None — the anon client (`token: null`, so Postgres runs it as the `anon` role) | Public RLS (insert applications/attachments/leads, read published jobs) |
 | **Cron / scheduler** | `x-cron-secret` header matching `CRON_SECRET` | Fails **closed** (503) when the secret is unset |
 
 ---
@@ -33,6 +33,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 | `POST` | `/api/careers/upload` | public | CV upload as multipart. Validated against `modules/careers/cv-rules` (size/type) before it reaches storage. Two-step flow: upload, then submit via the apply action. |
 | `POST` | `/api/careers/prefill` | public | Parses an uploaded CV to prefill the apply form; same content/size guards as upload. |
 | `GET` | `/api/careers/questions` | public | Returns a role's gate questions for the apply form (`application_gate_questions`). 404 if the role is not accepting applications. |
+| `POST` | `/api/careers/about-me` | public | Drafts the apply form's "About me" box from a LinkedIn profile link or the applicant's own CV. Reads only — no row is written and no file is stored, because the upload route owns storage. A LinkedIn link that returns the login wall, and a CV with no readable text, are each reported as themselves and pointed at the doors this form has; only `linkedin.com` / `linkedin.cn` hosts are fetched, and the model's prose is clamped to the field's own limits. |
 
 ### Staff — files, branding, live
 
@@ -41,6 +42,7 @@ Related: [ARCHITECTURE.md](ARCHITECTURE.md) · [AUTHENTICATION.md](AUTHENTICATIO
 | `GET` | `/api/branding/logo` | public | Resolves the configured company logo and `302`-redirects to it. |
 | `GET` | `/api/files/link` | staff + `candidates.read` | Mints a short-lived signed URL for a stored candidate file. 403 without the permission; 404 for unknown files. |
 | `POST` | `/api/files/upload` | staff | Stores a file a recruiter attaches to a candidate record (multipart; bucket rules checked first). |
+| `GET` `HEAD` | `/api/files/f/[token]` | the signed link itself — **no session check** | The byte door that replaced `storage.createSignedUrl` and the vendor's CDN: one HMAC-signed, expiring URL opens exactly one file, exactly one way. The token carries its own expiry and its own content type (taken from the `files` row at mint time, because a directory entry has none), and `resolveObjectPath` refuses a key that resolves outside its bucket — so a token minted by an older build cannot read a path this build would not sign. `206` + `Content-Range` and the `HEAD` probe are load-bearing, not niceties: without them a pitch recording cannot seek, and Safari shows it unplayable. Everything is `no-store`; the links it honours are minted by the guarded doors above. |
 | `GET` | `/api/live` | staff session | The portal's live channel. Fingerprints the watched hiring tables on the caller's own session client and names which areas moved; the browser re-reads affected data through its own RLS-scoped queries. No row content crosses this channel. |
 
 ### Staff — exports (the "one door" pattern)
@@ -55,7 +57,7 @@ Every download re-reads from the database and re-checks its permission server-si
 
 ### Cron — scheduled sweeps
 
-Both accept `GET` **and** `POST` (so pg_cron / Vercel Cron / an external scheduler can hit them either way) and require the `x-cron-secret` header.
+Both accept `GET` **and** `POST` and require the `x-cron-secret` header. The scheduler is the `cron` container in this repo — a supervised busybox loop (PID 1, not crond) that polls `$APP_URL` every `WHATSAPP_EVERY` (default 60 s) and hits grading every `GRADING_EVERY` (default 300 s). Nothing uses `pg_cron` (the vanilla image has no extension to schedule with) and nothing external is required.
 
 | Method | Route | Purpose |
 |--------|-------|---------|
@@ -113,11 +115,13 @@ Server Actions are plain `export async function`s in a `"use server"` module, ca
 | `settings/application/settings-trail-actions.ts` | Read the settings/credential audit trails. |
 | `shell/application/shell-actions.ts` | Admin shell chrome (theme/preference persistence, quick keys). |
 | `assessment/application/buildPaper.ts` | Deterministically assemble a candidate's paper from a suite. |
+| `i18n/application/translationWrites.ts` | The Languages console's two writes — store a screen of reviewed wording as one JSONB map per locale under `i18n.<locale>`, and ask the model for a draft (which only fills the fields; nothing reaches the DB until a person saves). Both gated on `settings.manage_platform`, because RLS silently refuses an `app_settings` UPDATE without it. |
 
 ### Public + candidate actions
 
 | File | Auth | Responsibility |
 |------|------|---------------|
+| `src/app/login/actions.ts` | public (pre-session) | Staff sign-in / sign-out — `signInAction` verifies the bcrypt password, mints the `sdg_session` bearer + cookie, and holds an in-process brute-force floor (the vendor's rate limiter is gone); `signOutAction` tears the session down. |
 | `src/app/careers/actions.ts` | public | Published job/company reads, apply submission. |
 | `src/app/(candidate)/portal/actions.ts` | candidate token/email | Application tracking lookups. |
 
@@ -128,6 +132,6 @@ Server Actions are plain `export async function`s in a `"use server"` module, ca
 ## Conventions
 
 - **Validate at the boundary** with Zod before touching the database.
-- **Prefer the session (JWT) client** so RLS is the enforcement layer; use the service-role client only for privileged writes after re-checking permissions in code.
+- **Prefer the request client** (`src/lib/data-api/server.ts`) so RLS is the enforcement layer; use the service-role client only for privileged writes after re-checking permissions in code.
 - **Fail closed**: a missing secret or permission returns an error, never a permissive default.
-- **Record side effects**: writes that matter emit to `activity_log` / `settings_audit_log` / `credential_audit_log` and publish a `live` change.
+- **Record side effects**: writes that matter emit to `activity_log` / `settings_audit_log` / `credential_audit_log`. No write notifies the portal — `/api/live` finds the change on its next fingerprint poll.

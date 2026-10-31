@@ -18,6 +18,7 @@
 import {
   ACTIVITY_ENTITIES,
   ACTOR_KIND_LABELS,
+  areaLabel,
   isActivityArea,
   isActivitySurface,
   isActorKind,
@@ -125,7 +126,7 @@ export function scopeFor(applied: AppliedFilters): string {
     bounds.hours === null ? "everything on record" : `last ${bounds.label.toLowerCase()}`,
     applied.actorKind ? `${ACTOR_KIND_LABELS[applied.actorKind]}-made` : null,
     applied.surface ? `through the ${applied.surface}` : null,
-    applied.area ? `${applied.area} only` : null,
+    applied.area ? `${areaLabel(applied.area)} only` : null,
     applied.entity
       ? applied.entityId
         ? `history of one ${applied.entity}`

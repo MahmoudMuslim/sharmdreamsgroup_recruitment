@@ -7,8 +7,12 @@
  */
 
 import { SECTOR_LABELS, type Sector } from "@/modules/settings/domain/vocabularies";
+import {
+  EMPLOYMENT_LABELS,
+  EXPERIENCE_LABELS,
+} from "@/modules/jobs/domain/openingTerms";
 import { hasKey, translate } from "@/lib/i18n";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 export interface PublicJob {
   id: string;
@@ -17,6 +21,12 @@ export interface PublicJob {
   sector: string;
   location: string;
   employment_type: string;
+  /**
+   * JUNIOR, MID, SENIOR or LEAD, or null when none was recorded — including
+   * every opening that predates the column. Never rendered as a middle tier:
+   * the card simply omits the tag.
+   */
+  experience_level: string | null;
   description: string;
   requirements: string[];
   min_salary_usd: number | null;
@@ -24,23 +34,27 @@ export interface PublicJob {
   salary_currency: string;
   company_id: string | null;
   company_name: string | null;
+  /**
+   * The day the role went public, or null for a row that reached PUBLISHED
+   * before the column was stamped. `posted_at` is set on the first publication
+   * and never removed (`src/app/(admin)/jobs/job-actions.ts`), so a published
+   * role normally has a real day; `created_at` is the fallback, and a role with
+   * neither is not dated enough to publish to the world.
+   */
+  posted_at: string | null;
+  created_at: string;
+  /** The advertised closing date, or null. Feeds `validThrough` only. */
+  closing_at: string | null;
 }
-
-const EMPLOYMENT_LABELS: Record<string, string> = {
-  FULL_TIME: "Full time",
-  PART_TIME: "Part time",
-  CONTRACT: "Contract",
-  INTERNSHIP: "Internship",
-};
 
 /**
  * `real_estate` -> "Real estate", for any stored value the maps miss.
  *
- * `SECTOR_LABELS` is keyed to the `business_sector` enum, but a label here is
- * also asked to describe `employment_type`, which the database constrains only
- * with a CHECK, and anything a recruiter later types into it. A mapping that
- * returns nothing for an unmapped value makes a real opening look like it has no
- * sector at all, so the raw code is humanized instead of dropped.
+ * `SECTOR_LABELS` is keyed to the `business_sector` enum, but the same fallback
+ * describes `employment_type` and `experience_level`, which the database
+ * constrains only with a CHECK. A mapping that returns nothing for an unmapped
+ * value makes a real opening look like it has no sector at all, so the raw code
+ * is humanized instead of dropped.
  */
 function humanize(code: string): string {
   return code
@@ -56,6 +70,11 @@ export function sectorLabel(sector: string, locale?: Locale): string {
 
 export function employmentLabel(type: string, locale?: Locale): string {
   return localize(type, EMPLOYMENT_LABELS[type] ?? humanize(type), locale);
+}
+
+/** The seniority tag on a public card, in the candidate's language when known. */
+export function experienceLabel(level: string, locale?: Locale): string {
+  return localize(level, EXPERIENCE_LABELS[level] ?? humanize(level), locale);
 }
 
 /**

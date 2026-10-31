@@ -6,7 +6,10 @@ import { regradeStuckAttempts } from "@/modules/assessment/application/gradeAtte
  * Timed re-grade sweep: picks up submitted attempts whose AI grading failed
  * during a provider outage (responses left unscored, attempt parked in
  * SUBMITTED because resubmission is impossible) and runs the same gated
- * grading pass fresh submissions get.
+ * grading pass fresh submissions get. It also closes a paper whose answers are
+ * all marked but whose finalize write never landed — that needs no model, so
+ * the sweep does it even while AI is off. Answers the engine parked for a
+ * person are left for that person.
  *
  * Protected like /api/cron/whatsapp — requires an `x-cron-secret` header
  * matching CRON_SECRET and fails closed when the secret is unset.

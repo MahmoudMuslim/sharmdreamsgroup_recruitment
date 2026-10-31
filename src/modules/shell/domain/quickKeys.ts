@@ -30,12 +30,18 @@ const KEY_TO_ROUTE = {
   c: "/candidates",
   s: "/sourcing",
   j: "/jobs",
+  // `m` for the application-for**m** builder — `f` already opens the files.
+  m: "/forms",
   // `q` used to open the apply-form console. That page is a tab of the bank now,
   // so the letter follows the questions to the one page that holds them all.
   q: "/questions",
   e: "/assessments",
   i: "/interviews",
   o: "/onboarding",
+  // `p` for the referral programme — the letter `r` is the reports console.
+  p: "/referrals",
+  // `l` for the legal desk: every letter of the hiring consoles is spoken for.
+  l: "/retention",
   f: "/files",
   w: "/whatsapp",
   b: "/assistant",

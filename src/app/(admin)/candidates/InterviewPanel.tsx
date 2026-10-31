@@ -19,6 +19,15 @@ import {
   type InterviewMutation,
   type InterviewRecord,
 } from "./interview-actions";
+import {
+  INTERVIEW_ROUND_LABELS,
+  INTERVIEW_ROUNDS,
+} from "@/modules/interviews/domain/interviewScorecard";
+import {
+  getInterviewRoundSupport,
+  type RoundSupport,
+} from "@/app/(admin)/interviews/scorecard-actions";
+import { saveInterviewGuideInNotes } from "@/app/(admin)/interviews/notes-actions";
 
 function statusTone(status: string) {
   if (status === "COMPLETED") return "success" as const;
@@ -72,10 +81,17 @@ export function InterviewPanel({
   const [questions, setQuestions] = useState<InterviewGuideQuestion[] | null>(null);
   const [guideError, setGuideError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [guideSavingId, setGuideSavingId] = useState<string | null>(null);
+  const [savedGuideFor, setSavedGuideFor] = useState<string | null>(null);
+  const [guideSaveError, setGuideSaveError] = useState<string | null>(null);
+  const [guideSavedNotice, setGuideSavedNotice] = useState<string | null>(null);
 
   async function makeGuide() {
     setGenerating(true);
     setGuideError(null);
+    setGuideSaveError(null);
+    setGuideSavedNotice(null);
+    setSavedGuideFor(null);
     try {
       const result = await generateInterviewGuide({ applicationId });
       if (result.ok) setQuestions(result.questions ?? []);
@@ -91,8 +107,34 @@ export function InterviewPanel({
     }
   }
 
+  async function saveGuide(interviewId: string) {
+    if (!questions || questions.length === 0) return;
+    setGuideSavingId(interviewId);
+    setGuideSaveError(null);
+    setGuideSavedNotice(null);
+    try {
+      const result = await saveInterviewGuideInNotes({ interviewId, questions });
+      if (!result.ok) {
+        setGuideSaveError(result.error ?? "The guide was not saved.");
+        return;
+      }
+      setSavedGuideFor(interviewId);
+      setGuideSavedNotice("The guide is now part of your notes on that panel.");
+    } catch {
+      setGuideSaveError("The portal did not answer, so the guide is still only on this screen.");
+    } finally {
+      setGuideSavingId(null);
+    }
+  }
+
+  const saveablePanels = interviews.filter(
+    (row) => row.status === "SCHEDULED" || row.status === "COMPLETED"
+  );
+
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("45");
+  const [round, setRound] = useState("");
+  const [roundSupport, setRoundSupport] = useState<RoundSupport | null>(null);
   const [interviewerId, setInterviewerId] = useState("");
   const [meetingLink, setMeetingLink] = useState("");
 
@@ -102,6 +144,24 @@ export function InterviewPanel({
       setInterviewers(await listInterviewers());
     } catch {
       setError("Could not load the interviewer list.");
+    }
+  }
+
+  /**
+   * Asks, once, whether this database has the round column.
+   *
+   * Probed on first open rather than in the page render — the booking form is a
+   * secondary surface, and a round the database cannot hold must not be sent as
+   * part of a booking that would otherwise succeed. A probe that fails for any
+   * other reason hides the select and books without a round, which is what the
+   * portal did before 032 existed.
+   */
+  async function loadRoundSupport() {
+    if (roundSupport) return;
+    try {
+      setRoundSupport(await getInterviewRoundSupport());
+    } catch {
+      setRoundSupport({ available: false, note: null });
     }
   }
 
@@ -116,15 +176,21 @@ export function InterviewPanel({
       // Left stale, the select still held whoever was picked for the last panel
       // opened, so moving one interview reassigned another.
       setInterviewerId(existing.interviewer_profile_id ?? "");
+      // A move never carries a round: the agenda owns that field, and an omitted
+      // round leaves the panel's existing one exactly where it was.
+      setRound("");
     } else {
       setEditingId(null);
       setWhen("");
       setDuration("45");
       setMeetingLink("");
       setInterviewerId("");
+      // The first panel on a role is usually the screening one.
+      setRound("SCREENING");
     }
     setShowForm(true);
     void loadInterviewers();
+    void loadRoundSupport();
   }
 
   function applyResult(result: InterviewMutation, message: string) {
@@ -157,7 +223,13 @@ export function InterviewPanel({
     try {
       const result = editingId
         ? await rescheduleInterview({ interviewId: editingId, ...payload })
-        : await scheduleInterview({ applicationId, ...payload });
+        : await scheduleInterview({
+            applicationId,
+            ...payload,
+            // Only sent once the probe says the column exists: a booking must not
+            // fail on a field the database has never heard of.
+            ...(roundSupport?.available ? { round: round || null } : {}),
+          });
 
       if (!result.ok) {
         setError(result.error ?? "Could not save the interview.");
@@ -335,6 +407,27 @@ export function InterviewPanel({
                       ))}
                     </Select>
                   </Field>
+                  {!editingId && roundSupport?.available && (
+                    <Field
+                      label="Round"
+                      htmlFor="interview-round"
+                      className="sm:col-span-2"
+                      hint="Which stage of the process this panel is. A move keeps the round it already has."
+                    >
+                      <Select
+                        id="interview-round"
+                        value={round}
+                        onChange={(event) => setRound(event.target.value)}
+                      >
+                        <option value="">No round</option>
+                        {INTERVIEW_ROUNDS.map((id) => (
+                          <option key={id} value={id}>
+                            {INTERVIEW_ROUND_LABELS[id]}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
                   <Field label="Interviewer" htmlFor="interview-interviewer" className="sm:col-span-2">
                     <Select
                       id="interview-interviewer"
@@ -364,6 +457,12 @@ export function InterviewPanel({
                     />
                   </Field>
                 </div>
+
+                {!editingId && roundSupport && !roundSupport.available && roundSupport.note && (
+                  <p className="mt-3 text-[11px] leading-relaxed text-brand-ink/45">
+                    {roundSupport.note}
+                  </p>
+                )}
 
                 <FormMessage error={error} success={notice} />
 
@@ -413,7 +512,7 @@ export function InterviewPanel({
                 <p className="mt-1 text-xs text-brand-ink/55">
                   Asked of the model behind Settings → AI & screening: it reads the gaps AI screening
                   found in this CV, the role&rsquo;s requirements and the answers from the test. The
-                  guide is not stored — copy what you need into your notes before closing this panel.
+                  guide stays on this screen until you file it in your own notes on a panel below.
                 </p>
 
                 {guideError && <p className="mt-3 text-xs font-semibold text-rose-700">{guideError}</p>}
@@ -440,6 +539,49 @@ export function InterviewPanel({
 
                 {questions && questions.length === 0 && !guideError && (
                   <p className="mt-3 text-xs text-brand-ink/55">The model returned no questions.</p>
+                )}
+
+                {questions && questions.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-brand-line bg-white p-3">
+                    <p className="text-xs leading-relaxed text-brand-ink/60">
+                      Save this guide into your own notes on the panel you are preparing for. Only
+                      you can edit those notes; every staff member can read them.
+                    </p>
+                    {saveablePanels.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {saveablePanels.map((row) => {
+                          const when = formatSlot(row.scheduled_at, timeZone);
+                          return (
+                            <Button
+                              key={row.id}
+                              size="sm"
+                              variant="outline"
+                              disabled={guideSavingId !== null || savedGuideFor === row.id}
+                              onClick={() => void saveGuide(row.id)}
+                              aria-label={`Save the guide to my notes on the ${when} panel`}
+                            >
+                              {guideSavingId === row.id && (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                              )}
+                              {savedGuideFor === row.id
+                                ? `Saved to my notes · ${when}`
+                                : `Save to my notes · ${when}`}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs font-semibold text-brand-ink/55">
+                        There is no scheduled or completed panel to file this guide on yet.
+                      </p>
+                    )}
+                    {guideSaveError && (
+                      <p className="mt-2 text-xs font-semibold text-rose-700">{guideSaveError}</p>
+                    )}
+                    {guideSavedNotice && (
+                      <p className="mt-2 text-xs font-semibold text-emerald-700">{guideSavedNotice}</p>
+                    )}
+                  </div>
                 )}
               </section>
             )}

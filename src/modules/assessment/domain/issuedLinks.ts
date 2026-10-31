@@ -27,7 +27,18 @@ export const LINKS_LIMIT = 300;
 export interface IssuedLink {
   id: string;
   application_id: string;
+  /**
+   * The person, or — under blind marking, while the paper's marks can still
+   * change — its tracking code. See `identity_blind`.
+   */
   candidate_name: string;
+  /**
+   * `candidate_name` above is a handle, not a name, because `security.blind_marking`
+   * is on and this paper is still open for marking. The board says so on the row
+   * instead of leaving a name-shaped gap.
+   */
+  identity_blind: boolean;
+  job_id: string | null;
   job_title: string | null;
   template_id: string;
   template_name: string;

@@ -1,14 +1,15 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { readAttemptScoresByApplication } from "@/infrastructure/repositories/candidateAttempt";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { FIT_BUCKETS, bucketBounds } from "@/modules/analytics/domain/fitBuckets";
 import { BOARD_LIMIT } from "@/app/(admin)/dashboard/board-model";
 import { isApplicationSource, isPipelineStage } from "@/modules/candidates/domain/listFilters";
+import { LIMITS as FORM_LIMITS } from "@/modules/form-builder/domain/limits";
+import type { ApplicationSource, ApplicationStage } from "@/core/entities";
 import type {
-  ApplicationStage,
-  ApplicationSource,
   ChannelEffectiveness,
   DashboardAnalytics,
   DashboardCandidate,
@@ -42,6 +43,8 @@ interface ApplicationJoin {
   created_at: string | null;
   hired_at: string | null;
   job_id: string;
+  /** The snapshot the form saved with this application, or null on a pre-form row. */
+  form_answers?: unknown;
   job_openings?: JobShape | null;
 }
 
@@ -59,11 +62,6 @@ interface JobRow {
   department: string;
   status: string;
   closing_at: string | null;
-}
-
-interface AttemptJoin {
-  application_id: string | null;
-  total_score: number | null;
 }
 
 /** PostgREST returns one-to-one embeds as an object, but arrays are possible. */
@@ -90,27 +88,29 @@ function sum(values: number[]): number {
 }
 
 export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
 
-  const [applicationsResult, attemptsResult, jobsResult] = await Promise.all([
-    supabase
+  // The attempts are not read here: the whole table only feeds the board's
+  // assessment columns for the rows a panel can hold, so they come after the
+  // board's ids are known (below) as a bounded `.in` read — the same shape the
+  // drill-down already uses.
+  const [applicationsResult, jobsResult] = await Promise.all([
+    restClient
       .from("applications")
       .select(
-        "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_id, job_openings(id, title, department, status, closing_at)"
+        "id, full_name, stage, source, ai_match_score, created_at, hired_at, job_id, form_answers, job_openings(id, title, department, status, closing_at)"
       )
       .is("archived_at", null),
-    supabase.from("candidate_attempts").select("application_id, total_score"),
-    supabase
+    restClient
       .from("job_openings")
       .select("id, title, department, status, closing_at")
       .order("title"),
   ]);
 
   const applications = (applicationsResult.data ?? []) as ApplicationJoin[];
-  const attempts = (attemptsResult.data ?? []) as AttemptJoin[];
   const jobs = (jobsResult.data ?? []) as JobRow[];
   const activeJobs = jobs.filter((job) => job.status === "PUBLISHED").length;
   const now = Date.now();
@@ -235,9 +235,7 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   // newest-first when scores are masked). That is a cap, not the set — the
   // tiles above count every live application, and the view names the difference
   // rather than letting a stage rail look like a filter over the whole pipeline.
-  const scoreByApplication = new Map(attempts.map((a) => [a.application_id, a.total_score]));
-
-  const candidates: DashboardCandidate[] = [...applications]
+  const boardRows = [...applications]
     .sort((a, b) =>
       // Ranking by a hidden score would leak its order, so a masked caller gets
       // the board newest-first instead.
@@ -245,22 +243,38 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
         ? String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))
         : (b.ai_match_score ?? -1) - (a.ai_match_score ?? -1)
     )
-    .slice(0, BOARD_LIMIT)
-    .map((app) => {
-      const job = one<JobShape>(app.job_openings);
-      return {
-        application_id: app.id,
-        full_name: app.full_name,
-        job_title: job?.title ?? "",
-        department: job?.department ?? "",
-        match_score: masked ? null : app.ai_match_score,
-        stage: app.stage,
-        source: app.source,
-        applied_at: app.created_at,
-        has_assessment: scoreByApplication.has(app.id),
-        assessment_score: masked ? null : scoreByApplication.get(app.id) ?? null,
-      };
-    });
+    .slice(0, BOARD_LIMIT);
+
+  // Attempts are only wanted for the rows the board actually holds, so this read
+  // is bounded to their ids rather than the whole table. A masked caller still
+  // gets `has_assessment` (a yes/no, not a score), so the read runs either way.
+  const attempts = await readAttemptScoresByApplication(
+    restClient,
+    boardRows.map((app) => app.id)
+  );
+  if (!attempts.ok) console.error("[dashboard] board attempt scores:", attempts.error);
+
+  const scoreByApplication = new Map(
+    (attempts.ok ? attempts.rows : []).map(
+      (attempt) => [attempt.application_id, attempt.total_score]
+    )
+  );
+
+  const candidates: DashboardCandidate[] = boardRows.map((app) => {
+    const job = one<JobShape>(app.job_openings);
+    return {
+      application_id: app.id,
+      full_name: app.full_name,
+      job_title: job?.title ?? "",
+      department: job?.department ?? "",
+      match_score: masked ? null : app.ai_match_score,
+      stage: app.stage,
+      source: app.source,
+      applied_at: app.created_at,
+      has_assessment: scoreByApplication.has(app.id),
+      assessment_score: masked ? null : scoreByApplication.get(app.id) ?? null,
+    };
+  });
 
   // --- Role leaderboard ------------------------------------------------------
   // One row per opening, built from a map rather than a second query: the
@@ -344,6 +358,51 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
       match_score: masked ? null : app.ai_match_score,
     }));
 
+  // --- Form & person coverage ------------------------------------------------
+  // Two head-counts rather than two row reads: this card states how much the
+  // form and the person store hold, and never quotes what any of it says.
+  //
+  // A form file counts only once an application references it. A null
+  // `application_id` is an upload the applicant never submitted — the retention
+  // sweep deletes it after the orphan window — so it is not part of the record
+  // and must not make the form look fuller than it is. The same filter is the
+  // Analytics reader's definition of an attachment.
+  //
+  // Unclaimed uploads are counted beside it, never added to it. The "past
+  // window" figure mirrors the sweep's own predicate, so the card states how
+  // many rows the next run will delete rather than quoting a different rule.
+  const orphanCutoff = new Date(
+    now - FORM_LIMITS.orphan_upload_window_hours * 60 * 60 * 1000
+  ).toISOString();
+  const [formFiles, profiles, unclaimedUploads, unclaimedPastWindow] = await Promise.all([
+    restClient
+      .from("application_form_files")
+      .select("id", { count: "exact", head: true })
+      .not("application_id", "is", null),
+    restClient.from("person_profiles").select("id", { count: "exact", head: true }),
+    restClient
+      .from("application_form_files")
+      .select("id", { count: "exact", head: true })
+      .is("application_id", null),
+    restClient
+      .from("application_form_files")
+      .select("id", { count: "exact", head: true })
+      .is("application_id", null)
+      .lt("uploaded_at", orphanCutoff),
+  ]);
+
+  const formCoverage = {
+    applications: applications.length,
+    with_form: applications.filter((app) => hasSnapshot(app.form_answers)).length,
+    attachments: formFiles.count ?? 0,
+    profiles: profiles.count ?? 0,
+    identity_complete: await countIdentityComplete(restClient),
+    /** "Unclaimed uploads": files a form never submitted, still inside the window. */
+    unclaimed_uploads: unclaimedUploads.count ?? 0,
+    /** Of those, the rows past the orphan window that the sweep will clear. */
+    unclaimed_past_window: unclaimedPastWindow.count ?? 0,
+  };
+
   return {
     total_applications: applications.length,
     active_jobs: activeJobs,
@@ -365,7 +424,36 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     roles,
     oldest_waiting,
     waiting_total: waitingApplications.length,
+    form_coverage: formCoverage,
   };
+}
+
+/**
+ * The shape `parseSnapshot` accepts — an object carrying a `fields` list.
+ *
+ * Re-stated rather than imported because this file only needs the yes/no, and
+ * the count has to agree with the Analytics reader's definition of "filed on
+ * the form": a snapshot that cannot be parsed is not a form.
+ */
+function hasSnapshot(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Array.isArray((value as { fields?: unknown }).fields);
+}
+
+type DashboardRest = Awaited<ReturnType<typeof createServerRestClient>>;
+
+/** The identity core of the person store: a legal name and a birth date, both set. */
+async function countIdentityComplete(restClient: DashboardRest): Promise<number> {
+  const { count, error } = await restClient
+    .from("person_profiles")
+    .select("id", { count: "exact", head: true })
+    .not("legal_name", "is", null)
+    .not("date_of_birth", "is", null);
+  if (error) {
+    console.error("[dashboard] identity coverage count failed:", error.message);
+    return 0;
+  }
+  return count ?? 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -459,12 +547,12 @@ export async function getDashboardDrilldown(
   scope: DashboardDrillScope
 ): Promise<DashboardDrillResult> {
   await requireStaff("/dashboard");
-  const [supabase, masked] = await Promise.all([
-    createSupabaseServerClient(),
+  const [restClient, masked] = await Promise.all([
+    createServerRestClient(),
     scoresAreMaskedForCurrentUser(),
   ]);
 
-  let query = supabase
+  let query = restClient
     .from("applications")
     .select(
       "id, full_name, email, tracking_code, stage, source, ai_match_score, created_at, hired_at, job_openings(title)",
@@ -555,18 +643,13 @@ export async function getDashboardDrilldown(
   const found = (data ?? []) as DrillJoin[];
   const ids = found.map((row) => row.id);
 
-  const attemptsResult =
-    ids.length === 0
-      ? null
-      : await supabase
-          .from("candidate_attempts")
-          .select("application_id, total_score")
-          .in("application_id", ids);
+  const attempts = await readAttemptScoresByApplication(restClient, ids);
+  if (!attempts.ok) console.error("[dashboard] drill-down attempt scores:", attempts.error);
+
   const scoreByApplication = new Map(
-    ((attemptsResult?.data ?? []) as AttemptJoin[]).map((attempt) => [
-      attempt.application_id,
-      attempt.total_score,
-    ])
+    (attempts.ok ? attempts.rows : []).map(
+      (attempt) => [attempt.application_id, attempt.total_score]
+    )
   );
 
   const now = Date.now();

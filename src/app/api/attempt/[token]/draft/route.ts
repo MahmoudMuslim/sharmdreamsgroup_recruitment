@@ -1,4 +1,4 @@
-import { getSupabaseServiceClient } from "@/lib/supabase/service";
+import { getServiceRestClient } from "@/lib/data-api/service";
 import { NextResponse } from "next/server";
 import type { SpreadsheetCellData } from "@/types";
 
@@ -7,6 +7,7 @@ interface DraftBody {
   time_remaining_seconds?: number;
   spreadsheet_data_map?: Record<string, Record<string, SpreadsheetCellData>>;
   case_study_answers_map?: Record<string, string>;
+  code_answers_map?: Record<string, string>;
   choice_answers_map?: Record<string, string>;
   video_paths_map?: Record<string, string>;
 }
@@ -18,8 +19,8 @@ export async function PUT(request: Request, { params }: { params: Promise<{ toke
     return NextResponse.json({ error: "Invalid draft payload" }, { status: 400 });
   }
 
-  const supabase = getSupabaseServiceClient();
-  const { data: attempt, error } = await supabase
+  const restClient = getServiceRestClient();
+  const { data: attempt, error } = await restClient
     .from("candidate_attempts")
     .select("id, status, template_id, expires_at")
     .eq("access_token", token)
@@ -32,7 +33,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ toke
     return NextResponse.json({ error: "Assessment is not in progress" }, { status: 409 });
   }
 
-  const { data: questions } = await supabase
+  const { data: questions } = await restClient
     .from("assessment_questions")
     .select("id, question_type, points")
     .eq("template_id", attempt.template_id);
@@ -53,11 +54,22 @@ export async function PUT(request: Request, { params }: { params: Promise<{ toke
   }
   for (const [questionId, text] of Object.entries(body.case_study_answers_map ?? {})) {
     const question = questionById.get(questionId);
-    if (!question) continue;
+    if (!question || question.question_type !== "CASE_STUDY") continue;
     upserts.push({
       attempt_id: attempt.id,
       question_id: questionId,
       answer_text: text,
+      max_score: question.points,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  for (const [questionId, answerText] of Object.entries(body.code_answers_map ?? {})) {
+    const question = questionById.get(questionId);
+    if (!question || question.question_type !== "CODING") continue;
+    upserts.push({
+      attempt_id: attempt.id,
+      question_id: questionId,
+      answer_text: answerText,
       max_score: question.points,
       updated_at: new Date().toISOString(),
     });
@@ -86,7 +98,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ toke
   }
 
   if (upserts.length > 0) {
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await restClient
       .from("candidate_responses")
       .upsert(upserts, { onConflict: "attempt_id,question_id" });
     if (upsertError) {
@@ -101,7 +113,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ toke
       ? new Date(Date.now() + remaining * 1000).toISOString()
       : attempt.expires_at;
 
-  const { error: updateError } = await supabase
+  const { error: updateError } = await restClient
     .from("candidate_attempts")
     .update({ draft_saved_at: new Date().toISOString(), current_index_hint: body.current_question_index ?? 0, expires_at: expiresAt })
     .eq("id", attempt.id);

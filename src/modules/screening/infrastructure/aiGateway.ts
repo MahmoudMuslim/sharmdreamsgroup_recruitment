@@ -12,10 +12,21 @@
  * Which provider serves a hop is decided by the model id itself: a routing row
  * carries no provider column, so an id prefixed `opencode:` or `qoder:` names
  * its provider explicitly, and everything else keeps the long-standing split
- * between OpenRouter's namespaced ids and Google's bare ones.
+ * between OpenRouter's namespaced ids and Google's bare ones. That rule, the
+ * Google chain it walks, and the fallback the table answers with all live in
+ * `settings/domain/modelRouting.ts`, because the Settings console has to read
+ * the same rule the gateway dispatches on.
  */
 import { aiConfig } from "@/lib/config.server";
 import { modelChains, type AiCapability } from "@/lib/config";
+import {
+  GOOGLE_MODEL_CHAIN,
+  GOOGLE_WALK_STATUSES,
+  TRANSCRIPTION_CAPABILITY,
+  transcriptionChain,
+  routeFor,
+  type GatewayProvider,
+} from "@/modules/settings/domain/modelRouting";
 import {
   resolveCredentials,
   resolveSecret,
@@ -41,15 +52,6 @@ export interface CompletionRequest {
    */
   modelOverride?: string;
 }
-
-/** Which provider answered. Every member here has a caller in this file. */
-export type GatewayProvider =
-  | "openrouter"
-  | "google"
-  | "opencode"
-  | "qoder"
-  | "cloudflare"
-  | "nvidia";
 
 export interface CompletionResult {
   content: string;
@@ -106,64 +108,6 @@ async function callOpenRouter(
     throw new Error(`OpenRouter ${model} returned an empty completion`);
   }
   return { content, truncated: choice?.finish_reason === "length" };
-}
-
-/**
- * Google AI Studio model ids, newest first.
- *
- * Walked in order so no single entry can break the fallback path: retired ids
- * (e.g. `gemini-2.0-flash`, and `gemini-2.5-flash` for newer accounts) 404 and
- * the next one is tried. Google's per-model load also flaps — observed live,
- * 3.8/3.7 returning 503 while 3.6/3.5 answered — so transient errors walk too
- * rather than failing the screening.
- */
-const GOOGLE_MODEL_CHAIN = [
-  "gemini-3.8-flash",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-] as const;
-
-/** "This model can't serve you right now" — try the next id instead of giving up. */
-const GOOGLE_WALK_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
-
-/**
- * True for ids that only Google's own endpoint serves — the ids its catalogue
- * lists without a `models/` prefix: `gemini-2.5-flash`, `gemma-4-31b-it`,
- * `nano-banana-pro-preview`, and the rest.
- *
- * Every OpenRouter id is namespaced (`google/gemini-flash-1.5`), so the slash is
- * what tells the two apart — and it means a routing row written for OpenRouter
- * keeps going down exactly the same path it always did.
- */
-function isGoogleNativeModel(model: string): boolean {
-  return !model.includes("/");
-}
-
-/**
- * Providers whose ids cannot be told apart by looking at them.
- *
- * OpenCode lists flat ids (`claude-haiku-4-5`), which is exactly the shape
- * `isGoogleNativeModel` reads as "Google's own endpoint", and Qoder's ids are
- * agent aliases (`qfmodel`) that no HTTP completion call accepts. Cloudflare's
- * (`@cf/meta/llama-3.3-70b-instruct`) and NVIDIA's (`deepseek-ai/…`) are both
- * namespaced the way OpenRouter's are, so an unqualified one would quietly be
- * billed to the wrong provider. All four are therefore stored in the routing
- * table with their provider in front of them, and the prefix is stripped before
- * the id goes on the wire.
- */
-const ROUTING_PREFIXES: Record<string, GatewayProvider> = {
-  "opencode:": "opencode",
-  "qoder:": "qoder",
-  "cloudflare:": "cloudflare",
-  "nvidia:": "nvidia",
-};
-
-function routeFor(model: string): { provider: GatewayProvider; model: string } {
-  for (const [prefix, provider] of Object.entries(ROUTING_PREFIXES)) {
-    if (model.startsWith(prefix)) return { provider, model: model.slice(prefix.length) };
-  }
-  return { provider: isGoogleNativeModel(model) ? "google" : "openrouter", model };
 }
 
 /**
@@ -450,8 +394,13 @@ export class RecordingNotTranscribableError extends Error {}
  *
  * Goes straight to Gemini rather than through `complete()`: it is the only
  * provider in this stack that accepts audio, and the OpenRouter hops would
- * spend daily quota on requests that cannot succeed. The same model chain is
- * walked so a retired or overloaded id never breaks the transcript.
+ * spend daily quota on requests that cannot succeed.
+ *
+ * The transcription row leads the walk when it names a Gemini model, so the card
+ * in Settings decides the order the ids are tried in. A pick from another
+ * provider is skipped rather than sent — it cannot take the file, and `saveModelRouting`
+ * now refuses one — and the shipped chain always stays behind the row, so the
+ * walk can only ever be longer than the one this function started with.
  */
 export async function transcribeRecording(
   bytes: Uint8Array,
@@ -465,7 +414,10 @@ export async function transcribeRecording(
     );
   }
 
-  const apiKey = await resolveSecret("google_ai_studio");
+  const [apiKey, routing] = await Promise.all([
+    resolveSecret("google_ai_studio"),
+    resolveModelRouting(TRANSCRIPTION_CAPABILITY),
+  ]);
   if (!apiKey) {
     throw new RecordingNotTranscribableError(
       "No Google AI Studio key is configured, which the transcription model needs."
@@ -475,7 +427,7 @@ export async function transcribeRecording(
   const data = Buffer.from(bytes).toString("base64");
   const walkErrors: string[] = [];
 
-  for (const model of GOOGLE_MODEL_CHAIN) {
+  for (const model of transcriptionChain(routing)) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), aiConfig.googleAiStudio.timeoutMs);
     try {

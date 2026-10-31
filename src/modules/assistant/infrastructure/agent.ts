@@ -2,8 +2,8 @@ import {
   complete,
   parseJsonResponse,
   TruncatedJsonResponseError,
-  type GatewayProvider,
 } from "@/modules/screening/infrastructure/aiGateway";
+import { type GatewayProvider } from "@/modules/settings/domain/modelRouting";
 import {
   ASSISTANT_TOOLS,
   asQuestion,
@@ -20,6 +20,7 @@ import {
   requiresApproval,
   type AssistantApproval,
 } from "@/modules/assistant/domain/approvals";
+import type { VoiceAutonomy } from "@/modules/assistant/domain/voice";
 import { chartForTool, type AssistantChart } from "@/modules/assistant/domain/charts";
 import {
   fileChipLine,
@@ -154,7 +155,11 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   [the model routing](/settings?area=providers&section=models), [the suites](/assessments),",
   "   [the interview agenda](/interviews), [the checklists](/onboarding), [the file manager](/files),",
   "   [the apply-form questions](/questions?store=gate), [the templates](/settings?area=access&section=templates),",
-  "   [the team](/settings?area=access&section=team), [the activity trail](/activity).",
+  "   [the team](/settings?area=access&section=team), [the change trail console](/activity) — that one",
+  "   is get_activity_trail's screen: it reads the hiring-data trail and takes the console's own filters",
+  "   (window=24h|7d|30d|90d|all, area=, actorKind=STAFF|AI|CANDIDATE|SYSTEM, surface=, entity=,",
+  "   entityId=, q= and page=), so [the AI-made changes](/activity?window=30d&actorKind=AI) is a real",
+  "   link. That is a different table from the settings change trail get_audit_log reads; never mix the two.",
   "   A filtered board is the same idea: [interview stage](/dashboard?stage=INTERVIEW) —",
   "   /dashboard takes ?stage=, ?source=, ?bucket= and ?q=; /candidates takes ?q=, ?stage=,",
   "   ?source=, ?company=<id>, ?application=<id>, ?c=<tracking code>, ?ungraded=1 (the grading queue — attempts",
@@ -206,8 +211,11 @@ export const ASSISTANT_RULES: readonly string[] = [
   "   empty search as \"nobody tested this key\" — the note says how far it looked, and a match past that window is a",
   "   different sentence. A VERIFIED row says somebody ran the test and what came back; it is not a claim that it passed.",
   "   Provider health only probes when a person opens that tab itself, so a link there shows nothing run;",
-  "   /assessments takes ?q= for its own suite box, and /files takes ?q=,",
+  "   /assessments takes ?q= for its own suite box and ?stats=<the suite id get_item_statistics read>,",
+  "   so [how those questions scored](/assessments?stats=<that id>) opens that suite's item table; /files takes ?q=,",
   `   ?bucket=${BUCKETS.map((bucket) => bucket.key).join("|")} and ?prefix=<a stored folder path it listed>;`,
+  "   /time takes ?window=today|7d|14d|30d and ?scope=mine|team, so",
+  "   [the team's hours this month](/time?window=30d&scope=team) is a real link — the ledger's own pills;",
   "   /interviews takes ?range=today|week|month|upcoming|past",
   "   and ?status=SCHEDULED|COMPLETED|NO_SHOW|CANCELLED, so [awaiting an outcome](/interviews?range=upcoming&status=SCHEDULED)",
   `   is a real link; /whatsapp takes ?bucket=${OUTBOX_BUCKETS.join("|")}, ?failed=1 and ?q= for the WhatsApp`,
@@ -367,14 +375,15 @@ function detailFor(value: unknown): string {
   return fitResult(value);
 }
 
-async function runTool(
+export async function runTool(
   name: string,
   args: ToolArgs,
   allowDestructive: boolean,
   /** The recruiter this write is held for, so only their click can release it. */
   profileId: string,
   /** The panel's web switch — the only thing that lets a lookup leave the portal. */
-  allowWeb: boolean
+  allowWeb: boolean,
+  autonomy: VoiceAutonomy
 ): Promise<{ step: AssistantStep; result: string }> {
   const tool = toolByName(name);
 
@@ -410,7 +419,7 @@ async function runTool(
   // the recruiter approves are the arguments this turn asked with — nothing that
   // happens afterwards can rewrite them.
   if (requiresApproval(tool.name)) {
-    const approval = mintApproval(tool, args, profileId);
+    const approval = mintApproval(tool, args, profileId, autonomy);
     return {
       step: {
         tool: tool.name,
@@ -534,7 +543,12 @@ export async function runAssistantTurn(
    * model answering this conversation is free to be Gemini, DeepSeek or whatever
    * the routing table names while the lookup still happens.
    */
-  allowWeb = false
+  allowWeb = false,
+  /**
+   * The caller's stored voice-autonomy level. A write minted under `code` carries
+   * a challenge; under the other levels the click alone releases it.
+   */
+  autonomy: VoiceAutonomy = "confirm"
 ): Promise<AssistantTurn> {
   const chosen = modelOverride?.trim() || undefined;
   const messages: ChatCompletionMessage[] = [
@@ -582,7 +596,8 @@ export async function runAssistantTurn(
       answer.args,
       allowDestructive,
       profileId,
-      allowWeb
+      allowWeb,
+      autonomy
     );
     steps.push(step);
 

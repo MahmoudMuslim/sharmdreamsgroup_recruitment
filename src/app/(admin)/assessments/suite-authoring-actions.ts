@@ -1,7 +1,8 @@
 "use server";
 
-import { createSupabaseServerClient } from "@/lib/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { readOpeningPickerWindow } from "@/infrastructure/repositories/jobOpening";
+import type { RestClient } from "@/lib/rest/client";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { hasAiProvider } from "@/lib/config.server";
@@ -98,25 +99,17 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
     return { openings: [], note: null, error: "You need the Create assessments permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
-  const [rows, count] = await Promise.all([
-    supabase
-      .from("job_openings")
-      .select("id, title, status")
-      .in("status", [...HIREABLE_STATUSES])
-      .order("created_at", { ascending: false })
-      .limit(PICKER_LIMIT),
-    supabase
-      .from("job_openings")
-      .select("id", { count: "exact", head: true })
-      .in("status", [...HIREABLE_STATUSES]),
-  ]);
+  const restClient = await createServerRestClient();
+  const picker = await readOpeningPickerWindow(restClient, {
+    statuses: HIREABLE_STATUSES,
+    limit: PICKER_LIMIT,
+  });
 
-  if (rows.error) {
-    return { openings: [], note: null, error: rows.error.message };
+  if (!picker.ok) {
+    return { openings: [], note: null, error: picker.error };
   }
 
-  const openings = (rows.data ?? []).map((row: { id: string; title: string; status: string }) => ({
+  const openings = picker.rows.map((row) => ({
     id: row.id,
     title: row.title,
     status: row.status,
@@ -125,17 +118,17 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
 
   return {
     openings,
-    note: pickerWindowNote(count.count ?? openings.length, openings.length),
+    note: pickerWindowNote(picker.total ?? openings.length, openings.length),
     error: null,
   };
 }
 
 /** The vacancy a draft is written for, in the words the recruiter filed. */
 async function readOpeningSeed(
-  supabase: SupabaseClient,
+  restClient: RestClient,
   openingId: string
 ): Promise<OpeningSeed | string> {
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select("id, title, department, location, description, requirements, status")
     .eq("id", openingId)
@@ -154,7 +147,9 @@ async function readOpeningSeed(
     location: data.location ?? "",
     description: data.description ?? "",
     requirements: (Array.isArray(data.requirements) ? data.requirements : []).filter(
-      (entry): entry is string => typeof entry === "string"
+      // `unknown` named explicitly because the row arrives untyped: a type
+      // predicate cannot narrow a parameter whose type is implicit `any`.
+      (entry: unknown): entry is string => typeof entry === "string"
     ),
     status: data.status,
   };
@@ -218,11 +213,11 @@ export async function draftSuite(input: SuiteAuthoringInput): Promise<SuiteDraft
     };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
   let opening: OpeningSeed | null = null;
   if (openingId) {
-    const seed = await readOpeningSeed(supabase, openingId);
+    const seed = await readOpeningSeed(restClient, openingId);
     if (typeof seed === "string") return { ok: false, error: seed };
     opening = seed;
   }
@@ -230,7 +225,7 @@ export async function draftSuite(input: SuiteAuthoringInput): Promise<SuiteDraft
   const [options, defaultDurationMinutes, suites] = await Promise.all([
     getMasterOptions(),
     getNumberSetting("assessment.default_duration_minutes", 60),
-    supabase.from("assessment_templates").select("name"),
+    restClient.from("assessment_templates").select("name"),
   ]);
 
   const brief: AuthoringBrief = {

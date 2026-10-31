@@ -1,13 +1,21 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { changePhrase, changedFields, printableValue } from "@/modules/activity/domain/trail";
 import { SECTORS, isSector } from "@/modules/settings/domain/vocabularies";
 import { JOB_STATUSES } from "@/modules/jobs/domain/hireable";
+import {
+  EMPLOYMENT_WRITE_REFUSAL,
+  EXPERIENCE_WRITE_REFUSAL,
+  isEmploymentType,
+  isMissingSchemaError,
+  readExperienceLevel,
+} from "@/modules/jobs/domain/openingTerms";
 import { MASTER_LIST_WORDS } from "@/modules/settings/domain/masterDataLists";
 import {
   FILED_ENTITIES,
@@ -22,6 +30,12 @@ import {
   resolveJobFiling,
   type JobFilingFields,
 } from "@/modules/jobs/application/filingVocabularies";
+import {
+  POSITION_TEMPLATE_COLUMNS,
+  inheritedFrom,
+  supplied,
+  type PositionTemplate,
+} from "@/modules/jobs/domain/positionInheritance";
 
 export interface JobDraft {
   title: string;
@@ -30,6 +44,14 @@ export interface JobDraft {
   sector: string;
   location: string;
   employment_type: string;
+  /**
+   * The seniority the opening states, or null for none recorded.
+   *
+   * `undefined` means the caller did not offer the field at all. On a database
+   * without the column the form sends nothing, and the action must write no
+   * column — a literal null would name something the database does not have.
+   */
+  experience_level?: string | null;
   description: string;
   requirements: string[];
   min_salary_usd: string;
@@ -37,6 +59,11 @@ export interface JobDraft {
   /** ISO 4217 code the two salary figures are denominated in. */
   salary_currency: string;
   status: string;
+  /**
+   * The position a new opening starts from. Only a create reads it, and only to
+   * inherit the copy below; an edit never moves an opening's position link.
+   */
+  position_id?: string;
 }
 
 export interface JobResult {
@@ -45,7 +72,6 @@ export interface JobResult {
   id?: string;
 }
 
-const EMPLOYMENT_TYPES = new Set(["FULL_TIME", "PART_TIME", "CONTRACT", "INTERNSHIP"]);
 const STATUSES = new Set<string>(JOB_STATUSES);
 
 /**
@@ -60,7 +86,7 @@ const STATUSES = new Set<string>(JOB_STATUSES);
  */
 async function jobColumnsFrom(
   draft: JobDraft,
-  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   stored?: Partial<JobFilingFields> | null
 ): Promise<{ ok: true; columns: Record<string, unknown> } | { ok: false; error: string }> {
   const title = draft.title.trim();
@@ -81,11 +107,21 @@ async function jobColumnsFrom(
   if (!isSector(draft.sector)) {
     return { ok: false, error: `Sector must be one of: ${SECTORS.join(", ")}.` };
   }
-  if (!EMPLOYMENT_TYPES.has(draft.employment_type)) {
+  if (!isEmploymentType(draft.employment_type)) {
     return { ok: false, error: "Invalid employment type." };
   }
   if (!STATUSES.has(draft.status)) {
     return { ok: false, error: "Invalid status." };
+  }
+
+  // Three states, not two: a level, a deliberate blank that clears it, and
+  // "not offered". The last is what keeps an edit from clearing a stored level
+  // on a database where the form cannot show it.
+  let experienceLevel: string | null | undefined;
+  if (draft.experience_level !== undefined) {
+    const read = readExperienceLevel(draft.experience_level);
+    if (!read.ok) return { ok: false, error: read.error };
+    experienceLevel = read.level;
   }
 
   // The salary pair is only meaningful with its currency, so the code is checked
@@ -100,7 +136,7 @@ async function jobColumnsFrom(
   // level refuses "Finance" when the list holds "Finance & Investment", which is how
   // five of the live openings drifted; the assistant types these values straight in.
   const filed = await resolveJobFiling({
-    supabase,
+    restClient,
     submitted: { tenant_id: draft.tenant_id, department, location, salary_currency },
     stored,
   });
@@ -113,6 +149,7 @@ async function jobColumnsFrom(
       title,
       sector: draft.sector,
       employment_type: draft.employment_type,
+      ...(experienceLevel !== undefined ? { experience_level: experienceLevel } : {}),
       description,
       requirements: draft.requirements ?? [],
       min_salary_usd: draft.min_salary_usd ? Number(draft.min_salary_usd) : null,
@@ -122,6 +159,53 @@ async function jobColumnsFrom(
   };
 }
 
+/**
+ * The position a create starts from, or the reason it cannot.
+ *
+ * The same refusal the Settings console prints when the table is missing: a retry
+ * would fail identically, so the answer names the migration instead of asking for
+ * one.
+ */
+async function positionTemplate(
+  restClient: Awaited<ReturnType<typeof createServerRestClient>>,
+  id: string
+): Promise<{ position: PositionTemplate } | { error: string }> {
+  const { data, error } = await restClient
+    .from("positions")
+    .select(POSITION_TEMPLATE_COLUMNS)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    // 42P01 is the missing table; PGRST205/204 is a schema cache that has not caught
+    // up with it. Both mean the same thing at this door.
+    if (
+      error.code === "42P01" ||
+      error.code === "PGRST205" ||
+      error.code === "PGRST204" ||
+      /does not exist|schema cache/i.test(error.message)
+    ) {
+      return {
+        error:
+          "The positions list has not been created on this database yet — db/migrations/026_positions.sql is authored but not applied, so nothing can start from a position until it is.",
+      };
+    }
+    return { error: error.message };
+  }
+
+  if (!data) {
+    return { error: "That position no longer exists — reload the form and pick another." };
+  }
+
+  const position = data as unknown as PositionTemplate;
+  if (position.is_active === false) {
+    return {
+      error: `“${position.title}” is retired, so a new opening cannot start from it. Reactivate it in Settings → Organisation → Positions, or pick another.`,
+    };
+  }
+  return { position };
+}
+
 /** Creates a job opening. Requires the `jobs.manage` permission. */
 export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
   await requireStaff("/jobs");
@@ -129,30 +213,70 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     return { ok: false, error: "You need the Manage jobs permission." };
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
 
-  const built = await jobColumnsFrom(draft, supabase);
+  // The position is read before validation because it supplies the copy the draft
+  // is allowed to leave out. The link is recorded only on create; an edit never
+  // moves it.
+  const positionId = supplied(draft.position_id) ? draft.position_id!.trim() : null;
+  let source = draft;
+  let position: PositionTemplate | null = null;
+  if (positionId) {
+    const read = await positionTemplate(restClient, positionId);
+    if ("error" in read) return { ok: false, error: read.error };
+    position = read.position;
+    // A position filed under one company is that company's post. Copying it onto
+    // another company's opening would be a role nobody defined, so the company an
+    // opening inherits has to be the one the position names — or the position has
+    // to be group-wide, which is what a null tenant means.
+    if (
+      position.tenant_id &&
+      supplied(draft.tenant_id) &&
+      draft.tenant_id.trim() !== position.tenant_id
+    ) {
+      return {
+        ok: false,
+        error: `“${position.title}” is filed under a different company, so an opening here cannot start from it. Pick that company, or a position filed under this one.`,
+      };
+    }
+    source = inheritedFrom(draft, position);
+  }
+
+  // The form fills the sector from the company when a position is picked; a chat
+  // that sends only the position does not have to know it, so it is read here when
+  // the position named a company.
+  if (!source.sector.trim() && source.tenant_id) {
+    const { data: company } = await restClient
+      .from("tenants_and_companies")
+      .select("sector")
+      .eq("id", source.tenant_id)
+      .maybeSingle();
+    if (typeof company?.sector === "string") source = { ...source, sector: company.sector };
+  }
+
+  const built = await jobColumnsFrom(source, restClient);
   if (!built.ok) return { ok: false, error: built.error };
   const { columns } = built;
 
   // `job_openings.created_by` references user_profiles(id), not auth.users(id),
   // so the authenticated user must be resolved to their profile row. Passing the
   // auth id directly violates the foreign key.
-  const { data: userData } = await supabase.auth.getUser();
+  const { data: userData } = await restClient.auth.getUser();
   let createdBy: string | null = null;
   if (userData.user) {
-    const { data: profile } = await supabase
-      .from("user_profiles")
-      .select("id")
-      .eq("auth_user_id", userData.user.id)
-      .maybeSingle();
-    createdBy = profile?.id ?? null;
+    const found = await readStaffProfileIdByAuthUserId(restClient, userData.user.id);
+    if (found.ok) createdBy = found.profileId;
+    else console.error("[jobs] opening creator lookup:", found.error);
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .insert({
       ...columns,
+      // Only a create carries the link, and only when a position was chosen: while
+      // 026 is unapplied the column does not exist, and sending `null` for it would
+      // fail an insert that has nothing to do with positions.
+      ...(positionId ? { position_id: positionId } : {}),
       created_by: createdBy,
       // Only a published opening gets a posted date.
       posted_at: columns.status === "PUBLISHED" ? new Date().toISOString() : null,
@@ -161,11 +285,29 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
     .single();
 
   if (error) {
+    // The link was chosen and the column it writes is not there: the position read
+    // could not have succeeded on such a database, so this is the migration, said
+    // once more rather than as a raw schema-cache error.
+    if (
+      /position_id/.test(error.message) &&
+      (error.code === "42703" ||
+        error.code === "PGRST204" ||
+        /does not exist|schema cache/i.test(error.message))
+    ) {
+      return {
+        ok: false,
+        error:
+          "The opening could not be linked to its position: db/migrations/026_positions.sql is authored but not applied, so job_openings has no position_id column yet.",
+      };
+    }
     // 23503 is a foreign-key violation. Naming the column makes this far
     // easier to diagnose than a generic "could not be found".
     if (error.code === "23503") {
       if (error.message.includes("tenant_id")) {
         return { ok: false, error: "That company no longer exists — pick another." };
+      }
+      if (error.message.includes("position_id")) {
+        return { ok: false, error: "That position no longer exists — pick another." };
       }
       if (error.message.includes("created_by")) {
         return { ok: false, error: "Your staff profile is missing — ask an admin to fix it." };
@@ -173,7 +315,10 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       return { ok: false, error: "A linked record no longer exists." };
     }
     if (error.code === "23514") {
-      return { ok: false, error: "The employment type or status is not valid." };
+      return { ok: false, error: describeWriteError(error) };
+    }
+    if (isMissingSchemaError(error) && /experience_level/i.test(error.message)) {
+      return { ok: false, error: EXPERIENCE_WRITE_REFUSAL };
     }
     return { ok: false, error: error.message };
   }
@@ -195,7 +340,13 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
       department: columns.department,
       location: columns.location,
       employment_type: columns.employment_type,
+      ...(columns.experience_level !== undefined
+        ? { experience_level: columns.experience_level }
+        : {}),
       status: columns.status,
+      // Named so the trail says where the copy came from, not just that an
+      // opening appeared. Absent on a blank create, which starts from no position.
+      ...(position ? { position: position.title } : {}),
       salary:
         columns.min_salary_usd || columns.max_salary_usd
           ? `${printableValue(columns.min_salary_usd)}–${printableValue(columns.max_salary_usd)} ${columns.salary_currency}`
@@ -208,17 +359,20 @@ export async function createJobOpening(draft: JobDraft): Promise<JobResult> {
 
 /** Staff session + `jobs.manage`, or the message explaining which is missing. */
 async function requireJobManager(): Promise<
-  { supabase: Awaited<ReturnType<typeof createSupabaseServerClient>> } | { error: string }
+  { restClient: Awaited<ReturnType<typeof createServerRestClient>> } | { error: string }
 > {
   await requireStaff("/jobs");
   if (!(await hasPermissionForUser("jobs.manage"))) {
     return { error: "You need the Manage jobs permission." };
   }
-  return { supabase: await createSupabaseServerClient() };
+  return { restClient: await createServerRestClient() };
 }
 
-/** Turns the two constraint errors this table can raise into recruiter language. */
+/** Turns the constraint and schema errors this table can raise into recruiter language. */
 function describeWriteError(error: { code?: string; message: string }): string {
+  if (isMissingSchemaError(error) && /experience_level/i.test(error.message)) {
+    return EXPERIENCE_WRITE_REFUSAL;
+  }
   if (error.code === "23503") {
     if (error.message.includes("tenant_id")) {
       return "That company no longer exists — pick another.";
@@ -226,6 +380,12 @@ function describeWriteError(error: { code?: string; message: string }): string {
     return "A linked record no longer exists.";
   }
   if (error.code === "23514") {
+    // The two constraints 033 touches are named, so a Remote type or a level the
+    // database has not been taught yet is told why rather than "not valid".
+    if (/employment_type_check/i.test(error.message)) return EMPLOYMENT_WRITE_REFUSAL;
+    if (/experience_level_check/i.test(error.message)) {
+      return "Experience level must be one of: JUNIOR, MID, SENIOR, LEAD.";
+    }
     return "The employment type or status is not valid.";
   }
   return error.message;
@@ -244,6 +404,7 @@ const EDITABLE_COLUMNS = [
   "sector",
   "location",
   "employment_type",
+  "experience_level",
   "description",
   "requirements",
   "min_salary_usd",
@@ -263,9 +424,9 @@ const EDITABLE_COLUMNS = [
 export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<JobResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("job_openings")
     .select(
       "id, posted_at, title, department, sector, location, employment_type, description, requirements, min_salary_usd, max_salary_usd, salary_currency, status, tenant_id"
@@ -274,7 +435,25 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
     .maybeSingle();
   if (!existing) return { ok: false, error: "That opening no longer exists." };
 
-  const built = await jobColumnsFrom(draft, supabase, {
+  // The level is read in its own query, for the same reason the grid reads it
+  // apart: naming it in the row select above would fail the whole edit on a
+  // database that has never run 033. It is read only when the draft names the
+  // field — a form that cannot offer it sends nothing, and "not offered" must
+  // never become "cleared".
+  let storedLevel: string | null = null;
+  let levelWasRead = false;
+  if (draft.experience_level !== undefined) {
+    const { data: levelRow, error: levelError } = await restClient
+      .from("job_openings")
+      .select("id, experience_level")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (levelError) return { ok: false, error: describeWriteError(levelError) };
+    storedLevel = (levelRow?.experience_level as string | null) ?? null;
+    levelWasRead = true;
+  }
+
+  const built = await jobColumnsFrom(draft, restClient, {
     tenant_id: existing.tenant_id,
     department: existing.department,
     location: existing.location,
@@ -287,10 +466,13 @@ export async function updateJobOpening(jobId: string, draft: JobDraft): Promise<
     columns.posted_at = new Date().toISOString();
   }
 
-  const { error } = await supabase.from("job_openings").update(columns).eq("id", jobId);
+  const { error } = await restClient.from("job_openings").update(columns).eq("id", jobId);
   if (error) return { ok: false, error: describeWriteError(error) };
 
-  const before = existing as unknown as Record<string, unknown>;
+  const before = {
+    ...(existing as unknown as Record<string, unknown>),
+    ...(levelWasRead ? { experience_level: storedLevel } : {}),
+  };
   const edits = changedFields(before, columns, EDITABLE_COLUMNS);
   const republished = built.columns.status === "PUBLISHED" && !existing.posted_at;
 
@@ -326,11 +508,11 @@ export async function setJobStatus(
 ): Promise<JobStatusResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
   if (!STATUSES.has(status)) return { ok: false, error: "Unknown status." };
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("job_openings")
     .select("id, title, status, posted_at")
     .eq("id", jobId)
@@ -343,7 +525,7 @@ export async function setJobStatus(
     patch.posted_at = new Date().toISOString();
   }
 
-  const { error } = await supabase.from("job_openings").update(patch).eq("id", jobId);
+  const { error } = await restClient.from("job_openings").update(patch).eq("id", jobId);
   if (error) return { ok: false, error: error.message };
 
   await recordActivity({
@@ -373,9 +555,9 @@ export async function setJobStatus(
 export async function deleteJobOpening(jobId: string): Promise<JobResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
-  const { data: existing } = await supabase
+  const { data: existing } = await restClient
     .from("job_openings")
     .select("id, title, department, location, status")
     .eq("id", jobId)
@@ -385,7 +567,7 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
   // Deliberately counted over filed candidates too: `applications.job_id`
   // cascades, so deleting an opening a filed applicant still points at would
   // erase the record the archive exists to keep.
-  const { count } = await supabase
+  const { count } = await restClient
     .from("applications")
     .select("id", { count: "exact", head: true })
     .eq("job_id", jobId);
@@ -397,7 +579,7 @@ export async function deleteJobOpening(jobId: string): Promise<JobResult> {
     };
   }
 
-  const { error } = await supabase.from("job_openings").delete().eq("id", jobId);
+  const { error } = await restClient.from("job_openings").delete().eq("id", jobId);
   if (error) return { ok: false, error: error.message };
 
   await recordActivity({
@@ -447,7 +629,7 @@ export interface RefileResult {
 export async function refileFiling(entity: string, from: string, to: string): Promise<RefileResult> {
   const access = await requireJobManager();
   if ("error" in access) return { ok: false, error: access.error };
-  const { supabase } = access;
+  const { restClient } = access;
 
   if (!isFiledEntity(entity)) {
     return {
@@ -458,7 +640,7 @@ export async function refileFiling(entity: string, from: string, to: string): Pr
 
   const { field, by } = filedColumn(entity);
   const source = String(from ?? "").trim();
-  const { vocabularies, unreadable } = await getFilingVocabularies(supabase);
+  const { vocabularies, unreadable } = await getFilingVocabularies(restClient);
   if (unreadable.includes(entity)) {
     return {
       ok: false,
@@ -478,7 +660,7 @@ export async function refileFiling(entity: string, from: string, to: string): Pr
   // Read and matched here rather than with `.eq()`, because the desk counted the
   // *trimmed* text and a stored value padded with a space would otherwise slip
   // past a match the recruiter was told had moved.
-  const { data, error } = await supabase
+  const { data, error } = await restClient
     .from("job_openings")
     .select(`id, title, ${field}`)
     .order("created_at", { ascending: false });
@@ -498,7 +680,7 @@ export async function refileFiling(entity: string, from: string, to: string): Pr
     };
   }
 
-  const { error: written } = await supabase
+  const { error: written } = await restClient
     .from("job_openings")
     .update({ [field]: destination.name })
     .in("id", moving.map((row) => row.id));

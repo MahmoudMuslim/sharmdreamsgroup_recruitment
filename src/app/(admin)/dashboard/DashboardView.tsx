@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -14,15 +14,10 @@ import {
   ExternalLink,
   Filter,
   Hourglass,
-  Loader2,
-  RefreshCw,
   Search,
   Sparkles,
-  TrendingDown,
-  TrendingUp,
   UserPlus,
-  Users,
-  X,
+  Users
 } from "lucide-react";
 import {
   Badge,
@@ -30,423 +25,22 @@ import {
   Card,
   CardHeader,
   EmptyState,
-  Meter,
+  Meter
 } from "@/modules/analytics/presentation/ui";
 import { Drawer } from "@/modules/analytics/presentation/Drawer";
 import { inBucket } from "@/modules/analytics/domain/fitBuckets";
 import { BOARD_LIMIT } from "@/app/(admin)/dashboard/board-model";
-import { cn, formatDateTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
-  getDashboardDrilldown,
-  type DashboardDrillResult,
-  type DashboardDrillRow,
-  type DashboardDrillScope,
+  type DashboardDrillScope
 } from "./actions";
-import type {
-  ApplicationStage,
-  DashboardAnalytics,
-  DashboardCandidate,
-  DashboardRoleRow,
-} from "@/types";
-
-type SortKey = "name" | "role" | "stage" | "fit" | "assessment" | "applied";
-
-/** Which popup the recruiter opened, and what it has to read to answer it. */
-type Panel = { kind: "roles" } | { kind: "applications"; scope: DashboardDrillScope };
-
-const STAGE_TONES: Record<string, "neutral" | "gold" | "success" | "danger" | "info"> = {
-  HIRED: "success",
-  REJECTED: "danger",
-  OFFER: "gold",
-  INTERVIEW: "gold",
-};
-
-function stageTone(stage: string) {
-  return STAGE_TONES[stage] ?? "info";
-}
-
-function prettyStage(stage: string) {
-  return stage.replace("_", " ");
-}
-
-function shortDate(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-/** `2026-10-15` → `Wed, Oct 15`, read as a calendar day rather than a moment. */
-function longDate(day: string) {
-  const date = new Date(`${day}T00:00:00`);
-  return Number.isNaN(date.getTime())
-    ? day
-    : date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-}
-
-/**
- * A headline number that answers "who is behind this?" when it is clicked.
- *
- * The whole card is the control, so the recruiter never hunts for a link hidden
- * in a corner — and a card only gets a click target when there is a read that
- * can genuinely list the rows behind the figure.
- */
-function Tile({
-  label,
-  value,
-  hint,
-  icon,
-  delta,
-  detail,
-  onClick,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-  icon: ReactNode;
-  delta?: { value: number; label: string } | null;
-  /** What the popup will show, e.g. "Every live application". */
-  detail?: string;
-  onClick?: () => void;
-}) {
-  const up = (delta?.value ?? 0) > 0;
-  return (
-    <Card className={cn("group relative p-5", onClick && "hover:border-brand-gold hover:shadow-soft")}>
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
-          {label}
-        </p>
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-gold/15 text-brand-gold-dark">
-          {icon}
-        </span>
-      </div>
-      <p className="mt-2 font-display text-3xl font-extrabold tracking-tight">{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-brand-ink/50">{hint}</p>}
-      {delta && delta.value !== 0 && (
-        <p
-          className={cn(
-            "mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold",
-            up ? "bg-emerald-500/12 text-emerald-700" : "bg-rose-500/12 text-rose-700"
-          )}
-        >
-          {up ? (
-            <TrendingUp className="h-3 w-3" aria-hidden />
-          ) : (
-            <TrendingDown className="h-3 w-3" aria-hidden />
-          )}
-          {up ? "+" : ""}
-          {delta.value}
-          {delta.label}
-        </p>
-      )}
-      {onClick && detail && (
-        <p className="mt-2.5 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-brand-ink/35 transition group-hover:text-brand-gold-dark">
-          {detail}
-          <ArrowUpRight className="h-3 w-3" aria-hidden />
-        </p>
-      )}
-      {onClick && (
-        // Last in the DOM, so the whole card is one click target and the text
-        // above it stays selectable-looking rather than half-interactive.
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={`${label}: ${detail}`}
-          className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-gold"
-        />
-      )}
-    </Card>
-  );
-}
-
-function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-gold bg-brand-gold/15 py-1 pl-2.5 pr-1 text-[11px] font-bold uppercase tracking-wide text-brand-gold-dark">
-      {label}
-      <button
-        type="button"
-        onClick={onClear}
-        aria-label={`Clear ${label} filter`}
-        className="rounded-full p-0.5 transition hover:bg-brand-gold/25"
-      >
-        <X className="h-3 w-3" aria-hidden />
-      </button>
-    </span>
-  );
-}
-
-/** Small strip at the bottom of a card that carries its next step. */
-function CardFooter({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-t border-brand-line bg-brand-cream px-5 py-3 sm:px-6">
-      {children}
-    </div>
-  );
-}
-
-function GhostAction({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-line bg-white px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-brand-ink/60 transition hover:bg-brand-sand hover:text-brand-ink"
-    >
-      {children}
-    </button>
-  );
-}
-
-/** The one control every chart row shares: narrow the board under the charts. */
-function BoardFilterButton({
-  active,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      aria-label={active ? `Board is filtered to ${label}` : `Filter the board to ${label}`}
-      title={active ? `Board is filtered to ${label}` : `Filter the board to ${label}`}
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition",
-        active
-          ? "border-brand-gold bg-brand-gold/20 text-brand-gold-dark"
-          : "border-brand-line bg-white text-brand-ink/50 hover:bg-brand-sand hover:text-brand-ink"
-      )}
-    >
-      <Filter className="h-3 w-3" aria-hidden />
-      {active ? "Filtered" : "Filter"}
-    </button>
-  );
-}
-
-function RoleLine({
-  role,
-  max,
-  masked,
-  onSelect,
-}: {
-  role: DashboardRoleRow;
-  max: number;
-  masked: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className="w-full rounded-xl border border-transparent px-3 py-2.5 text-left transition hover:border-brand-line hover:bg-brand-cream"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold">{role.title}</p>
-          <p className="truncate text-[11px] text-brand-ink/50">
-            {role.department || "—"} · {prettyStage(role.status) || "no status"}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="font-display text-base font-extrabold leading-none">{role.applications}</p>
-          <p className="text-[10px] uppercase tracking-wider text-brand-ink/40">apps</p>
-        </div>
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-brand-ink/55">
-        <span>{role.hires} hired</span>
-        {!masked && role.avg_fit !== null && (
-          <span className="inline-flex items-center gap-1">
-            <Sparkles className="h-3 w-3 text-brand-gold" aria-hidden />
-            {role.avg_fit}% avg fit
-          </span>
-        )}
-        {role.oldest_waiting_days !== null && (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1",
-              role.oldest_waiting_days >= 14 && "font-bold text-rose-700"
-            )}
-          >
-            <Hourglass className="h-3 w-3" aria-hidden />
-            {role.oldest_waiting_days}d waiting
-          </span>
-        )}
-        {role.closing_at && <span>closes {shortDate(role.closing_at)}</span>}
-        <Meter value={role.applications} max={max} className="ml-auto w-16" />
-      </div>
-    </button>
-  );
-}
-
-/**
- * The rows behind one dashboard figure, read from the database on open.
- *
- * The board under the charts only ships 200 applications, and every figure here
- * counts all of them, so a popup that names a total has to re-read rather than
- * count the rows the browser happens to be holding.
- */
-function DrillPanel({ scope, masked }: { scope: DashboardDrillScope; masked: boolean }) {
-  const [result, setResult] = useState<DashboardDrillResult | null>(null);
-  const [retry, setRetry] = useState(0);
-
-  useEffect(() => {
-    let active = true;
-    getDashboardDrilldown(scope).then(
-      (next) => {
-        if (active) setResult(next);
-      },
-      () => {
-        // A rejected action call is a session or transport failure, not a
-        // recruiter error, so it reads the same as a retry would.
-        if (active) setResult({ ok: false, error: "These applications could not be read. Please retry." });
-      }
-    );
-    return () => {
-      active = false;
-    };
-  }, [scope, retry]);
-
-  function reload() {
-    setResult(null);
-    setRetry((count) => count + 1);
-  }
-
-  if (!result) {
-    return (
-      <p className="flex items-center gap-2 py-6 text-sm text-brand-ink/55">
-        <Loader2 className="h-4 w-4 animate-spin text-brand-gold" aria-hidden />
-        Reading the applications behind this figure…
-      </p>
-    );
-  }
-
-  if (!result.ok) {
-    return (
-      <div className="space-y-3 py-2">
-        <p className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3.5 py-3 text-sm text-rose-800">
-          {result.error}
-        </p>
-        <GhostAction onClick={reload}>
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-          Try again
-        </GhostAction>
-      </div>
-    );
-  }
-
-  const { rows, total, shown, read_at } = result;
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-brand-line bg-brand-cream px-3.5 py-2.5">
-        <p className="text-sm" aria-live="polite">
-          <strong className="font-display text-base font-extrabold">
-            {total.toLocaleString()}
-          </strong>{" "}
-          application{total === 1 ? "" : "s"}
-          <span className="text-[11px] text-brand-ink/50">
-            {" "}
-            · {shown < total ? `first ${shown} listed` : "all listed"} · read{" "}
-            {formatDateTime(read_at)}
-          </span>
-        </p>
-        <GhostAction onClick={reload}>
-          <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-          Recount
-        </GhostAction>
-      </div>
-
-      {/* Filed records are never part of a dashboard count, so say what is not
-          in the list rather than let a missing name look like a bug. */}
-      {total === 0 ? (
-        <EmptyState
-          title="Nothing matches this yet"
-          description="Filed-away records are excluded, so an empty list means the pipeline genuinely holds none."
-        />
-      ) : (
-        <>
-          {scope.type !== "stage" && rows.length > 1 && <StageStrip rows={rows} />}
-          <ul className="divide-y divide-brand-line">
-            {rows.map((row) => (
-              <DrillRow key={row.application_id} row={row} masked={masked} />
-            ))}
-          </ul>
-          {shown < total && (
-            <p className="text-[11px] text-brand-ink/45">
-              The {shown} most recent are listed — use the candidates board search to reach the
-              rest.
-            </p>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-/** Stage mix of the rows on screen, so a popup is scannable before it is read. */
-function StageStrip({ rows }: { rows: DashboardDrillRow[] }) {
-  const counts = new Map<string, number>();
-  for (const row of rows) counts.set(row.stage, (counts.get(row.stage) ?? 0) + 1);
-  const steps = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/40">
-        Of these {rows.length}
-      </span>
-      {steps.map(([stage, count]) => (
-        <Badge key={stage} tone={stageTone(stage)}>
-          {prettyStage(stage)} · {count}
-        </Badge>
-      ))}
-    </div>
-  );
-}
-
-function DrillRow({ row, masked }: { row: DashboardDrillRow; masked: boolean }) {
-  const clock =
-    row.days_to_hire !== null
-      ? `${row.days_to_hire}d to hire`
-      : row.waiting_days !== null
-        ? `waiting ${row.waiting_days}d`
-        : row.hired_at
-          ? `hired ${shortDate(row.hired_at)}`
-          : "closed";
-
-  return (
-    <li className="group flex items-start justify-between gap-3 py-3">
-      <div className="min-w-0">
-        <Link
-          href={`/candidates/${row.application_id}`}
-          className="inline-flex items-center gap-1.5 text-sm font-semibold hover:text-brand-gold-dark hover:underline"
-        >
-          {row.full_name}
-          <ExternalLink className="h-3 w-3 shrink-0 opacity-0 transition group-hover:opacity-100" aria-hidden />
-        </Link>
-        <p className="truncate text-[11px] text-brand-ink/45">
-          {row.email} · {row.tracking_code}
-        </p>
-        <p className="mt-0.5 truncate text-[11px] text-brand-ink/55">
-          {row.job_title || "—"} · {prettyStage(row.source)} · applied {shortDate(row.applied_at)}
-        </p>
-      </div>
-
-      <div className="shrink-0 text-right">
-        <Badge tone={stageTone(row.stage)}>{prettyStage(row.stage)}</Badge>
-        <p className="mt-1.5 text-[11px] font-bold text-brand-ink/55">{clock}</p>
-        {!masked && (
-          <p className="mt-0.5 text-[11px] text-brand-gold-dark">
-            {row.match_score === null ? "unscored" : `${row.match_score}% fit`}
-            {row.has_assessment &&
-              ` · ${row.assessment_score === null ? "assessment" : `score ${row.assessment_score}`}`}
-          </p>
-        )}
-      </div>
-    </li>
-  );
-}
+import type { ApplicationStage } from "@/core/entities";
+import type { DashboardAnalytics } from "@/types";
+import { type Panel, type SortKey, longDate, prettyStage, shortDate, stageTone } from "./DashboardBits";
+import { CandidateRow } from "./DashboardCandidateRow";
+import { BoardFilterButton, CardFooter, FilterChip, GhostAction, Tile } from "./DashboardCards";
+import { DrillPanel } from "./DashboardDrill";
+import { RoleLine } from "./DashboardRoleLine";
 
 /**
  * Dashboard board.
@@ -851,14 +445,15 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
             </div>
 
             {/*
-              Fourteen columns out of a ~300px card give each day about 15px, so a
+              Fourteen columns out of a ~300px card give each day about 18px, so a
               date label squeezed in there is nothing but an ellipsis. Below `sm`
               the strip drops the per-day labels and names its two ends instead —
               the same axis the analytics trend strips use — while each column
               keeps its full date in the accessible name and opens its own day on
-              tap.
+              tap. It scrolls rather than shares the width evenly there: an 18px
+              column is a bar chart, not a target, so each keeps a 24px minimum.
             */}
-            <div className="flex h-36 items-end gap-1 sm:gap-1.5">
+            <div className="flex h-36 items-end gap-1 overflow-x-auto sm:gap-1.5">
               {series.map((day, index) => (
                 <button
                   key={day.date}
@@ -869,7 +464,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                   onBlur={() => setHoverDay(null)}
                   onClick={() => drill({ type: "day", date: day.date })}
                   aria-label={`${day.count} applications on ${day.date} — open the list`}
-                  className="group flex h-full min-w-0 flex-1 flex-col justify-end gap-1 focus:outline-none"
+                  className="group flex h-full min-w-6 shrink-0 flex-col justify-end gap-1 focus:outline-none sm:min-w-0 sm:flex-1"
                 >
                   <div
                     className={cn(
@@ -1097,6 +692,83 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         </Card>
       </div>
 
+      {/* ---- The application form and the person store ---- */}
+      <Card>
+        <CardHeader
+          title="Forms & profiles"
+          meta="What the form saved and what the person store holds · counts only"
+        />
+        <div className="p-5 sm:p-6">
+          {analytics.form_coverage.applications === 0 &&
+          analytics.form_coverage.unclaimed_uploads === 0 ? (
+            <EmptyState
+              title="Nothing has been filed yet"
+              description="The form figures count live applications; the person store fills as candidates and recruiters add profiles."
+            />
+          ) : (
+            <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {[
+                {
+                  label: "Applications",
+                  value: analytics.form_coverage.applications,
+                  hint: "Live applications",
+                },
+                {
+                  label: "On the form",
+                  value: analytics.form_coverage.with_form,
+                  hint: "With a saved snapshot",
+                },
+                {
+                  label: "Form files",
+                  value: analytics.form_coverage.attachments,
+                  hint: "Uploaded while filling it",
+                },
+                {
+                  label: "People on file",
+                  value: analytics.form_coverage.profiles,
+                  hint: "In the person store",
+                },
+                {
+                  label: "Identity complete",
+                  value: analytics.form_coverage.identity_complete,
+                  hint: "Legal name and birth date",
+                },
+                {
+                  label: "Unclaimed uploads",
+                  value: analytics.form_coverage.unclaimed_uploads,
+                  hint: "Never submitted",
+                },
+                {
+                  label: "Past the window",
+                  value: analytics.form_coverage.unclaimed_past_window,
+                  hint: "The sweep will clear these",
+                },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-brand-line bg-white px-3 py-2.5">
+                  <dt className="text-[11px] font-bold uppercase tracking-wide text-brand-ink/45">
+                    {item.label}
+                  </dt>
+                  <dd className="mt-0.5 font-display text-xl font-extrabold tabular-nums tracking-tight">
+                    {item.value.toLocaleString()}
+                  </dd>
+                  <dd className="mt-0.5 text-[11px] leading-relaxed text-brand-ink/50">{item.hint}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <p className="mt-3 text-[11px] leading-relaxed text-brand-ink/45">
+            The snapshot behind an application is what was asked when it was filed, so a later edit of
+            the form does not rewrite it. An unclaimed upload is a file from a form nobody submitted:
+            it is not part of the record, and the retention sweep deletes it once it is past the
+            window. No demographic value is read here — the gated tallies live on{" "}
+            <Link className="font-semibold text-brand-gold-dark underline" href="/analytics">
+              Analytics
+            </Link>
+            .
+          </p>
+        </div>
+      </Card>
+
       {/* ---- Channels + fit distribution ---- */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -1276,7 +948,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Name, role or department…"
                 aria-label="Search candidates"
-                className="w-40 bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none sm:w-56"
+                className="min-h-6 w-40 bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none sm:w-56"
               />
             </div>
             <Link
@@ -1344,7 +1016,7 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
                           type="button"
                           onClick={() => toggleSort(key)}
                           className={cn(
-                            "inline-flex items-center gap-1 uppercase tracking-wider transition hover:text-brand-ink",
+                            "inline-flex min-h-6 items-center gap-1 uppercase tracking-wider transition hover:text-brand-ink",
                             sortKey === key && "text-brand-gold-dark"
                           )}
                         >
@@ -1477,58 +1149,5 @@ export function DashboardView({ analytics }: { analytics: DashboardAnalytics }) 
         </Drawer>
       )}
     </div>
-  );
-}
-
-function CandidateRow({ candidate, masked }: { candidate: DashboardCandidate; masked: boolean }) {
-  return (
-    <tr className="transition hover:bg-brand-cream">
-      <td className="py-3.5 pl-6 pr-4">
-        <Link
-          href={`/candidates/${candidate.application_id}`}
-          className="font-semibold hover:text-brand-gold-dark hover:underline"
-        >
-          {candidate.full_name}
-        </Link>
-        <p className="text-[11px] uppercase tracking-wide text-brand-ink/40">
-          {prettyStage(candidate.source)} · {shortDate(candidate.applied_at)}
-        </p>
-      </td>
-      <td className="px-4 py-3.5 text-brand-ink/60">
-        <p>{candidate.job_title || "—"}</p>
-        {candidate.department && (
-          <p className="text-[11px] text-brand-ink/40">{candidate.department}</p>
-        )}
-      </td>
-      <td className="px-4 py-3.5">
-        <Badge tone={stageTone(candidate.stage)}>{prettyStage(candidate.stage)}</Badge>
-      </td>
-      <td className="px-4 py-3.5 text-xs text-brand-ink/55">{shortDate(candidate.applied_at)}</td>
-      <td className="px-4 py-3.5">
-        {masked ? (
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
-            Hidden
-          </span>
-        ) : (
-          <div className="flex w-28 items-center gap-2">
-            <span className="w-9 text-right font-display font-bold text-brand-gold-dark">
-              {candidate.match_score === null ? "0" : `${candidate.match_score}%`}
-            </span>
-            <Meter value={candidate.match_score ?? 0} className="flex-1" />
-          </div>
-        )}
-      </td>
-      <td className="py-3.5 pl-4 pr-6">
-        {masked ? (
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-ink/35">
-            Hidden
-          </span>
-        ) : candidate.has_assessment ? (
-          <span className="font-display font-bold">{candidate.assessment_score ?? "—"}</span>
-        ) : (
-          <span className="text-xs text-brand-ink/35">Pending</span>
-        )}
-      </td>
-    </tr>
   );
 }

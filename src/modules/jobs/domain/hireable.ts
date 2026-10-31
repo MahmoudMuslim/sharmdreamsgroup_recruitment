@@ -14,7 +14,7 @@
  * on the list with their status shown rather than being hidden.
  */
 
-/** The four `job_status` values — see the enum in `supabase/schema.sql`. */
+/** The four `job_status` values — see the enum in `db/schema.sql`. */
 export const JOB_STATUSES = ["DRAFT", "PUBLISHED", "PAUSED", "CLOSED"] as const;
 
 export type JobStatus = (typeof JOB_STATUSES)[number];

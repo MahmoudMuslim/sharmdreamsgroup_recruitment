@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createServerRestClient } from "@/lib/data-api/server";
+import { getFileStore } from "@/lib/files/store";
+import { oversizeUploadResponse } from "@/lib/files/upload-guard";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { readAttachmentAsCv } from "@/app/(admin)/candidates/cv-actions";
@@ -36,6 +39,17 @@ export async function POST(request: NextRequest) {
       { status: 403 }
     );
   }
+
+  // The ceiling only becomes bucket-specific once the body is parsed, so this
+  // uses the largest rule (`candidate-audio`, 20 MB): a body bigger than that
+  // cannot satisfy any bucket, and the check below still applies the one the
+  // caller actually asked for. It sits behind the staff gate so an anonymous
+  // request is refused for being anonymous, not for its Content-Length.
+  const oversize = oversizeUploadResponse(
+    request,
+    Math.max(...ATTACHMENT_RULES.map((rule) => rule.maxBytes))
+  );
+  if (oversize) return oversize;
 
   const form = await request.formData().catch(() => null);
   if (!form) return NextResponse.json({ error: "Could not read the upload." }, { status: 400 });
@@ -82,11 +96,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const supabase = await createSupabaseServerClient();
+  const restClient = await createServerRestClient();
+  const files = await getFileStore();
 
   // The parent record is read through RLS first, so a recruiter cannot attach a
   // file to a candidate sitting in another tenant's pipeline.
-  const { data: application } = await supabase
+  const { data: application } = await restClient
     .from("applications")
     .select("id, full_name")
     .eq("id", applicationId)
@@ -101,12 +116,16 @@ export async function POST(request: NextRequest) {
 
   const path = attachmentPath(applicationId, file.name);
 
-  const { error: uploadError } = await supabase.storage
-    .from(rule.bucket)
-    .upload(path, file, { contentType: file.type, upsert: false });
+  const { error: uploadError } = await files.upload({
+    bucket: rule.bucket,
+    path,
+    body: file,
+    contentType: file.type,
+    upsert: false,
+  });
 
   if (uploadError) {
-    console.error("[uploads] storage refused:", rule.bucket, uploadError.message);
+    console.error("[uploads] storage refused:", rule.bucket, uploadError);
     return NextResponse.json(
       { error: `Storage refused that file. ${rule.hint}` },
       { status: 500 }
@@ -115,13 +134,11 @@ export async function POST(request: NextRequest) {
 
   // The uploader is named from their own profile row, so the candidate record can
   // say who added a file months after they left the company.
-  const { data: profile } = await supabase
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", user.authUserId)
-    .maybeSingle();
+  const found = await readStaffProfileIdByAuthUserId(restClient, user.authUserId);
+  if (!found.ok) console.error("[uploads] uploader profile lookup:", found.error);
+  const uploadedBy = found.ok ? found.profileId : null;
 
-  const { data: attachment, error: insertError } = await supabase
+  const { data: attachment, error: insertError } = await restClient
     .from("application_attachments")
     .insert({
       application_id: applicationId,
@@ -130,16 +147,16 @@ export async function POST(request: NextRequest) {
       file_name: file.name.slice(0, 200),
       mime_type: file.type,
       bytes: file.size,
-      uploaded_by: profile?.id ?? null,
+      uploaded_by: uploadedBy,
     })
     .select("id, bucket, storage_path, file_name, mime_type, bytes, created_at")
     .maybeSingle();
 
   if (insertError || !attachment) {
     console.error("[uploads] attachment row refused:", insertError?.message);
-    const { error: cleanupError } = await supabase.storage.from(rule.bucket).remove([path]);
+    const { error: cleanupError } = await files.remove({ bucket: rule.bucket, paths: [path] });
     if (cleanupError) {
-      console.error("[uploads] orphan left behind:", rule.bucket, path, cleanupError.message);
+      console.error("[uploads] orphan left behind:", rule.bucket, path, cleanupError);
     }
     return NextResponse.json(
       {

@@ -1,9 +1,14 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { getPublicJob } from "../../actions";
+import { readReferralCode } from "@/modules/referrals/domain/referral";
 import { getCandidateLocales } from "@/modules/settings/application/candidateLocales";
+import { readPrivacySettings } from "@/modules/privacy/infrastructure/privacyReader";
 import { translate } from "@/lib/i18n";
+import { project, resolveFormForJob } from "@/modules/form-builder/application/publicForm";
 import { ApplyWizard } from "./ApplyWizard";
+import { DynamicApplyWizard } from "./DynamicApplyWizard";
 
 /**
  * The application itself, on its own page.
@@ -40,13 +45,52 @@ export const instant = false;
 
 export default async function ApplyPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
+  // The role, its layout and the pool window are all read fresh per request;
+  // without this the route qualifies for a static render, and the clock reads
+  // Next's own cache layer performs inside it abort every attempt.
+  await connection();
+
   const { id } = await params;
+  const query = await searchParams;
   const job = await getPublicJob(id);
 
   if (!job) notFound();
 
-  return <ApplyWizard job={{ id: job.id, title: job.title }} />;
+  // The code is carried, not judged, here: a malformed or unknown code simply
+  // leaves the applicant with the normal source picker, and the submit action
+  // resolves the code again before it labels anything REFERRAL.
+  const referralCode = readReferralCode(query.ref);
+
+  // The pool consent names its own window, so the review step prints the figure
+  // the sweep will act on rather than a number typed into the copy. Reading it
+  // here also means a Settings change reaches the next applicant without a build.
+  const { talentPoolMonths } = await readPrivacySettings();
+
+  // Spec §9's one rule: a published layout renders itself, and every failure
+  // state degrades to the wizard below rather than to a broken form. The
+  // submit door re-reads the same layout and refuses where this page degraded.
+  const resolved = await resolveFormForJob(job.id);
+  if ("fallback" in resolved) {
+    return (
+      <ApplyWizard
+        job={{ id: job.id, title: job.title }}
+        referralCode={referralCode}
+        talentPoolMonths={talentPoolMonths}
+      />
+    );
+  }
+
+  return (
+    <DynamicApplyWizard
+      form={project(resolved)}
+      job={{ id: job.id, title: job.title }}
+      referralCode={referralCode}
+      talentPoolMonths={talentPoolMonths}
+    />
+  );
 }

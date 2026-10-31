@@ -1,5 +1,5 @@
-import { isLocale, placeholdersIn, shippedText, translationKeys } from "@/lib/i18n";
-import type { Locale } from "@/types";
+import { placeholdersIn, shippedText, translationKeys } from "@/lib/i18n";
+import type { Locale } from "@/core/entities";
 
 /**
  * The translation console's own model: which words exist, how they are grouped,
@@ -33,25 +33,13 @@ export function overridesKey(locale: Locale): string {
   return `${OVERRIDES_KEY_PREFIX}${locale}`;
 }
 
-/**
- * Which language an `app_settings` key holds wording for, or `null` for any other
- * setting. Used to keep these rows out of the settings editor, which lists every
- * `GLOBAL` row it can find and would otherwise render a 400-key JSON blob as a
- * text field.
- */
-export function localeOfSettingKey(key: string): Locale | null {
-  if (!key.startsWith(OVERRIDES_KEY_PREFIX)) return null;
-  const code = key.slice(OVERRIDES_KEY_PREFIX.length);
-  return isLocale(code) ? code : null;
-}
-
 /** Longest wording one key may carry. A paragraph is a template, not a label. */
 export const MAX_TEXT_CHARS = 2_000;
 
 /**
  * Narrow a JSONB settings row into a flat key→wording map.
  *
- * The row is reachable from Supabase's own table editor, so anything that is not
+ * The row is hand-editable through the database, so anything that is not
  * a string is dropped rather than coerced: a number or a nested object would
  * reach `translate` and print `[object Object]` to a candidate. An empty string
  * is dropped too, because "no override" and "print nothing" have to stay
