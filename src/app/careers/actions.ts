@@ -242,6 +242,11 @@ export async function getPublicJob(id: string): Promise<PublicJob | null> {
   "use cache";
   cacheLife("minutes");
 
+  // A path segment that cannot be an id is no role, not a read error: without
+  // this the filter reaches Postgres as `id = 'nonexistent'`, which raises
+  // 22P02 mid-stream and leaves the shell hanging instead of 404ing.
+  if (!UUID_PATTERN.test(id)) return null;
+
   const restClient = getAnonRestClient();
   const { data, error } = await restClient
     .from("job_openings")

@@ -75,6 +75,20 @@ check(
   "a surface that stopped filtering on PUBLISHED would publish a draft"
 );
 
+// A URL segment is not an id until it is one. Without the shape check the filter
+// reaches Postgres as `id = 'nonexistent'`, which raises 22P02 mid-render.
+const publicJobSource = read("src/app/careers/actions.ts");
+const publicJobBody = publicJobSource.slice(
+  publicJobSource.indexOf("export async function getPublicJob(id")
+);
+const shapeAt = publicJobBody.indexOf("UUID_PATTERN.test(id)");
+const restAt = publicJobBody.indexOf("const restClient = getAnonRestClient()");
+check(
+  "a path segment that cannot be an id is answered as missing, not sent to Postgres",
+  shapeAt !== -1 && shapeAt < restAt,
+  "an unvalidated id reaches the REST filter as 22P02 instead of 404ing"
+);
+
 // ---------------------------------------------------------------------------
 // 2. The schema.org mapping: what a role becomes, and what it cannot become.
 // ---------------------------------------------------------------------------

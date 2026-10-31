@@ -21,6 +21,8 @@ import {
  * them.
  */
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: Request): Promise<Response> {
   // Refused before the body is buffered, in the same words the check below uses
   // (`cvSizeError()`), so a candidate cannot tell which of the two caught them.
@@ -43,6 +45,12 @@ export async function POST(request: Request): Promise<Response> {
 
   if (typeof jobId !== "string" || !jobId) {
     return Response.json({ error: "Missing job reference." }, { status: 400 });
+  }
+
+  // The shape is checked before the read: `id = 'nonexistent'` raises 22P02,
+  // which would report a permanent refusal as a read that failed just now.
+  if (!UUID.test(jobId)) {
+    return Response.json({ error: "This role is no longer accepting applications." }, { status: 404 });
   }
 
   // Re-validated server-side: a client MIME type proves nothing.
