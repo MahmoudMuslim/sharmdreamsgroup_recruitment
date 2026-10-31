@@ -14,3 +14,4 @@ export * from "./jobOpening";
 export * from "./candidateAttempt";
 export * from "./userProfile";
 export * from "./sourcedProspect";
+export * from "./personEmail";

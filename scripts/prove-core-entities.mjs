@@ -48,7 +48,7 @@ function check(name, pass, detail = "") {
 // 1. What the source says.
 // ---------------------------------------------------------------------------
 
-/** The seven tables this layer owns, and the interface that names each row. */
+/** The eight tables this layer owns, and the interface that names each row. */
 const ROW_TYPES = [
   { file: "src/core/entities/application.ts", iface: "Application", table: "applications" },
   { file: "src/core/entities/jobOpening.ts", iface: "JobOpening", table: "job_openings" },
@@ -57,6 +57,7 @@ const ROW_TYPES = [
   { file: "src/core/entities/sourcedProspect.ts", iface: "SourcedProspect", table: "sourced_prospects" },
   { file: "src/core/entities/company.ts", iface: "Company", table: "tenants_and_companies" },
   { file: "src/core/entities/assessmentTemplate.ts", iface: "AssessmentTemplate", table: "assessment_templates" },
+  { file: "src/core/entities/personEmail.ts", iface: "PersonEmail", table: "person_emails" },
 ];
 
 /** Postgres enum type name → the tuple in core that lists its labels. */
@@ -93,7 +94,7 @@ const DUPLICATES = [
   { file: "src/modules/settings/domain/vocabularies.ts", tuple: "APPLICATION_SOURCES", core: "APPLICATION_SOURCES" },
 ];
 
-const ENTITY_FILES = ["vocabularies", "company", "assessmentTemplate", "application", "jobOpening", "candidateAttempt", "userProfile", "sourcedProspect"];
+const ENTITY_FILES = ["vocabularies", "company", "assessmentTemplate", "application", "jobOpening", "candidateAttempt", "userProfile", "sourcedProspect", "personEmail"];
 
 /**
  * The fields of one exported interface, in the order they are written.
@@ -240,9 +241,12 @@ function labelDiff(declared, stored) {
 /**
  * A CHECK that bounds a column by shape rather than by words, as the database
  * prints it: `CHECK ((referral_code ~ '^[0-9A-F]{10}$'::text))`.
+ *
+ * `~*` is the case-insensitive spelling of the same operator — the address
+ * table's shape CHECK is written with it — and both are a shape, not a ladder.
  */
 function patternFromCheckDef(def) {
-  const m = /~\s*'\^(.*?)\$'::text/.exec(def);
+  const m = /~\*?\s*'\^(.*?)\$'::text/.exec(def);
   return m ? m[1] : null;
 }
 
@@ -289,6 +293,7 @@ const wordListDef = "CHECK ((locale = ANY (ARRAY['en'::text, 'ar'::text, 'ru'::t
 const nullableWordListDef =
   "CHECK (((experience_level IS NULL) OR (experience_level = ANY (ARRAY['JUNIOR'::text, 'MID'::text]))))";
 const patternDef = "CHECK ((referral_code ~ '^[0-9A-F]{10}$'::text))";
+const caseInsensitivePatternDef = "CHECK ((email ~* '^[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}$'::text))";
 check(
   "a CHECK's column is read however deeply its parentheses nest",
   columnFromCheckDef(wordListDef) === "locale" && columnFromCheckDef(nullableWordListDef) === "experience_level"
@@ -301,6 +306,11 @@ check(
   "a pattern CHECK is read as a shape, never as a one-word vocabulary",
   labelsFromCheckDef(patternDef).length === 0 && patternFromCheckDef(patternDef) === "[0-9A-F]{10}"
 );
+check(
+  "a case-insensitive pattern CHECK is a shape too",
+  labelsFromCheckDef(caseInsensitivePatternDef).length === 0 &&
+    patternFromCheckDef(caseInsensitivePatternDef) === "[^@\\s]+@[^@\\s]+\\.[^@\\s]{2,}"
+);
 
 // The boundary: core sits under everything and therefore imports nothing above it.
 const LAYER_IMPORTS = ["@/app", "@/modules", "@/lib", "@/stores", "@/types", "@/components"];
@@ -309,7 +319,7 @@ for (const file of ENTITY_FILES) {
   const offenders = LAYER_IMPORTS.filter((p) => text.includes(`from "${p}`));
   check(`core/entities/${file}.ts imports no layer above core`, offenders.length === 0, offenders.join(", "));
 }
-check("the entities barrel exports the eight files", ["./vocabularies", "./company", "./assessmentTemplate", "./application", "./jobOpening", "./candidateAttempt", "./userProfile", "./sourcedProspect"].every((p) => read("src/core/entities/index.ts").includes(`export * from "${p}"`)));
+check("the entities barrel exports the nine files", ["./vocabularies", "./company", "./assessmentTemplate", "./application", "./jobOpening", "./candidateAttempt", "./userProfile", "./sourcedProspect", "./personEmail"].every((p) => read("src/core/entities/index.ts").includes(`export * from "${p}"`)));
 
 // `src/types` kept the DTOs and gave up the rows.
 const typesFile = read("src/types/index.ts");
@@ -490,6 +500,17 @@ check(
     coreDescribes(entities, "assessment_templates") === true &&
     repoReads.some((r) => r.table === "assessment_templates"),
   "the mutation needs a suite read in the layer and a suite row in core"
+);
+
+/* And over the address table, whose three doors were the first reader of it. */
+const withoutPersonEmails = new Map(entities);
+withoutPersonEmails.delete("person_emails");
+check(
+  "a layer read of the address table with no row type is named",
+  coreDescribes(withoutPersonEmails, "person_emails") === false &&
+    coreDescribes(entities, "person_emails") === true &&
+    repoReads.some((r) => r.table === "person_emails"),
+  "the mutation needs an address read in the layer and an address row in core"
 );
 
 /** The members each `Pick<Entity, "a" | "b">` in a repository names. */
@@ -1430,6 +1451,42 @@ if (reInlinedSuite) {
     "the question board re-inlines the suite read → the 3c gate names it",
     copies.length === 1,
     `the injected chain matched ${copies.length} times against ${suiteReadIdentity}`
+  );
+}
+
+// The person-address lookup had three doors and now has none: the layer's chain
+// is the only one written down. This mutation puts the candidate door's original
+// chain back and asks whether the comparison names it.
+const personEmailIdentity = layerReads
+  .filter((r) => r.file === "personEmail.ts")
+  .map((r) => r.identity)
+  .find((id) => id.includes(".maybeSingle("));
+const CANDIDATE_DOOR_REL = "src/app/(admin)/candidates/candidate-actions.ts";
+const reInlinedPersonEmail = personEmailIdentity
+  ? mutateOnce(
+      "the candidate door's person address lookup",
+      read(CANDIDATE_DOOR_REL),
+      (t) =>
+        t.replace(
+          "  const found = await readPersonIdByEmail(restClient, email);",
+          `  const { data: owned, error: ownedError } = await restClient
+    .from("person_emails")
+    .select("person_id")
+    .eq("email", email)
+    .limit(1)
+    .maybeSingle();
+  const found = ownedError
+    ? { ok: false as const, missingSchema: isMissingSchemaError(ownedError), error: ownedError.message }
+    : { ok: true as const, personId: (owned as { person_id?: string | null } | null)?.person_id ?? null };`
+        )
+    )
+  : null;
+if (reInlinedPersonEmail) {
+  const copies = identitiesIn(reInlinedPersonEmail).filter((id) => id === personEmailIdentity);
+  check(
+    "the candidate door re-inlines the person address lookup → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${personEmailIdentity}`
   );
 }
 

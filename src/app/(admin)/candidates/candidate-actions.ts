@@ -57,6 +57,7 @@ import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import { readApplicationPerson } from "@/infrastructure/repositories/application";
 import { readOpeningPickerWindow } from "@/infrastructure/repositories/jobOpening";
+import { readPersonIdByEmail } from "@/infrastructure/repositories/personEmail";
 import {
   CV_MAX_BYTES,
   CV_TEXT_MIN_CHARS,
@@ -1702,19 +1703,15 @@ async function resolveWritablePerson(applicationId: string): Promise<WritablePer
     return { ok: false, error: "This record is not linked to a person profile yet." };
   }
 
-  const { data: owned, error: ownedError } = await restClient
-    .from("person_emails")
-    .select("person_id")
-    .eq("email", email)
-    .limit(1)
-    .maybeSingle();
-
-  if (isMissingSchemaError(ownedError)) {
-    return { ok: false, error: PERSON_SPINE_MISSING_NOTE };
+  const found = await readPersonIdByEmail(restClient, email);
+  if (!found.ok) {
+    return {
+      ok: false,
+      error: found.missingSchema ? PERSON_SPINE_MISSING_NOTE : `The person lookup failed: ${found.error}`,
+    };
   }
-  if (ownedError) return { ok: false, error: `The person lookup failed: ${ownedError.message}` };
 
-  const personId = (owned as { person_id?: string | null } | null)?.person_id ?? null;
+  const personId = found.personId;
   if (!personId) {
     return {
       ok: false,

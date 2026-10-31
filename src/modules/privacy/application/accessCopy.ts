@@ -5,6 +5,7 @@ import { storageConfig } from "@/lib/config";
 import { getFileStore } from "@/lib/files/store";
 import { MAX_LINK_SECONDS } from "@/lib/files/signed-link";
 import { publicBaseUrl } from "@/lib/public-url";
+import { readPersonIdByEmail } from "@/infrastructure/repositories/personEmail";
 
 import { emailSpellings, personKey } from "@/modules/candidates/domain/personIdentity";
 import { fieldsForTier } from "@/modules/candidates/domain/person-fields";
@@ -626,17 +627,12 @@ async function specialCount(
 async function resolvePersonIds(service: ServiceClient, email: string): Promise<string[]> {
   const ids = new Set<string>();
 
-  const { data: matched, error } = await service
-    .from("person_emails")
-    .select("person_id")
-    .eq("email", personKey(email));
-
-  if (isMissingSchemaError(error)) throw new SpineMissing("person_emails");
-  if (error) throw new Error(`person_emails: ${error.message ?? "no reason given"}`);
-  for (const row of (matched ?? []) as Row[]) {
-    const id = value(row, "person_id");
-    if (id) ids.add(id);
+  const matched = await readPersonIdByEmail(service, personKey(email));
+  if (!matched.ok) {
+    if (matched.missingSchema) throw new SpineMissing("person_emails");
+    throw new Error(`person_emails: ${matched.error || "no reason given"}`);
   }
+  if (matched.personId) ids.add(matched.personId);
 
   const { data: links, error: linkError } = await service
     .from("applications")

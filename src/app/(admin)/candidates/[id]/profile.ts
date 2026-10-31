@@ -28,6 +28,7 @@ import { requireStaff, type SessionUser } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/timezone";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { readApplicationPerson } from "@/infrastructure/repositories/application";
+import { readPersonIdByEmail } from "@/infrastructure/repositories/personEmail";
 import type { SoftSkillReport } from "@/core/entities";
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
 import { attachmentRule } from "@/modules/careers/attachment-rules";
@@ -56,7 +57,6 @@ import {
   getNumberSetting,
   getOrganisationTimeZone,
 } from "@/modules/settings/infrastructure/settingsReader";
-import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import {
   INTERVIEW_SELECT,
   toInterviewRecord,
@@ -916,23 +916,14 @@ async function resolvePerson(
     return { personId: found.personId, spinePresent: true };
   }
 
-  const { data: owned, error: ownedError } = await client
-    .from("person_emails")
-    .select("person_id")
-    .eq("email", personKey(email))
-    .limit(1)
-    .maybeSingle();
-
-  if (isMissingSchemaError(ownedError)) return { personId: null, spinePresent: false };
-  if (ownedError) {
-    console.error("[candidate-profile] person address lookup refused:", ownedError.message);
+  const address = await readPersonIdByEmail(client, personKey(email));
+  if (!address.ok) {
+    if (address.missingSchema) return { personId: null, spinePresent: false };
+    console.error("[candidate-profile] person address lookup refused:", address.error);
     return { personId: null, spinePresent: true };
   }
 
-  return {
-    personId: asNullableText((owned as { person_id?: unknown } | null)?.person_id),
-    spinePresent: true,
-  };
+  return { personId: address.personId, spinePresent: true };
 }
 
 /** A bundle with nothing in it — the shape a degraded page still renders. */
