@@ -9,6 +9,7 @@ import { emailSpellings } from "@/modules/candidates/domain/personIdentity";
 import { erasureBlocker, PRIVACY_WRITE_REFUSAL } from "@/modules/privacy/domain/privacy";
 
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
+import { readApplicationCvPath } from "@/infrastructure/repositories/application";
 
 /**
  * The one engine that erases a person's data, shared by the staff desk and the
@@ -97,12 +98,8 @@ async function collectPaths(
 ): Promise<PathsByBucket> {
   const paths: PathsByBucket = new Map();
 
-  const { data: application } = await service
-    .from("applications")
-    .select("cv_file_path")
-    .eq("id", applicationId)
-    .maybeSingle();
-  addPath(paths, CV_BUCKET, (application as Record<string, unknown> | null)?.cv_file_path);
+  const cv = await readApplicationCvPath(service, applicationId);
+  addPath(paths, CV_BUCKET, cv.ok ? cv.application?.cv_file_path : null);
 
   const { data: attempts } = await service
     .from("candidate_attempts")

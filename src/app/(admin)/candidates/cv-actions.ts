@@ -13,6 +13,7 @@ import {
   extractCvText,
 } from "@/modules/screening/infrastructure/cvParser";
 import { cvContentError } from "@/modules/careers/cv-rules";
+import { readApplicationCvPath } from "@/infrastructure/repositories/application";
 
 export interface CvReadResult {
   ok: boolean;
@@ -148,17 +149,13 @@ export async function readRecordCv(input: {
 
   const restClient = await createServerRestClient();
 
-  const { data: application } = await restClient
-    .from("applications")
-    .select("cv_file_path")
-    .eq("id", input.applicationId)
-    .maybeSingle();
+  const found = await readApplicationCvPath(restClient, input.applicationId);
 
-  if (!application) {
+  if (!found.ok || !found.application) {
     return { ok: false, error: "This candidate record is no longer in your pipeline." };
   }
 
-  const path = (application.cv_file_path as string | null) ?? "";
+  const path = found.application.cv_file_path ?? "";
   if (!path) {
     return { ok: false, error: "No CV file is stored on this record — attach one first." };
   }

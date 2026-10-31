@@ -1490,6 +1490,39 @@ if (reInlinedPersonEmail) {
   );
 }
 
+// The CV key was read by two doors — the screening desk and the erasure engine —
+// and the layer is now the only place that chain is written down. This mutation
+// puts the desk's original chain back and asks whether the comparison names it.
+const cvPathIdentity = layerReads
+  .filter((r) => r.file === "application.ts")
+  .map((r) => r.identity)
+  .find((id) => id.includes("cv_file_path"));
+const CV_DOOR_REL = "src/app/(admin)/candidates/cv-actions.ts";
+const reInlinedCvPath = cvPathIdentity
+  ? mutateOnce(
+      "the screening desk's CV-key read",
+      read(CV_DOOR_REL),
+      (t) =>
+        t.replace(
+          "  const found = await readApplicationCvPath(restClient, input.applicationId);",
+          `  const { data: application } = await restClient
+    .from("applications")
+    .select("cv_file_path")
+    .eq("id", input.applicationId)
+    .maybeSingle();
+  const found = { ok: true as const, application };`
+        )
+    )
+  : null;
+if (reInlinedCvPath) {
+  const copies = identitiesIn(reInlinedCvPath).filter((id) => id === cvPathIdentity);
+  check(
+    "the screening desk re-inlines the CV-key read → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${cvPathIdentity}`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 6. The tally.
 // ---------------------------------------------------------------------------

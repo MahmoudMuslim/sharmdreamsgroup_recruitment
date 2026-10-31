@@ -87,3 +87,34 @@ export async function readApplicationForStageDoor(
   if (!data) return { ok: false, reason: "gone" };
   return { ok: true, application: data as unknown as ApplicationStageDoorFields };
 }
+
+/**
+ * The key of the CV the career site stored for an application.
+ *
+ * The screening desk reads it to pull the submitted file into `cv_text`, and the
+ * erasure engine reads it to delete that same file when the person asks to be
+ * forgotten. Both only care whether there is a key, and both used to treat a
+ * refused read as "there is none" — the desk told the staff member the record was
+ * gone, and the erasure quietly skipped the bucket. That answer is preserved:
+ * the caller gets the row or the database's message and decides what the refusal
+ * means, but nothing here turns a refusal into a missing key on its own.
+ */
+export type ApplicationCvPath = Pick<Application, "cv_file_path">;
+
+export type ApplicationCvPathRead =
+  | { ok: true; application: ApplicationCvPath | null }
+  | { ok: false; error: string };
+
+export async function readApplicationCvPath(
+  restClient: StaffReadClient,
+  applicationId: string
+): Promise<ApplicationCvPathRead> {
+  const { data, error } = await restClient
+    .from("applications")
+    .select("cv_file_path")
+    .eq("id", applicationId)
+    .maybeSingle();
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, application: (data as ApplicationCvPath | null) ?? null };
+}
