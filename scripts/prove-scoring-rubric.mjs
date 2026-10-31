@@ -1347,7 +1347,7 @@ const storedCase = (overrides) => ({
   ...overrides,
 });
 
-const editHarness = (row, overrides) =>
+const editHarness = (row) =>
   authoringHarness({ tables: { assessment_questions: [row ?? storedCase()] } });
 
 async function refused(draft, expression, options) {
