@@ -1,5 +1,5 @@
 import { placeholdersIn, shippedText, translationKeys } from "@/lib/i18n";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 /**
  * The translation console's own model: which words exist, how they are grouped,

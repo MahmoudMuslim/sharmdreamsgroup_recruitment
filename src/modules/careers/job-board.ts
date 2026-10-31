@@ -12,7 +12,7 @@ import {
   EXPERIENCE_LABELS,
 } from "@/modules/jobs/domain/openingTerms";
 import { hasKey, translate } from "@/lib/i18n";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 export interface PublicJob {
   id: string;

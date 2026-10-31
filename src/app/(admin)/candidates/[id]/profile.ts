@@ -27,7 +27,7 @@
 import { requireStaff, type SessionUser } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/timezone";
 import { createServerRestClient } from "@/lib/data-api/server";
-import type { SoftSkillReport } from "@/types";
+import type { SoftSkillReport } from "@/core/entities";
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
 import { attachmentRule } from "@/modules/careers/attachment-rules";
 import { cvDisplayName, createCvLinks } from "@/modules/careers/cv-links";

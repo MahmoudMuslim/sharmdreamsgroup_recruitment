@@ -1,4 +1,4 @@
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 /**
  * Which language the public pages speak, remembered per browser.

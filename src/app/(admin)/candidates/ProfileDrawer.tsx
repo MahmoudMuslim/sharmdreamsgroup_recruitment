@@ -25,7 +25,7 @@ import { OfferPanel } from "./OfferPanel";
 import { RejectReasonForm } from "./RejectReasonForm";
 import { ArchiveButton, stageTone } from "./CandidateBrowserBits";
 import { cn } from "@/lib/utils";
-import type { SoftSkillReport } from "@/types";
+import type { SoftSkillReport } from "@/core/entities";
 
 /* The one candidate's profile drawer — see ./CandidateBrowser.tsx for the table
    that opens it. Everything here is scoped to a single application row. */

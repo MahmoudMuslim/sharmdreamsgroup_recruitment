@@ -1,31 +1,17 @@
 /**
- * Shared domain interfaces & DTOs for the entire platform.
- * Every entity, payload, and state object is strictly typed — no `any`.
+ * Shared DTOs for the entire platform — the shapes that are not a table row.
+ *
+ * Row types live in `src/core/entities`, proven against the live schema. The
+ * column vocabularies come from there too, so a stage or a source is only ever
+ * spelled one way. Every payload here is strictly typed — no `any`.
  */
 
-import type { GateAnswer } from "@/modules/careers/gate-questions";
 import type { DemonstratedSkill } from "@/modules/jobs/domain/openingSkills";
+import type { ApplicationSource, ApplicationStage, BusinessSector } from "@/core/entities";
 
 // ---------------------------------------------------------------------------
-// Enums (mirrored in db/schema.sql)
+// Enums that belong to no entity row
 // ---------------------------------------------------------------------------
-
-export type UserRole = "SUPER_ADMIN" | "RECRUITER" | "HIRING_MANAGER" | "CANDIDATE";
-
-export type BusinessSector = "HOSPITALITY" | "REAL_ESTATE" | "COMMERCIAL_DEVELOPMENT" | "CORPORATE";
-
-export type JobStatus = "DRAFT" | "PUBLISHED" | "PAUSED" | "CLOSED";
-
-export type ApplicationStage =
-  | "NEW"
-  | "AI_SCREENING"
-  | "ASSESSMENT"
-  | "INTERVIEW"
-  | "OFFER"
-  | "HIRED"
-  | "REJECTED";
-
-export type ApplicationSource = "LINKEDIN" | "WHATSAPP" | "JOB_BOARD" | "CAREER_SITE" | "REFERRAL" | "ATS_IMPORT";
 
 export type QuestionType =
   | "EXCEL_MODEL"
@@ -35,18 +21,21 @@ export type QuestionType =
   | "SITUATIONAL_JUDGMENT"
   | "CODING";
 
-export type AttemptStatus = "NOT_STARTED" | "IN_PROGRESS" | "SUBMITTED" | "GRADED" | "EXPIRED";
-
 export type MessageChannel = "WHATSAPP" | "EMAIL" | "IN_APP";
 
 export type MessageDirection = "INBOUND" | "OUTBOUND";
-
-export type Locale = "en" | "ar" | "ru" | "de";
 
 // ---------------------------------------------------------------------------
 // Database entities
 // ---------------------------------------------------------------------------
 
+/**
+ * The six columns `tenants_and_companies` has always had.
+ *
+ * The company console edits a wider row — profile copy, logo, the jsonb
+ * milestones and benefits — and reads those through its own projection, so this
+ * stays the short description the rest of the platform needs.
+ */
 export interface Tenant {
   id: string;
   name: string;
@@ -54,83 +43,6 @@ export interface Tenant {
   sector: BusinessSector;
   country: string;
   created_at: string;
-}
-
-export interface UserProfile {
-  id: string;
-  auth_user_id: string;
-  tenant_id: string | null;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  role: UserRole;
-  avatar_url: string | null;
-  locale: Locale;
-  created_at: string;
-}
-
-export interface JobOpening {
-  id: string;
-  tenant_id: string;
-  title: string;
-  department: string;
-  sector: BusinessSector;
-  location: string;
-  employment_type: "FULL_TIME" | "PART_TIME" | "CONTRACT" | "INTERNSHIP";
-  description: string;
-  requirements: string[];
-  min_salary_usd: number | null;
-  max_salary_usd: number | null;
-  status: JobStatus;
-  posted_at: string | null;
-  closing_at: string | null;
-  created_by: string | null;
-  created_at: string;
-}
-
-export interface Application {
-  id: string;
-  job_id: string;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  cv_file_path: string | null;
-  cv_text: string | null;
-  tracking_code: string;
-  stage: ApplicationStage;
-  source: ApplicationSource;
-  ai_match_score: number | null;
-  ai_screening_summary: string | null;
-  ai_strengths: string[] | null;
-  ai_gaps: string[] | null;
-  ai_soft_skills: SoftSkillReport | null;
-  ai_feedback: string | null;
-  diversity_flags: Record<string, string> | null;
-  /**
-   * Viability gate answers as scored when the application arrived, or null when
-   * the role asked no questions. Stored, never recomputed — the recruiter reads
-   * what the candidate actually answered.
-   */
-  gate_answers: GateAnswer[] | null;
-  rejection_reason: string | null;
-  hired_at: string | null;
-  /**
-   * Staff filing door. Set means the record is hidden from every staff surface
-   * but kept whole — answers, notices and scores included — and can be restored.
-   */
-  archived_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SoftSkillReport {
-  emotional_intelligence: number;
-  communication: number;
-  leadership_potential: number;
-  cultural_fit: number;
-  overall_sentiment: "POSITIVE" | "NEUTRAL" | "NEGATIVE";
-  sentiment_score: number;
-  summary: string;
 }
 
 export interface AssessmentTemplate {
@@ -245,22 +157,6 @@ export interface QuestionConfig {
    * rubric cannot reach a sitting candidate by being forgotten there.
    */
   rubric?: RubricCriterion[];
-}
-
-export interface CandidateAttempt {
-  id: string;
-  application_id: string;
-  template_id: string;
-  access_token: string;
-  status: AttemptStatus;
-  time_limit_minutes: number;
-  started_at: string | null;
-  expires_at: string | null;
-  submitted_at: string | null;
-  total_score: number | null;
-  max_score: number | null;
-  draft_saved_at: string | null;
-  created_at: string;
 }
 
 export interface CandidateResponse {

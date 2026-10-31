@@ -4,7 +4,7 @@ import {
   Pencil
 } from "lucide-react";
 import type { PublicGateQuestion } from "@/modules/careers/gate-questions";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 import { sourceKey, StepHead, type T } from "./ApplyBits";
 
 function ReviewRow({

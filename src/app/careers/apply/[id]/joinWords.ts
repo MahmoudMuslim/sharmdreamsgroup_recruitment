@@ -1,4 +1,4 @@
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 /**
  * "name, email and phone", in the grammar of the language on screen.

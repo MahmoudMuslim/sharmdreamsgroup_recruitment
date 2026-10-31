@@ -8,7 +8,7 @@ import {
   parseJsonResponse,
 } from "@/modules/screening/infrastructure/aiGateway";
 import { MAX_TEXT_CHARS, type TranslationLocale } from "../domain/translations";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 /**
  * Drafts interface wording in another language, a batch at a time.

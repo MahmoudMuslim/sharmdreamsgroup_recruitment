@@ -13,7 +13,7 @@ import {
   type CandidateTally,
 } from "@/modules/candidates/domain/listFilters";
 import { INTERVIEW_SELECT, toInterviewRecord, type InterviewRecord } from "./interviews-model";
-import type { Application } from "@/types";
+import type { Application } from "@/core/entities";
 
 /** An application joined with its parent job opening (one-to-one via `job_id`). */
 export type CandidateRow = Application & {

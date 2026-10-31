@@ -20,7 +20,7 @@ import {
   writeTheme,
   type ThemeChoice,
 } from "@/lib/theme";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 import { cn } from "@/lib/utils";
 
 /**

@@ -12,7 +12,7 @@
  * form and the action that receives it both call it.
  */
 
-import type { ApplicationStage } from "@/types";
+import type { ApplicationStage } from "@/core/entities";
 
 /** The file that has to be applied before any of this can store a row. */
 export const REFERRAL_MIGRATION = "db/migrations/040_referrals.sql";

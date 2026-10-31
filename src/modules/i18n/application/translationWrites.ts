@@ -5,7 +5,7 @@ import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 import {
   MAX_TRANSLATION_KEYS,
   draftTranslations,

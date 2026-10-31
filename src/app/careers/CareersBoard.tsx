@@ -38,7 +38,7 @@ import { EmptyState } from "@/modules/analytics/presentation/ui";
 import { hasKey, translate } from "@/lib/i18n";
 import { usePublicLocale } from "@/modules/shell/presentation/PublicChrome";
 import { cn } from "@/lib/utils";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 /**
  * The applicant-facing job board: a sidebar of search and ticked filters, the

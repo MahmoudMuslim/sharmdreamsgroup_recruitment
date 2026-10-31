@@ -5,7 +5,7 @@ import { createServerRestClient } from "@/lib/data-api/server";
 import { verifySessionToken } from "@/lib/auth/token";
 import { SESSION_COOKIE } from "@/lib/auth/cookies";
 import { loginSearch } from "@/lib/auth/login-target";
-import type { UserRole } from "@/types";
+import type { UserRole } from "@/core/entities";
 
 export interface SessionUser {
   authUserId: string;

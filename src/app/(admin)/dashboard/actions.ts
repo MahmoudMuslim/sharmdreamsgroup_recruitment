@@ -7,9 +7,8 @@ import { FIT_BUCKETS, bucketBounds } from "@/modules/analytics/domain/fitBuckets
 import { BOARD_LIMIT } from "@/app/(admin)/dashboard/board-model";
 import { isApplicationSource, isPipelineStage } from "@/modules/candidates/domain/listFilters";
 import { LIMITS as FORM_LIMITS } from "@/modules/form-builder/domain/limits";
+import type { ApplicationSource, ApplicationStage } from "@/core/entities";
 import type {
-  ApplicationStage,
-  ApplicationSource,
   ChannelEffectiveness,
   DashboardAnalytics,
   DashboardCandidate,

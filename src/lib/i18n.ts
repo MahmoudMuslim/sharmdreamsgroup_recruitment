@@ -1,4 +1,4 @@
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 
 export const locales: readonly Locale[] = ["en", "ar", "ru", "de"];
 

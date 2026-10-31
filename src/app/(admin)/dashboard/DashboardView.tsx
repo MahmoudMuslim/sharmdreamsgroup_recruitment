@@ -34,10 +34,8 @@ import { cn } from "@/lib/utils";
 import {
   type DashboardDrillScope
 } from "./actions";
-import type {
-  ApplicationStage,
-  DashboardAnalytics
-} from "@/types";
+import type { ApplicationStage } from "@/core/entities";
+import type { DashboardAnalytics } from "@/types";
 import { type Panel, type SortKey, longDate, prettyStage, shortDate, stageTone } from "./DashboardBits";
 import { CandidateRow } from "./DashboardCandidateRow";
 import { BoardFilterButton, CardFooter, FilterChip, GhostAction, Tile } from "./DashboardCards";

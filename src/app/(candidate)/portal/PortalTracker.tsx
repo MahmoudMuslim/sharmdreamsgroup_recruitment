@@ -27,7 +27,7 @@ import {
   PublicThemeToggle,
   usePublicLocale,
 } from "@/modules/shell/presentation/PublicChrome";
-import type { Locale } from "@/types";
+import type { Locale } from "@/core/entities";
 import { cn } from "@/lib/utils";
 
 /**
