@@ -37,9 +37,6 @@ export async function POST(request: Request): Promise<Response> {
   const fileEntry = form.get("file");
   const jobId = form.get("jobId");
 
-  console.log("[upload] received file:", fileEntry instanceof File, fileEntry instanceof File ? fileEntry.size : "N/A", "bytes, type:", fileEntry instanceof File ? fileEntry.type : "N/A");
-  console.log("[upload] jobId:", jobId);
-
   if (!(fileEntry instanceof File) || fileEntry.size === 0) {
     return Response.json({ error: "No file was attached." }, { status: 400 });
   }
