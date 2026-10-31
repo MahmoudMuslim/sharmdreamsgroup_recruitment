@@ -1359,6 +1359,39 @@ if (reInlinedOpeningGuard) {
   );
 }
 
+// The title-ordered opening picker had three hand-written doors — the forms
+// board, a form's own page and the referral desk. All three call the layer now,
+// so this mutation puts the board's original chain back and asks whether the
+// comparison names it.
+const titlePickerIdentity = layerReads
+  .filter((r) => r.file === "jobOpening.ts")
+  .map((r) => r.identity)
+  .find((id) => id.includes('.order("title",{ascending: true})') && id.includes(".limit(?"));
+const FORMS_ACTIONS_REL = "src/modules/form-builder/application/formActions.ts";
+const reInlinedTitlePicker = titlePickerIdentity
+  ? mutateOnce(
+      "the forms board's opening picker",
+      read(FORMS_ACTIONS_REL),
+      (t) =>
+        t.replace(
+          "    readOpeningTitlePicker(client, { limit: JOB_LIST_LIMIT }),",
+          `    client
+      .from("job_openings")
+      .select("id, title, status")
+      .order("title", { ascending: true })
+      .limit(JOB_LIST_LIMIT),`
+        )
+    )
+  : null;
+if (reInlinedTitlePicker) {
+  const copies = identitiesIn(reInlinedTitlePicker).filter((id) => id === titlePickerIdentity);
+  check(
+    "the forms board re-inlines the opening-title picker → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${titlePickerIdentity}`
+  );
+}
+
 // The account read's ledger entry left with the last ten doors, so its ownership
 // check is now the plain "no copies outside" half. That green only means
 // something if a door writing the chain by hand again turns it red — so this

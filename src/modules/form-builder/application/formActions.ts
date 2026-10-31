@@ -29,7 +29,11 @@ import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth/session";
 import { hasAiProvider } from "@/lib/config.server";
 import { createServerRestClient } from "@/lib/data-api/server";
-import { readOpeningTitleAndStatus } from "@/infrastructure/repositories/jobOpening";
+import {
+  readOpeningTitleAndStatus,
+  readOpeningTitlePicker,
+  type OpeningPickerOption,
+} from "@/infrastructure/repositories/jobOpening";
 import { recordActivity, withActivityContext } from "@/modules/activity/application/record";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import {
@@ -418,11 +422,7 @@ export async function listForms(): Promise<FormsBoardData> {
       .from("job_application_forms")
       .select("job_id, form_id, position")
       .limit(FORM_LIST_LIMIT * LIMITS.forms_assigned_per_opening),
-    client
-      .from("job_openings")
-      .select("id, title, status")
-      .order("title", { ascending: true })
-      .limit(JOB_LIST_LIMIT),
+    readOpeningTitlePicker(client, { limit: JOB_LIST_LIMIT }),
     readFormUsage(client),
   ]);
 
@@ -459,10 +459,10 @@ export async function listForms(): Promise<FormsBoardData> {
     fieldCounts.set(row.form_id, (fieldCounts.get(row.form_id) ?? 0) + 1);
   }
 
-  const jobs = (jobsResult.data ?? []) as { id: string; title: string; status: string }[];
+  const jobs = jobsResult.ok ? jobsResult.rows : [];
   const jobById = new Map(jobs.map((job) => [job.id, job]));
 
-  const assignedByForm = new Map<string, { id: string; title: string; status: string }[]>();
+  const assignedByForm = new Map<string, OpeningPickerOption[]>();
   for (const row of (assignmentsResult.data ?? []) as AssignmentDbRow[]) {
     const job = jobById.get(row.job_id);
     if (!job) continue;
@@ -522,11 +522,7 @@ export async function formEditorData(formId: string): Promise<FormsEditorData> {
       .order("position", { ascending: true })
       .order("key", { ascending: true }),
     client.from("job_application_forms").select("job_id, form_id, position").eq("form_id", formId),
-    client
-      .from("job_openings")
-      .select("id, title, status")
-      .order("title", { ascending: true })
-      .limit(JOB_LIST_LIMIT),
+    readOpeningTitlePicker(client, { limit: JOB_LIST_LIMIT }),
     readFormUsage(client),
   ]);
 
@@ -568,11 +564,11 @@ export async function formEditorData(formId: string): Promise<FormsEditorData> {
     };
   }
 
-  const jobs = (jobsResult.data ?? []) as { id: string; title: string; status: string }[];
+  const jobs = jobsResult.ok ? jobsResult.rows : [];
   const jobById = new Map(jobs.map((job) => [job.id, job]));
   const assignedJobs = ((assignmentsResult.data ?? []) as AssignmentDbRow[])
     .map((entry) => jobById.get(entry.job_id))
-    .filter((job): job is { id: string; title: string; status: string } => Boolean(job))
+    .filter((job): job is OpeningPickerOption => Boolean(job))
     .sort((a, b) => a.title.localeCompare(b.title));
 
   return {

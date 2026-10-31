@@ -134,6 +134,38 @@ export async function readOpeningPickerWindow(
 }
 
 /**
+ * One row of the title-ordered picker: what to show, and the state it prints.
+ *
+ * The status is here because a referral is often filed before a role is
+ * published and the desk labels the option; the forms pickers never print it.
+ */
+export type OpeningPickerOption = Pick<JobOpening, "id" | "title" | "status">;
+
+/**
+ * Every opening in title order — the picker a recruiter scans by name.
+ *
+ * Three surfaces ask it: the forms board and a form's own page (to offer the
+ * openings a form is not on) and the referral desk (to file a claim against a
+ * role that may not be published yet). None filters by status, and each passes
+ * its own ceiling, because a picker that lists every role forever is a list
+ * nobody scrolls. The read is a picker's, not a guard's: no row is special, and
+ * a failed read yields no rows — the caller decides how loudly to say so.
+ */
+export async function readOpeningTitlePicker(
+  restClient: StaffReadClient,
+  options: { limit: number }
+): Promise<{ ok: true; rows: OpeningPickerOption[] } | { ok: false; error: string }> {
+  const { data, error } = await restClient
+    .from("job_openings")
+    .select("id, title, status")
+    .order("title", { ascending: true })
+    .limit(options.limit);
+
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: (data ?? []) as unknown as OpeningPickerOption[] };
+}
+
+/**
  * The seniority level of an opening, as the column holds it.
  *
  * `experience_level` is `text` with a CHECK, not an enum, so a row can carry a

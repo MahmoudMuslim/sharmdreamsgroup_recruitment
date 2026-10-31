@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { createServerRestClient } from "@/lib/data-api/server";
+import { readOpeningTitlePicker } from "@/infrastructure/repositories/jobOpening";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import {
   REFERRAL_READ_LIMIT,
@@ -248,11 +249,7 @@ export async function readReferralPickers(
   restClient: RestClient
 ): Promise<{ jobs: ReferralJobOption[]; staff: ReferralPersonOption[] }> {
   const [jobs, staff] = await Promise.all([
-    restClient
-      .from("job_openings")
-      .select("id, title, status")
-      .order("title", { ascending: true })
-      .limit(REFERRAL_PICKER_LIMIT),
+    readOpeningTitlePicker(restClient, { limit: REFERRAL_PICKER_LIMIT }),
     restClient
       .from("user_profiles")
       .select("id, full_name, role")
@@ -262,10 +259,10 @@ export async function readReferralPickers(
   ]);
 
   return {
-    jobs: ((jobs.data ?? []) as Record<string, unknown>[]).map((row) => ({
-      id: String(row.id),
-      title: String(row.title),
-      status: String(row.status),
+    jobs: (jobs.ok ? jobs.rows : []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      status: row.status,
     })),
     staff: ((staff.data ?? []) as Record<string, unknown>[]).map((row) => ({
       id: String(row.id),
