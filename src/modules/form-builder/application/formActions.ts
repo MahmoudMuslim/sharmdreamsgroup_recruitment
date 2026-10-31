@@ -1398,7 +1398,7 @@ export async function unassignFormFromJob(
 
   const [form, job] = await Promise.all([
     readForm(client, formId),
-    client.from("job_openings").select("id, title").eq("id", jobId).maybeSingle(),
+    readOpeningTitleAndStatus(client, jobId),
   ]);
   if (!form) return { ok: false, error: NOT_THERE };
 
@@ -1414,7 +1414,7 @@ export async function unassignFormFromJob(
     return { ok: false, error: `“${form.name}” is not assigned to that opening.` };
   }
 
-  const title = (job.data as { title?: string } | null)?.title ?? "an opening";
+  const title = job.ok ? job.opening.title : "an opening";
 
   await recordActivity({
     area: "forms",

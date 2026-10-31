@@ -27,6 +27,7 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { isMissingSchemaError } from "@/modules/jobs/domain/openingTerms";
+import { readOpeningTitleAndStatus } from "@/infrastructure/repositories/jobOpening";
 import {
   MAX_SKILL_LEVEL,
   MIN_SKILL_LEVEL,
@@ -80,12 +81,9 @@ export async function saveOpeningSkills(
 
   const restClient = await createServerRestClient();
 
-  const { data: opening } = await restClient
-    .from("job_openings")
-    .select("id, title")
-    .eq("id", jobId)
-    .maybeSingle();
-  if (!opening) return { ok: false, error: "That opening no longer exists." };
+  const found = await readOpeningTitleAndStatus(restClient, jobId);
+  if (!found.ok) return { ok: false, error: "That opening no longer exists." };
+  const opening = found.opening;
 
   const catalogue = await getSkillsCatalogue(restClient);
   if (!catalogue.available) {

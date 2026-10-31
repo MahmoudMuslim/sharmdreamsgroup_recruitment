@@ -1326,6 +1326,39 @@ if (reInlinedTermsRead) {
   );
 }
 
+// The opening guard read had two hand-written doors left — the requisition
+// skills save and the form-unassign desk. Both call the layer now, so this
+// mutation puts the skills door's original chain back and asks whether the
+// comparison names it.
+const openingGuardIdentity = layerReads
+  .filter((r) => r.file === "jobOpening.ts")
+  .map((r) => r.identity)
+  .find((id) => id.includes("select(id,status,title)") && id.includes(".maybeSingle("));
+const SKILLS_DOOR_REL = "src/app/(admin)/jobs/opening-skills-actions.ts";
+const reInlinedOpeningGuard = openingGuardIdentity
+  ? mutateOnce(
+      "the requisition skills door's opening guard",
+      read(SKILLS_DOOR_REL),
+      (t) =>
+        t.replace(
+          "  const found = await readOpeningTitleAndStatus(restClient, jobId);",
+          `  const { data: opening } = await restClient
+    .from("job_openings")
+    .select("id, title, status")
+    .eq("id", jobId)
+    .maybeSingle();`
+        )
+    )
+  : null;
+if (reInlinedOpeningGuard) {
+  const copies = identitiesIn(reInlinedOpeningGuard).filter((id) => id === openingGuardIdentity);
+  check(
+    "the requisition skills door re-inlines the opening guard read → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${openingGuardIdentity}`
+  );
+}
+
 // The account read's ledger entry left with the last ten doors, so its ownership
 // check is now the plain "no copies outside" half. That green only means
 // something if a door writing the chain by hand again turns it red — so this
