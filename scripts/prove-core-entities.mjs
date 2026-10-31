@@ -7,9 +7,13 @@
  * OFFLINE (no database) — the boundary the layering claims: core imports nothing
  * from the layers above it, every vocabulary tuple it declares is actually used
  * by a row type, no label is listed twice, and the same words written in the
- * modules that predate core still agree with it. These run whether or not the
- * stack is up, because a module editing its own copy of `PIPELINE_STAGES` is a
- * bug this gate can see without asking Postgres anything.
+ * modules that predate core still agree with it. The repository half is checked
+ * here too: the columns each projection asks Postgres for are columns the row
+ * type declares, the layer imports nothing above itself, no projection ships
+ * without a caller, and the three copies of the missing-schema predicate still
+ * name the same four codes. These run whether or not the stack is up, because a
+ * module editing its own copy of `PIPELINE_STAGES` is a bug this gate can see
+ * without asking Postgres anything.
  *
  * ON DATABASE — the schema claim: for each of the five tables the interface's
  * fields must equal `information_schema.columns` in name, order, nullability and
@@ -23,7 +27,7 @@
  *
  *   node scripts/prove-core-entities.mjs
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -285,7 +289,232 @@ for (const d of DUPLICATES) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The database answers.
+// 3. The repositories — the thin layer sitting beside core.
+// ---------------------------------------------------------------------------
+
+/**
+ * `src/infrastructure/repositories` is thin on purpose, so everything it claims
+ * is measurable from the text: the columns a projection asks for are columns the
+ * row type declares, it imports nothing from the layers above it, no projection
+ * ships that nobody calls, and the predicate that decides "this read failed on a
+ * missing column, not on a bad value" is one agreement across the three files
+ * that write it — the claim `missingSchema.ts` makes about this script.
+ */
+
+const REPO_DIR = "src/infrastructure/repositories";
+const repoFiles = readdirSync(path.join(root, REPO_DIR))
+  .filter((n) => n.endsWith(".ts"))
+  .sort();
+
+/** Every import specifier in a file, single-line or wrapped. */
+function importSpecifiers(text) {
+  return [
+    ...[...text.matchAll(/^import[\s\S]*?from\s+"([^"]+)";/gm)].map((m) => m[1]),
+    ...[...text.matchAll(/^export[\s\S]*?from\s+"([^"]+)";/gm)].map((m) => m[1]),
+  ];
+}
+
+// A repository may reach down into core and sideways at the transport, never up
+// into a module that owns a business rule: the caller passes its vocabulary in.
+const REPO_ALLOWED_IMPORTS = ["@/core/entities", "@/lib", "./"];
+for (const name of repoFiles) {
+  const specifiers = importSpecifiers(read(`${REPO_DIR}/${name}`));
+  const offenders = specifiers.filter((s) => !REPO_ALLOWED_IMPORTS.some((a) => s.startsWith(a)));
+  check(
+    `repositories/${name} imports only core, the transport and its siblings (${specifiers.length} import${specifiers.length === 1 ? "" : "s"})`,
+    offenders.length === 0,
+    offenders.join(", ")
+  );
+}
+
+/**
+ * The reads one file asks for, split at each `.from("table")`.
+ *
+ * A chain is cut at the next `.from(`, at the statement's `;`, or at the blank
+ * line after it, whichever comes first — so a filter written under one read is
+ * never charged to the read above it, and a `Promise.all` of two reads is two
+ * reads with one table each.
+ */
+function readRequests(text) {
+  const marks = [...text.matchAll(/\.from\("([a-z_]+)"\)/g)];
+  return marks.map((mark, i) => {
+    const after = text.slice(mark.index);
+    const bounds = [
+      i + 1 < marks.length ? after.indexOf(".from(", 1) : -1,
+      after.indexOf(";"),
+      after.search(/\n[ \t]*\n/),
+    ].filter((n) => n > 0);
+    return { table: mark[1], chain: bounds.length ? after.slice(0, Math.min(...bounds)) : after };
+  });
+}
+
+/** The methods that take a column name as their first argument. */
+const COLUMN_METHODS = "select|eq|neq|gt|gte|lt|lte|in|is|not|like|ilike|contains|containedBy|overlaps|order|filter";
+
+/** A `const NAME = "…"` column list, resolved so a shared string is still read. */
+function resolveConstant(text, name) {
+  if (!name) return null;
+  const m = new RegExp(`const ${name}\\s*=\\s*\\n?\\s*"([^"]*)"`).exec(text);
+  return m ? m[1] : null;
+}
+
+/**
+ * The columns one chain names, and anything it names that is not a plain column.
+ *
+ * A select item that is not a bare name — `total_score::text`, `person(name)` —
+ * is reported rather than skipped: an embed is a read across a foreign key, which
+ * is a different claim than "this column exists", and a parser that quietly
+ * ignored it would be a gate that passes because it stopped looking.
+ */
+function columnsNamed(text, chain) {
+  const columns = [];
+  const unparsed = [];
+  const re = new RegExp(`\\.(${COLUMN_METHODS})\\(\\s*(?:"([^"]*)"|([A-Za-z_$][\\w$]*))`, "g");
+  for (const m of chain.matchAll(re)) {
+    const arg = m[2] ?? resolveConstant(text, m[3]);
+    if (arg === null) continue;
+    for (const part of arg.split(",")) {
+      const word = part.trim();
+      if (!word) continue;
+      if (/^[a-z_][a-z0-9_]*$/.test(word)) columns.push(word);
+      else unparsed.push(word);
+    }
+  }
+  return { columns: [...new Set(columns)], unparsed };
+}
+
+const ifaceByTable = new Map(ROW_TYPES.map((t) => [t.table, t.iface]));
+const repoReads = repoFiles.flatMap((name) => {
+  const text = read(`${REPO_DIR}/${name}`);
+  return readRequests(text).map((r) => ({ ...r, file: name, ...columnsNamed(text, r.chain) }));
+});
+
+check(`the layer holds ${repoFiles.length} files and asks ${repoReads.length} reads`, repoFiles.length > 0 && repoReads.length > 0);
+
+for (const req of repoReads) {
+  const fields = entities.get(req.table);
+  if (!fields) {
+    check(`repositories/${req.file} reads ${req.table}, a table core describes`, false, "no row type for it in src/core/entities");
+    continue;
+  }
+  const offenders = req.columns.filter((c) => !fields.some((f) => f.name === c));
+  check(
+    `${req.file}: its ${req.table} read names only columns ${ifaceByTable.get(req.table)} declares (${req.columns.length})`,
+    offenders.length === 0,
+    offenders.map((c) => `no field ${c}`).join(", ")
+  );
+  check(
+    `${req.file}: every column its ${req.table} read names is a plain name`,
+    req.unparsed.length === 0,
+    req.unparsed.join(", ")
+  );
+}
+
+/** The members each `Pick<Entity, "a" | "b">` in a repository names. */
+function picksNamed(text) {
+  return [...text.matchAll(/Pick<\s*([A-Z]\w+)\s*,\s*([\s\S]*?)>/g)].map((m) => ({
+    iface: m[1],
+    members: [...m[2].matchAll(/"([a-z_][a-z0-9_]*)"/g)].map((x) => x[1]),
+  }));
+}
+
+const tableByIface = new Map(ROW_TYPES.map((t) => [t.iface, t.table]));
+for (const name of repoFiles) {
+  for (const pick of picksNamed(read(`${REPO_DIR}/${name}`))) {
+    if (!tableByIface.has(pick.iface)) continue;
+    const fields = entities.get(tableByIface.get(pick.iface));
+    const offenders = pick.members.filter((mem) => !fields.some((f) => f.name === mem));
+    check(
+      `${name}: Pick<${pick.iface}, …> names ${pick.members.length} real field${pick.members.length === 1 ? "" : "s"}`,
+      pick.members.length > 0 && offenders.length === 0,
+      offenders.map((mem) => `not a field: ${mem}`).join(", ")
+    );
+  }
+}
+
+// Every source file the app holds, read once, so a projection can be asked who
+// calls it. Anything under the repositories directory is the layer talking to
+// itself and does not count as a caller.
+const appSources = [];
+(function walk(dir) {
+  for (const entry of readdirSync(path.join(root, dir), { withFileTypes: true })) {
+    const rel = `${dir}/${entry.name}`;
+    if (entry.isDirectory()) walk(rel);
+    else if (/\.tsx?$/.test(entry.name)) appSources.push({ rel, text: readFileSync(path.join(root, rel), "utf8") });
+  }
+})("src");
+
+const outsideLayer = appSources.filter((s) => !s.rel.startsWith(`${REPO_DIR}/`));
+
+const projections = repoFiles.flatMap((name) => {
+  const text = read(`${REPO_DIR}/${name}`);
+  return [...text.matchAll(/^export (?:async )?function (\w+)/gm)].map((m) => ({ file: name, fn: m[1] }));
+});
+
+/** How many files outside the layer call one projection by name. */
+const callersOf = (fn, sources = outsideLayer) =>
+  sources.filter((s) => new RegExp(`\\b${fn}\\(`).test(s.text)).length;
+
+for (const p of projections) {
+  check(
+    `${p.fn} is called from the app (${callersOf(p.fn)} file${callersOf(p.fn) === 1 ? "" : "s"})`,
+    callersOf(p.fn) > 0,
+    callersOf(p.fn) === 0 ? "a repository nobody calls is dead code" : ""
+  );
+}
+
+// -- 3b. The missing-schema predicate, written in three places, one agreement.
+const SHARED_SCHEMA_FILE = `${REPO_DIR}/missingSchema.ts`;
+const SCHEMA_PREDICATE_COPIES = [
+  "src/modules/interviews/domain/interviewScorecard.ts",
+  "src/modules/jobs/domain/openingTerms.ts",
+];
+
+/** The body of one exported function, from its header to the line that closes it. */
+function functionBody(text, name) {
+  const start = text.indexOf(`export function ${name}(`);
+  if (start === -1) return null;
+  const end = text.indexOf("\n}", start);
+  return end === -1 ? null : text.slice(start, end);
+}
+
+/** The codes one copy of the predicate treats as "the schema is not there yet". */
+function schemaCodesIn(body) {
+  const literals = [...body.matchAll(/code\s*===\s*"([^"]+)"/g)].map((m) => m[1]);
+  const viaTuple = body.includes("MISSING_SCHEMA_CODES") ? parseTuple(read(SHARED_SCHEMA_FILE), "MISSING_SCHEMA_CODES") ?? [] : [];
+  return [...new Set([...literals, ...viaTuple])];
+}
+
+/** The message the same copies fall back to when a code is not sent. */
+function schemaMessageIn(body) {
+  return /\/([^/\n]+)\/i\.test\(\s*error\.message/.exec(body)?.[1] ?? null;
+}
+
+const sharedBody = functionBody(read(SHARED_SCHEMA_FILE), "isMissingSchemaError");
+const sharedCodes = sharedBody ? schemaCodesIn(sharedBody) : [];
+const sharedMessage = sharedBody ? schemaMessageIn(sharedBody) : null;
+
+check(`the shared predicate names ${sharedCodes.length} codes`, sharedCodes.length === 4, sharedCodes.join(", "));
+
+for (const file of SCHEMA_PREDICATE_COPIES) {
+  const body = functionBody(read(file), "isMissingSchemaError");
+  if (!body) {
+    check(`${file} still writes isMissingSchemaError`, false);
+    continue;
+  }
+  const codes = schemaCodesIn(body);
+  const same = codes.length === sharedCodes.length && codes.every((c) => sharedCodes.includes(c));
+  check(
+    `${file.split("/").pop()}: the same ${sharedCodes.length} codes mean a missing schema`,
+    same,
+    [...sharedCodes.filter((c) => !codes.includes(c)).map((c) => `only here: ${c}`), ...codes.filter((c) => !sharedCodes.includes(c)).map((c) => `only there: ${c}`)].join(", ")
+  );
+  const message = schemaMessageIn(body);
+  check(`${file.split("/").pop()}: the message fallback tests the same sentence`, message === sharedMessage, message === sharedMessage ? "" : `${message} vs ${sharedMessage}`);
+}
+
+// ---------------------------------------------------------------------------
+// 4. The database answers.
 // ---------------------------------------------------------------------------
 
 const env = Object.fromEntries(
@@ -441,7 +670,7 @@ if (onDatabase) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. The mutations — each one fed through the function above, and must go red.
+// 5. The mutations — each one fed through the function above, and must go red.
 // ---------------------------------------------------------------------------
 
 if (onDatabase) {
@@ -547,8 +776,106 @@ check(
     !commentedFields.some((f) => f.name === "the comment is prose, not a column")
 );
 
+// -- The repository half, mutated.
+//
+// Each rewrite is confined to the one line the check reads, so a mutation that
+// misses its target cannot be mistaken for a check that passed.
+function mutateOnce(label, text, rewrite) {
+  const next = rewrite(text);
+  if (next === text) {
+    check(`${label}: the mutation this proof relies on lands`, false, "the rewritten text is byte-for-byte the original");
+    return null;
+  }
+  return next;
+}
+
+const driftedSelect = mutateOnce(
+  "a projection's column list",
+  read(`${REPO_DIR}/candidateAttempt.ts`),
+  (t) => t.replace('.select("application_id, total_score")', '.select("application_id, final_score")')
+);
+if (driftedSelect) {
+  const mutatedRead = readRequests(driftedSelect)[0];
+  const offenders = columnsNamed(driftedSelect, mutatedRead.chain).columns.filter(
+    (c) => !entities.get("candidate_attempts").some((f) => f.name === c)
+  );
+  check("a column a projection invented is named against the row type", offenders.includes("final_score"), offenders.join(", "));
+}
+
+const castSelect = mutateOnce(
+  "a projection's column list",
+  read(`${REPO_DIR}/candidateAttempt.ts`),
+  (t) => t.replace('.select("application_id, total_score")', '.select("application_id, total_score::text")')
+);
+if (castSelect) {
+  const mutatedRead = readRequests(castSelect)[0];
+  check(
+    "a column renamed by a cast is not silently skipped",
+    columnsNamed(castSelect, mutatedRead.chain).unparsed.length === 1
+  );
+}
+
+const widenedPick = mutateOnce(
+  "a projection's Pick",
+  read(`${REPO_DIR}/sourcedProspect.ts`),
+  (t) => t.replace('| "profile_captured_at"', '| "captured_profile_at"')
+);
+if (widenedPick) {
+  const pick = picksNamed(widenedPick).find((p) => p.iface === "SourcedProspect");
+  const fields = entities.get("sourced_prospects");
+  check(
+    "a Pick that names a field the row type lacks is red",
+    pick.members.filter((mem) => !fields.some((f) => f.name === mem)).includes("captured_profile_at")
+  );
+}
+
+const reachedUp = mutateOnce(
+  "a repository file's imports",
+  read(`${REPO_DIR}/jobOpening.ts`),
+  (t) => t.replace('import type { StaffReadClient } from "./restClient";', 'import { HIREABLE_STATUSES } from "@/modules/jobs/domain/hireable";\nimport type { StaffReadClient } from "./restClient";')
+);
+if (reachedUp) {
+  const offenders = importSpecifiers(reachedUp).filter((s) => !REPO_ALLOWED_IMPORTS.some((a) => s.startsWith(a)));
+  check("a repository that imports a module's rule is red", offenders.includes("@/modules/jobs/domain/hireable"), offenders.join(", "));
+}
+
+const renamedProjection = mutateOnce(
+  "a projection's name",
+  read(`${REPO_DIR}/candidateAttempt.ts`),
+  (t) => t.replace("export async function readAttemptScoresByApplication(", "export async function readScoresOfEveryPaper(")
+);
+if (renamedProjection) {
+  const fn = /^export (?:async )?function (\w+)/m.exec(renamedProjection)[1];
+  check("a projection left without a caller is named as dead", callersOf(fn) === 0, `${fn} has ${callersOf(fn)} callers`);
+}
+
+const driftedCopy = mutateOnce(
+  "the interview scorecard's copy of the predicate",
+  read("src/modules/interviews/domain/interviewScorecard.ts"),
+  (t) => t.replace('error.code === "42703"', 'error.code === "42704"')
+);
+if (driftedCopy) {
+  const codes = schemaCodesIn(functionBody(driftedCopy, "isMissingSchemaError"));
+  check(
+    "a copy that changes one code is named against the shared list",
+    !codes.includes("42703") && codes.includes("42704") && !sharedCodes.includes("42704")
+  );
+}
+
+const rewordedCopy = mutateOnce(
+  "the jobs module's message fallback",
+  read("src/modules/jobs/domain/openingTerms.ts"),
+  (t) => t.replace("/does not exist|schema cache/i", "/column is missing/i")
+);
+if (rewordedCopy) {
+  check(
+    "a copy that rewords the message fallback is named",
+    schemaMessageIn(functionBody(rewordedCopy, "isMissingSchemaError")) !== sharedMessage
+  );
+}
+
 // ---------------------------------------------------------------------------
-// 5. The tally.
+// 6. The tally.
 // ---------------------------------------------------------------------------
 
 const failed = results.filter((r) => !r.pass);

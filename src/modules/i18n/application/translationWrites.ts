@@ -2,6 +2,7 @@
 
 import { revalidatePath, updateTag } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
@@ -46,12 +47,12 @@ async function staffProfileId(
   restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   authUserId: string
 ): Promise<string | null> {
-  const { data } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+  const found = await readStaffProfileIdByAuthUserId(restClient, authUserId);
+  if (!found.ok) {
+    console.error("[i18n] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 /** The machine-readable list of languages this console stores wording for. */

@@ -2,6 +2,7 @@
 
 import { revalidatePath, updateTag } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { requireStaff, STAFF_ROLES } from "@/lib/auth/session";
 import { ALLOWED_SETTING_KEYS } from "@/modules/settings/domain/schema";
 import { shippedTemplate, type TemplateWriteResult } from "@/modules/settings/domain/templates";
@@ -67,12 +68,12 @@ async function staffProfileId(
   restClient: Awaited<ReturnType<typeof createServerRestClient>>,
   authUserId: string
 ): Promise<string | null> {
-  const { data } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+  const found = await readStaffProfileIdByAuthUserId(restClient, authUserId);
+  if (!found.ok) {
+    console.error("[settings] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 /** The channel a template row belongs to, in the words a trail row uses. */

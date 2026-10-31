@@ -29,6 +29,7 @@ import { revalidatePath } from "next/cache";
 import { requireStaff } from "@/lib/auth/session";
 import { hasAiProvider } from "@/lib/config.server";
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readOpeningTitleAndStatus } from "@/infrastructure/repositories/jobOpening";
 import { recordActivity, withActivityContext } from "@/modules/activity/application/record";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import {
@@ -1311,15 +1312,16 @@ export async function assignFormToJob(
     };
   }
 
-  const { data: job } = await client
-    .from("job_openings")
-    .select("id, title, status")
-    .eq("id", jobId)
-    .maybeSingle();
-  const opening = job as { id: string; title: string; status: string } | null;
-  if (!opening) {
-    return { ok: false, error: "That opening no longer exists — pick a current one." };
+  const found = await readOpeningTitleAndStatus(client, jobId);
+  if (!found.ok) {
+    return {
+      ok: false,
+      error: found.reason === "gone"
+        ? "That opening no longer exists — pick a current one."
+        : found.error,
+    };
   }
+  const opening = found.opening;
 
   const read = await readComposition(client);
   if (!read.ok) return { ok: false, error: read.error };

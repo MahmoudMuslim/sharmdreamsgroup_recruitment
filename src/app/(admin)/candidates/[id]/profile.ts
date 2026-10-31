@@ -27,6 +27,7 @@
 import { requireStaff, type SessionUser } from "@/lib/auth/session";
 import { formatInZone } from "@/lib/timezone";
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readApplicationPerson } from "@/infrastructure/repositories/application";
 import type { SoftSkillReport } from "@/core/entities";
 import { DEFAULT_LINK_VALIDITY_HOURS } from "@/modules/assessment/application/linkValidity";
 import { attachmentRule } from "@/modules/careers/attachment-rules";
@@ -902,20 +903,18 @@ async function resolvePerson(
   applicationId: string,
   email: string
 ): Promise<{ personId: string | null; spinePresent: boolean }> {
-  const { data, error } = await client
-    .from("applications")
-    .select("person_id")
-    .eq("id", applicationId)
-    .maybeSingle();
+  const found = await readApplicationPerson(client, applicationId);
 
-  if (isMissingSchemaError(error)) return { personId: null, spinePresent: false };
-  if (error) {
-    console.error("[candidate-profile] person link refused:", error.message);
+  if (found.status === "error") {
+    console.error("[candidate-profile] person link refused:", found.error);
     return { personId: null, spinePresent: true };
   }
-
-  const linked = asNullableText((data as { person_id?: unknown } | null)?.person_id);
-  if (linked) return { personId: linked, spinePresent: true };
+  if (found.status === "found" && !found.spinePresent) {
+    return { personId: null, spinePresent: false };
+  }
+  if (found.status === "found" && found.personId) {
+    return { personId: found.personId, spinePresent: true };
+  }
 
   const { data: owned, error: ownedError } = await client
     .from("person_emails")

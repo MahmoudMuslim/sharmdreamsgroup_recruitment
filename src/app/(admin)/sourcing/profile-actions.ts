@@ -15,6 +15,7 @@ import {
 import { describeExtractionFailure, extractProfile } from "@/modules/sourcing/infrastructure/profile-extract";
 import { normalizeLinkedInUrl } from "@/modules/sourcing/domain/prospect-import";
 import { recordActivity } from "@/modules/activity/application/record";
+import { readProspectCaptureFields } from "@/infrastructure/repositories/sourcedProspect";
 
 /**
  * Reading a prospect's full profile.
@@ -58,21 +59,6 @@ export interface StoredProspectProfile {
   company: string | null;
 }
 
-const PROFILE_COLUMNS =
-  "profile, profile_url, profile_source, profile_captured_at, profile_error, full_name, headline, company, linkedin_url";
-
-interface ProspectProfileRecord {
-  profile: unknown;
-  profile_url: string | null;
-  profile_source: string | null;
-  profile_captured_at: string | null;
-  profile_error: string | null;
-  full_name: string;
-  headline: string | null;
-  company: string | null;
-  linkedin_url: string | null;
-}
-
 function asSource(value: unknown): ProfileSource | null {
   return value === "URL" || value === "PASTE" || value === "FILE" ? value : null;
 }
@@ -90,15 +76,10 @@ export async function getProspectProfile(id: string): Promise<StoredProspectProf
   await requireStaff("/sourcing");
 
   const restClient = await createServerRestClient();
-  const { data, error } = await restClient
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
+  const found = await readProspectCaptureFields(restClient, id);
+  if (!found.ok) return null;
 
-  if (error || !data) return null;
-
-  const row = data as unknown as ProspectProfileRecord;
+  const row = found.row;
   return {
     profile: row.profile ? normalizeProspectProfile(row.profile) : null,
     source: asSource(row.profile_source),
@@ -293,14 +274,9 @@ export async function readProspectProfile(input: {
   }
 
   const restClient = await createServerRestClient();
-  const { data } = await restClient
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", input.id)
-    .maybeSingle();
-
-  const row = data as unknown as ProspectProfileRecord | null;
-  if (!row) return { ok: false, error: "That prospect is no longer in the pool." };
+  const found = await readProspectCaptureFields(restClient, input.id);
+  if (!found.ok) return { ok: false, error: found.error };
+  const row = found.row;
 
   const candidate = (input.url ?? row.profile_url ?? row.linkedin_url ?? "").trim();
   if (!candidate) {
@@ -358,14 +334,9 @@ export async function pasteProspectProfile(input: {
   }
 
   const restClient = await createServerRestClient();
-  const { data } = await restClient
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", input.id)
-    .maybeSingle();
-
-  const row = data as unknown as ProspectProfileRecord | null;
-  if (!row) return { ok: false, error: "That prospect is no longer in the pool." };
+  const found = await readProspectCaptureFields(restClient, input.id);
+  if (!found.ok) return { ok: false, error: found.error };
+  const row = found.row;
 
   return structureAndStore(restClient, input.id, profileTextFromPaste(trimmed), row, "PASTE");
 }
@@ -440,14 +411,9 @@ export async function uploadProspectProfile(formData: FormData): Promise<Profile
   }
 
   const restClient = await createServerRestClient();
-  const { data } = await restClient
-    .from("sourced_prospects")
-    .select(PROFILE_COLUMNS)
-    .eq("id", id)
-    .maybeSingle();
-
-  const row = data as unknown as ProspectProfileRecord | null;
-  if (!row) return { ok: false, error: "That prospect is no longer in the pool." };
+  const found = await readProspectCaptureFields(restClient, id);
+  if (!found.ok) return { ok: false, error: found.error };
+  const row = found.row;
 
   let read: ProfileRead;
   try {

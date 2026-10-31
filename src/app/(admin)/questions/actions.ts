@@ -6,6 +6,7 @@ import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
+import { readOpeningTitleAndStatus } from "@/infrastructure/repositories/jobOpening";
 import {
   parseGateRows,
   type GateOption,
@@ -815,14 +816,16 @@ async function readFormPlace(restClient: RestClient, jobId: string): Promise<Pla
     return { ok: false, error: "Choose one of the open roles, or ask it for every role." };
   }
 
-  const { data } = await restClient
-    .from("job_openings")
-    .select("id, title, status")
-    .eq("id", jobId)
-    .maybeSingle();
-
-  const job = data as { title: string; status: string } | null;
-  if (!job) return { ok: false, error: "That role no longer exists — pick one of the current openings." };
+  const found = await readOpeningTitleAndStatus(restClient, jobId);
+  if (!found.ok) {
+    return {
+      ok: false,
+      error: found.reason === "gone"
+        ? "That role no longer exists — pick one of the current openings."
+        : found.error,
+    };
+  }
+  const job = found.opening;
   if (job.status !== "PUBLISHED") {
     return {
       ok: false,

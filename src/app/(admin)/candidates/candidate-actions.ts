@@ -55,6 +55,7 @@ import {
 } from "@/modules/candidates/infrastructure/cvProfileExtract";
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
+import { readApplicationPerson } from "@/infrastructure/repositories/application";
 import {
   CV_MAX_BYTES,
   CV_TEXT_MIN_CHARS,
@@ -1522,31 +1523,20 @@ export async function commitExtractionPreview(input: CommitPreviewInput): Promis
   }
 
   const restClient = await createServerRestClient();
-  const { data, error: readError } = await restClient
-    .from("applications")
-    .select("person_id")
-    .eq("id", input.applicationId)
-    .maybeSingle();
+  const foundPerson = await readApplicationPerson(restClient, input.applicationId);
 
   // Re-read server-side — the client's person id is never trusted. A missing
   // column re-reads without it, so a live record still answers honestly: an
   // extraction writes at the person level only, and with no spine there is no
   // person to write to (spec §9 refuses with the note; §5 fills a person's
   // empty fields, and an absent profile has none).
-  let personId: string | null | undefined;
-  if (readError && isMissingSchemaError(readError)) {
-    const { data: withoutPerson } = await restClient
-      .from("applications")
-      .select("id")
-      .eq("id", input.applicationId)
-      .maybeSingle();
-    if (!withoutPerson) return { ok: false, error: "This candidate record is no longer here." };
-    personId = null;
-  } else if (!data) {
+  if (foundPerson.status === "gone") {
     return { ok: false, error: "This candidate record is no longer here." };
-  } else {
-    personId = (data as { person_id: string | null }).person_id;
   }
+  if (foundPerson.status === "error") {
+    return { ok: false, error: foundPerson.error };
+  }
+  const personId = foundPerson.personId;
   if (!personId) return { ok: false, error: PERSON_SPINE_MISSING_NOTE };
 
   const changes = extractionChanges(input.profile, staff.profileId);

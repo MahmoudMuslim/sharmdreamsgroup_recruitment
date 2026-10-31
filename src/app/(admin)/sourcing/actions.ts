@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readOpeningPickerWindow } from "@/infrastructure/repositories/jobOpening";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getStringSetting } from "@/modules/settings/infrastructure/settingsReader";
@@ -249,27 +251,17 @@ export async function getProspectJobs(): Promise<JobPicker> {
   await requireStaff("/sourcing");
 
   const restClient = await createServerRestClient();
-  const [rows, count] = await Promise.all([
-    restClient
-      .from("job_openings")
-      .select("id, title, status")
-      .in("status", [...HIREABLE_STATUSES])
-      .order("created_at", { ascending: false })
-      .limit(PICKER_LIMIT),
-    restClient
-      .from("job_openings")
-      .select("id", { count: "exact", head: true })
-      .in("status", [...HIREABLE_STATUSES]),
-  ]);
+  const picker = await readOpeningPickerWindow(restClient, {
+    statuses: HIREABLE_STATUSES,
+    limit: PICKER_LIMIT,
+  });
 
-  if (rows.error || count.error) {
-    console.error(
-      "[sourcing] opening picker failed:",
-      (rows.error ?? count.error)?.message,
-    );
+  if (!picker.ok) {
+    console.error("[sourcing] opening picker failed:", picker.error);
+    return { jobs: [], total: 0 };
   }
 
-  return { jobs: (rows.data ?? []) as JobOption[], total: count.count ?? 0 };
+  return { jobs: picker.rows as JobOption[], total: picker.total ?? 0 };
 }
 
 export async function getProspectHistory(id: string): Promise<ProspectHistoryRow[]> {
@@ -738,12 +730,12 @@ type StaffClient = Awaited<ReturnType<typeof createServerRestClient>>;
  * the auth id straight would break the foreign key.
  */
 async function staffProfileId(restClient: StaffClient, authUserId: string): Promise<string | null> {
-  const { data } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", authUserId)
-    .maybeSingle();
-  return (data as { id: string } | null)?.id ?? null;
+  const found = await readStaffProfileIdByAuthUserId(restClient, authUserId);
+  if (!found.ok) {
+    console.error("[sourcing] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 async function logOutbound(

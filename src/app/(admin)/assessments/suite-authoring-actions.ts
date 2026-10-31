@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readOpeningPickerWindow } from "@/infrastructure/repositories/jobOpening";
 import type { RestClient } from "@/lib/rest/client";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
@@ -99,24 +100,16 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
   }
 
   const restClient = await createServerRestClient();
-  const [rows, count] = await Promise.all([
-    restClient
-      .from("job_openings")
-      .select("id, title, status")
-      .in("status", [...HIREABLE_STATUSES])
-      .order("created_at", { ascending: false })
-      .limit(PICKER_LIMIT),
-    restClient
-      .from("job_openings")
-      .select("id", { count: "exact", head: true })
-      .in("status", [...HIREABLE_STATUSES]),
-  ]);
+  const picker = await readOpeningPickerWindow(restClient, {
+    statuses: HIREABLE_STATUSES,
+    limit: PICKER_LIMIT,
+  });
 
-  if (rows.error) {
-    return { openings: [], note: null, error: rows.error.message };
+  if (!picker.ok) {
+    return { openings: [], note: null, error: picker.error };
   }
 
-  const openings = (rows.data ?? []).map((row: { id: string; title: string; status: string }) => ({
+  const openings = picker.rows.map((row) => ({
     id: row.id,
     title: row.title,
     status: row.status,
@@ -125,7 +118,7 @@ export async function getOpeningsForAuthoring(): Promise<OpeningsRead> {
 
   return {
     openings,
-    note: pickerWindowNote(count.count ?? openings.length, openings.length),
+    note: pickerWindowNote(picker.total ?? openings.length, openings.length),
     error: null,
   };
 }

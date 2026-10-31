@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readAttemptScoresByApplication } from "@/infrastructure/repositories/candidateAttempt";
 import { requireStaff } from "@/lib/auth/session";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { FIT_BUCKETS, bucketBounds } from "@/modules/analytics/domain/fitBuckets";
@@ -61,11 +62,6 @@ interface JobRow {
   department: string;
   status: string;
   closing_at: string | null;
-}
-
-interface AttemptJoin {
-  application_id: string | null;
-  total_score: number | null;
 }
 
 /** PostgREST returns one-to-one embeds as an object, but arrays are possible. */
@@ -252,19 +248,16 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
   // Attempts are only wanted for the rows the board actually holds, so this read
   // is bounded to their ids rather than the whole table. A masked caller still
   // gets `has_assessment` (a yes/no, not a score), so the read runs either way.
-  const attemptsResult =
-    boardRows.length === 0
-      ? null
-      : await restClient
-          .from("candidate_attempts")
-          .select("application_id, total_score")
-          .in("application_id", boardRows.map((app) => app.id));
+  const attempts = await readAttemptScoresByApplication(
+    restClient,
+    boardRows.map((app) => app.id)
+  );
+  if (!attempts.ok) console.error("[dashboard] board attempt scores:", attempts.error);
 
   const scoreByApplication = new Map(
-    ((attemptsResult?.data ?? []) as AttemptJoin[]).map((attempt) => [
-      attempt.application_id,
-      attempt.total_score,
-    ])
+    (attempts.ok ? attempts.rows : []).map(
+      (attempt) => [attempt.application_id, attempt.total_score]
+    )
   );
 
   const candidates: DashboardCandidate[] = boardRows.map((app) => {
@@ -650,18 +643,13 @@ export async function getDashboardDrilldown(
   const found = (data ?? []) as DrillJoin[];
   const ids = found.map((row) => row.id);
 
-  const attemptsResult =
-    ids.length === 0
-      ? null
-      : await restClient
-          .from("candidate_attempts")
-          .select("application_id, total_score")
-          .in("application_id", ids);
+  const attempts = await readAttemptScoresByApplication(restClient, ids);
+  if (!attempts.ok) console.error("[dashboard] drill-down attempt scores:", attempts.error);
+
   const scoreByApplication = new Map(
-    ((attemptsResult?.data ?? []) as AttemptJoin[]).map((attempt) => [
-      attempt.application_id,
-      attempt.total_score,
-    ])
+    (attempts.ok ? attempts.rows : []).map(
+      (attempt) => [attempt.application_id, attempt.total_score]
+    )
   );
 
   const now = Date.now();

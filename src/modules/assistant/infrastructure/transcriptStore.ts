@@ -1,4 +1,5 @@
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readStaffProfileIdByAuthUserId } from "@/infrastructure/repositories/userProfile";
 import type { AssistantEngine } from "@/modules/assistant/domain/engine";
 import { MAX_HISTORY_ATTACHMENT_CHARS } from "@/modules/assistant/domain/attachments";
 import { withoutStepFileBytes, type AssistantStep } from "@/modules/assistant/infrastructure/agent";
@@ -71,13 +72,12 @@ async function currentProfileId(): Promise<string | null> {
   } = await restClient.auth.getUser();
   if (!user) return null;
 
-  const { data } = await restClient
-    .from("user_profiles")
-    .select("id")
-    .eq("auth_user_id", user.id)
-    .maybeSingle();
-
-  return (data as { id?: string } | null)?.id ?? null;
+  const found = await readStaffProfileIdByAuthUserId(restClient, user.id);
+  if (!found.ok) {
+    console.error("[assistant] staff profile lookup:", found.error);
+    return null;
+  }
+  return found.profileId;
 }
 
 /**
