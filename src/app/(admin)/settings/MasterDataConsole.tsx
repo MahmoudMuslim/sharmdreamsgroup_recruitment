@@ -31,8 +31,8 @@ import {
 import { areaById, sectionFor } from "@/modules/settings/domain/settingsNav";
 import { Badge, Button } from "@/modules/analytics/presentation/ui";
 import { cn } from "@/lib/utils";
+import type { Company } from "@/core/entities";
 import type {
-  Company,
   Currency,
   Department,
   Location,

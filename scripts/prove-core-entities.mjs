@@ -15,7 +15,7 @@
  * module editing its own copy of `PIPELINE_STAGES` is a bug this gate can see
  * without asking Postgres anything.
  *
- * ON DATABASE — the schema claim: for each of the five tables the interface's
+ * ON DATABASE — the schema claim: for each of the six tables the interface's
  * fields must equal `information_schema.columns` in name, order, nullability and
  * type family; each enum-backed tuple must equal `pg_enum`; each CHECK-backed
  * text vocabulary must equal the constraint's own labels. This is what makes the
@@ -48,13 +48,14 @@ function check(name, pass, detail = "") {
 // 1. What the source says.
 // ---------------------------------------------------------------------------
 
-/** The five tables this layer owns, and the interface that names each row. */
+/** The six tables this layer owns, and the interface that names each row. */
 const ROW_TYPES = [
   { file: "src/core/entities/application.ts", iface: "Application", table: "applications" },
   { file: "src/core/entities/jobOpening.ts", iface: "JobOpening", table: "job_openings" },
   { file: "src/core/entities/candidateAttempt.ts", iface: "CandidateAttempt", table: "candidate_attempts" },
   { file: "src/core/entities/userProfile.ts", iface: "UserProfile", table: "user_profiles" },
   { file: "src/core/entities/sourcedProspect.ts", iface: "SourcedProspect", table: "sourced_prospects" },
+  { file: "src/core/entities/company.ts", iface: "Company", table: "tenants_and_companies" },
 ];
 
 /** Postgres enum type name → the tuple in core that lists its labels. */
@@ -91,7 +92,7 @@ const DUPLICATES = [
   { file: "src/modules/settings/domain/vocabularies.ts", tuple: "APPLICATION_SOURCES", core: "APPLICATION_SOURCES" },
 ];
 
-const ENTITY_FILES = ["vocabularies", "application", "jobOpening", "candidateAttempt", "userProfile", "sourcedProspect"];
+const ENTITY_FILES = ["vocabularies", "company", "application", "jobOpening", "candidateAttempt", "userProfile", "sourcedProspect"];
 
 /**
  * The fields of one exported interface, in the order they are written.
@@ -307,7 +308,7 @@ for (const file of ENTITY_FILES) {
   const offenders = LAYER_IMPORTS.filter((p) => text.includes(`from "${p}`));
   check(`core/entities/${file}.ts imports no layer above core`, offenders.length === 0, offenders.join(", "));
 }
-check("the entities barrel exports the six files", ["./vocabularies", "./application", "./jobOpening", "./candidateAttempt", "./userProfile", "./sourcedProspect"].every((p) => read("src/core/entities/index.ts").includes(`export * from "${p}"`)));
+check("the entities barrel exports the seven files", ["./vocabularies", "./company", "./application", "./jobOpening", "./candidateAttempt", "./userProfile", "./sourcedProspect"].every((p) => read("src/core/entities/index.ts").includes(`export * from "${p}"`)));
 
 // `src/types` kept the DTOs and gave up the rows.
 const typesFile = read("src/types/index.ts");
@@ -442,6 +443,9 @@ const repoReads = repoFiles.flatMap((name) => {
 
 check(`the layer holds ${repoFiles.length} files and asks ${repoReads.length} reads`, repoFiles.length > 0 && repoReads.length > 0);
 
+/** Whether a row type in core names a table's row. */
+const coreDescribes = (map, table) => Boolean(map.get(table));
+
 for (const req of repoReads) {
   const fields = entities.get(req.table);
   if (!fields) {
@@ -460,6 +464,19 @@ for (const req of repoReads) {
     req.unparsed.join(", ")
   );
 }
+
+/* The rule above is only a rule if the map can miss: the same predicate, fed a
+ * core with the company row taken out, must name the company read as written
+ * against a table nothing describes. */
+const withoutCompany = new Map(entities);
+withoutCompany.delete("tenants_and_companies");
+check(
+  "a layer read of a table core does not describe is named",
+  coreDescribes(withoutCompany, "tenants_and_companies") === false &&
+    coreDescribes(entities, "tenants_and_companies") === true &&
+    repoReads.some((r) => r.table === "tenants_and_companies"),
+  "the mutation needs a company read in the layer and a company row in core"
+);
 
 /** The members each `Pick<Entity, "a" | "b">` in a repository names. */
 function picksNamed(text) {
@@ -856,7 +873,7 @@ if (onDatabase) {
   // -- 3e. The DTO that is a projection of a wider table.
   //
   // `Tenant` is the one row-shaped type `src/types` kept, because the staff
-  // session reads six columns off a table the console reads twenty-seven from.
+  // session reads six columns off a table `Company` in core describes in full.
   // Leaving twenty-one out is legal; naming a field that is not a column is not,
   // because PostgREST answers such a select with an error, not with a null.
   const tenantFields = parseInterface(typesFile, "Tenant");

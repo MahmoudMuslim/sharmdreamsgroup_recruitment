@@ -32,9 +32,9 @@ export type MessageDirection = "INBOUND" | "OUTBOUND";
 /**
  * The six columns `tenants_and_companies` has always had.
  *
- * The company console edits a wider row — profile copy, logo, the jsonb
- * milestones and benefits — and reads those through its own projection, so this
- * stays the short description the rest of the platform needs.
+ * The full row — profile copy, logo, the jsonb milestones and benefits — is
+ * `Company` in `src/core/entities/company.ts`, in the order the database holds
+ * it. This stays the short projection the staff session reads.
  */
 export interface Tenant {
   id: string;

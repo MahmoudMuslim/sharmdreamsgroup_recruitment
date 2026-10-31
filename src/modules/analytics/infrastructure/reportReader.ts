@@ -17,6 +17,7 @@
 import "server-only";
 
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readCompanyNameById } from "@/infrastructure/repositories/company";
 import { scoresAreMaskedForCurrentUser } from "@/modules/settings/application/scoreVisibility";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { getOrganisationTimeZone } from "@/modules/settings/infrastructure/settingsReader";
@@ -1295,16 +1296,12 @@ export async function buildCandidateExport(
    * in it. The same refusal the chat makes on the same id. */
   let companyName: string | null = null;
   if (filters.company) {
-    const one = await restClient
-      .from("tenants_and_companies")
-      .select("name")
-      .eq("id", filters.company)
-      .maybeSingle();
-    if (one.error) return { error: `That company could not be read: ${one.error.message}` };
-    if (!one.data) {
+    const one = await readCompanyNameById(restClient, filters.company);
+    if (!one.ok) return { error: one.error };
+    if (one.name === null) {
       return { error: "No company carries that id, so there is nothing to download under it." };
     }
-    companyName = (one.data as { name: string }).name;
+    companyName = one.name;
   }
 
   let query = restClient

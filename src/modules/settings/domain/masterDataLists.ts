@@ -31,7 +31,8 @@
  * the server-side reads and the assistant registry can all import it.
  */
 
-import type { Company, Currency, Location, MasterEntity, Position, Skill } from "./types";
+import type { Company } from "@/core/entities";
+import type { Currency, Location, MasterEntity, Position, Skill } from "./types";
 
 /** The seven lists, in the order the settings dock shows them. */
 export const MASTER_LIST_ORDER: readonly MasterEntity[] = [

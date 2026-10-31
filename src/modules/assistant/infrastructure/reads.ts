@@ -1,5 +1,6 @@
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
+import { readCompanyNameById } from "@/infrastructure/repositories/company";
 import {
   HIREABLE_STATUSES,
   OPENING_READ_LIMIT,
@@ -196,19 +197,18 @@ export interface AssistantJobDetail {
  * Both rails that light by company id, the openings grid and the candidates
  * table, have to tell "this company has nobody in it" apart from "no company
  * carries that id", and a read of the child rows cannot: an empty set looks the
- * same either way. So the id is looked up on its own before anything is counted,
+ * same either way. So the id is named on its own before anything is counted,
  * and a caller turns `null` into a refusal rather than an empty list.
+ *
+ * The read itself belongs to the repositories layer, with the two other doors
+ * that ask it. Here a refused read is a thrown one, because the chat's answer is
+ * built further up and has nowhere to put a half-read scope.
  */
 export async function companyNameById(id: string): Promise<string | null> {
   const restClient = await createServerRestClient();
-  const one = await restClient
-    .from("tenants_and_companies")
-    .select("name")
-    .eq("id", id)
-    .maybeSingle();
-  if (one.error) throw new Error(`That company could not be read: ${one.error.message}`);
-  const name = (one.data as { name?: string } | null)?.name;
-  return typeof name === "string" && name !== "" ? name : null;
+  const found = await readCompanyNameById(restClient, id);
+  if (!found.ok) throw new Error(found.error);
+  return found.name;
 }
 
 /** Openings newest first, with their live applicant count and the set's size. */

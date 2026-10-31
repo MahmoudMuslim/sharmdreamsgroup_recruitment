@@ -7,6 +7,7 @@
  */
 
 export * from "./vocabularies";
+export * from "./company";
 export * from "./application";
 export * from "./jobOpening";
 export * from "./candidateAttempt";

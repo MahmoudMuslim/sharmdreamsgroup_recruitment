@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createServerRestClient } from "@/lib/data-api/server";
 import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
+import type { Company } from "@/core/entities";
 import type {
-  Company,
   Currency,
   Department,
   Location,

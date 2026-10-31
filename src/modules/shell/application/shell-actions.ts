@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerRestClient } from "@/lib/data-api/server";
+import { readCompanyNameById } from "@/infrastructure/repositories/company";
 import { getSessionUser, isStaff } from "@/lib/auth/session";
 import { hasAiProvider } from "@/lib/config.server";
 import {
@@ -425,12 +426,13 @@ export async function getMyProfile(): Promise<MyProfileResult> {
   let company: string | null = null;
 
   if (tenantId) {
-    const { data: tenant } = await restClient
-      .from("tenants_and_companies")
-      .select("name")
-      .eq("id", tenantId)
-      .maybeSingle();
-    company = tenant?.name ?? null;
+    const one = await readCompanyNameById(restClient, tenantId);
+    /* The menu still opens without a company label — a name is not worth
+     * failing the profile read over — but the reason it is missing is printed,
+     * so "no such company" and "the read failed" do not collapse into the same
+     * blank the recruiter sees. */
+    if (!one.ok) console.error("[shell] the account menu company label failed:", one.error);
+    company = one.ok ? one.name : null;
   }
 
   return {
