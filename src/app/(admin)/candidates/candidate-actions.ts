@@ -56,6 +56,7 @@ import {
 import { extractCvText } from "@/modules/screening/infrastructure/cvParser";
 import { isMissingSchemaError } from "@/modules/interviews/domain/interviewScorecard";
 import { readApplicationPerson } from "@/infrastructure/repositories/application";
+import { readOpeningPickerWindow } from "@/infrastructure/repositories/jobOpening";
 import {
   CV_MAX_BYTES,
   CV_TEXT_MIN_CHARS,
@@ -797,34 +798,25 @@ export async function listManualOpenings(): Promise<ManualOpeningsResult> {
   await requireStaff("/candidates");
   const restClient = await createServerRestClient();
 
-  const [rows, count] = await Promise.all([
-    restClient
-      .from("job_openings")
-      .select("id, title, department, status")
-      .in("status", [...HIREABLE_STATUSES])
-      .order("created_at", { ascending: false })
-      .limit(PICKER_LIMIT),
-    restClient
-      .from("job_openings")
-      .select("id", { count: "exact", head: true })
-      .in("status", [...HIREABLE_STATUSES]),
-  ]);
-  const { data, error } = rows;
+  const picker = await readOpeningPickerWindow(restClient, {
+    statuses: HIREABLE_STATUSES,
+    limit: PICKER_LIMIT,
+  });
 
-  if (error) {
-    console.error("[candidates] manual entry openings failed:", error.message);
-    return { ok: false, error: error.message, openings: [], total: 0 };
+  if (!picker.ok) {
+    console.error("[candidates] manual entry openings failed:", picker.error);
+    return { ok: false, error: picker.error, openings: [], total: 0 };
   }
 
   return {
     ok: true,
-    openings: (data ?? []).map((row: Record<string, unknown>) => ({
-      id: String(row.id),
-      title: String(row.title ?? ""),
-      department: String(row.department ?? ""),
-      status: String(row.status ?? "DRAFT"),
+    openings: picker.rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      department: row.department,
+      status: row.status,
     })),
-    total: count.count ?? 0,
+    total: picker.total ?? 0,
   };
 }
 

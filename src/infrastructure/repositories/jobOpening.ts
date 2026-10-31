@@ -84,6 +84,16 @@ export async function readOpeningTitleAndStatus(
 export const OPENING_WINDOW_LIMIT = 200;
 
 /**
+ * One row of that window: the guard fields, plus the department.
+ *
+ * `department` is in the projection because the manual-entry drawer lists it
+ * beside every title, and a picker that shows a job but not where it sits is a
+ * recruiter guessing which of the three "Accountant" rows is theirs. The two
+ * pickers that never show it read the same row and drop the column.
+ */
+export type OpeningPickerRow = Pick<JobOpening, "id" | "title" | "status" | "department">;
+
+/**
  * The newest openings in the given statuses, with the head count of that whole
  * set beside them.
  *
@@ -96,14 +106,14 @@ export async function readOpeningPickerWindow(
   restClient: StaffReadClient,
   options: { statuses: readonly JobStatus[]; limit?: number }
 ): Promise<
-  | { ok: true; rows: OpeningGuardFields[]; total: number | null }
+  | { ok: true; rows: OpeningPickerRow[]; total: number | null }
   | { ok: false; error: string }
 > {
   const limit = options.limit ?? OPENING_WINDOW_LIMIT;
   const [rows, count] = await Promise.all([
     restClient
       .from("job_openings")
-      .select("id, title, status")
+      .select("id, title, department, status")
       .in("status", [...options.statuses])
       .order("created_at", { ascending: false })
       .limit(limit),
@@ -118,7 +128,7 @@ export async function readOpeningPickerWindow(
   }
   return {
     ok: true,
-    rows: (rows.data ?? []) as unknown as OpeningGuardFields[],
+    rows: (rows.data ?? []) as unknown as OpeningPickerRow[],
     total: count.error ? null : count.count ?? null,
   };
 }

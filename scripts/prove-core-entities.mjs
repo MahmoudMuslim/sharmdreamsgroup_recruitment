@@ -630,14 +630,6 @@ const STANDING_COPIES = new Map([
         "the erasure's person pass folds gone, absent spine and refused read into null on purpose, so that a database without 043 loses only what is new; naming the three would change what an in-flight erasure does.",
     },
   ],
-  [
-    '.from("job_openings").select(id,{count: "exact", head: true}).in("status",?)',
-    {
-      files: ["src/app/(admin)/candidates/candidate-actions.ts"],
-      because:
-        "that picker's rows carry `department`, a column the layer's picker read does not return, so only the head-count half of its pair collides; wiring it means widening the layer read for the sourcing pickers that never show a department.",
-    },
-  ],
 ]);
 
 const ledgeredIdentities = new Set(layerReads.map((r) => r.identity));
@@ -1319,6 +1311,61 @@ if (reInlinedAccount) {
     "a staff door that re-inlines the account read is named with the ledger gone",
     written.length === 1 && !STANDING_COPIES.has(accountReadIdentity),
     `the gate would count ${written.length} copy${written.length === 1 ? "" : "ies"}: ${written.join(", ") || "nowhere"}`
+  );
+}
+
+// The manual-entry picker's ledger entry left the same way: the layer's picker
+// read widened to carry `department`, so the door has no chain of its own left
+// to name. This mutation puts the door's original pair back — the rows half the
+// ledger never counted, and the head-count half it excused — and asks whether
+// the ownership check now names both.
+const pickerIdentities = layerReads
+  .filter((r) => r.file === "jobOpening.ts")
+  .map((r) => r.identity)
+  .filter(
+    (id) =>
+      id.includes('in("status"') &&
+      (id.includes('{count: "exact", head: true}') || id.includes(".limit("))
+  );
+const MANUAL_PICKER_REL = "src/app/(admin)/candidates/candidate-actions.ts";
+const reInlinedPicker =
+  pickerIdentities.length === 2
+    ? mutateOnce(
+        "the manual-entry picker's own pair of reads",
+        read(MANUAL_PICKER_REL),
+        (t) =>
+          t.replace(
+            // The door's file carries CRLF line endings; a `\n`-only needle
+            // would match nothing and the mutation would report itself as landless.
+            /const picker = await readOpeningPickerWindow\(restClient, \{[\s\S]*?\}\);/,
+            `const [pickerRows, pickerCount] = await Promise.all([
+    restClient
+      .from("job_openings")
+      .select("id, title, department, status")
+      .in("status", [...HIREABLE_STATUSES])
+      .order("created_at", { ascending: false })
+      .limit(PICKER_LIMIT),
+    restClient
+      .from("job_openings")
+      .select("id", { count: "exact", head: true })
+      .in("status", [...HIREABLE_STATUSES]),
+  ]);
+  const picker = { ok: true, rows: pickerRows, total: pickerCount.count };`
+          )
+      )
+    : null;
+if (reInlinedPicker) {
+  const named = new Set();
+  for (const id of pickerIdentities) {
+    const written = outsideLayer.some((s) =>
+      identitiesIn(s.rel === MANUAL_PICKER_REL ? reInlinedPicker : s.text).includes(id)
+    );
+    if (written) named.add(id);
+  }
+  check(
+    "the manual-entry picker that re-inlines its own pair is named on both halves, with the ledger gone",
+    named.size === 2 && pickerIdentities.every((id) => !STANDING_COPIES.has(id)),
+    `the gate names ${named.size} of ${pickerIdentities.length}: ${[...named].map((i) => i.slice(0, 40)).join(" | ")}`
   );
 }
 
