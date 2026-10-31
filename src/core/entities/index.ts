@@ -8,6 +8,7 @@
 
 export * from "./vocabularies";
 export * from "./company";
+export * from "./assessmentTemplate";
 export * from "./application";
 export * from "./jobOpening";
 export * from "./candidateAttempt";

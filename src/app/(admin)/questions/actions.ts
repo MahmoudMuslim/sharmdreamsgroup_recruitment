@@ -7,6 +7,7 @@ import { requireStaff } from "@/lib/auth/session";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 import { recordActivity } from "@/modules/activity/application/record";
 import { readOpeningTitleAndStatus } from "@/infrastructure/repositories/jobOpening";
+import { listSuites, readSuiteById } from "@/infrastructure/repositories/assessmentTemplate";
 import {
   parseGateRows,
   type GateOption,
@@ -130,7 +131,7 @@ export async function getQuestionBankData(): Promise<BankData> {
     hasPermissionForUser("assessments.create"),
     restClient.from("application_gate_questions").select(GATE_COLUMNS).order("position"),
     restClient.from("assessment_questions").select(SUITE_COLUMNS).order("position"),
-    restClient.from("assessment_templates").select("id, name, is_active").order("name"),
+    listSuites(restClient),
     // Every opening, not only the published ones: a question outlives the role it was
     // written for, and the board has to name that role rather than print a uuid.
     restClient.from("job_openings").select("id, title, status").order("title"),
@@ -157,11 +158,10 @@ export async function getQuestionBankData(): Promise<BankData> {
     });
   }
 
-  for (const suite of (templateResult.data ?? []) as {
-    id: string;
-    name: string;
-    is_active: boolean;
-  }[]) {
+  if (!templateResult.ok) {
+    console.error("[questions] the suite destinations failed:", templateResult.error);
+  }
+  for (const suite of templateResult.ok ? templateResult.suites : []) {
     places.push({
       key: bankPlaceKey("suite", suite.id),
       label: suite.name,
@@ -841,13 +841,9 @@ async function readSuitePlace(restClient: RestClient, templateId: string): Promi
     return { ok: false, error: "Choose the suite to copy it into." };
   }
 
-  const { data } = await restClient
-    .from("assessment_templates")
-    .select("id, name, is_active")
-    .eq("id", templateId)
-    .maybeSingle();
-
-  const suite = data as { name: string; is_active: boolean } | null;
+  const found = await readSuiteById(restClient, templateId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const suite = found.suite;
   if (!suite) return { ok: false, error: "That assessment suite no longer exists." };
   if (!suite.is_active) {
     return {

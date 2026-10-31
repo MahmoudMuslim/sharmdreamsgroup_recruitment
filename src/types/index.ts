@@ -45,17 +45,6 @@ export interface Tenant {
   created_at: string;
 }
 
-export interface AssessmentTemplate {
-  id: string;
-  tenant_id: string;
-  name: string;
-  description: string;
-  role_family: string;
-  time_limit_minutes: number;
-  is_active: boolean;
-  created_at: string;
-}
-
 export interface AssessmentQuestion {
   id: string;
   template_id: string;

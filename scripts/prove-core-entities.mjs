@@ -48,7 +48,7 @@ function check(name, pass, detail = "") {
 // 1. What the source says.
 // ---------------------------------------------------------------------------
 
-/** The six tables this layer owns, and the interface that names each row. */
+/** The seven tables this layer owns, and the interface that names each row. */
 const ROW_TYPES = [
   { file: "src/core/entities/application.ts", iface: "Application", table: "applications" },
   { file: "src/core/entities/jobOpening.ts", iface: "JobOpening", table: "job_openings" },
@@ -56,6 +56,7 @@ const ROW_TYPES = [
   { file: "src/core/entities/userProfile.ts", iface: "UserProfile", table: "user_profiles" },
   { file: "src/core/entities/sourcedProspect.ts", iface: "SourcedProspect", table: "sourced_prospects" },
   { file: "src/core/entities/company.ts", iface: "Company", table: "tenants_and_companies" },
+  { file: "src/core/entities/assessmentTemplate.ts", iface: "AssessmentTemplate", table: "assessment_templates" },
 ];
 
 /** Postgres enum type name → the tuple in core that lists its labels. */
@@ -92,7 +93,7 @@ const DUPLICATES = [
   { file: "src/modules/settings/domain/vocabularies.ts", tuple: "APPLICATION_SOURCES", core: "APPLICATION_SOURCES" },
 ];
 
-const ENTITY_FILES = ["vocabularies", "company", "application", "jobOpening", "candidateAttempt", "userProfile", "sourcedProspect"];
+const ENTITY_FILES = ["vocabularies", "company", "assessmentTemplate", "application", "jobOpening", "candidateAttempt", "userProfile", "sourcedProspect"];
 
 /**
  * The fields of one exported interface, in the order they are written.
@@ -308,7 +309,7 @@ for (const file of ENTITY_FILES) {
   const offenders = LAYER_IMPORTS.filter((p) => text.includes(`from "${p}`));
   check(`core/entities/${file}.ts imports no layer above core`, offenders.length === 0, offenders.join(", "));
 }
-check("the entities barrel exports the seven files", ["./vocabularies", "./company", "./application", "./jobOpening", "./candidateAttempt", "./userProfile", "./sourcedProspect"].every((p) => read("src/core/entities/index.ts").includes(`export * from "${p}"`)));
+check("the entities barrel exports the eight files", ["./vocabularies", "./company", "./assessmentTemplate", "./application", "./jobOpening", "./candidateAttempt", "./userProfile", "./sourcedProspect"].every((p) => read("src/core/entities/index.ts").includes(`export * from "${p}"`)));
 
 // `src/types` kept the DTOs and gave up the rows.
 const typesFile = read("src/types/index.ts");
@@ -476,6 +477,19 @@ check(
     coreDescribes(entities, "tenants_and_companies") === true &&
     repoReads.some((r) => r.table === "tenants_and_companies"),
   "the mutation needs a company read in the layer and a company row in core"
+);
+
+/* The same rule over the suite table, which arrived later: a core without the
+ * repeated-suite row must name the layer's suite reads as written against a
+ * table nothing describes. */
+const withoutSuites = new Map(entities);
+withoutSuites.delete("assessment_templates");
+check(
+  "a layer read of the suite table with no row type is named",
+  coreDescribes(withoutSuites, "assessment_templates") === false &&
+    coreDescribes(entities, "assessment_templates") === true &&
+    repoReads.some((r) => r.table === "assessment_templates"),
+  "the mutation needs a suite read in the layer and a suite row in core"
 );
 
 /** The members each `Pick<Entity, "a" | "b">` in a repository names. */
@@ -1383,6 +1397,39 @@ if (reInlinedPicker) {
     "the manual-entry picker that re-inlines its own pair is named on both halves, with the ledger gone",
     named.size === 2 && pickerIdentities.every((id) => !STANDING_COPIES.has(id)),
     `the gate names ${named.size} of ${pickerIdentities.length}: ${[...named].map((i) => i.slice(0, 40)).join(" | ")}`
+  );
+}
+
+// The suite read's three doors all went through the layer, so the ownership
+// check has no hand-written copy left to count. This mutation puts the question
+// board's original chain back and asks whether the comparison names it.
+const suiteReadIdentity = layerReads
+  .filter((r) => r.file === "assessmentTemplate.ts")
+  .map((r) => r.identity)
+  .find((id) => id.includes("is_active") && id.includes(".maybeSingle("));
+const QUESTION_ACTIONS_REL = "src/app/(admin)/questions/actions.ts";
+const reInlinedSuite = suiteReadIdentity
+  ? mutateOnce(
+      "the question board's suite read",
+      read(QUESTION_ACTIONS_REL),
+      (t) =>
+        t.replace(
+          "  const found = await readSuiteById(restClient, templateId);",
+          `  const { data } = await restClient
+    .from("assessment_templates")
+    .select("id, name, is_active")
+    .eq("id", templateId)
+    .maybeSingle();
+  const found = { ok: true as const, suite: data as { id: string; name: string; is_active: boolean } | null };`
+        )
+    )
+  : null;
+if (reInlinedSuite) {
+  const copies = identitiesIn(reInlinedSuite).filter((id) => id === suiteReadIdentity);
+  check(
+    "the question board re-inlines the suite read → the 3c gate names it",
+    copies.length === 1,
+    `the injected chain matched ${copies.length} times against ${suiteReadIdentity}`
   );
 }
 

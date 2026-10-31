@@ -11,6 +11,7 @@ import { processDueWhatsAppJobs } from "@/modules/omnichannel/application/whatsa
 import { changePhrase, changedFields } from "@/modules/activity/domain/trail";
 import { recordActivity } from "@/modules/activity/application/record";
 import { readFollowUpAvailability } from "@/modules/assessment/application/followUpAvailability";
+import { readSuiteById } from "@/infrastructure/repositories/assessmentTemplate";
 import {
   FOLLOW_UP_WRITE_REFUSAL,
   followUpLoop,
@@ -299,11 +300,9 @@ export async function setTemplateActive(
 
   const restClient = await createServerRestClient();
 
-  const { data: suite } = await restClient
-    .from("assessment_templates")
-    .select("id, name, is_active")
-    .eq("id", templateId)
-    .maybeSingle();
+  const found = await readSuiteById(restClient, templateId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const suite = found.suite;
   if (!suite) return { ok: false, error: "That suite no longer exists." };
 
   const { error } = await restClient
@@ -426,11 +425,9 @@ export async function assignTemplate(input: {
 
   const restClient = await createServerRestClient();
 
-  const { data: template } = await restClient
-    .from("assessment_templates")
-    .select("id, name, is_active")
-    .eq("id", input.templateId)
-    .maybeSingle();
+  const found = await readSuiteById(restClient, input.templateId);
+  if (!found.ok) return { ok: false, error: found.error };
+  const template = found.suite;
 
   if (!template) return { ok: false, error: "That assessment suite no longer exists." };
   if (template.is_active === false) {
