@@ -9,7 +9,7 @@ import { previewFormLayout } from "@/modules/form-builder/application/formPrevie
 import { FormEditor } from "../FormEditor";
 
 export const metadata = {
-  title: "Application form · Sharm Dreams Talent Cloud",
+  title: "Application form",
   description: "One form's questions, its details and the openings that ask it",
 };
 

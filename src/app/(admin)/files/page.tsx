@@ -8,7 +8,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/ui";
 
 export const metadata = {
-  title: "Files · Sharm Dreams Talent Cloud",
+  title: "Files",
   description:
     "Browse the private buckets that hold candidate CVs, pitch recordings and the files staff attach to a candidate record",
 };

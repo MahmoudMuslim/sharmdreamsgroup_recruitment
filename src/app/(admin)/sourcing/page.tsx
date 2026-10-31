@@ -8,7 +8,7 @@ import { isProspectStage } from "./pool-model";
 import { SourcingBoard } from "./SourcingBoard";
 
 export const metadata = {
-  title: "Sourcing · Sharm Dreams Talent Cloud",
+  title: "Sourcing",
   description: "Prospects you found off-pipeline, loaded for outreach",
 };
 

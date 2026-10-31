@@ -11,7 +11,7 @@ import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/u
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
 export const metadata = {
-  title: "Reports · Sharm Dreams Group",
+  title: "Reports",
   description: "Row-level hiring lists, downloadable as CSV, Excel or PDF",
 };
 

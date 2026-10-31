@@ -6,7 +6,7 @@ import { listForms } from "@/modules/form-builder/application/formActions";
 import { FormsBoard } from "./FormsBoard";
 
 export const metadata = {
-  title: "Application Forms · Sharm Dreams Talent Cloud",
+  title: "Application Forms",
   description: "Every application form the estate holds, in the state it is in",
 };
 

@@ -6,7 +6,7 @@ import { getQuestionBankData } from "./actions";
 import { BankBoard } from "./BankBoard";
 
 export const metadata = {
-  title: "Question Bank · Sharm Dreams Talent Cloud",
+  title: "Question Bank",
   description: "Write and place every apply-form and assessment question the portal holds",
 };
 

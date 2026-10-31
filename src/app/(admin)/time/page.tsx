@@ -10,7 +10,7 @@ import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissi
 import { LEDGER_NOTES, TRACK_DENIED } from "@/modules/timelog/domain/ledger";
 
 export const metadata = {
-  title: "Time Tracker · Sharm Dreams Group",
+  title: "Time Tracker",
   description: "Hours logged against candidates, openings and the hiring paperwork",
 };
 

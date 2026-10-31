@@ -9,7 +9,7 @@ import { Card, EmptyState, PageHeader } from "@/modules/analytics/presentation/u
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
 export const metadata = {
-  title: "Analytics · Sharm Dreams Group",
+  title: "Analytics",
   description: "Assessment, sourcing, messaging and interview reporting",
 };
 

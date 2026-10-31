@@ -12,7 +12,7 @@ import { TRAIL_LIST } from "@/modules/activity/domain/trail";
 import { hasPermissionForUser } from "@/modules/settings/infrastructure/permissions";
 
 export const metadata = {
-  title: "Activity · Sharm Dreams Group",
+  title: "Activity",
   description: "Every change to the hiring data, and who or what made it",
 };
 
