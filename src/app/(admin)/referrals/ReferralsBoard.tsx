@@ -226,8 +226,8 @@ export function ReferralsBoard({ desk }: { desk: ReferralDesk }) {
             />
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-start">
-            <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-start">
+            <div className="min-w-0 space-y-6">
               <Card>
                 <CardHeader title="Your referral link" meta="one code, every role" />
                 <div className="space-y-3 p-5">
@@ -393,7 +393,7 @@ export function ReferralsBoard({ desk }: { desk: ReferralDesk }) {
               </Card>
             </div>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader title="Who brought the most" meta="hires, then the size of the book" />
               {board.leaderboard.length === 0 ? (
                 <EmptyState

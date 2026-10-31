@@ -163,7 +163,7 @@ function CompanyPanel({ company }: { company: PublicCompany }) {
           href={company.website}
           target="_blank"
           rel="noreferrer noopener"
-          className="mt-5 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
+          className="mt-5 inline-flex min-h-6 items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
         >
           <PublicText k="careers.online" vars={{ name: company.name }} />
           <ArrowRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -225,7 +225,7 @@ function ApplyPanel({
         </p>
         <Link
           href="/portal"
-          className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
+          className="mt-3 inline-flex min-h-6 items-center gap-1.5 text-xs font-bold text-brand-gold-dark"
         >
           <PublicText k="careers.trackMine" />
           <ArrowRight className="h-3.5 w-3.5 shrink-0 rtl:rotate-180" aria-hidden />
@@ -287,7 +287,7 @@ export default async function CareerDetailPage({
       )}
       <Link
         href="/careers"
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-ink/55 transition hover:text-brand-ink"
+        className="inline-flex min-h-6 items-center gap-1.5 text-sm font-semibold text-brand-ink/55 transition hover:text-brand-ink"
       >
         <ArrowLeft className="h-4 w-4 shrink-0 rtl:rotate-180" aria-hidden />
         <PublicText k="careers.allRoles" />

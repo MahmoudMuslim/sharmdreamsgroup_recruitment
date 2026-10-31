@@ -602,7 +602,7 @@ export function BankBoard({ data }: { data: BankData }) {
                       type="button"
                       onClick={() => toggleGroup(group.key)}
                       aria-expanded={!isClosed}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/45 transition hover:text-brand-ink"
+                      className="inline-flex items-center gap-1.5 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-brand-ink/45 transition hover:text-brand-ink"
                     >
                       {isClosed ? (
                         <ChevronRight className="h-3.5 w-3.5" aria-hidden />
@@ -621,7 +621,7 @@ export function BankBoard({ data }: { data: BankData }) {
                           if (group.key.startsWith("gate:")) addGate(bankPlaceScope(group.key));
                           else addSuite(bankPlaceScope(group.key));
                         }}
-                        className="text-[11px] font-bold text-brand-ink/45 underline transition hover:text-brand-ink"
+                        className="py-1 text-[11px] font-bold text-brand-ink/45 underline transition hover:text-brand-ink"
                       >
                         Add one here
                       </button>

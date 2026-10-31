@@ -90,13 +90,13 @@ export function BankToolbar({
           </p>
         ) : (
           <>
-            <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
+            <label className="flex min-w-0 items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
               Where
               <Select
                 aria-label="Filter by the role or suite a question belongs to"
                 value={view.scope}
                 onChange={(event) => onPatch({ scope: event.target.value })}
-                className="w-auto py-1.5 text-xs font-semibold normal-case tracking-normal"
+                className="w-auto max-w-full py-1.5 text-xs font-semibold normal-case tracking-normal"
               >
                 <option value="">Every place ({total})</option>
                 {scopeChoices.map((choice) => (
@@ -107,7 +107,7 @@ export function BankToolbar({
               </Select>
             </label>
 
-            <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
+            <label className="flex min-w-0 items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-ink/45">
               Group
               <Select
                 aria-label="Group the bank by"
@@ -115,7 +115,7 @@ export function BankToolbar({
                 onChange={(event) =>
                   onPatch({ group: event.target.value as BankViewState["group"] })
                 }
-                className="w-auto py-1.5 text-xs font-semibold normal-case tracking-normal"
+                className="w-auto max-w-full py-1.5 text-xs font-semibold normal-case tracking-normal"
               >
                 {BANK_GROUPS.filter((option) => !option.gateOnly || onGateTab).map((option) => (
                   <option key={option.key} value={option.key}>
@@ -180,7 +180,7 @@ export function BankToolbar({
             </Button>
           )}
           {can.suites && (
-            <label className="flex items-center gap-1.5">
+            <label className="flex min-w-0 items-center gap-1.5">
               <span className="sr-only">Add a question into a test suite</span>
               <Select
                 aria-label="Add a question into a test suite"
@@ -189,7 +189,7 @@ export function BankToolbar({
                 onChange={(event) => {
                   if (event.target.value) onAddSuite(event.target.value);
                 }}
-                className="w-auto py-1.5 text-xs font-semibold"
+                className="w-auto max-w-full py-1.5 text-xs font-semibold"
               >
                 <option value="">
                   {suiteChoices.length === 0 ? "No suite is switched on" : "Add into a suite…"}

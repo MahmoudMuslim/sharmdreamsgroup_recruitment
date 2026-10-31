@@ -299,7 +299,7 @@ export function SettingsConsole({
             onChange={(e) => setQuery(e.target.value)}
             placeholder={`Search ${active.controls.length} settings by ${settingSearchWords()}…`}
             aria-label="Search settings"
-            className="w-full bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none"
+            className="min-h-6 w-full bg-transparent text-sm placeholder:text-brand-ink/35 focus:outline-none"
           />
           {query && (
             <span className="shrink-0 text-xs font-semibold text-brand-ink/45">

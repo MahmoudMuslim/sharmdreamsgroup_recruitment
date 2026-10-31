@@ -209,7 +209,7 @@ export function PrivacyDoor({
                   setOutcome(null);
                 }}
                 autoComplete="email"
-                className="h-11 flex-1 rounded-xl border border-brand-line bg-white px-3 text-sm text-brand-ink outline-none transition focus:border-brand-gold focus-visible:ring-2 focus-visible:ring-brand-gold/40"
+                className="h-11 rounded-xl border border-brand-line bg-white px-3 text-sm text-brand-ink outline-none transition focus:border-brand-gold focus-visible:ring-2 focus-visible:ring-brand-gold/40 sm:flex-1"
               />
               <button
                 type="submit"
